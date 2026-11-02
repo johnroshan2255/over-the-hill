@@ -397,4 +397,21 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   masks, meta with `biome` + `gate`), `scripts/oth/desert_rocks.py` (Blender: the sandstone slabs' low-poly skins →
   `formations.glb`, drawn by `Formations.ts`); `OTH_DESERT` in every world material (sand / sandstone palette, wind
   ripples, oasis-only grass, date palms, Over the Hill's bushes, the desert sky grade).
-
+- **The crossing** (`Crossing.ts`, round 2 — NEXT.md has the numbers): each world's `meta.gate` (where, how high, the
+  way out, its `mist`) at the top of a long climb — the valley's GREAT CLIFF (`scripts/oth/valley_cliff.py` over the
+  baked valley: a ~490 m plateau, a 7-leg LEDGE ROAD up its west face — `scripts/oth/ledgeroad.py`), the desert's
+  escarpment (the same `LedgeRoad`, 4 legs). The MIST (`uMist`: a fog round the camera in `ATMOS_GLSL`, the sky gone
+  to it) thickens with the climb; the other world is BUILT IN THE BACKGROUND within 1100 m of the gate (`World.build`
+  `background`: the terrain shadow `prepare`d, the shade and the far grid left alone until `World.adopt`; tree / bush
+  placement sliced over frames) and kept (not drawn) until the car is 1600 m away; the SWAP at the gate line, at the
+  start of a frame: `enter`, the car / dust / free camera moved by the gates' offset (a pure translation: the gates
+  face opposite ways), the old world kept for a way back, then disposed whole.
+- **The desert's weather and sand**: a SANDSTORM spell (`uDust`: dust fog, dust sky, a dimmed sun, `Rain.ts` 'sand'
+  streaks, headlights on, the wind loud) instead of rain; ruts in loose sand (TyreTracks), sand spray by the ground
+  (Dust), the car's SAND COAT (`uCoat`, Vehicle.weather).
+- **The desert's structures** (`desert_rocks.py` → `formations.glb` + `structures.json` colliders, `Formations.ts`):
+  the natural arch (its deck the road — a ground collider), the Roman aqueduct, the ksar, the gorge's blocks; the
+  gorge's ROPE BRIDGE (`Bridge.kind 'rope'`, `sag`, `deckY` — Bridges.ts draws it, Physics follows the sag in pieces).
+- **The desert's things** (`Places.ts` `desert` branches: oasis camps, wells, Bedouin tents, sandstone ruins; crate ids
+  from 100000) and sound (`Audio.ts`: open-sand wind, oasis-only birds and crickets, no owls). Per world: the journal's
+  `totals`, the player's camp (`Progress.camps`). `?save=0`: a test session that never saves.

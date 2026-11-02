@@ -13,6 +13,8 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
  * view and not behind the hills (Horizon) — beyond it the terrain's own terraced beds carry the shape. Coloured like
  * the ground's sandstone (paint.ts: each 9 m bed its own tone), sand on the lips, a darker tuck under each slab, the
  * terrain's shadow and the haze.
+ * The STRUCTURES too (2026-11-02, in the same file: the natural arch, the aqueduct, the ksar, the gorge's blocks) — and
+ * their colliders (structures.json: boxes; the arch's deck is ground) for the physics (main.ts: with the landmarks').
  */
 export class Formations {
   readonly group = new THREE.Group()
@@ -26,6 +28,8 @@ export class Formations {
   private readonly last = new THREE.Vector3(1e9, 0, 0)
   private readonly lastDir = new THREE.Vector3()
   private readonly dir = new THREE.Vector3()
+  /** The structures' colliders (Physics.addLandmarks' boxes). */
+  colliders: { c: THREE.Vector3; h: THREE.Vector3; q: THREE.Quaternion; ground: boolean }[] = []
 
   private constructor(scene: THREE.Object3D, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4) {
     this.reach = { low: 420, medium: 560, high: 720, ultra: 900 }[tier.name] ?? 720
@@ -55,8 +59,14 @@ export class Formations {
   static async load(url: string, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4): Promise<Formations | null> {
     const draco = (dracoLoader ??= new DRACOLoader().setDecoderPath('/draco/'))
     try {
-      const gltf = await new GLTFLoader().setDRACOLoader(draco).loadAsync(url)
-      return new Formations(gltf.scene, atmos, shadow, tier, farGrid)
+      const [gltf, st] = await Promise.all([
+        new GLTFLoader().setDRACOLoader(draco).loadAsync(url),
+        fetch(url.replace(/formations.glb$/, 'structures.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      ])
+      const f = new Formations(gltf.scene, atmos, shadow, tier, farGrid)
+      type C = { c: number[]; h: number[]; q: number[]; ground: boolean }
+      f.colliders = ((st?.colliders ?? []) as C[]).map((k) => ({ c: new THREE.Vector3().fromArray(k.c), h: new THREE.Vector3().fromArray(k.h), q: new THREE.Quaternion().fromArray(k.q), ground: k.ground }))
+      return f
     } catch {
       return null
     }

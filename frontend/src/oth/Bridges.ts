@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { Horizon } from './Horizon'
-import type { Bridge, MapData } from './MapData'
+import { type Bridge, deckY, type MapData } from './MapData'
 import type { Tier } from './quality'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 
@@ -12,6 +12,9 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
  * a log RAIL on the posts. A mesh per bridge (~10 k vertices in all, one material: drawn only when in view and not
  * behind the hills — `cull`), flat-shaded wood in this world's light (the terrain's baked sun shadow, the headlights).
  * The physics (Physics.ts) gives each a deck, curbs and rails to drive on.
+ * A ROPE BRIDGE (the desert's gorge, 2026-11-02 — Over the Hill's Algeria): planks on two cables hanging in a sag, a
+ * rope handrail each side tied down to the deck edge every couple of metres, A-frame log towers at both ends, the cables
+ * anchored back into the ground behind them.
  */
 export class Bridges {
   readonly group = new THREE.Group()
@@ -23,7 +26,7 @@ export class Bridges {
     const list = map.meta.bridges ?? []
     if (!list.length) return
     const b = new Builder(0x1b0a7d), ranges: [number, number][] = []
-    for (const br of list) { const from = b.count; b.bridge(br, map); ranges.push([from, b.count]) }
+    for (const br of list) { const from = b.count; if (br.kind === 'rope') b.ropeBridge(br, map); else b.bridge(br, map); ranges.push([from, b.count]) }
     this.parts = splitMeshes(b, ranges, woodMaterial(atmos, shadow, tier, farGrid), this.group)
   }
 
@@ -167,6 +170,58 @@ export class Builder {
       this.log(e0.setY(e0.y + 0.82), e1.setY(e1.y + 0.82), 0.1, this.wood(0.9))
       const c0 = a.clone().addScaledVector(across, sd * (half - 0.14)).addScaledVector(along, -0.2), c1 = b.clone().addScaledVector(across, sd * (half - 0.14)).addScaledVector(along, 0.2)
       this.log(c0.setY(c0.y + 0.1), c1.setY(c1.y + 0.1), 0.12, this.wood(0.85))
+    }
+  }
+
+  /** A ROPE BRIDGE: br's deck hanging br.sag m at its middle (deckY) — planks on two cables, the handrails, towers. */
+  ropeBridge(br: Bridge, map: MapData): void {
+    const a = new THREE.Vector3(br.x0, br.y0, br.z0), b = new THREE.Vector3(br.x1, br.y1, br.z1)
+    const Lh = Math.hypot(br.x1 - br.x0, br.z1 - br.z0)
+    const along = new THREE.Vector3(br.x1 - br.x0, 0, br.z1 - br.z0).normalize()
+    const up = new THREE.Vector3(0, 1, 0), across = new THREE.Vector3().crossVectors(up, along).normalize()
+    const half = br.w / 2
+    const at = (t: number, side: number, dy: number) => new THREE.Vector3(br.x0 + (br.x1 - br.x0) * t, deckY(br, t) + dy, br.z0 + (br.z1 - br.z0) * t).addScaledVector(across, side)
+    // PLANKS: across, square to the deck's slope where they lie; a few missing or loose-looking, each its own tone
+    const P = 0.31, n = Math.floor(Lh / P)
+    for (let i = 0; i < n; i++) {
+      const t = (i + 0.5) / n, e = 1e-3
+      const slope = (deckY(br, t + e) - deckY(br, t - e)) / (2 * e * Lh)
+      const al = along.clone().addScaledVector(up, slope).normalize(), dUp = new THREE.Vector3().crossVectors(al, across).normalize()
+      const skew = (this.rnd() - 0.5) * 0.06
+      const c = at(t, (this.rnd() - 0.5) * 0.12, -0.06 + (this.rnd() - 0.5) * 0.03)
+      this.box(c, across.clone().applyAxisAngle(dUp, skew), dUp, al.clone().applyAxisAngle(dUp, skew), half + (this.rnd() - 0.5) * 0.2, 0.05, 0.13, this.wood(this.rnd() < 0.06 ? 0.6 : 1))
+    }
+    // the two CABLES under the planks' ends and the HANDRAILS (thick ropes) above, as short straight pieces of the curve
+    const rope: [number, number, number] = [0.42, 0.34, 0.22]
+    const S = Math.max(8, Math.round(Lh / 4))
+    for (const sd of [-1, 1]) for (let i = 0; i < S; i++) {
+      const t0 = i / S, t1 = (i + 1) / S
+      this.log(at(t0, sd * (half - 0.25), -0.2), at(t1, sd * (half - 0.25), -0.2), 0.07, rope)
+      // (the handrail hangs a little deeper than the deck between the towers)
+      const r0 = at(t0, sd * (half + 0.12), 1.05 + 0.25 * 4 * t0 * (1 - t0)), r1 = at(t1, sd * (half + 0.12), 1.05 + 0.25 * 4 * t1 * (1 - t1))
+      this.log(r0, r1, 0.05, rope)
+    }
+    // SUSPENDERS: from the handrail down to the deck's edge every ~2.2 m
+    const k = Math.round(Lh / 2.2)
+    for (let i = 1; i < k; i++) for (const sd of [-1, 1]) {
+      const t = i / k
+      this.log(at(t, sd * (half + 0.1), 1.05 + 0.25 * 4 * t * (1 - t)), at(t, sd * (half - 0.05), -0.05), 0.022, rope)
+    }
+    // TOWERS: an A-frame of logs at each end (two posts leaning in, a cross beam), the cables anchored behind
+    for (const [t, dir] of [[0, -1], [1, 1]] as const) {
+      const base = t === 0 ? a : b
+      for (const sd of [-1, 1]) {
+        const foot = base.clone().addScaledVector(across, sd * (half + 0.7)).addScaledVector(along, dir * 0.6)
+        foot.y = map.height(foot.x, foot.z) - 0.8
+        const top = base.clone().addScaledVector(across, sd * (half + 0.15)).addScaledVector(along, dir * 0.6).setY(base.y + 3.6)
+        this.log(foot, top, 0.2, this.wood(0.8))
+        const anchor = base.clone().addScaledVector(across, sd * (half + 1.4)).addScaledVector(along, dir * 7)
+        anchor.y = map.height(anchor.x, anchor.z) + 0.3
+        this.log(top.clone().setY(top.y - 0.3), anchor, 0.06, rope)
+        this.box(anchor.clone().setY(anchor.y + 0.1), across, up, along, 0.35, 0.45, 0.35, this.wood(0.6)) // (the stake)
+      }
+      const cb = base.clone().addScaledVector(along, dir * 0.6).setY(base.y + 3.35)
+      this.log(cb.clone().addScaledVector(across, -(half + 0.5)), cb.clone().addScaledVector(across, half + 0.5), 0.16, this.wood(0.75))
     }
   }
 

@@ -78,11 +78,21 @@ function bake(g: { n: number; step: number; origin: number }, dx: number, dz: nu
   return out
 }
 
+/** Every world's ground the main thread has sent (the next one arrives while this one plays: the crossing), by key. */
+const grounds = new Map<number, { inner: Grid; far: Grid }>()
+
 self.onmessage = (e: MessageEvent) => {
   const m = e.data
   if (m.type === 'init') {
-    inner = m.inner
-    far = m.far
+    grounds.set(m.key, { inner: m.inner, far: m.far })
+    return
+  }
+  if (m.type === 'use') {
+    ;({ inner, far } = grounds.get(m.key)!)
+    return
+  }
+  if (m.type === 'drop') {
+    grounds.delete(m.key)
     return
   }
   if (m.type === 'trees') {

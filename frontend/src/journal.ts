@@ -10,8 +10,8 @@ export interface Journal {
   crates: number[]
   /** Paints bought (#rrggbb). */
   paints: string[]
-  /** How many there are to find in the valley (the game writes them; the title screen's journal shows x / n). */
-  totals?: { crates: number; places: number }
+  /** How many there are to find in each world (the game writes them; the title screen's journal shows x / n). */
+  totals?: Record<string, { crates: number; places: number }>
 }
 
 /** What finding things pays. */
@@ -22,7 +22,10 @@ const KEY = 'overhill.journal.v1'
 export function loadJournal(): Journal {
   try {
     const j = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Journal | null
-    if (j && j.v === 1) return { v: 1, coins: j.coins | 0, crates: j.crates ?? [], paints: j.paints ?? [], totals: j.totals }
+    // (totals were the valley's alone before the desert: { crates, places })
+    const t = j?.totals as Journal['totals'] | { crates: number; places: number } | undefined
+    const totals = t && typeof (t as { crates?: unknown }).crates === 'number' ? { valley: t as { crates: number; places: number } } : (t as Journal['totals'])
+    if (j && j.v === 1) return { v: 1, coins: j.coins | 0, crates: j.crates ?? [], paints: j.paints ?? [], totals }
   } catch {
     /* (fresh) */
   }

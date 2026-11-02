@@ -21,6 +21,8 @@ import type { Vehicle } from './Vehicle'
  *     over the RIDGES (synthesized: noise through a wandering band-pass, in slow gusts) where the land is high and
  *     open.
  * Streams, falls, fires and ponds fade in as the camera nears them, panned to their side. M mutes everything.
+ * The DESERT (2026-11-02): wind over the open sand (day and night), the leaves, birds and most crickets only at the
+ * oasis, no owls; frogs only by the lagoon (as by any water). A SANDSTORM howls everywhere, a hiss of sand with it.
  */
 const BASE = '/oth/audio/'
 const MUSIC = ['music_etirwer.ogg', 'music_middle_of_nowhere.mp3']
@@ -292,10 +294,15 @@ export class OthAudio {
     this.sense -= dt
     if (this.sense <= 0) { this.sense = 0.25; this.listen(camera) }
     const night = this.atmos.uniforms.uNight.value, day = 1 - night, B = this.beds
-    B.forest.target = day * (0.16 + 0.42 * this.near.forest)
-    B.wind.target = day * (0.1 + 0.22 * (1 - this.near.forest))
-    B.night.target = night * 0.5 * (1 - 0.7 * this.atmos.uniforms.uRain.value)
-    if (this.rainGain) this.rainGain.gain.value += (0.5 * this.atmos.uniforms.uRain.value - this.rainGain.gain.value) * Math.min(1, dt * 1.5)
+    // (the DESERT, 2026-11-02: the leaves and birds only at the oasis, the wind over the open sand stronger and on at
+    //  night too, the crickets mostly by the palms — NEXT.md 6)
+    const desert = this.map.desert, open = 1 - this.near.forest
+    B.forest.target = day * ((desert ? 0 : 0.16) + 0.42 * this.near.forest)
+    B.wind.target = desert ? (0.2 + 0.3 * open) * (0.55 + 0.45 * day) : day * (0.1 + 0.22 * open)
+    B.night.target = night * (desert ? 0.2 + 0.4 * this.near.forest : 0.5) * (1 - 0.7 * this.atmos.uniforms.uRain.value)
+    // (the rain's hiss — and the sandstorm's: sand on the car, in the scrub)
+    const dust = this.atmos.uniforms.uDust.value
+    if (this.rainGain) this.rainGain.gain.value += (Math.max(0.5 * this.atmos.uniforms.uRain.value, 0.42 * dust) - this.rainGain.gain.value) * Math.min(1, dt * 1.5)
     B.stream.target = 0.65 * smooth(70, 8, this.near.stream)
     B.stream.pan.pan.value = this.near.streamPan * 0.7
     B.fall.target = 0.85 * smooth(110, 10, this.near.fall)
@@ -310,8 +317,9 @@ export class OthAudio {
     if (this.windGain) {
       const gust = 0.55 + 0.25 * Math.sin(t * 0.37) + 0.15 * Math.sin(t * 0.83 + 1) + 0.1 * Math.sin(t * 1.9 + 2)
       const sky = 0.6 + 0.4 * this.atmos.uniforms.uCloud.value
-      this.windGain.gain.setTargetAtTime(0.5 * this.near.ridge * gust * sky, t, 0.4)
-      this.windHowl.frequency.setTargetAtTime(330 + 300 * gust, t, 0.5)
+      // (a sandstorm howls everywhere, not only on the ridges)
+      this.windGain.gain.setTargetAtTime(Math.max(0.5 * this.near.ridge * sky, 0.85 * dust) * gust, t, 0.4)
+      this.windHowl.frequency.setTargetAtTime(330 + 300 * gust + 160 * dust, t, 0.5)
     }
     this.calls(dt, camera.position)
   }
@@ -333,7 +341,7 @@ export class OthAudio {
       const answer = !this.owlAnswered && Math.random() < 0.35
       N.owl = answer ? 2.5 + Math.random() * 2.5 : 14 + Math.random() * 30
       this.owlAnswered = answer
-      if (night > 0.6 && rain < 0.3 && f > 0.1) {
+      if (night > 0.6 && rain < 0.3 && f > 0.1 && !this.map.desert) { // (no owls in the desert)
         const [x, z] = this.spot(cam, 35, 110)
         if (!this.call('owl', x, this.map.height(x, z) + 10, z, 0.55, 30, 0.95 + Math.random() * 0.09, cam)) N.owl = 1
       }

@@ -1,4 +1,4 @@
-# overhill — where it stands, what's next (hand-off, 2026-11-02)
+# overhill — where it stands, what's next (hand-off, 2026-11-02, round 2)
 
 Read `docs/ARCHITECTURE.md` and `CLAUDE.md` first. This file is the to-do list for the **second world (the desert)
 and the crossing between worlds**. The user's asks, in their words: *"do the cliff and path, not a bridge, it will walk
@@ -8,43 +8,74 @@ map in Blender so you can sculpt desert cliffs, rocks and all, also the oasis"*;
 time, use a filter for that, and sands like in Over the Hill — the real looking thing"*; *"stones low poly like in the
 valley"*; *"don't use the valley trees there, use the things in Over the Hill"*.
 
-## Done
+## Done — round 1 (worlds you can swap, the desert)
 
-- **Worlds you can swap at runtime** — `src/oth/World.ts`: everything built from one map (terrain, grass, rocks,
-  water, falls, trees + impostors, bushes, horizon, bridges, glow, places/landmarks/props, birds, formations) under one
-  group, built in steps (`pace` = one frame between steps while playing) and **disposed whole** (geometries, materials,
-  textures, the impostor atlas; `keep` = the textures that last). What lasts across worlds is in `main.ts`: renderer,
-  camera, Atmosphere, car + physics (`OthPhysics.setWorld` swaps every collider), sound (`OthAudio.setWorld`), HUD,
-  terrain shadow (`TerrainShadow.setMap`), the winch (`setWorld`), the map view (rebuilt). They read the current map
-  through `liveMap()`. `main.ts` has `buildWorld(id)` + `enter(world)`; the harness has `__oth.swapTo('valley'|'desert')`
-  and `__oth.gpuMemory()`.
-  - Measured (valley → valley ×3): GPU geometries / textures / programs come back to the same counts every time (no
-    leak); longest frame while a world builds ~40 ms (trees / bushes placement on the main thread), after entering
-    ~20 ms.
-- **Workers**: `mapLoad.worker.ts` fetches a world's files and computes heights, normals, the track / shore distance
-  fields and the terrain's height pyramid (`mapPrep.ts`), arrays transferred, no copy (was ~200 ms on the main
-  thread). Leaf / frond textures are made once (`leafTexture.ts`, `userData.shared`). Draco decoding (formations) runs
-  in DRACOLoader's workers (`public/draco/`). The new world's textures are uploaded one a frame and its shaders
-  compiled (`compileAsync`) before it is entered.
-- **The desert** — `?world=desert` (or a save there) boots it.
-  - `scripts/oth/desert.py` (Blender + numpy, `terrainlib.py` helpers): the plain, the north plateau (spire field),
-    the high south plateau (the pass) with the escarpment, the oasis canyon W→E (buttressed two-tier walls, the river,
-    the lagoon, a waterfall at its head), the gorge (east) with a plank bridge, the arch's slot, 10 mesas, 59 spires, a
-    dune sea (two crossing crescent trains) in the south-west, the beds TERRACED into every steep wall (9 m beds),
-    ledge roads cut into the cliffs (switchbacks down the escarpment, ramps on the canyon walls) + A* roads between,
-    masks (R rock, G loose sand, B wet/water, A oasis growth), `meta.json` with `biome: 'desert'` and the `gate`.
-  - `scripts/oth/desert_rocks.py` (Blender): the **sandstone skins** — for every bed, the contour at the riser's
-    middle where the ground is steep, a 6-point low-poly profile swept along it (bulge, tuck, lip), jittered facets,
-    cracks every 12–35 m → `public/oth/desert/formations.glb` (Draco, ~1.1 MB, ~270k vertices, 256 m cells).
-    `src/oth/Formations.ts` draws them (reach by tier, frustum, Horizon), flat-faceted like the valley's rock.
-  - Biome switch `OTH_DESERT` (MapData `desert` / `biomeDefines`) through Terrain (sand palette, sandstone beds, wind
-    ripples, no green ledges), Grass (oasis only, green), Rocks (sandstone), Bushes (OTH's light yellow-green round
-    bushes, oasis-heavy), Trees (**date palms** — `palmGeometry()` in the broadleaf family's place, impostors baked
-    from it), Water, Atmosphere (`desert`: pale cyan-white sky, cream horizon, pink sunsets, purple night, warm haze,
-    clearer air, warm sand bounce).
-  - Rebuild: `cd frontend && blender -b --factory-startup --python scripts/oth/desert.py -- OUT=public/oth/desert
-    PREVIEW=<dir>` then `blender -b --factory-startup --python scripts/oth/desert_rocks.py -- OUT=public/oth/desert`
-    (the second reads `scripts/oth/.cache/desert.npz`, git-ignored).
+- **Worlds you can swap at runtime** (`World.ts`: one group, built in steps, disposed whole; what lasts in `main.ts`
+  reads the current map through `liveMap()`), **workers** (`mapLoad.worker.ts` + `mapPrep.ts`; Draco in the loader's
+  workers; textures uploaded and shaders compiled before a world is entered), **the desert** (`desert.py`,
+  `desert_rocks.py` → `formations.glb`, `OTH_DESERT` through every world material). See ARCHITECTURE.md.
+
+## Done — round 2 (this hand-off: NEXT.md items 1–8 of round 1)
+
+1. **THE CROSSING** (`Crossing.ts`): drive the valley's ledge road up the Great Cliff into the cloud, through the gate,
+   and you're on the desert's pass — and back. Verified by a steering bot (`climbtest.mjs`) both ways, every leg and
+   hairpin of both roads, and by `crosstest.mjs` (the swap at 99 km/h, back by reversing).
+   - **Mist** (`Atmosphere` `uMist` / `uMistColor`, `ATMOS_GLSL` `fogAmount` / `fogColor` / `skyColor`, Sky, Glow): a fog
+     round the camera, density `0.19 · uMist³` (at 1: the land 85 % gone 10 m off). It thickens with the CLIMB near the
+     gate (`gate.mist` {y0, y1, r} in meta: valley 300 → 469 m within 520 m, desert 200 → 315 m within 420 m) and is
+     thickest at the gate. The player's car takes less of it (`MIST_K 0.45`); its shadow and the tyre tracks fade in
+     it; at full mist the sky is the mist (no sun disc, clouds, stars — no ridge silhouettes against it).
+   - **Background builds**: `World.build(…, background)` leaves what lasts alone (the terrain shadow: `prepare` sends
+     the heights to its worker during the build, `use` at the swap; Trees' shade; the shared far grid) until
+     `World.adopt` at the swap. Tree and bush PLACEMENT are generators (`placeTrees`, `placeBushes`) run ~6 ms a frame
+     (`sliced` in World.build): the longest frame of a background build 82–92 ms → 26–34 ms (what's left: rocks
+     ~25 ms, the impostor bake 15–34 ms).
+   - **The swap** happens at the start of a frame (before the physics, the pose, the cameras): `enter(next)` (≈ 3 ms
+     now), the car / its dust / the free camera moved by the gates' offset (the height from the ground under the car
+     in each world), tyre tracks cleared, the region's title ("Entering the desert"). The world left stays built (not
+     drawn) while the car is within 1600 m of the gate — turning back is instant — then it's disposed whole. A
+     swap needs the car to have come from ≥ 8 m inside, on the gate's road (arming ignores a car not yet placed).
+   - **The valley's GREAT CLIFF** (`scripts/oth/valley_cliff.py`, post-process, base copy in `.cache/valley-base`): the
+     NE plateau raised to ~490 m (on north out of the box in the far grid), its west face ~300 m; the LEDGE ROAD
+     (`scripts/oth/ledgeroad.py`, shared with the desert): 7 legs N ↔ S, 420 m, 26 m apart, 9.5 %, hairpins (r 13 m)
+     on benches, a berm on each shelf's outer edge, risers in strata; the pass north through the gate (1102, −1990,
+     483 m, heading 0) to the box's edge; an approach track (A*, 911 m) from track 64 by the pond to the foot.
+   - **The desert's escarpment road** rebuilt the same way (`desert.py`, `LedgeRoad`: 4 legs E ↔ W, 380 m, 9.8 %, the
+     face built out as a bastion where the slope was gentle; the top leg bends onto the pass; gate heading π). The
+     old ramps cut across the slope rolled the car at their hairpins.
+   - Cost: mist on vs off ≤ 0.017 ms (ULTRA 1080p, at the gate), nothing measurable on LOW (`abweather.mjs`).
+2. **SANDSTORM** (desert weather instead of rain — `Atmosphere.weather` 'sandstorm', `uDust` / `uDustColor`; Shift+G /
+   K step to it; `?weather=sandstorm`): an orange dust fog round the camera (~110 m to see), the sky gone to dust with
+   a pale sun disc, the sun's light ×0.32, blowing SAND streaks (`Rain.ts` kind 'sand': flat with the wind, sand-
+   coloured), headlights on by themselves, the synthesized wind loud everywhere + the hiss. Builds over 20 s, settles
+   over 30. Cost ≤ 0.02 ms.
+3. **SAND** (`TyreTracks`, `Dust`, `Vehicle`): ruts in loose sand (mask G) darker, wider, 5 min to fade; sand spray
+   coloured and sized by the ground (pale orange plumes off loose sand, sandstone dust off rock); the car's SAND COAT
+   (`uCoat` in the car shader — low on the body and on what faces up, in blotches; ~1 min of sand to coat it, washed off
+   in a ford or the oasis water in a few seconds, slowly by rain; light dust on the valley's tracks too).
+4. **FORMATIONS** (`desert_rocks.py` structures → `formations.glb`, colliders → `structures.json`, loaded by
+   `Formations.ts`, added with the landmarks' in `main.ts`): the natural ARCH (15 stacked beds over the slot, its
+   deck the road — level at 238.2 m, the road's ends levelled to it in desert.py; deck = ground collider, lips = 1.5 m
+   walls), the Roman AQUEDUCT (39 bays, 472 m, voussoir arches, parapets, 3 bays fallen with their stones), the KSAR
+   (walls in blocks with gates where the road runs through, corner towers, ruined houses), the GORGE's 46 huge blocks.
+   The gorge's bridge is a ROPE BRIDGE now (`Bridge.kind 'rope'`, `sag` 3.5 m: `deckY()`; `Bridges.ropeBridge`: planks
+   on cables, handrails, suspenders, A-frame towers; physics as 12 m pieces along the sag; the ground under it
+   notched below the deck — the rim's lip stood through it). Both driven across (a test script, not in the repo).
+5. **DESERT PLACES** (`Places.ts`, `Props.ts`): oasis camps (Lagoon, Oasis, Date Grove, Tamarisk), WELLS (by the camps,
+   the ksar, the lagoon), Bedouin TENTS (by the camps + a nomads' camp on the plain), sandstone RUINS / stones, a truck
+   by the ksar; no log piles, sheds, outhouses, meadow fireflies. Crate ids from 100000 (`DESERT_IDS`); the journal's
+   `totals` per world; your camp per world (`Progress.camps`); the title screen's journal shows both worlds.
+6. **SOUND** (`Audio.ts`): desert wind over the open sand (day and night), leaves / birds / most crickets only at the
+   oasis, no owls; frogs only by the lagoon. (Not listened to — headless; check by ear.)
+7. **LOOK** (partial): the desert's day sky more cyan, its horizon a cool white, its haze longer and following the
+   horizon by day; the sand a step deeper / more orange (frame stats: whole frame 221 196 170 → 214 188 163, theirs
+   213 175 158; sand from the air 223 191 154 → 217 181 139, at the oasis 204 168 120, theirs 213 173 128); no palms in
+   the lagoon (its ellipse + margin).
+8. **PERFORMANCE** (partial): the desert per tier (`desertcost.mjs`, 1080p uncapped, this PC): LOW 0.38–0.46 ms vs the
+   valley's spawn 0.53; ULTRA 0.51–0.85 ms vs 0.97 — no smaller reach / LOD needed for the formations yet; the
+   background build's long frames (above).
+- `?save=0`: a session that never writes the journey or the journal — use it when testing in a real browser (a test
+  drive on :5201 overwrote the user's saved journey, 2026-11-02).
 
 ## Reference: Over the Hill's desert (their Algeria region)
 
@@ -59,58 +90,28 @@ whole-frame colour stats against theirs before tweaking objects (`scripts/oth/co
 
 ## Next, in order
 
-1. **THE CROSSING** (the user's main ask, not built yet). Design worked out:
-   - **Mist**: two uniforms in `Atmosphere` (`uMist` 0…1, `uMistColor`) used in `ATMOS_GLSL`: `fogAmount` →
-     `max(haze, 1 − exp(−d · 0.32 · uMist³))` (thick: ~10 m visibility at 1); `fogColor` and the end of `skyColor`
-     mix toward `uMistColor` (the horizon's luminance as a grey-white, so it darkens at night). Every material copies
-     `atmos.uniforms` at creation, so add them in the constructor.
-   - **Building in the background must not touch the shared terrain shadow**: add a `background` flag to
-     `World.build` — skip the `shadow.setMap` step and the Trees constructor's `shadow.setTrees` (give Trees a
-     `shade = true` parameter); `enter()` already calls `adoptShadow` (setMap + reshade) at the swap.
-   - **`Crossing.ts`** controller (per frame, car position): gate = `world.map.meta.gate` ({x, z, y, heading}:
-     heading = the direction OUT of that world, 0 = −z). Mist target `1 − smoothstep(60, 520, d)`, eased. Start
-     `buildWorld(other)` when d < 1100 m; dispose a built-but-unused world when d > 1600 m. Swap when the car crosses
-     the gate line outward (`dot(p − gate, outDir)` changes sign, lateral < 30 m) and the world is ready: `enter(next)`,
-     then shift the car (`Vehicle.shift(dx, dy, dz)` exists — keeps its speed), the chase / fly cameras, clear the
-     dust / tracks, by `gateDest − gateSrc`. The two gates' headings must be opposite (`h_dest = h_src + π`): then
-     it's a pure translation. If the next world isn't ready the car meets the box wall 18 m on (in the mist).
-   - **Desert gate**: in `desert.py` `GATE = (-120, 1990)`; set its `heading` to **π** (out of the desert = south).
-   - **The valley's GREAT CLIFF** (a post-process script over the valley's files, e.g. `scripts/oth/valley_cliff.py`,
-     always starting from a backup of the originals in `.cache` so it can re-run after `terrain.py`): measured the
-     valley's north-east — a shelf at ~200–224 m around x ≈ 950, z −1100 … −2000, mountains rising east of it; track
-     73 ends at (764, −1122). Raise a ~300 m sandstone-free valley-rock cliff along z ≈ −1700 … −1820 (x 700–1300) up
-     to ~520 m, the far grid behind it raised too (a plateau that continues north out of the box); cut a **ledge road**:
-     ~7 switchback legs east–west across the face (x 760–1240), ~42 m up each, ~9 % grade; then the pass north on top
-     to the **valley gate (1000, −1990), heading 0**; a new track from (764, −1122) to the cliff's foot. Terrace and
-     skin the cliff the valley's way (grey slabs), add the new track to `meta.trails`, and `gate` to `meta.json`.
-   - The ground at both gates should look alike in the mist (a neutral rock road) — or keep the mist ~85 % at the
-     car's distance at the swap.
-2. **Sandstorm** (desert weather instead of rain): `Atmosphere.weather` gets a `sandstorm` spell in the desert
-   (Shift+G steps to it); a warm orange "filter": the fog range collapses (~60–120 m), fog colour dusty orange, the
-   sun dimmed, sky → dust; blowing sand streaks (reuse `Rain.ts`'s particles: horizontal, sand-coloured, fast); the
-   synthesized wind (Audio) loud + hiss; a light CSS/canvas grade only if needed. Cheap: it's the fog every shader has.
-3. **Sand like theirs**: ripples are in (Terrain, desert only); add deeper tyre tracks in loose sand (`TyreTracks` —
-   longer-lived, darker in sand), sand spray / dust colour from the ground (`Dust.ts` reads the mask), the car's sand
-   coat (a `uSandCoat` on the car material that builds while driving on sand, washes in the oasis water).
-4. **Formations**: the natural ARCH (a Blender mesh in `desert_rocks.py` — a stack of slab segments along an arc over
-   the slot at (1180, −760), its deck drivable → a trimesh collider in `Physics`), the gorge's big blocks, the
-   AQUEDUCT (Blender arches, sandstone ashlar) at (-560, 600) → (-90, 560), the KSAR ruins (980, 1020), a proper rope
-   bridge for the gorge (the plank Bridges.ts bridge is 80 m up on tall posts now). Landmarks of these kinds draw
-   nothing today (`KINDS[kind]?.`): their meshes come from Blender.
-5. **Desert places & props**: `Places.ts` is valley-specific (camps at falls pools / meadows, sheds, outhouses, wood);
-   give the desert its own (camps at the oasis, crates, signposts, a well, tents, ruins in sandstone). Crate ids must
-   not collide across worlds (offset the desert's by 100000); `journal.totals`, the player's camp (`myCamp`, save's
-   `camp`) should be per world.
-6. **Sound**: desert ambience (wind over sand, oasis birds by day, crickets at night), no frogs / owls away from water.
-7. **Look polish**: the aerial view is too hazy/pale (compare frame stats), spire shards at a few bases, a palm or two
-   at the lagoon's edge in the water (use the lake ellipse with a margin in the palm placement), vertical shadow
-   streaks on steep faces (desert: softened in Terrain; check formations), the lagoon/river colours vs theirs.
-8. **Performance**: measure the desert per tier (formations triangles in view; LOW / phones: a smaller reach or a
-   lower-poly LOD from `desert_rocks.py`), move tree / bush placement into the worker (the last ~40 ms frames).
+1. **Look**: the sky still short of their cyan-white (the light clouds grey it; try fewer clouds in the desert's clear
+   spell); the arch reads as masonry — rounder, more irregular beds, a thicker crown; the escarpment's bastion sides
+   are flat planes (strata / skins on them); the ksar wants crenellations, doorways, a mud-brick tint; spire shards at
+   a few bases; vertical shadow streaks on steep faces; the lagoon / river colours vs theirs.
+2. **The crossing, polish**: the valley's plateau top is plain (it's in the cloud, but a cairn or a shrine at the gate,
+   a few pines in the mist would sell it); a muffled sound in the mist; a short "the other world is still loading"
+   hint if the car reaches the wall before the build is done (never seen on this PC: ~1–2 s builds).
+3. **Performance**: slice `Rocks` placement (~25 ms) like the trees; the impostor bake (15–34 ms, GPU) could be done a
+   species a frame; measure phones (a device, not the headless phone viewport).
+4. **Saves**: `Progress.camps` and `Journal.totals` (per world) changed shape — keep the backend's API in step when it
+   lands (the `backend/` folder isn't in this repo yet).
 
 ## Harness
 
-`frontend/scripts/harness/` (headless Chrome via puppeteer-core; the dev server on :5200): `desertshot.mjs <dir>`
-(desert views), `oasisshot.mjs <dir>`, `swaptest.mjs [tier]` (world swaps: GPU memory, longest frames),
-`buildprof.mjs` (CPU profile of a world build), `abprops.mjs [tier]` (props cost A/B, trimmed means — the machine
-stalls at random, plain means mislead), `sheet.py out.jpg a.png b.png …` (contact sheets).
+`frontend/scripts/harness/` (headless Chrome via puppeteer-core — Windows and macOS paths; the dev server on :5200):
+`climbtest.mjs` (a STEERING BOT on the crossing's roads: `START=world:x,z DIR=out|in SECONDS=` — pure pursuit, slows
+for hairpins, reports falls / flips / stalls), `crosstest.mjs` (the car driven through the gate and back: the swap, the
+longest frames, GPU memory), `cliffshot.mjs <dir> [tier]` (still views: `WORLD=`, `VIEWS='[[name,x,z,h,yaw,pitch,hour]]'`,
+`Q=` more URL — yaw 0 looks NORTH, −z; to face (tx, tz) from (x, z): `atan2(−(tx−x), −(tz−z))`), `abweather.mjs [tier]`
+(the mist / sandstorm on vs off), `desertcost.mjs low,ultra` (the desert per tier beside the valley), `desertshot.mjs`,
+`oasisshot.mjs`, `swaptest.mjs`, `buildprof.mjs`, `abprops.mjs` (macOS paths), `sheet.py`.
+Rebuild — the valley: `terrain.py` → `scenery.mjs` → `valley_cliff.py` (`blender -b --factory-startup --python
+scripts/oth/valley_cliff.py -- OUT=public/oth/valley PREVIEW=<png>`; after a new bake delete `scripts/oth/.cache/
+valley-base`). The desert: `desert.py` (~2 min) → `desert_rocks.py` (reads `.cache/desert.npz`; writes formations.glb
+and structures.json). Blender: `C:/Program Files/Blender Foundation/Blender 5.2/blender.exe` on this PC.

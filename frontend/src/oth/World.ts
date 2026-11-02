@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { Atmosphere } from './Atmosphere'
 import { Birds } from './Birds'
 import { Bridges } from './Bridges'
-import { Bushes } from './Bushes'
+import { Bushes, placeBushes } from './Bushes'
 import { Falls } from './Falls'
 import { Formations } from './Formations'
 import { Glow } from './Glow'
@@ -16,7 +16,7 @@ import type { Tier } from './quality'
 import { Rocks } from './Rocks'
 import { Terrain } from './Terrain'
 import type { TerrainShadow } from './TerrainShadow'
-import { Trees } from './Trees'
+import { placeTrees, Trees } from './Trees'
 import { Water } from './Water'
 
 /**
@@ -43,7 +43,7 @@ export interface WorldEnv {
   scene: THREE.Scene
   atmos: Atmosphere
   tier: Tier
-  /** The terrain shadow (lasts across worlds; set to each world's ground in turn — adoptShadow). */
+  /** The terrain shadow (lasts across worlds; set to each world's ground in turn — World.adopt). */
   shadow: TerrainShadow
   /** The far grid every world's materials read (the same Vector4 always: the car's material holds it). */
   farGrid: THREE.Vector4
@@ -79,8 +79,10 @@ export class World {
     readonly places: Landmark[],
   ) {}
 
-  /** Build world `id` (its files fetched first); `pace` runs between the steps (a frame, when built while playing). */
-  static async build(id: WorldId, env: WorldEnv, pace: () => Promise<void> = async () => {}, onProgress?: (f: number) => void, loaded?: MapData): Promise<World> {
+  /** Build world `id` (its files fetched first); `pace` runs between the steps (a frame, when built while playing).
+   *  BACKGROUND (the crossing: built while another world plays): what lasts across worlds is left alone — the terrain
+   *  shadow keeps the playing world's ground and trees, the far grid its values — until `adopt` at the swap. */
+  static async build(id: WorldId, env: WorldEnv, pace: () => Promise<void> = async () => {}, onProgress?: (f: number) => void, loaded?: MapData, background = false): Promise<World> {
     const timings: Record<string, number> = {}
     const t0 = performance.now()
     const map = loaded ?? (await MapData.load(WORLDS[id].path, env.tier.terrainLeaf, onProgress))
@@ -92,12 +94,22 @@ export class World {
       await pace()
       return r
     }
+    /** A step done a slice at a time (a generator yielding as it goes): ~6 ms of it a frame, then `pace`. */
+    const sliced = async (label: string, gen: Generator<void, void, void>): Promise<void> => {
+      const t = performance.now()
+      let s = t, busy = 0
+      for (const _ of gen) if (performance.now() - s > 6) { busy += performance.now() - s; await pace(); s = performance.now() }
+      timings[label] = busy + performance.now() - s
+      timings[label + ' (frames)'] = performance.now() - t
+    }
     const { atmos, tier, shadow } = env
-    await step('shadow', () => shadow.setMap(map))
+    await step('shadow', () => (background ? shadow.prepare(map) : shadow.setMap(map)))
+    let farGrid = new THREE.Vector4()
     const terrain = await step('terrain', () => {
       const t = new Terrain(map, atmos, tier, shadow)
-      // (the far grid the car's material holds: this world's values in the same Vector4)
-      env.farGrid.copy(t.uniforms.uFarGrid.value)
+      // (the far grid the car's material holds: this world's values in the same Vector4 — at once, or at the swap)
+      farGrid = t.uniforms.uFarGrid.value.clone()
+      if (!background) env.farGrid.copy(farGrid)
       t.uniforms.uFarGrid.value = env.farGrid
       return t
     })
@@ -105,9 +117,13 @@ export class World {
     const grass = await step('grass', () => new Grass(map, atmos, terrain, tier, rocks.footprint))
     const water = await step('water', () => new Water(map, atmos, terrain, tier, rocks.footprint))
     const falls = await step('falls', () => new Falls(map, atmos))
-    const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks))
+    const treeData: number[] = []
+    await sliced('placing trees', placeTrees(map, rocks, treeData))
+    const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks, !background, new Float32Array(treeData)))
     await step('impostors', () => trees.bakeImpostors(env.renderer))
-    const bushes = await step('bushes', () => new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture))
+    const bushData: number[] = []
+    await sliced('placing bushes', placeBushes(map, rocks, bushData))
+    const bushes = await step('bushes', () => new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture, new Float32Array(bushData)))
     // OCCLUSION CULLING: what the hills hide (trees, rocks, bushes behind them are skipped)
     const horizon = await step('horizon', () => new Horizon(map, Math.max(tier.treeReach, tier.rockReach)))
     horizon.enabled = env.occlusion
@@ -121,7 +137,7 @@ export class World {
     const placed = await step('places', () => placeThings(map, rocks, trees))
     const places = (map.meta.landmarks = [...(map.meta.landmarks ?? []), ...placed.camps])
     const landmarks = await step('landmarks', () => new Landmarks(map, atmos, shadow, tier, env.farGrid))
-    const props = await step('props', () => new Props(placed.props, places, placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner))
+    const props = await step('props', () => new Props(placed.props, places, placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner, map.desert))
     landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
     const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
     // (the desert's sandstone slabs: fetched, Draco-decoded in the loader's workers)
@@ -130,6 +146,7 @@ export class World {
     timings.formations = performance.now() - tf
     if (formations) formations.horizon = horizon
     const w = new World(id, map, terrain, rocks, grass, water, falls, trees, bushes, horizon, bridges, glow, landmarks, props, birds, formations, places)
+    w.farGrid.copy(farGrid)
     Object.assign(w.timings, timings)
     w.group.add(props.group, landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group)
     if (glow) w.group.add(glow.group)
@@ -150,10 +167,15 @@ export class World {
     return w
   }
 
-  /** The terrain shadow back to this world's ground and trees (a world built behind the fog and then not entered). */
-  adoptShadow(shadow: TerrainShadow): void {
-    shadow.setMap(this.map)
-    this.trees.reshade(shadow)
+  /** This world's far grid values (the shared Vector4 takes them when it's entered). */
+  private readonly farGrid = new THREE.Vector4()
+
+  /** What lasts across worlds set to this one (entering it — main.ts): the terrain shadow to its ground and trees,
+   *  the shared far grid to its values. */
+  adopt(env: WorldEnv): void {
+    env.shadow.setMap(this.map)
+    this.trees.reshade(env.shadow)
+    env.farGrid.copy(this.farGrid)
   }
 
   /** What's drawn this frame: each system's own culling and lists (the camera has moved). */

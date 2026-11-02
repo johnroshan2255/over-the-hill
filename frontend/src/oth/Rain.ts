@@ -7,11 +7,13 @@ import type { Tier } from './quality'
  * (each streak wraps round it in the vertex shader — no CPU per drop), slanted by the wind, fading near the lens and
  * into the distance. ONE instanced draw of `tier.rain` streaks (LOW 1 600 … ULTRA 4 000), only while it rains; their
  * colour follows the sky (pale by day, dim at night, lit warm in the headlights' beams). ≈ 0.05–0.15 ms GPU.
+ * SAND (2026-11-02, the desert's sandstorm): the same streaks blown FLAT with the wind, fast, longer, sand-coloured
+ * (the dust's colour, lit by what light gets through), thicker low down, while `uDust` blows.
  */
 export class Rain {
   readonly mesh: THREE.Mesh
 
-  constructor(private readonly atmos: Atmosphere, tier: Tier) {
+  constructor(private readonly atmos: Atmosphere, tier: Tier, private readonly kind: 'rain' | 'sand' = 'rain') {
     const n = tier.rain
     const g = new THREE.InstancedBufferGeometry()
     // one streak: a quad along y (0 bottom … 1 top), x across (−1 … 1)
@@ -25,7 +27,8 @@ export class Rain {
     g.instanceCount = n
     const u = atmos.uniforms
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uCamPos: u.uCamPos, uTime: u.uTime, uRain: u.uRain, uWind: u.uWind, uAmbSky: u.uAmbSky, uSunColor: u.uSunColor, uHeadL: u.uHeadL, uHeadR: u.uHeadR, uHeadDir: u.uHeadDir },
+      uniforms: { uCamPos: u.uCamPos, uTime: u.uTime, uRain: kind === 'sand' ? u.uDust : u.uRain, uWind: u.uWind, uAmbSky: u.uAmbSky, uSunColor: u.uSunColor, uHeadL: u.uHeadL, uHeadR: u.uHeadR, uHeadDir: u.uHeadDir, uDustColor: u.uDustColor },
+      defines: kind === 'sand' ? { SAND: '' } : {},
       vertexShader: /* glsl */ `
         attribute vec4 seed;
         uniform vec3 uCamPos;
@@ -34,15 +37,30 @@ export class Rain {
         varying float vFade;
         varying float vV;
         varying vec3 vWorld;
+        #ifdef SAND
+        const vec3 BOX = vec3(44.0, 14.0, 44.0);
+        #else
         const vec3 BOX = vec3(44.0, 26.0, 44.0);
+        #endif
         void main() {
+          #ifdef SAND
+          // (flat with the wind, a little up or down each)
+          float speed = 16.0 + seed.w * 10.0;
+          vec2 wd = normalize(uWind + 1e-4);
+          vec3 vel = vec3(wd.x * speed, (seed.z - 0.5) * 2.5, wd.y * speed);
+          #else
           float speed = 9.0 + seed.w * 3.0;
           vec3 vel = vec3(uWind.x * 0.6, -speed, uWind.y * 0.6);
+          #endif
           // wrapped round the camera: each streak's place in the box, moved by its fall
           vec3 p = seed.xyz * BOX + vel * uTime;
           p = mod(p - uCamPos + BOX * 0.5, BOX) - BOX * 0.5 + uCamPos;
           vec3 dir = normalize(vel);
+          #ifdef SAND
+          float len = 0.9 + seed.w * 1.5;
+          #else
           float len = 0.8 + seed.w * 0.6;
+          #endif
           vec3 toCam = normalize(uCamPos - p);
           // (≥ ~1.5 px wide at any distance: a 2 cm streak vanished past a few metres)
           float d0 = length(p - uCamPos);
@@ -61,6 +79,8 @@ export class Rain {
         uniform vec4 uHeadL;
         uniform vec3 uHeadR;
         uniform vec3 uHeadDir;
+        uniform vec3 uDustColor;
+        uniform vec3 uCamPos;
         varying float vFade;
         varying float vV;
         varying vec3 vWorld;
@@ -73,7 +93,13 @@ export class Rain {
             float r = length(v - a * uHeadDir) / max(a, 0.5);
             c += vec3(1.0, 0.88, 0.66) * 0.9 * step(0.0, a) * (1.0 - smoothstep(0.25, 0.45, r)) * (1.0 - smoothstep(8.0, 22.0, a));
           }
+          #ifdef SAND
+          // (the blowing sand: the dust's colour a shade lighter, thicker near the ground)
+          c = uDustColor * 1.1 + c * 0.05;
+          float alpha = 0.2 * uRain * vFade * sin(vV * 3.14159) * (0.45 + 0.55 * smoothstep(6.0, -4.0, vWorld.y - uCamPos.y));
+          #else
           float alpha = 0.5 * uRain * vFade * sin(vV * 3.14159);
+          #endif
           gl_FragColor = vec4(c * alpha, alpha);
         }`,
       transparent: true,
@@ -93,6 +119,6 @@ export class Rain {
   }
 
   update(): void {
-    this.mesh.visible = this.atmos.uniforms.uRain.value > 0.01
+    this.mesh.visible = (this.kind === 'sand' ? this.atmos.uniforms.uDust : this.atmos.uniforms.uRain).value > 0.01
   }
 }

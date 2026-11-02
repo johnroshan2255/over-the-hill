@@ -53,7 +53,11 @@ function leanTo(b: Builder, w: number, z0: number, y0: number, z1: number, y1: n
   b.box(V(0, (y0 + y1) / 2, (z0 + z1) / 2), X, up, wv, w, 0.035, len / 2, TIN)
 }
 
-const KINDS: Record<PropKind, { build: (b: Builder) => void; reach: number; size: number; col: [number, number, number, number] | null; more?: [number, number, number, number, number, number][]; scale?: number }> = {
+/** The desert's stone (its sandstone, a little paler than the walls): stones, cairns, ruins, wells (`build`'s desert). */
+const SANDSTONE: RGB = [0.46, 0.24, 0.15]
+const sandOr = (desert: boolean, c: RGB, k = 1): RGB => (desert ? [SANDSTONE[0] * k, SANDSTONE[1] * k, SANDSTONE[2] * k] : c)
+
+const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; reach: number; size: number; col: [number, number, number, number] | null; more?: [number, number, number, number, number, number][]; scale?: number }> = {
   sign: {
     reach: 380, size: 2.6, col: [1.2, 0.09, 1.2, 0.09],
     build(b) {
@@ -123,8 +127,8 @@ const KINDS: Record<PropKind, { build: (b: Builder) => void; reach: number; size
   },
   stones: {
     reach: 200, size: 0.4, col: null,
-    build(b) {
-      const G: RGB = [0.27, 0.27, 0.285]
+    build(b, desert) {
+      const G: RGB = sandOr(desert, [0.27, 0.27, 0.285])
       const u = V(Math.cos(0.4), 0.14, Math.sin(0.4)).normalize(), w = new THREE.Vector3().crossVectors(u, Y).normalize(), v = new THREE.Vector3().crossVectors(w, u).normalize()
       b.box(V(0, 0.12, 0), u, v, w, 0.3, 0.17, 0.22, G)
       b.box(V(0.1, 0.27, -0.04), w, Y, u, 0.14, 0.09, 0.12, [G[0] * 1.12, G[1] * 1.12, G[2] * 1.14])
@@ -160,13 +164,56 @@ const KINDS: Record<PropKind, { build: (b: Builder) => void; reach: number; size
     // an old homestead's RUIN: its stone chimney (4.5 m, the fireplace's mouth) and the broken walls of a 6 × 5 m house
     reach: 700, size: 4.5, col: [2.2, 0.38, 2.2, 0.32],
     more: RUIN_WALLS.map(([x0, x1, z0, z1, h]) => [(x0 + x1) / 2, h / 2, (z0 + z1) / 2, Math.max(0.25, (x1 - x0) / 2), h / 2, Math.max(0.25, (z1 - z0) / 2)] as [number, number, number, number, number, number]),
-    build(b) {
-      const S1: RGB = [0.26, 0.25, 0.24], S2: RGB = [0.21, 0.2, 0.19]
+    build(b, desert) {
+      const S1: RGB = sandOr(desert, [0.26, 0.25, 0.24]), S2: RGB = sandOr(desert, [0.21, 0.2, 0.19], 0.82)
       box(b, 0, 2.2, 0, 0.38, 2.2, 0.32, S1)
       box(b, 0, 4.45, 0, 0.3, 0.1, 0.26, S2)
       box(b, 0.39, 0.55, 0, 0.01, 0.4, 0.2, [0.03, 0.03, 0.03])
       RUIN_WALLS.forEach(([x0, x1, z0, z1, h], i) => box(b, (x0 + x1) / 2, h / 2, (z0 + z1) / 2, Math.max(0.25, (x1 - x0) / 2), h / 2, Math.max(0.25, (z1 - z0) / 2), i % 2 ? S1 : S2))
       b.log(V(1.6, 0.15, 1.1), V(4.8, 0.32, -1.4), 0.13, b.wood(0.55))
+    },
+  },
+  well: {
+    // a WELL (the desert): a ring of dressed stones 1.1 m round, 0.9 m high, a log frame over it, a rope and a bucket
+    reach: 450, size: 2.6, col: [0.45, 1.25, 0.45, 1.25],
+    build(b, desert) {
+      const S: RGB = sandOr(desert, [0.3, 0.29, 0.28])
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2, u = V(Math.cos(a), 0, Math.sin(a)), w = new THREE.Vector3().crossVectors(u, Y)
+        for (const [y, h, s] of [[0.22, 0.22, 1], [0.66, 0.22, 0.96]] as const) {
+          const k2 = 0.88 + 0.2 * b.rnd()
+          b.box(u.clone().multiplyScalar(1.05 * s).setY(y), u, Y, w, 0.2, h, 0.3, [S[0] * k2, S[1] * k2, S[2] * k2])
+        }
+      }
+      box(b, 0, 0.05, 0, 0.9, 0.04, 0.9, [0.02, 0.025, 0.03]) // (the dark water down the shaft)
+      for (const sx of [-1, 1]) b.log(V(sx * 1.25, -0.2, 0), V(sx * 1.05, 2.4, 0), 0.08, b.wood(0.7))
+      b.log(V(-1.3, 2.3, 0), V(1.3, 2.3, 0), 0.07, b.wood(0.8))
+      b.log(V(0, 2.3, 0), V(0, 1.1, 0), 0.015, [0.42, 0.34, 0.22])
+      box(b, 0, 0.98, 0, 0.16, 0.14, 0.16, b.wood(0.9))
+    },
+  },
+  tent: {
+    // a BEDOUIN TENT: dark woven goat hair over three poles, low and long (6 × 4 m, 2.1 m at its ridge), its sides
+    // pitched down to the sand, the front open, light stripes across, guy ropes out to stakes
+    reach: 700, size: 2.2, col: [1.0, 3.0, 1.05, 2.0],
+    build(b) {
+      const DARK: RGB = [0.07, 0.055, 0.045], STRIPE: RGB = [0.3, 0.24, 0.16]
+      for (let i = 0; i < 6; i++) {
+        const z0 = -3 + i, c = i % 3 === 1 ? STRIPE : DARK
+        for (const sx of [-1, 1]) {
+          // a panel from the ridge (2.1 m) down to the eave (0.6 m, 2 m out), 1 m wide
+          const p0 = V(0, 2.1, z0), p1 = V(0, 2.1, z0 + 1), p2 = V(sx * 2.0, 0.6, z0 + 1), p3 = V(sx * 2.0, 0.6, z0)
+          if (sx > 0) { b.quad(p0, p1, p2, p3, c); b.quad(p0, p3, p2, p1, c) } else { b.quad(p0, p3, p2, p1, c); b.quad(p0, p1, p2, p3, c) }
+        }
+      }
+      // the back closed, the front's flaps
+      for (const [z, s] of [[-3, 1], [3, -1]] as const) {
+        const a = V(-2.0, 0.6, z), c = V(0, 2.1, z), d = V(2.0, 0.6, z)
+        if (z < 0) { b.tri(a, c, d, DARK); b.tri(a, d, c, DARK) } else for (const sx of [-1, 1]) { const e = V(sx * 1.2, 0.05, z + s * 0.2); b.tri(V(sx * 2.0, 0.6, z), V(sx * 0.5, 1.7, z), e, DARK); b.tri(V(sx * 2.0, 0.6, z), e, V(sx * 0.5, 1.7, z), DARK) }
+      }
+      for (const z of [-2.9, 0, 2.9]) b.log(V(0, 0, z), V(0, 2.15, z), 0.05, b.wood(0.6))
+      for (const sx of [-1, 1]) for (const z of [-3, 3]) { b.log(V(sx * 2.0, 0.6, z), V(sx * 3.1, 0.0, z), 0.012, [0.4, 0.33, 0.24]); box(b, sx * 3.1, 0.12, z, 0.04, 0.14, 0.04, b.wood(0.6)) }
+      box(b, 0, 0.03, 0.8, 1.5, 0.02, 1.6, [0.42, 0.12, 0.08]) // (a rug inside)
     },
   },
   crate: {
@@ -183,7 +230,7 @@ const KINDS: Record<PropKind, { build: (b: Builder) => void; reach: number; size
 
 const CELL = 128
 /** The grass cleared round each kind (m; a fence: three spots along it). */
-const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, crate: 1.8, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 5.5 }
+const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, crate: 1.8, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 5.5, well: 1.8, tent: 4.0 }
 
 export interface PropCollider { x: number; y: number; z: number; rot: number; hx: number; hy: number; hz: number }
 
@@ -223,7 +270,7 @@ export class Props {
   private pickT = 0
 
   constructor(readonly props: Prop[], landmarks: Landmark[], wild: [number, number, number][], atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4, collected: number[],
-    footprint: THREE.DataTexture, private readonly grid: { n: number; step: number; origin: number }) {
+    footprint: THREE.DataTexture, private readonly grid: { n: number; step: number; origin: number }, desert = false) {
     const camps = landmarks.filter((l) => l.kind === 'camp'), cabins = landmarks.filter((l) => l.kind === 'cabin')
     for (const id of collected) this.collected.add(id)
     this.reachK = tier.rockReach / 900
@@ -233,7 +280,7 @@ export class Props {
       const n = props.filter((p) => p.kind === kind).length
       if (!n) continue
       const b = new Builder(0x5eed + kind.length * 131)
-      KINDS[kind].build(b)
+      KINDS[kind].build(b, desert)
       const mesh = new THREE.InstancedMesh(b.geometry(), mat, n)
       mesh.count = 0
       mesh.frustumCulled = false // (culled per cell in update)

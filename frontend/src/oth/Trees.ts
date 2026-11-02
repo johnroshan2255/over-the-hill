@@ -60,10 +60,13 @@ export class Trees {
   /** The leaf texture (the bushes are built of the same leaf cards). */
   get leafTexture(): THREE.Texture { return this.leafU.value }
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, rocks: Rocks) {
+  /** shade: hand the trees' shade to the terrain shadow now (not when built behind another world — World.adopt). */
+  /** placed: the trees already placed (placeTrees, a row a step — World.build); else placed here. */
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, rocks: Rocks, shade = true, placed?: Float32Array) {
     this.noiseU = atmos.uniforms.uNoise
     this.ranges = [tier.treeNear, tier.treeMid, tier.treeFar, tier.treeReach]
-    this.data = this.place(rocks)
+    if (!placed) { const out: number[] = []; for (const _ of placeTrees(map, rocks, out)); placed = new Float32Array(out) }
+    this.data = placed
     this.count = this.data.length / TREE_STRIDE
     for (let i = 0; i < this.count; i++) {
       const o = i * TREE_STRIDE, k = this.key(Math.floor(this.data[o] / TILE), Math.floor(this.data[o + 2] / TILE))
@@ -76,7 +79,7 @@ export class Trees {
     // sun every shadow is long: stamping 25 000 of them froze the game 100–180 ms each time, all evening and night)
     const sh = (this.shade = new Float32Array(this.count * 4))
     for (let i = 0; i < this.count; i++) { const o = i * TREE_STRIDE; sh.set([this.data[o], this.data[o + 2], this.data[o + 3], this.data[o + 5]], i * 4) }
-    shadow.setTrees(sh, CROWN)
+    if (shade) shadow.setTrees(sh, CROWN)
     this.leafU = { value: createLeafTexture() }
     this.frondU = { value: createFrondTexture() }
     const mat = new THREE.ShaderMaterial({
@@ -129,110 +132,6 @@ export class Trees {
 
   private key(i: number, j: number): number { return (i + 512) * 1024 + (j + 512) }
 
-  /** Deterministic placement from the forest mask. */
-  private place(rocks: Rocks): Float32Array {
-    const map = this.map, out: number[] = []
-    if (map.desert) {
-      // THE DESERT'S PALMS: the oasis (mask A, its growth) — groves along the water, a few strays; 9–17 m tall,
-      // green (species 5: the broadleaf family, drawn as palms)
-      let s2 = 0x2c1b3c6d
-      const r2 = () => ((s2 = (Math.imul(s2 ^ (s2 >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
-      const mk: [number, number, number, number] = [0, 0, 0, 0], G2 = 7.5, h2 = map.half - 50
-      for (let z = -h2; z < h2; z += G2) for (let x = -h2; x < h2; x += G2) {
-        const px = x + (r2() - 0.5) * G2 * 1.2, pz = z + (r2() - 0.5) * G2 * 1.2
-        map.maskAt(px, pz, mk)
-        if (mk[3] < 0.08 || mk[2] > 0.86 || mk[0] > 0.3 || map.trailDist(px, pz) < map.meta.trails.hw + 2.5 || map.waterLevel(px, pz) !== null) continue
-        if (r2() > 0.15 + 0.75 * Math.min(1, (mk[3] - 0.08) / 0.5)) continue
-        if (rocks.biggestNear(px, pz, 3)) continue
-        const y = map.height(px, pz), H = 9 + 8 * Math.pow(r2(), 0.8)
-        out.push(px, y - 0.3, pz, H, r2() * Math.PI * 2, 5, r2(), r2())
-      }
-      return new Float32Array(out)
-    }
-    const G = 6.5, half = map.half - 50
-    let s = 0x7f4a7c15
-    const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
-    const mk: [number, number, number, number] = [0, 0, 0, 0]
-    const hw = map.meta.trails.hw
-    const fp = rocks.footprint.image.data as Uint8Array, g = map.inner
-    const sp = map.meta.spawn
-    // a slow noise: golden larch stands among the spruce
-    const vn = (x: number, z: number) => {
-      const xi = Math.floor(x), zi = Math.floor(z), fx = x - xi, fz = z - zi
-      const h = (a: number, b: number) => (((Math.imul(a, 374761393) + Math.imul(b, 668265263)) ^ 0x5bd1e995) >>> 0) % 1000 / 1000
-      const u = fx * fx * (3 - 2 * fx), w = fz * fz * (3 - 2 * fz)
-      return (h(xi, zi) * (1 - u) + h(xi + 1, zi) * u) * (1 - w) + (h(xi, zi + 1) * (1 - u) + h(xi + 1, zi + 1) * u) * w
-    }
-    // a per-spot hash 0..1 (no rnd() draw: picking a species must not move the trees after it)
-    const hash01 = (x: number, z: number) => (((Math.imul(Math.floor(x * 8), 73856093) ^ Math.imul(Math.floor(z * 8), 19349663)) >>> 0) % 1000) / 1000
-    // the HIDDEN PLACES' floors stay open (meta.hidden): a flower hollow's meadow clear to its banks, a falls basin's
-    // view of its fall clear — no tree on the pool's shore or between the way in and the fall
-    const hid = map.meta.hidden ?? []
-    const hiddenClear = (x: number, z: number) => hid.some((h) => {
-      const dx = x - h.x, dz = z - h.z, d = Math.hypot(dx, dz)
-      if (d > h.r) return false
-      if (h.kind === 'meadow') return d < h.r - 6
-      const ox = Math.sin(h.open), oz = Math.cos(h.open), along = dx * ox + dz * oz, across = Math.abs(dx * oz - dz * ox)
-      return across < 22 || along < -h.r * 0.45
-    })
-    for (let gz = -half; gz < half; gz += G) {
-      for (let gx = -half; gx < half; gx += G) {
-        // (jittered past the cell's edges: no rows — a dense grove's cells all hold a tree, and an even grid shows)
-        const x = gx + (rnd() * 1.7 - 0.35) * G, z = gz + (rnd() * 1.7 - 0.35) * G
-        map.maskAt(x, z, mk)
-        const forest = Math.min(1, Math.max(0, (mk[3] - 0.22) / 0.45))
-        // (OTH woods are open: clumps and gaps, the ground showing between; lone trees on the meadows — fewer pines:
-        //  the user, "no need of that many pine trees")
-        const clump = vn(x / 45 + 17, z / 45 - 9)
-        // (broadleaf GROVES are dense — OTH ss2: crowns side by side — conifer stands open)
-        const groveN = vn(x / 260 + 5, z / 260 - 3)
-        // TIGHTNESS (the user: "no need of that many trees — put them near him, at the sides, near the river; I need to
-        // feel the tightness like OTH"): the big stands thinner, and clumps where the player IS — round the spawn,
-        // lining the tracks (5–26 m off them), along the river banks (14–45 m)
-        const td = map.trackDist(x, z), rd = map.riverDist(x, z), sd = Math.hypot(x - sp.x, z - sp.z)
-        const clumpS = vn(x / 28 - 3, z / 28 + 21)
-        const bands = (td > hw + 3 && td < 26 ? 0.33 * (1 - (td - 5) / 21) : 0) + (rd > 14 && rd < 45 ? 0.34 : 0)
-          + (sd < 300 ? 0.52 * (1 - sd / 300) : 0)
-        // (a little denser everywhere — the user: "feel a bit denser, but not a lot")
-        const p = forest * (0.058 + 0.25 * clump) * (groveN > 0.55 ? 2 : 1) + bands * Math.max(0, clumpS * 1.6 - 0.42)
-          + 0.005 + 0.034 * Math.max(0, mk[3] - 0.08)
-        const r = rnd()
-        if (r > p) continue
-        if (mk[2] > 0.75 || mk[0] > 0.45) continue // water / its banks, rock
-        if (map.trailDist(x, z) < hw + 3) continue
-        if ((x - sp.x) ** 2 + (z - sp.z) ** 2 < 16 * 16) continue
-        if (hiddenClear(x, z)) continue
-        const gi = Math.round((x - g.origin) / g.step), gj = Math.round((z - g.origin) / g.step)
-        if (fp[gj * g.n + gi] > 40) continue // a boulder
-        const y = map.height(x, z)
-        const sl = Math.hypot(map.height(x + 3, z) - map.height(x - 3, z), map.height(x, z + 3) - map.height(x, z - 3)) / 6
-        if (sl > 0.85) continue
-        // conifer stands and broadleaf groves by a slow noise (about half each); in a grove birch / aspen / green
-        // (by the river and round the spawn mostly broadleaf: birch and aspen line the water in OTH)
-        // (and round the spawn a few PINE clumps among them — the user: "add some pines near")
-        const pines = sd < 320 && vn(x / 55 + 31, z / 55 - 13) > 0.6
-        const broad = !pines && groveN + (rnd() - 0.5) * 0.3 + (forest < 0.2 ? 0.25 : 0) + (rd < 45 ? 0.3 : 0) + (sd < 260 ? 0.15 : 0) > 0.55
-        let species: number
-        if (broad) {
-          const k = vn(x / 120 - 7, z / 120 + 11) + (rnd() - 0.5) * 0.5
-          species = k < 0.4 ? 3 : k < 0.86 ? 4 : 5 // (gold 40 %, red / orange 45 %, a few still green)
-        } else {
-          const larch = vn(x / 230, z / 230) + (rnd() - 0.5) * 0.45 > 0.6 ? 1 : 0
-          species = rnd() < 0.05 ? 2 : pines && rnd() < 0.8 ? 0 : larch
-        }
-        // 80 % PINES (the user: "reduce other trees count and increase our pine tree — 80 % pine, 20 % other"): a green
-        // spruce everywhere but in small groves (~60 m) of the rest, a fifth of the trees (0.7: measured on the placed
-        // trees); there a tree keeps the species picked above (a spruce turns golden larch).
-        // (the picks above still run: the same rnd() draws, so every tree stands where it did)
-        const other = vn(x / 60 - 23, z / 60 + 41) + (hash01(x + 0.37, z + 0.11) - 0.5) * 0.3 > 0.7
-        if (!other) species = 0
-        else if (species === 0) species = 1
-        const H = family(species) === 1 ? (7 + 8 * Math.pow(rnd(), 0.8)) * (0.85 + 0.15 * forest) : (6 + 15 * Math.pow(rnd(), 0.8)) * (0.75 + 0.25 * forest)
-        out.push(x, y - 0.3, z, H, rnd() * Math.PI * 2, species, rnd(), rnd())
-      }
-    }
-    return new Float32Array(out)
-  }
 
   /** The nearest tree of `species` (−1 any) to (x, z) within r — the shot harness frames trees with it. */
   nearest(x: number, z: number, r: number, species = -1, minH = 0): { x: number; y: number; z: number; h: number } | null {
@@ -403,7 +302,7 @@ export class Trees {
   }
   /** The impostor atlas (two textures: albedo, normal) — kept for the harness / a debug view. */
   atlas: THREE.WebGLRenderTarget | null = null
-  /** Every tree's x, z, height, species — the terrain shadow's worker stamps their shade (World.adoptShadow). */
+  /** Every tree's x, z, height, species — the terrain shadow's worker stamps their shade (World.adopt). */
   readonly shade: Float32Array
   /** Their shade to the terrain shadow again (it was another world's). */
   reshade(shadow: TerrainShadow): void { shadow.setTrees(this.shade, CROWN) }
@@ -731,3 +630,111 @@ void main() {
   #include <colorspace_fragment>
 }
 `
+
+/** Deterministic placement from the forest mask, into `out` (TREE_STRIDE numbers a tree): a row of the grid at a
+ *  time — it YIELDS after each, so a world built behind another one spreads the work over frames (World.build; ~80 ms
+ *  in one go was the longest frame of a crossing's build). */
+export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generator<void, void, void> {
+  if (map.desert) {
+    // THE DESERT'S PALMS: the oasis (mask A, its growth) — groves along the water, a few strays; 9–17 m tall,
+    // green (species 5: the broadleaf family, drawn as palms)
+    let s2 = 0x2c1b3c6d
+    const r2 = () => ((s2 = (Math.imul(s2 ^ (s2 >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+    const mk: [number, number, number, number] = [0, 0, 0, 0], G2 = 7.5, h2 = map.half - 50
+    // (never in the lagoon: its ellipse with a margin — a palm or two stood in the water at its edge)
+    const L = map.meta.water.lake, lc = Math.cos(L.rot), ls = Math.sin(L.rot)
+    const inLagoon = (x: number, z: number) => ((((x - L.cx) * lc + (z - L.cz) * ls) / (L.rx * 1.12 + 3)) ** 2 + ((-(x - L.cx) * ls + (z - L.cz) * lc) / (L.rz * 1.12 + 3)) ** 2) < 1
+    for (let z = -h2; z < h2; z += G2, yield) for (let x = -h2; x < h2; x += G2) {
+      const px = x + (r2() - 0.5) * G2 * 1.2, pz = z + (r2() - 0.5) * G2 * 1.2
+      map.maskAt(px, pz, mk)
+      if (mk[3] < 0.08 || mk[2] > 0.86 || mk[0] > 0.3 || map.trailDist(px, pz) < map.meta.trails.hw + 2.5 || map.waterLevel(px, pz) !== null || inLagoon(px, pz)) continue
+      if (r2() > 0.15 + 0.75 * Math.min(1, (mk[3] - 0.08) / 0.5)) continue
+      if (rocks.biggestNear(px, pz, 3)) continue
+      const y = map.height(px, pz), H = 9 + 8 * Math.pow(r2(), 0.8)
+      out.push(px, y - 0.3, pz, H, r2() * Math.PI * 2, 5, r2(), r2())
+    }
+    return
+  }
+  const G = 6.5, half = map.half - 50
+  let s = 0x7f4a7c15
+  const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+  const mk: [number, number, number, number] = [0, 0, 0, 0]
+  const hw = map.meta.trails.hw
+  const fp = rocks.footprint.image.data as Uint8Array, g = map.inner
+  const sp = map.meta.spawn
+  // a slow noise: golden larch stands among the spruce
+  const vn = (x: number, z: number) => {
+    const xi = Math.floor(x), zi = Math.floor(z), fx = x - xi, fz = z - zi
+    const h = (a: number, b: number) => (((Math.imul(a, 374761393) + Math.imul(b, 668265263)) ^ 0x5bd1e995) >>> 0) % 1000 / 1000
+    const u = fx * fx * (3 - 2 * fx), w = fz * fz * (3 - 2 * fz)
+    return (h(xi, zi) * (1 - u) + h(xi + 1, zi) * u) * (1 - w) + (h(xi, zi + 1) * (1 - u) + h(xi + 1, zi + 1) * u) * w
+  }
+  // a per-spot hash 0..1 (no rnd() draw: picking a species must not move the trees after it)
+  const hash01 = (x: number, z: number) => (((Math.imul(Math.floor(x * 8), 73856093) ^ Math.imul(Math.floor(z * 8), 19349663)) >>> 0) % 1000) / 1000
+  // the HIDDEN PLACES' floors stay open (meta.hidden): a flower hollow's meadow clear to its banks, a falls basin's
+  // view of its fall clear — no tree on the pool's shore or between the way in and the fall
+  const hid = map.meta.hidden ?? []
+  const hiddenClear = (x: number, z: number) => hid.some((h) => {
+    const dx = x - h.x, dz = z - h.z, d = Math.hypot(dx, dz)
+    if (d > h.r) return false
+    if (h.kind === 'meadow') return d < h.r - 6
+    const ox = Math.sin(h.open), oz = Math.cos(h.open), along = dx * ox + dz * oz, across = Math.abs(dx * oz - dz * ox)
+    return across < 22 || along < -h.r * 0.45
+  })
+  for (let gz = -half; gz < half; gz += G, yield) {
+    for (let gx = -half; gx < half; gx += G) {
+      // (jittered past the cell's edges: no rows — a dense grove's cells all hold a tree, and an even grid shows)
+      const x = gx + (rnd() * 1.7 - 0.35) * G, z = gz + (rnd() * 1.7 - 0.35) * G
+      map.maskAt(x, z, mk)
+      const forest = Math.min(1, Math.max(0, (mk[3] - 0.22) / 0.45))
+      // (OTH woods are open: clumps and gaps, the ground showing between; lone trees on the meadows — fewer pines:
+      //  the user, "no need of that many pine trees")
+      const clump = vn(x / 45 + 17, z / 45 - 9)
+      // (broadleaf GROVES are dense — OTH ss2: crowns side by side — conifer stands open)
+      const groveN = vn(x / 260 + 5, z / 260 - 3)
+      // TIGHTNESS (the user: "no need of that many trees — put them near him, at the sides, near the river; I need to
+      // feel the tightness like OTH"): the big stands thinner, and clumps where the player IS — round the spawn,
+      // lining the tracks (5–26 m off them), along the river banks (14–45 m)
+      const td = map.trackDist(x, z), rd = map.riverDist(x, z), sd = Math.hypot(x - sp.x, z - sp.z)
+      const clumpS = vn(x / 28 - 3, z / 28 + 21)
+      const bands = (td > hw + 3 && td < 26 ? 0.33 * (1 - (td - 5) / 21) : 0) + (rd > 14 && rd < 45 ? 0.34 : 0)
+        + (sd < 300 ? 0.52 * (1 - sd / 300) : 0)
+      // (a little denser everywhere — the user: "feel a bit denser, but not a lot")
+      const p = forest * (0.058 + 0.25 * clump) * (groveN > 0.55 ? 2 : 1) + bands * Math.max(0, clumpS * 1.6 - 0.42)
+        + 0.005 + 0.034 * Math.max(0, mk[3] - 0.08)
+      const r = rnd()
+      if (r > p) continue
+      if (mk[2] > 0.75 || mk[0] > 0.45) continue // water / its banks, rock
+      if (map.trailDist(x, z) < hw + 3) continue
+      if ((x - sp.x) ** 2 + (z - sp.z) ** 2 < 16 * 16) continue
+      if (hiddenClear(x, z)) continue
+      const gi = Math.round((x - g.origin) / g.step), gj = Math.round((z - g.origin) / g.step)
+      if (fp[gj * g.n + gi] > 40) continue // a boulder
+      const y = map.height(x, z)
+      const sl = Math.hypot(map.height(x + 3, z) - map.height(x - 3, z), map.height(x, z + 3) - map.height(x, z - 3)) / 6
+      if (sl > 0.85) continue
+      // conifer stands and broadleaf groves by a slow noise (about half each); in a grove birch / aspen / green
+      // (by the river and round the spawn mostly broadleaf: birch and aspen line the water in OTH)
+      // (and round the spawn a few PINE clumps among them — the user: "add some pines near")
+      const pines = sd < 320 && vn(x / 55 + 31, z / 55 - 13) > 0.6
+      const broad = !pines && groveN + (rnd() - 0.5) * 0.3 + (forest < 0.2 ? 0.25 : 0) + (rd < 45 ? 0.3 : 0) + (sd < 260 ? 0.15 : 0) > 0.55
+      let species: number
+      if (broad) {
+        const k = vn(x / 120 - 7, z / 120 + 11) + (rnd() - 0.5) * 0.5
+        species = k < 0.4 ? 3 : k < 0.86 ? 4 : 5 // (gold 40 %, red / orange 45 %, a few still green)
+      } else {
+        const larch = vn(x / 230, z / 230) + (rnd() - 0.5) * 0.45 > 0.6 ? 1 : 0
+        species = rnd() < 0.05 ? 2 : pines && rnd() < 0.8 ? 0 : larch
+      }
+      // 80 % PINES (the user: "reduce other trees count and increase our pine tree — 80 % pine, 20 % other"): a green
+      // spruce everywhere but in small groves (~60 m) of the rest, a fifth of the trees (0.7: measured on the placed
+      // trees); there a tree keeps the species picked above (a spruce turns golden larch).
+      // (the picks above still run: the same rnd() draws, so every tree stands where it did)
+      const other = vn(x / 60 - 23, z / 60 + 41) + (hash01(x + 0.37, z + 0.11) - 0.5) * 0.3 > 0.7
+      if (!other) species = 0
+      else if (species === 0) species = 1
+      const H = family(species) === 1 ? (7 + 8 * Math.pow(rnd(), 0.8)) * (0.85 + 0.15 * forest) : (6 + 15 * Math.pow(rnd(), 0.8)) * (0.75 + 0.25 * forest)
+      out.push(x, y - 0.3, z, H, rnd() * Math.PI * 2, species, rnd(), rnd())
+    }
+  }
+}

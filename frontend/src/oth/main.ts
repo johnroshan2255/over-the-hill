@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { isMobileDevice } from '../rendering/quality/DeviceProfile'
 import { loadJournal, REWARD, saveJournal } from '../journal'
-import { continueRequested, loadProgress, requestContinue, saveProgress } from '../save'
+import { type Camp, continueRequested, loadProgress, requestContinue, saveProgress } from '../save'
 import { gameParams } from '../settings'
 import { Menu } from '../ui/Menu'
 import { installToneMap } from './toneMap'
@@ -9,6 +9,8 @@ import { Atmosphere } from './Atmosphere'
 import { OthAudio } from './Audio'
 import { Dust } from './Dust'
 import { ChaseCam } from './ChaseCam'
+import { Crossing } from './Crossing'
+import { DESERT_IDS } from './Places'
 import { FlyCam } from './FlyCam'
 import { MapData } from './MapData'
 import { MapView } from './MapView'
@@ -32,11 +34,15 @@ import { liveMap, World, type WorldEnv, type WorldId, WORLDS } from './World'
  * Switches (settings.ts `gameParams`: the menus' settings, under the page's URL): ?tier=low|medium|high|ultra
  *      ?car=gwagen|bmw ?paint=rrggbb ?gearbox=auto|manual ?aids=off|standard|full ?offroad=0|1 ?aa=0 ?scale=50…100
  *      ?sound=0 ?drive=0 (start in the free camera) ?x= &z= (m) ?h= (m above the ground) ?yaw= ?pitch= (rad) ?hour=
- *      ?tm=neutral|agx|aces ?exp= (exposure) ?stats=1
+ *      ?tm=neutral|agx|aces ?exp= (exposure) ?stats=1 ?world=valley|desert ?weather=clear|cloudy|rain|sandstorm
+ *      ?save=0 (a test session: the journey and the journal never written)
  * Keys: drive W A S D, Space handbrake, Shift boost, X / Z gears (manual), R reset, 1 / 2 the car, V free camera ⇄ the
  *      car, F3 stats, Esc pause.
  */
 const q = gameParams()
+/** ?save=0: a session that never writes the journey or the journal (tests in a real browser: a test drive must not
+ *  overwrite the player's saved progress — 2026-11-02, it did) */
+const saving = q.get('save') !== '0'
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d)
 const tier = pickTier()
 const status = document.getElementById('status')!
@@ -96,9 +102,10 @@ async function boot() {
       }
     }
   })
-  // ?weather=clear|cloudy|rain pins the weather (settled at once: the shot harness)
+  // ?weather=clear|cloudy|rain|sandstorm pins the weather (settled at once: the shot harness)
   const wq = q.get('weather')
-  if (wq === 'clear' || wq === 'cloudy' || wq === 'rain') { atmos.weather = wq; atmos.settleWeather() }
+  if (wq === 'clear' || wq === 'cloudy' || wq === 'rain' || wq === 'sandstorm') atmos.weather = wq
+  let settled = false
 
   const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, num('far', tier.far)) // (?far= m: cost tests)
   const scene = new THREE.Scene()
@@ -107,7 +114,9 @@ async function boot() {
   shadow.onBaked = () => (shadowReady = true)
   const sky = new Sky(atmos, !!tier.bloom) // (the sky marks itself for the god rays when Post draws)
   const rain = new Rain(atmos, tier)
+  const sand = new Rain(atmos, tier, 'sand')
   const journal = loadJournal()
+  const keepJournal = () => { if (saving) saveJournal(journal) }
   const env: WorldEnv = {
     renderer, camera, scene, atmos, tier, shadow,
     farGrid: new THREE.Vector4(),
@@ -124,24 +133,28 @@ async function boot() {
     w.landmarks.onDiscover = (l, n, total) => {
       const pay = l.kind === 'camp' ? REWARD.camp : REWARD.place
       journal.coins += pay
-      saveJournal(journal)
+      keepJournal()
       readouts.coins(journal.coins, pay)
       toast(`Discovered · ${l.name}   +${pay} ◆   ${n} / ${total}`, 4200)
       audio.chime('place')
     }
     atmos.desert = w.map.desert
-    journal.totals = { crates: w.props.crateCount, places: w.places.length }
-    saveJournal(journal)
+    // (a pinned ?weather= settled at once, in the first world's own kind: rain or a sandstorm)
+    if (wq && !settled) { settled = true; atmos.settleWeather() }
+    // (each world's own counts: the title screen's journal shows both)
+    journal.totals = { ...journal.totals, [w.id]: { crates: w.props.crateCount, places: w.places.length } }
+    keepJournal()
     scene.add(w.group)
   }
   enterWorld(world)
-  scene.add(sky.mesh, rain.mesh)
+  scene.add(sky.mesh, rain.mesh, sand.mesh)
 
   // THE 4×4: the game's vehicle physics on this map's ground and rocks
   status.textContent = 'Loading the 4×4…'
   const physics = await OthPhysics.create(world.map, world.rocks)
   physics.trees = world.trees
   physics.addLandmarks(world.landmarks.colliders)
+  physics.addLandmarks(world.formations?.colliders ?? [])
   physics.addPropColliders(world.props.colliders)
   const car = new Vehicle(map, physics, atmos, shadow, tier, env.farGrid)
   if (q.get('paint')) car.paint = '#' + q.get('paint')!.replace('#', '')
@@ -161,7 +174,7 @@ async function boot() {
   // the tyres' dust and the exhaust smoke
   const dust = new Dust(map, atmos, tier)
   scene.add(dust.mesh)
-  const tyreTracks = new TyreTracks(map, tier)
+  const tyreTracks = new TyreTracks(map, tier, atmos)
   scene.add(tyreTracks.mesh)
   const winch = new Winch(map, car, world.trees, world.rocks)
   winch.onMessage = (m) => toast(m)
@@ -196,27 +209,52 @@ async function boot() {
     else { camera.fov = THREE.MathUtils.clamp(camera.fov * k, 18, 80); camera.updateProjectionMatrix() }
   })
 
-  // ANOTHER WORLD (the crossing — Crossing.ts — or ?world / the harness): built a step a frame while this one plays,
-  // then everything that lasts is pointed at it and this one is DISPOSED whole (World.dispose: its GPU memory back)
+  // ANOTHER WORLD (the crossing — Crossing.ts — or ?world / the harness): built a step a frame while this one plays
+  // (in the background: what lasts is left alone until the swap), then everything that lasts is pointed at it; the
+  // world left is DISPOSED whole (World.dispose: its GPU memory back) — by the crossing once the car is away from the
+  // gate, at once by the harness
   const keep = new Set<THREE.Texture>([noise, shadow.box, shadow.world, shadow.treeTex])
   const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
-  const buildWorld = (id: WorldId) => World.build(id, env, nextFrame)
-  const enter = (next: World) => {
+  const buildWorld = (id: WorldId) => World.build(id, env, nextFrame, undefined, undefined, true)
+  /** Enter `next`; returns the world left (out of the scene, still built). */
+  const enter = (next: World): World => {
     const old = world
-    next.adoptShadow(shadow)
+    next.adopt(env)
     world = next
+    old.group.removeFromParent()
     enterWorld(next)
     physics.setWorld(next.map, next.rocks, next.trees)
     physics.addLandmarks(next.landmarks.colliders)
+    physics.addLandmarks(next.formations?.colliders ?? [])
     physics.addPropColliders(next.props.colliders)
     winch.setWorld(next.trees, next.rocks)
     mapView.dispose()
     mapView = new MapView(next.map, next.landmarks, camera, () => car.pos, () => car.sim?.heading ?? 0)
     audio.fires = next.props.fires
     audio.setWorld()
-    myCamp = null
-    old.dispose(keep)
+    // (your own camp is each world's: left pitched where it was, the one here back up)
+    camps[old.id] = myCamp
+    myCamp = camps[next.id] ?? null
+    if (myCamp) next.props.pitch(myCamp)
+    return old
   }
+  // THE CROSSING: the mist on the pass, the other world built behind it, the swap at the gate
+  const crossing = new Crossing({
+    world: () => world,
+    build: buildWorld,
+    enter: (w) => { enter(w) },
+    move: (dx, dy, dz) => {
+      car.shift(dx, dy, dz)
+      dust.shift(dx, dy, dz)
+      tyreTracks.clear()
+      if (!driving) { camera.position.x += dx; camera.position.y += dy; camera.position.z += dz; camera.updateMatrixWorld() }
+      lastPos.set(lastPos.x + dx, lastPos.y + dy, lastPos.z + dz)
+      safe.x = Number.NaN
+    },
+    dispose: (w) => { shadow.forget(w.map); w.dispose(keep) },
+    atmos,
+  })
+  crossing.onSwap = (_, to) => regionTitle(WORLDS[to.id].name)
 
   const post = tier.bloom ? new Post(num('levels', tier.bloom), num('samples', tier.samples), num('bloom', 0.42), num('rays', 2.0), tier.bloomStart, tier.rayDiv) : null // (?levels= ?samples= ?rays=0: cost tests)
   const baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100 // (?maxdpr=: the pixel-ratio cap, cost tests)
@@ -253,12 +291,14 @@ async function boot() {
   let travelled = saved?.travelled ?? 0, playSeconds = saved?.playSeconds ?? 0, saveT = 0
   const safe = { x: Number.NaN, z: 0, heading: 0 }
   // the player's own camp (pitched with C), back where it was
-  let myCamp: { x: number; y: number; z: number; rot: number } | null = saved?.camp ?? null
+  // (one per world: `camps` keeps the other's while you're away — save.ts)
+  const camps: Partial<Record<WorldId, Camp | null>> = { ...(saved?.camps ?? {}), ...(saved?.camp && saved.map ? { [saved.map]: saved.camp } : {}) }
+  let myCamp: Camp | null = camps[world.id] ?? null
   if (myCamp) world.props.pitch(myCamp)
   const lastPos = new THREE.Vector3().copy(car.pos)
   const save = () => {
-    if (Number.isNaN(safe.x)) return
-    saveProgress({ v: 1, map: map.meta.id, car: car.id, x: safe.x, z: safe.z, heading: safe.heading, hour: atmos.hour, travelled, playSeconds, savedAt: Date.now(), camp: myCamp })
+    if (Number.isNaN(safe.x) || !saving) return
+    saveProgress({ v: 1, map: map.meta.id, car: car.id, x: safe.x, z: safe.z, heading: safe.heading, hour: atmos.hour, travelled, playSeconds, savedAt: Date.now(), camp: myCamp, camps: { ...camps, [world.id]: myCamp } })
   }
   addEventListener('pagehide', save)
   document.addEventListener('visibilitychange', () => { if (document.hidden) save() })
@@ -372,6 +412,8 @@ async function boot() {
     last = now
     const dt = Math.min(clock.getDelta(), 0.1)
     car.wet = dust.wet = atmos.uniforms.uWet.value
+    // the crossing first: a swap moves the car before this frame's physics, pose and cameras
+    crossing.update(dt, car.sim ? car.pos : null, camera.position)
     physics.pw.advance(dt, (fdt) => { car.fixed(fdt); winch.fixed(fdt) })
     car.update(physics.pw.alpha)
     // the journey: distance driven (not the jumps of a reset / a car change), the last safe spot, the autosave
@@ -386,9 +428,10 @@ async function boot() {
     if (got.length) {
       for (const id of got) journal.crates.push(id)
       journal.coins += REWARD.crate * got.length
-      saveJournal(journal)
+      keepJournal()
       readouts.coins(journal.coins, REWARD.crate * got.length)
-      toast(`Supply crate · +${REWARD.crate * got.length} ◆   ${journal.crates.length} / ${world.props.crateCount}`)
+      const here = journal.crates.filter((id) => (id >= DESERT_IDS) === world.map.desert).length
+      toast(`Supply crate · +${REWARD.crate * got.length} ◆   ${here} / ${world.props.crateCount}`)
       audio.chime('crate')
     }
     // the HUD's slow parts (4× a second): the signpost, the camp prompt
@@ -396,6 +439,7 @@ async function boot() {
     dust.update(dt, car)
     tyreTracks.update(car, clock.elapsedTime)
     car.lights(atmos, dt)
+    car.weather(atmos, dt)
     if (driving) chase.update(dt)
     else fly.update(dt)
     ui.update(driving, atmos.clock)
@@ -403,6 +447,7 @@ async function boot() {
     atmos.tick(dt)
     atmos.update(camera.position, clock.elapsedTime)
     rain.update()
+    sand.update()
     mapView.update(dt)
     winch.update(camera)
     shadow.update(atmos.uniforms.uSunDir.value)
@@ -432,7 +477,7 @@ async function boot() {
       const p = camera.position
       hud.textContent = `${tier.name.toUpperCase()}  res ${Math.round(dprScale * 100)}%  ${(1000 / frameMs).toFixed(0)} fps  frame ${frameMs.toFixed(1)} ms  cpu ${cpuMs.toFixed(2)} ms  gpu ${timer ? gpuMs.toFixed(2) : '–'} ms\n` +
         `draws ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  patches ${world.terrain.patches}  blades ${(world.grass.blades / 1000).toFixed(0)}k  trees ${world.trees.drawn.join('/')} of ${world.trees.count}  culled: trees ${world.trees.occluded} tiles behind hills, rocks ${world.rocks.culled.frustum} off-view / ${world.rocks.culled.occluded} hidden cells, ${world.rocks.culled.small} tiny\n` +
-        `x ${p.x.toFixed(0)} z ${p.z.toFixed(0)} y ${p.y.toFixed(0)} (agl ${(p.y - map.height(p.x, p.z)).toFixed(1)})  yaw ${fly.yaw.toFixed(2)} pitch ${fly.pitch.toFixed(2)}  hour ${atmos.hour.toFixed(1)}`
+        `x ${p.x.toFixed(0)} z ${p.z.toFixed(0)} y ${p.y.toFixed(0)} (agl ${(p.y - map.height(p.x, p.z)).toFixed(1)})  yaw ${fly.yaw.toFixed(2)} pitch ${fly.pitch.toFixed(2)}  hour ${atmos.hour.toFixed(1)}  ${world.id}  crossing: ${crossing.state}, mist ${crossing.mist.toFixed(2)}`
     } else if (!showHud) hud.style.display = 'none'
     requestAnimationFrame(frame)
   }
@@ -462,13 +507,17 @@ async function boot() {
     audio: () => audio.debug(),
     /** Build world `id` behind the play, enter it, the car at its spawn (the harness: a crossing's swap without the road). */
     swapTo: async (id: WorldId) => {
+      crossing.forget()
       const w = await buildWorld(id)
-      enter(w)
+      const old = enter(w)
+      shadow.forget(old.map)
+      old.dispose(keep)
       const sp = w.map.meta.spawn
       physics.follow(sp.x, sp.z)
       car.sim?.place(sp.x, w.map.height(sp.x, sp.z) + 0.6, sp.z, sp.yaw)
       return w.timings
     },
+    crossing,
     gpuMemory: () => ({ ...renderer.info.memory, programs: renderer.info.programs?.length ?? 0 }),
     /** Drive mode on / off (the chase camera). */
     drive: (on: boolean) => { driving = on; if (on) chase.snap() },
@@ -606,6 +655,17 @@ function gameHud(coins0: number) {
       campBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); f() })
     },
   }
+}
+
+/** The REGION's title (a crossing's arrival): big, centred, fading in and out over a few seconds. */
+function regionTitle(name: string): void {
+  const t = document.createElement('div')
+  t.className = 'oth-region'
+  t.innerHTML = `<small>Entering</small>${name}`
+  document.body.appendChild(t)
+  requestAnimationFrame(() => t.classList.add('on'))
+  setTimeout(() => t.classList.remove('on'), 3800)
+  setTimeout(() => t.remove(), 5200)
 }
 
 /** Fade to black, do `mid`, fade back (a rest at camp). */

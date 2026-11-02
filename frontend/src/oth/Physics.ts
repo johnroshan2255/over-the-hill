@@ -1,7 +1,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat'
 import * as THREE from 'three'
 import { group, Groups, PhysicsWorld, STATIC_MESH_FILTER } from '../physics/PhysicsWorld'
-import type { MapData } from './MapData'
+import { deckY, type MapData } from './MapData'
 import type { PropCollider } from './Props'
 import type { Rocks } from './Rocks'
 import { TREE_STRIDE, type Trees } from './Trees'
@@ -78,7 +78,15 @@ export class OthPhysics {
     // (STATIC_MESH_FILTER, as the game's bridges): a curb or the deck's edge that slipped into that hollow shell was
     // pushed on from both sides and flipped the car
     const Q = new THREE.Quaternion(), E = new THREE.Euler(), V = new THREE.Vector3()
-    for (const br of map.meta.bridges ?? []) {
+    // (a ROPE bridge — the desert's gorge — sags: its deck and rails as a chain of straight pieces along the curve)
+    const pieces = (map.meta.bridges ?? []).flatMap((br) => {
+      const n = br.sag ? Math.max(2, Math.ceil(Math.hypot(br.x1 - br.x0, br.z1 - br.z0) / 12)) : 1
+      return Array.from({ length: n }, (_, i) => {
+        const t0 = i / n, t1 = (i + 1) / n
+        return { ...br, x0: br.x0 + (br.x1 - br.x0) * t0, z0: br.z0 + (br.z1 - br.z0) * t0, x1: br.x0 + (br.x1 - br.x0) * t1, z1: br.z0 + (br.z1 - br.z0) * t1, y0: deckY(br, t0), y1: deckY(br, t1) }
+      })
+    })
+    for (const br of pieces) {
       const dx = br.x1 - br.x0, dz = br.z1 - br.z0, dy = br.y1 - br.y0, Lh = Math.hypot(dx, dz), L = Math.hypot(Lh, dy)
       const yaw = Math.atan2(dx, dz), pitch = Math.atan2(dy, Lh)
       Q.setFromEuler(E.set(-pitch, yaw, 0, 'YXZ'))

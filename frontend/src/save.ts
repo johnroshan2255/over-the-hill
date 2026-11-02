@@ -18,9 +18,14 @@ export interface Progress {
   playSeconds: number
   /** When it was saved (ms since 1970). */
   savedAt: number
-  /** The player's own camp, if pitched (Props.pitch). */
-  camp?: { x: number; y: number; z: number; rot: number } | null
+  /** The player's own camp in `map`, if pitched (Props.pitch). */
+  camp?: Camp | null
+  /** Every world's camp (2026-11-02: one per world — the valley's stays pitched while you're in the desert). */
+  camps?: Record<string, Camp | null>
 }
+
+/** A camp pitched with C: where its tent stands and which way it faces. */
+export interface Camp { x: number; y: number; z: number; rot: number }
 
 const KEY = 'overhill.progress.v1'
 

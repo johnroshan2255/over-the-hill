@@ -73,14 +73,36 @@ export class TerrainShadow {
   /** The ground the worker has (setMap). */
   private current: MapData | null = null
 
-  /** Another world's ground (World.ts — every world's grids are the same size): its heights to the worker, all lit
-   *  until its first bake (the next update re-bakes; a bake of the old ground still under way is dropped). */
+  /** The worlds' grounds the worker has (prepare), by map. */
+  private readonly keys = new Map<MapData, number>()
+  private nextKey = 0
+
+  /** Send a world's heights to the worker ahead (a world built behind another: World.build) — ~20 ms of copying off
+   *  the frame that swaps to it. */
+  prepare(map: MapData): void {
+    if (this.keys.has(map)) return
+    if ((map.inner.n - 1) / 2 + 1 !== this.boxN || map.far.n !== this.world.image.width) throw new Error('TerrainShadow: a world of another size')
+    const key = ++this.nextKey
+    this.keys.set(map, key)
+    const g = (h: MapData['inner']) => ({ h: h.h.slice(), n: h.n, step: h.step, origin: h.origin })
+    this.worker.postMessage({ type: 'init', key, inner: g(map.inner), far: g(map.far) })
+  }
+
+  /** A world gone (World.dispose): the worker lets go of its ground. */
+  forget(map: MapData): void {
+    const key = this.keys.get(map)
+    if (key === undefined || map === this.current) return
+    this.keys.delete(map)
+    this.worker.postMessage({ type: 'drop', key })
+  }
+
+  /** Another world's ground (World.ts — every world's grids are the same size): the worker bakes over it from now, all
+   *  lit until its first bake (the next update re-bakes; a bake of the old ground still under way is dropped). */
   setMap(map: MapData): void {
     if (map === this.current) return
+    this.prepare(map)
     this.current = map
-    if ((map.inner.n - 1) / 2 + 1 !== this.boxN || map.far.n !== this.world.image.width) throw new Error('TerrainShadow: a world of another size')
-    const g = (h: MapData['inner']) => ({ h: h.h.slice(), n: h.n, step: h.step, origin: h.origin })
-    this.worker.postMessage({ type: 'init', inner: g(map.inner), far: g(map.far) })
+    this.worker.postMessage({ type: 'use', key: this.keys.get(map) })
     for (const t of [this.box, this.world, this.treeTex]) { (t.image.data as Uint8Array).fill(255); t.needsUpdate = true }
     this.uniforms.uShOn.value = this.uniforms.uTreeShOn.value = 0
     this.baked.set(0, -1, 0)

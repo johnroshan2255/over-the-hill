@@ -24,11 +24,19 @@ import { TREE_STRIDE, type Trees } from './Trees'
  *   swarms  wild FIREFLIES at night (2026-11-02, the user: "near some trees and random places"): by trees at a
  *           grove's edge, round the ponds, along the streams, in the Flower Hollow and the open meadows (~40)
  *
+ * THE DESERT'S (2026-11-02, NEXT.md 5): the same signposts, crates (their ids from 100000: the journal keeps both
+ * worlds'), stones (sandstone) and camps — at the oasis: by the lagoon and along the river — and its own: a stone WELL
+ * by each oasis camp, at the ksar and along the oasis road; Bedouin TENTS by the camps and a nomads' camp on the plain;
+ * sandstone RUINS out on the sand; an abandoned truck by the ksar. No log piles, sheds, outhouses or meadow fireflies
+ * (the fireflies keep to the palms).
+ *
  * Every spot is checked against the water, the tracks, the slope, the rocks and the trees (spatial hashes: ~10 ms for
  * the whole valley).
  */
-export type PropKind = 'sign' | 'table' | 'fence' | 'logs' | 'cairn' | 'truck' | 'crate' | 'stones' | 'shed' | 'outhouse' | 'ruin'
-export const PROP_KINDS: PropKind[] = ['sign', 'table', 'fence', 'logs', 'cairn', 'truck', 'crate', 'stones', 'shed', 'outhouse', 'ruin']
+export type PropKind = 'sign' | 'table' | 'fence' | 'logs' | 'cairn' | 'truck' | 'crate' | 'stones' | 'shed' | 'outhouse' | 'ruin' | 'well' | 'tent'
+export const PROP_KINDS: PropKind[] = ['sign', 'table', 'fence', 'logs', 'cairn', 'truck', 'crate', 'stones', 'shed', 'outhouse', 'ruin', 'well', 'tent']
+/** The desert's things' ids start here (a crate's id is kept in the journal: the two worlds' never meet). */
+export const DESERT_IDS = 100000
 
 /** A thing's place: on the ground at (x, y, z), turned `rot` about +y, scaled `s` (default 1). */
 export interface Prop { kind: PropKind; id: number; x: number; y: number; z: number; rot: number; s?: number }
@@ -69,11 +77,18 @@ const CAMP_NAMES: Record<string, string[]> = {
   river: ['Riverbend Camp', 'Gravel Bar Camp', 'Alder Camp'],
   pond: ['Still Water Camp', 'Reed Pond Camp', 'Lily Pond Camp'],
 }
+const DESERT_CAMP_NAMES: Record<string, string[]> = {
+  falls: ['Spring Camp'],
+  lake: ['Lagoon Camp', 'Palm Shore Camp'],
+  river: ['Oasis Camp', 'Date Grove Camp', 'Tamarisk Camp'],
+  pond: [],
+}
 
 export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut {
   const t0 = performance.now()
   const rnd = rng(0x0b5e55)
-  const meta = map.meta, hw = meta.trails.hw, lines = meta.trails.lines, half = map.half
+  const meta = map.meta, hw = meta.trails.hw, lines = meta.trails.lines, half = map.half, desert = map.desert
+  const idBase = desert ? DESERT_IDS : 0
   const mk: [number, number, number, number] = [0, 0, 0, 0]
   // ---- what's already there
   const rockHash = new Hash(16)
@@ -103,7 +118,7 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
     return clearOf(x, z, o.clear)
   }
   const add = (kind: PropKind, x: number, z: number, rot: number, sc?: number) => {
-    props.push({ kind, id: props.length, x, y: map.height(x, z), z, rot, ...(sc ? { s: sc } : {}) })
+    props.push({ kind, id: idBase + props.length, x, y: map.height(x, z), z, rot, ...(sc ? { s: sc } : {}) })
     placed.add(x, z, props.length - 1)
   }
   /** A spot on a ring round (x, z) (radius r, from angle a0 on, n tries) where `ok` holds. */
@@ -127,7 +142,7 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
   const campOk = (x: number, z: number) => free(x, z, { clear: 5, maxSlope: 0.08, offTrack: hw + 5, spacing: 0, kind: 'camp' }) &&
     !camps.some((c) => (c.x - x) ** 2 + (c.z - z) ** 2 < 380 * 380) && !pads.some((l) => (l.x - x) ** 2 + (l.z - z) ** 2 < (AREA.has(l.kind) ? 25 : 110) ** 2)
   const camp = (kind: string, x: number, z: number, faceX: number, faceZ: number) => {
-    const names = CAMP_NAMES[kind], n = used[kind] ?? 0
+    const names = (desert ? DESERT_CAMP_NAMES : CAMP_NAMES)[kind] ?? [], n = used[kind] ?? 0
     if (n >= names.length || camps.length >= 9) return false
     used[kind] = n + 1
     camps.push({ id: nextId++, kind: 'camp', name: names[n], x, z, y: map.height(x, z), rot: Math.atan2(faceX - x, faceZ - z), r: 9 })
@@ -215,9 +230,9 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
     }
   }
 
-  // ---- along the TRACKS: log piles in the forest, the deep-forest truck, the cairns on the rough trails
+  // ---- along the TRACKS: log piles in the forest, the deep-forest truck, the cairns on the rough trails (the valley's)
   let deep: [number, number, number, number] | null = null // (x, z, rot, forest)
-  lines.forEach((L, li) => {
+  if (!desert) lines.forEach((L, li) => {
     let run = 0
     for (let i = 1; i < L.length; i++) {
       run += Math.hypot(L[i][0] - L[i - 1][0], L[i][1] - L[i - 1][1])
@@ -248,7 +263,7 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
 
   // ---- the small HUMAN TRACES: a shed and an outhouse by every cabin, sheds along the forest tracks, outhouses at some
   //      camps, homestead RUINS in the open meadows
-  for (const l of pads) {
+  if (!desert) for (const l of pads) {
     if (l.kind !== 'cabin') continue
     const c = Math.cos(l.rot), sn = Math.sin(l.rot)
     // (just outside the cabin's pad: it keeps l.r + 5 m clear)
@@ -259,12 +274,12 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
       }
     }
   }
-  camps.forEach((cp, i) => {
+  if (!desert) camps.forEach((cp, i) => {
     if (i % 3) return
     const c = Math.cos(cp.rot), sn = Math.sin(cp.rot), x = cp.x - 6 * c - 6 * sn, z = cp.z + 6 * sn - 6 * c
     if (free(x, z, { clear: 0.9, maxSlope: 0.2, offTrack: hw + 2, spacing: 30, kind: 'outhouse' })) add('outhouse', x, z, cp.rot)
   })
-  lines.forEach((L) => {
+  if (!desert) lines.forEach((L) => {
     let run = 0
     for (let i = 1; i < L.length; i++) {
       run += Math.hypot(L[i][0] - L[i - 1][0], L[i][1] - L[i - 1][1])
@@ -283,8 +298,36 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
     const x = (rnd() * 2 - 1) * (half - 150), z = (rnd() * 2 - 1) * (half - 150)
     if (map.trackDist(x, z) < 12) continue
     map.maskAt(x, z, mk)
-    if (mk[3] > 0.45) continue
+    if (mk[3] > 0.45 || (desert && mk[1] > 0.8)) continue // (the desert's: on firm ground, not the loose sand)
     if (free(x, z, { clear: 2.0, maxSlope: 0.18, offTrack: hw + 6, spacing: 600, kind: 'ruin' }) && !allPads.some((l) => (l.x - x) ** 2 + (l.z - z) ** 2 < 100 * 100)) { add('ruin', x, z, rnd() * 6.283); n++ }
+  }
+
+  // ---- THE DESERT's own: a WELL by each oasis camp, at the ksar's gate and along the oasis road; a Bedouin TENT by
+  //      each camp and a nomads' camp on the plain; an abandoned truck by the ksar
+  if (desert) {
+    const near = (x: number, z: number, r0: number, r1: number, kind: PropKind, clear: number, spacing: number, rot?: number) => {
+      for (let r = r0; r <= r1; r += 3) {
+        const s = ring(x, z, r, rnd() * 6.283, 14, (px, pz) => free(px, pz, { clear, maxSlope: 0.18, offTrack: hw + 2, spacing, kind }))
+        if (s) { add(kind, s[0], s[1], rot ?? Math.atan2(x - s[0], z - s[1])); return true }
+      }
+      return false
+    }
+    for (const cp of camps) { near(cp.x, cp.z, 11, 24, 'well', 1.4, 60); near(cp.x, cp.z, 12, 26, 'tent', 3.2, 20) }
+    for (const l of pads) {
+      if (l.kind === 'ksar') { near(l.x, l.z, l.r + 8, l.r + 30, 'well', 1.4, 60); near(l.x, l.z, l.r + 14, l.r + 40, 'truck', 3.2, 600, rnd() * 6.283) }
+      if (l.kind === 'oasis') near(l.x, l.z, l.r + 10, l.r + 40, 'well', 1.4, 60)
+    }
+    // the nomads: three tents and a well in a ring by a track, out on the plain
+    for (let t = 0; t < 4000; t++) {
+      const L = lines[Math.floor(rnd() * lines.length)], i = Math.floor(rnd() * L.length), [x0, z0] = L[i]
+      const a = rnd() * 6.283, x = x0 + Math.cos(a) * 40, z = z0 + Math.sin(a) * 40
+      map.maskAt(x, z, mk)
+      if (mk[0] > 0.1 || mk[3] > 0.1 || mk[1] > 0.85 || slope(x, z) > 0.08 || allPads.some((l) => (l.x - x) ** 2 + (l.z - z) ** 2 < 300 * 300)) continue
+      if (!free(x, z, { clear: 6, maxSlope: 0.08, offTrack: hw + 14, spacing: 0, kind: 'tent' })) continue
+      for (let k = 0; k < 3; k++) near(x, z, 9, 16, 'tent', 3.2, 9)
+      near(x, z, 0, 6, 'well', 1.4, 60)
+      break
+    }
   }
 
   // ---- small STONES: in little clusters along the tracks' edges, round the camps, on the river's banks
@@ -367,7 +410,7 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
   for (const P of meta.water.ponds ?? []) { const a = rnd() * 6.283, r = Math.max(P.rx, P.rz) + 6; sw(P.cx + Math.cos(a) * r, P.cz + Math.sin(a) * r) }
   for (const S of meta.water.streams ?? []) for (let i = 4; i < S.x.length; i += 40) sw(S.x[i] + (rnd() - 0.5) * 12, S.z[i] + (rnd() - 0.5) * 12)
   for (const h of meta.hidden ?? []) if (h.kind === 'meadow') for (let k = 0; k < 3; k++) { const a = rnd() * 6.283, r = h.r * 0.4 * rnd(); sw(h.x + Math.cos(a) * r, h.z + Math.sin(a) * r) }
-  for (let t = 0; t < 400 && swarms.length < 44; t++) {
+  for (let t = 0; t < 400 && swarms.length < 44 && !desert; t++) {
     const x = (rnd() * 2 - 1) * (half - 150), z = (rnd() * 2 - 1) * (half - 150)
     map.maskAt(x, z, mk)
     if (mk[1] < 0.5 && mk[0] < 0.2 && slope(x, z) < 0.2) sw(x, z) // (the green meadows)

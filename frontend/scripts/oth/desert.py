@@ -19,6 +19,7 @@ import sys, os, math, json, time, heapq
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from terrainlib import hash2, gnoise, fbm, ridged, smoothstep, blur, grid, bilinear, spline, polyline_field, chaikin, rdp, resample
+from ledgeroad import LedgeRoad
 
 T0 = time.time()
 ARGS = dict(a.split('=', 1) for a in (sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []) if '=' in a)
@@ -223,7 +224,10 @@ HF = HF + (terrace(HF, 0.4) - HF) * smoothstep(0.3, 0.7, np.hypot(gxf, gzf))
 log('roads')
 TRAIL_HW = 3.0
 TRAILS = []
-GATE = dict(x=-120.0, z=1990.0, heading=0.0)   # the pass (heading 0 = toward −z, north)
+# the pass: heading = the way OUT of the desert (π: south, +z — the valley's gate faces north, out of the valley:
+# going out of one is coming into the other on the same road); its MIST thickens from 200 m to the plateau's 315 m
+# within 420 m of it (Crossing.ts)
+GATE = dict(x=-120.0, z=1990.0, heading=math.pi, mist=dict(y0=200.0, y1=315.0, r=420.0))
 def ground_at(x, z): return float(bilinear(H, HALF, np.array([float(x)]), np.array([float(z)]))[0])
 def carve_ramp(P, y0=None, y1=None, hw=TRAIL_HW):
     """A shelf at a steady grade along the polyline P (its ends at the ground's height, or y0 / y1)."""
@@ -239,11 +243,42 @@ def carve_ramp(P, y0=None, y1=None, hw=TRAIL_HW):
     TRAILS.append(T)
     log(f'  ledge road {len(T) * 2} m, {a:.0f} → {b:.0f} m ({abs(b - a) / ss[-1] * 100:.1f} %)')
     return T
-# the pass: level on the high plateau, then the switchbacks down the escarpment's face to the plain
-PASS = [(GATE['x'], GATE['z']), (-120, 1860), (-120, 1640)]
-carve_ramp(PASS, HIGH + 2, HIGH + 2)
-legs = [(-120, 1640), (200, 1610), (230, 1590), (-420, 1560), (-450, 1540), (200, 1515), (230, 1495), (-420, 1468), (-440, 1450), (-150, 1420)]
-carve_ramp(legs, HIGH + 2, None)
+# THE ESCARPMENT'S LEDGE ROAD (ledgeroad.py — the valley's Great Cliff the same way): 4 legs east ↔ west across the
+# face, 26 m apart up it, hairpins on benches at both ends, from the plain (leg 0, starting at its west end) up to the
+# plateau's edge; the face there built out where the slope was gentler (a bastion: its sides falling at ~73°, the
+# plateau behind it filled up to the road's top). The top leg ends at its west end and bends south onto THE PASS,
+# straight and level over the plateau through the gate to the box's edge. (2026-11-02: the first switchbacks — ramps
+# carved across the slope — cut 15 m into it at one end, stood on banks at the other, and the hairpins rolled the car.)
+P_ESC, NL_ESC, L_ESC = 26.0, 4, 380.0
+O_ESC = (GATE['x'] + P_ESC / 2, 1440.0)       # leg 0's start: the top leg's bend lands on the pass's line
+def esc_top(x, z): return HIGH + 2 + 1.5 * fbm(x / 160, z / 160, SEED + 60, 2)
+ESC = LedgeRoad(O=O_ESC, eu=(1, 0), ev=(0, 1), NL=NL_ESC, L=L_ESC, y0=ground_at(*O_ESC), top=esc_top, P=P_ESC,
+                y_top=HIGH + 2, SH=TRAIL_HW + 0.7, seed=SEED + 61)
+ew = (X > O_ESC[0] - 100) & (X < O_ESC[0] + L_ESC + 100) & (Z > O_ESC[1] - 45) & (Z < O_ESC[1] + 200)
+ej, ei = np.nonzero(ew.any(1))[0], np.nonzero(ew.any(0))[0]
+sl_ = (slice(ej[0], ej[-1] + 1), slice(ei[0], ei[-1] + 1))
+Xe, Ze, Ne = X[sl_], Z[sl_], H[sl_]
+He = ESC.face(Xe, Ze, Ne)
+ue, ve = ESC.local(Xe, Ze)
+vtop = ESC.VK[-1] + ESC.SH + ESC.wall
+He = np.where(ve > vtop, np.maximum(Ne, Ne + (He - Ne) * (1 - smoothstep(vtop + 40, vtop + 90, ve))), He)
+log(f'  escarpment: leg 0 at {ESC.y0:.0f} m, the plain under the legs {Ne[(np.abs(ve) < 4) & (ue > 0) & (ue < L_ESC)].mean():.0f} m, '
+    f'the ground under the top leg {Ne[(np.abs(ve - ESC.VK[-1]) < 4) & (ue > 0) & (ue < L_ESC)].mean():.0f} m (its bed {ESC.y_top - 20:.0f} … {ESC.y_top:.0f}), grade {ESC.grade * 100:.1f} %')
+H[sl_] = He
+# the pass: from the top leg's end a quarter turn south, then straight through the gate
+(tx, tz), _, _ = ESC.top_end()
+arc = np.array([[tx - ESC.R * math.sin(t), tz + ESC.R - ESC.R * math.cos(t)] for t in np.linspace(math.pi / 2, 0, 12)])
+PASSD = np.vstack([[[GATE['x'], z] for z in np.arange(2040.0, arc[0][1] + 1, -2.0)], arc])
+Dp, _, _ = polyline_field(X, Z, PASSD, 16)
+H = H + (ESC.y_top - H) * (1 - smoothstep(ESC.SH, ESC.SH + 8, Dp))
+TRAILS.append(PASSD)
+# the stair road down from the top (the bot and the map read it so), then on west off leg 0's foot to the plain
+ESC_LINE = ESC.points(2.0)[::-1]
+lead = np.array([[O_ESC[0] - 2.0 * k, O_ESC[1]] for k in range(1, 21)])
+Dl, Sl, _ = polyline_field(X, Z, lead, 16)
+H = H + (ESC.y0 + (ground_at(*lead[-1]) - ESC.y0) * np.clip(Sl / 40, 0, 1) - H) * (1 - smoothstep(TRAIL_HW + 0.5, TRAIL_HW + 7, Dl)) * (Dl < 16)
+TRAILS.append(np.vstack([ESC_LINE, lead]))
+log(f'  escarpment road {len(ESC_LINE) * 2} m, pass {len(PASSD) * 2} m')
 # down the canyon's south wall (the plain → the floor by the lagoon)
 carve_ramp([(-150, 790), (150, 760), (400, 660), (330, 520), (180, 470), (60, 400), (30, 310)], None, None)
 # up the north wall to the plateau (the floor → the plain → the plateau)
@@ -329,7 +364,7 @@ def route(points, maxg=0.26):
     T = resample(chaikin(spline(K, 6.0) if len(K) > 2 else K, 2), 2.0)
     return T if len(T) > 8 else None
 for pts in [
-    [(-150, 1420), (-60, 1100), (-150, 790)],                                            # the plain, to the canyon's rim
+    [(O_ESC[0] - 40, O_ESC[1]), (-60, 1100), (-150, 790)],                               # the plain, to the canyon's rim
     [(-1520, 130), (-1100, 120), (-760, 230), (-420, 30)],                               # the floor: the falls ← the north ramp
     [(-420, 30), (-150, 340), (30, 310), (560, 320), (840, 250)],                        # … the lagoon, the south ramp, the gorge's mouth
     [(-760, -600), (-1000, -800), (-1350, -1200), (-900, -1500), (-500, -1250), (-760, -600)],   # the spire field
@@ -361,7 +396,15 @@ for ti, T in enumerate(TRAILS):
     w = (1 - smoothstep(TRAIL_HW + 0.5, TRAIL_HW + 9, D)) * np.interp(S, ss, (~span).astype(float))
     H = H + (np.interp(S, ss, sm) - H) * w
 
-# the gorge's plank BRIDGE: from rim to rim along the bridge road (its ends where the ground under it is high)
+# THE ARCH's deck (desert_rocks.py models it; its deck is a collider of structures.json): the road over the slot is
+# levelled to one height for 30 m on each side of the gap, so the rock bridge meets it flush
+ARCH_Y = round(float(np.median(bilinear(H, HALF, np.array([ARCH['x'] - 60, ARCH['x'] - 45, ARCH['x'] + 45, ARCH['x'] + 60.0]), np.full(4, ARCH['z'])))), 2)
+au = np.abs(X - ARCH['x']); av = np.abs(Z - ARCH['z'])
+lev = (1 - smoothstep(TRAIL_HW + 2, TRAIL_HW + 10, av)) * smoothstep(28, 34, au) * (1 - smoothstep(64, 90, au))
+H = H + (ARCH_Y - H) * lev
+log(f'  the arch: deck {ARCH_Y} m')
+# the gorge's ROPE BRIDGE (Bridges.ts draws it): from rim to rim along the bridge road (its ends where the ground under
+# it is high), hanging 3.5 m at its middle
 BRIDGES = []
 TB = TRAILS[-1]
 gb = bilinear(H, HALF, TB[:, 0], TB[:, 1])
@@ -371,7 +414,16 @@ if len(low):
     a, b = TB[max(0, low[0] - 2)], TB[min(len(TB) - 1, low[-1] + 2)]
     ya, yb = ground_at(*a), ground_at(*b)
     BRIDGES.append({'x0': round(float(a[0]), 1), 'z0': round(float(a[1]), 1), 'x1': round(float(b[0]), 1), 'z1': round(float(b[1]), 1),
-                    'y': round(max(ya, yb), 2), 'y0': round(ya, 2), 'y1': round(yb, 2), 'w': 4.2})
+                    'y': round(max(ya, yb), 2), 'y0': round(ya, 2), 'y1': round(yb, 2), 'w': 4.2, 'kind': 'rope', 'sag': 3.5})
+# (under a rope bridge the ground is notched to below its sagging deck: the rim's lips stood up through the planks)
+for br in BRIDGES:
+    if br.get('kind') != 'rope': continue
+    bx, bz = br['x1'] - br['x0'], br['z1'] - br['z0']; bl2 = bx * bx + bz * bz
+    t = np.clip(((X - br['x0']) * bx + (Z - br['z0']) * bz) / bl2, 0, 1)
+    dx = np.abs((X - br['x0']) * bz - (Z - br['z0']) * bx) / math.sqrt(bl2)
+    deck = br['y0'] + (br['y1'] - br['y0']) * t - br['sag'] * 4 * t * (1 - t)
+    allowed = deck - 1.2 - 2.0 * np.maximum(dx - br['w'] / 2 - 1, 0)
+    H = np.where((dx < br['w'] / 2 + 6) & (t > 0.01) & (t < 0.99), np.minimum(H, allowed), H)
 log(f'  {len(TRAILS)} roads, bridges {BRIDGES}')
 
 # ---------------------------------------------------------------------------------------------------------- masks
@@ -389,6 +441,9 @@ patch = fbm(X4 / 90, Z4 / 90, SEED + 50, 3)
 patch = fbm(X4 / 260, Z4 / 260, SEED + 50, 3)
 rock = np.clip(smoothstep(0.38, 0.65, sl) + WALL[::2, ::2] + smoothstep(0.2, 0.4, patch) * UPN[::2, ::2] * 0.6, 0, 1)
 rock = rock * (1 - smoothstep(TRAIL_HW + 10, TRAIL_HW + 3, Dt4)) * (1 - near_water * 0.8) * (1 - smoothstep(0.05, 0.3, ERG4))
+# (the escarpment road's risers are rock right down to its shelves)
+DE4 = polyline_field(X4, Z4, np.vstack([ESC_LINE, PASSD]), 40)[0]
+rock = np.where(DE4 < 40, np.maximum(rock, smoothstep(0.5, 0.9, sl) * smoothstep(ESC.SH + 0.5, ESC.SH + 2.5, DE4)), rock)
 # G LOOSE SAND: the dunes, the plain, drifts against the walls' feet; compact on the roads and the slickrock
 sand = np.clip(0.55 + 0.45 * ERG4 + 0.25 * fbm(X4 / 300, Z4 / 300, SEED + 51, 2) - 0.6 * rock, 0, 1)
 # B WET: open water (1), the damp banks and the oasis's soil
@@ -449,11 +504,19 @@ meta = {
     'gate': GATE,
     'bridges': BRIDGES,
     'landmarks': LANDMARKS,
-    'trails': {'hw': TRAIL_HW, 'lines': [[[round(float(a), 1), round(float(b), 1)] for a, b in T[::4]] for T in TRAILS], 'rough': []},
+    # (every 8 m; the pass and the escarpment road every 4 m — their hairpins)
+    'trails': {'hw': TRAIL_HW, 'lines': [[[round(float(a), 1), round(float(b), 1)] for a, b in T[::(2 if ti < 2 else 4)]] for ti, T in enumerate(TRAILS)], 'rough': []},
 }
 with open(os.path.join(OUT, 'meta.json'), 'w') as f: json.dump(meta, f)
 os.makedirs(CACHE, exist_ok=True)
+# (the slabs' skins — desert_rocks.py — on the escarpment road's tall risers too, never within 10 m of it: a skin's
+#  lip leans back over the bench above)
+DEs = polyline_field(X, Z, np.vstack([ESC_LINE, PASSD]), 60)[0]
+gzE, gxE = np.gradient(H, CELL)
+WALL = np.where(DEs < 60, smoothstep(0.45, 0.9, blur(np.hypot(gxE, gzE), 2)) * smoothstep(10, 12, DEs), WALL)
 np.savez_compressed(os.path.join(CACHE, 'desert.npz'), H=H.astype(np.float32), WALL=WALL.astype(np.float32), PHASE=PHASE.astype(np.float32), Dr=Dr.astype(np.float32),
+                    arch=np.array([ARCH['x'], ARCH['z'], ARCH_Y], np.float32), aqueduct=np.array([AQUEDUCT['x0'], AQUEDUCT['z0'], AQUEDUCT['x1'], AQUEDUCT['z1']], np.float32),
+                    ksar=np.array([KSAR['x'], KSAR['z']], np.float32), river=RIVER.astype(np.float32), lagoon=np.array([LAGOON['cx'], LAGOON['cz'], LAGOON['rx'], LAGOON['rz'], LAGOON['rot']], np.float32),
                     Dt=Dt.astype(np.float32), spires=np.array(SPIRES, np.float32), mesas=np.array(MESAS, np.float32))
 log(f'wrote {OUT}: box {in_min:.1f}..{in_min + in_range:.1f} m, world {far_min:.1f}..{far_min + far_range:.1f} m')
 log(f'  rock {rock.mean():.2f}  sand {sand.mean():.2f}  wet {wetb.mean():.3f}  growth {grow.mean():.3f}  spires {len(SPIRES)}  mesas {len(MESAS)}')

@@ -36,10 +36,12 @@ export class Bushes {
   private readonly reach: number
   drawn = [0, 0]
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, rocks: Rocks, leafTex: THREE.Texture) {
+  /** placed: the bushes already placed (placeBushes, a row a step — World.build); else placed here. */
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, rocks: Rocks, leafTex: THREE.Texture, placed?: Float32Array) {
     this.near = tier.bushNear
     this.reach = tier.bushReach
-    this.data = this.place(rocks)
+    if (!placed) { const out: number[] = []; for (const _ of placeBushes(map, rocks, out)); placed = new Float32Array(out) }
+    this.data = placed
     this.count = this.data.length / STRIDE
     for (let i = 0; i < this.count; i++) {
       const o = i * STRIDE, k = this.key(Math.floor(this.data[o] / TILE), Math.floor(this.data[o + 2] / TILE))
@@ -77,40 +79,6 @@ export class Bushes {
   }
 
   private key(i: number, j: number): number { return (i + 512) * 1024 + (j + 512) }
-
-  private place(rocks: Rocks): Float32Array {
-    const map = this.map, out: number[] = []
-    const G = 9, half = map.half - 50
-    let s = 0x1b873593
-    const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
-    const mk: [number, number, number, number] = [0, 0, 0, 0]
-    const hw = map.meta.trails.hw, fp = rocks.footprint.image.data as Uint8Array, g = map.inner
-    for (let gz = -half; gz < half; gz += G) {
-      for (let gx = -half; gx < half; gx += G) {
-        const x = gx + rnd() * G, z = gz + rnd() * G
-        map.maskAt(x, z, mk)
-        if (mk[2] > 0.8 || mk[0] > 0.4) continue
-        const edge = Math.max(0, 1 - Math.abs(mk[3] - 0.3) / 0.25) // the forest's edge
-        const green = 1 - Math.min(1, mk[1] / 0.6)
-        // (+ thick along the river banks, lining the tracks and round the spawn — the user: "bushes near the river, near
-        //  the trees")
-        const td = map.trackDist(x, z), rd = map.riverDist(x, z), sd = Math.hypot(x - map.meta.spawn.x, z - map.meta.spawn.z)
-        // (the DESERT — Over the Hill's, not the valley's, the user: round light yellow-green bushes thick along the
-        //  oasis and in its growth, a few scattered over the open sand, none on the dunes' loose crests)
-        const p = map.desert ? 0.03 + 0.4 * Math.min(1, mk[3] / 0.4) + (rd > 9 && rd < 70 ? 0.3 : 0) + (td > hw + 1.5 && td < 10 ? 0.06 : 0) - 0.025 * Math.max(0, mk[1] - 0.8) / 0.2
-          : 0.05 + 0.18 * green + 0.3 * edge + 0.12 * Math.min(1, mk[2] / 0.6) - 0.15 * Math.max(0, mk[3] - 0.6)
-          + (rd > 11 && rd < 34 ? 0.45 : 0) + (td > hw + 1.5 && td < 12 ? 0.3 : 0) + (sd > 12 && sd < 150 ? 0.25 : 0)
-        if (rnd() > p) continue
-        if (map.trailDist(x, z) < hw + 1.2) continue
-        const gi = Math.round((x - g.origin) / g.step), gj = Math.round((z - g.origin) / g.step)
-        if (fp[gj * g.n + gi] > 60) continue
-        const size = map.desert ? 0.9 + 1.3 * Math.pow(rnd(), 1.4) : 0.7 + 1.4 * Math.pow(rnd(), 1.6)
-        const r = rnd(), kind = map.desert ? 0 : r < 0.06 ? 2 : r < 0.3 ? 1 : 0
-        out.push(x, map.height(x, z) - 0.12 * size, z, size, rnd() * Math.PI * 2, kind, rnd())
-      }
-    }
-    return new Float32Array(out)
-  }
 
   /** Terrain occlusion (main.ts sets it): tiles behind the hills are skipped. */
   horizon: Horizon | null = null
@@ -282,3 +250,37 @@ void main() {
   #include <colorspace_fragment>
 }
 `
+
+/** Where the bushes stand, into `out` (STRIDE numbers a bush): a row of the grid at a time — it YIELDS after each (a
+ *  world built behind another spreads it over frames: World.build). */
+export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generator<void, void, void> {
+  const G = 9, half = map.half - 50
+  let s = 0x1b873593
+  const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+  const mk: [number, number, number, number] = [0, 0, 0, 0]
+  const hw = map.meta.trails.hw, fp = rocks.footprint.image.data as Uint8Array, g = map.inner
+  for (let gz = -half; gz < half; gz += G, yield) {
+    for (let gx = -half; gx < half; gx += G) {
+      const x = gx + rnd() * G, z = gz + rnd() * G
+      map.maskAt(x, z, mk)
+      if (mk[2] > 0.8 || mk[0] > 0.4) continue
+      const edge = Math.max(0, 1 - Math.abs(mk[3] - 0.3) / 0.25) // the forest's edge
+      const green = 1 - Math.min(1, mk[1] / 0.6)
+      // (+ thick along the river banks, lining the tracks and round the spawn — the user: "bushes near the river, near
+      //  the trees")
+      const td = map.trackDist(x, z), rd = map.riverDist(x, z), sd = Math.hypot(x - map.meta.spawn.x, z - map.meta.spawn.z)
+      // (the DESERT — Over the Hill's, not the valley's, the user: round light yellow-green bushes thick along the
+      //  oasis and in its growth, a few scattered over the open sand, none on the dunes' loose crests)
+      const p = map.desert ? 0.03 + 0.4 * Math.min(1, mk[3] / 0.4) + (rd > 9 && rd < 70 ? 0.3 : 0) + (td > hw + 1.5 && td < 10 ? 0.06 : 0) - 0.025 * Math.max(0, mk[1] - 0.8) / 0.2
+        : 0.05 + 0.18 * green + 0.3 * edge + 0.12 * Math.min(1, mk[2] / 0.6) - 0.15 * Math.max(0, mk[3] - 0.6)
+        + (rd > 11 && rd < 34 ? 0.45 : 0) + (td > hw + 1.5 && td < 12 ? 0.3 : 0) + (sd > 12 && sd < 150 ? 0.25 : 0)
+      if (rnd() > p) continue
+      if (map.trailDist(x, z) < hw + 1.2) continue
+      const gi = Math.round((x - g.origin) / g.step), gj = Math.round((z - g.origin) / g.step)
+      if (fp[gj * g.n + gi] > 60) continue
+      const size = map.desert ? 0.9 + 1.3 * Math.pow(rnd(), 1.4) : 0.7 + 1.4 * Math.pow(rnd(), 1.6)
+      const r = rnd(), kind = map.desert ? 0 : r < 0.06 ? 2 : r < 0.3 ? 1 : 0
+      out.push(x, map.height(x, z) - 0.12 * size, z, size, rnd() * Math.PI * 2, kind, rnd())
+    }
+  }
+}

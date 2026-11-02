@@ -80,11 +80,20 @@ export class Atmosphere {
     uWind: { value: new THREE.Vector2(2.2, 0.9) },
     /** 1 without the post pass (Glow.ts): the sky paints the bloom's halo round the sun, the haze glows toward it. */
     uGlow: { value: 0 },
+    /** THE CROSSING's MIST (Crossing.ts): 0 clear … 1 inside the cloud (~10 m to see) — a fog round the camera on top
+     *  of the haze, the sky gone to it; its colour the horizon's brightness as a grey-white (dark at night). */
+    uMist: { value: 0 },
+    uMistColor: { value: new THREE.Color() },
+    /** The desert's SANDSTORM (`weather`): 0 … 1, and the dust's colour (the sand lit by what light gets through). */
+    uDust: { value: 0 },
+    uDustColor: { value: new THREE.Color() },
   }
   /** WEATHER (2026-10-27, OTH has it): spells of CLEAR, CLOUDY and RAIN a few real minutes each, easing into one another
    *  (the clouds over a minute, the rain over ~25 s once the sky is heavy); the land gets wet in the rain over ~40 s and
-   *  dries over ~3 min. `?weather=clear|cloudy|rain` pins it, K steps through them. */
-  weather: 'auto' | 'clear' | 'cloudy' | 'rain' = 'auto'
+   *  dries over ~3 min. In the DESERT the third is a SANDSTORM (2026-11-02, the user: "we will have a sand storm at
+   *  some time, use a filter for that"): the dust blows up over ~20 s and settles over ~30. `?weather=clear|cloudy|
+   *  rain|sandstorm` pins it, K / Shift+G step through them. */
+  weather: 'auto' | 'clear' | 'cloudy' | 'rain' | 'sandstorm' = 'auto'
   private spell: 'clear' | 'cloudy' | 'rain' = 'clear'
   private spellLeft = 240
   private wseed = (Date.now() & 0xffff) | 1
@@ -116,11 +125,15 @@ export class Atmosphere {
       this.spell = kind = r < 0.45 ? 'clear' : r < 0.75 ? 'cloudy' : 'rain'
       this.spellLeft = 180 + ((this.wseed >>> 4) % 240)
     }
-    const cloudT = kind === 'rain' ? 0.95 : kind === 'cloudy' ? 0.62 : 0.22
+    // (each world's own wet spell: rain in the valley, a sandstorm in the desert — never rain on the sand)
+    if (this.desert && kind === 'rain') kind = 'sandstorm'
+    if (!this.desert && kind === 'sandstorm') kind = 'rain'
+    const cloudT = kind === 'rain' ? 0.95 : kind === 'cloudy' ? 0.62 : kind === 'sandstorm' ? 0.3 : 0.22
     const rainT = kind === 'rain' && u.uCloud.value > 0.75 ? 1 : 0
     const ease = (v: number, t: number, rate: number) => (v < t ? Math.min(t, v + dt * rate) : Math.max(t, v - dt * rate))
     u.uCloud.value = ease(u.uCloud.value, cloudT, 1 / 60)
     u.uRain.value = ease(u.uRain.value, rainT, 1 / 25)
+    u.uDust.value = ease(u.uDust.value, kind === 'sandstorm' ? 1 : 0, kind === 'sandstorm' ? 1 / 20 : 1 / 30)
     u.uWet.value = ease(u.uWet.value, u.uRain.value > 0.3 ? 1 : 0, u.uRain.value > 0.3 ? 1 / 40 : 1 / 180)
   }
 
@@ -137,10 +150,11 @@ export class Atmosphere {
     for (let i = 0; i < 400; i++) this.tickWeather(1)
   }
 
-  /** K: clear → cloudy → rain → auto. */
+  /** K: clear → cloudy → rain (the desert: a sandstorm) → auto. */
   stepWeather(): string {
-    const order = ['auto', 'clear', 'cloudy', 'rain'] as const
-    this.weather = order[(order.indexOf(this.weather) + 1) % order.length]
+    const order = ['auto', 'clear', 'cloudy', this.desert ? 'sandstorm' : 'rain'] as const
+    const i = order.indexOf(this.weather as (typeof order)[number])
+    this.weather = order[(i + 1) % order.length]
     return this.weather
   }
 
@@ -154,11 +168,19 @@ export class Atmosphere {
    *  (2026-11-02): a pale cyan-white sky by day (their ≈ sRGB 229 244 251), a warm cream horizon, sand-coloured haze,
    *  clearer air; hot pink sunsets, a purple night; the sand's warm bounce light. */
   desert = false
+  /** How far the air has gone to the desert's grade (0 … 1): it follows `desert` over a few seconds, so a crossing's
+   *  swap (in the mist) never snaps the sky's colours. */
+  private dk = -1
+  private lastT = 0
 
   update(cam: THREE.Vector3, t: number): void {
     const u = this.uniforms
     u.uCamPos.value.copy(cam)
     u.uTime.value = t
+    const dt = Math.min(Math.max(t - this.lastT, 0), 0.1)
+    this.lastT = t
+    this.dk = this.dk < 0 ? (this.desert ? 1 : 0) : this.dk + THREE.MathUtils.clamp((this.desert ? 1 : 0) - this.dk, -dt / 4, dt / 4)
+    const dk = this.dk
     // the sun's path: east at 6, south (+z) at noon, west at 18, under the ground at night; 62° at its highest
     const az = ((this.hour - 6) / 12) * Math.PI
     const el = Math.sin(az) * THREE.MathUtils.degToRad(62)
@@ -170,23 +192,37 @@ export class Atmosphere {
     const f = THREE.MathUtils.clamp((s - a.s) / (b.s - a.s), 0, 1)
     // (under a heavy sky the sun dims and the sky goes a soft grey, its brightness kept)
     const overcast = THREE.MathUtils.smoothstep(u.uCloud.value, 0.45, 1.0)
-    const sunI = (a.sunI + (b.sunI - a.sunI) * f) * (1 - 0.72 * overcast)
+    // (in a sandstorm the sun is a pale disc through the dust)
+    const dust = u.uDust.value
+    const sunI = (a.sunI + (b.sunI - a.sunI) * f) * (1 - 0.72 * overcast) * (1 - 0.68 * dust)
     u.uSkyZenith.value.copy(a.zen).lerp(b.zen, f)
     u.uSkyHorizon.value.copy(a.hor).lerp(b.hor, f)
     u.uSunGlow.value.copy(a.glow).lerp(b.glow, f).multiplyScalar(1 - 0.8 * overcast)
-    if (this.desert) {
-      const day = THREE.MathUtils.smoothstep(s, 0.12, 0.35), low = THREE.MathUtils.smoothstep(s, -0.04, 0.06) * (1 - day)
+    if (dk > 0) {
+      const day = THREE.MathUtils.smoothstep(s, 0.12, 0.35) * dk, low = THREE.MathUtils.smoothstep(s, -0.04, 0.06) * (1 - day) * dk
       const zl = 0.2126 * u.uSkyZenith.value.r + 0.7152 * u.uSkyZenith.value.g + 0.0722 * u.uSkyZenith.value.b
       const hl = 0.2126 * u.uSkyHorizon.value.r + 0.7152 * u.uSkyHorizon.value.g + 0.0722 * u.uSkyHorizon.value.b
-      u.uSkyZenith.value.lerp(u.uSkyHorizon.value, 0.45 * day).lerp(D_CYAN.clone().multiplyScalar(zl * 1.05), 0.35 * day)
-      u.uSkyHorizon.value.lerp(D_CREAM.clone().multiplyScalar(hl * 1.04), 0.45 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.1), 0.45 * low)
-      u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 1.3), 0.55 * (1 - THREE.MathUtils.smoothstep(s, -0.25, 0.0)))
+      // (2026-11-02, frame stats vs theirs: our sky a warm grey 216 209 209, theirs a pale cyan-white 229 244 251 —
+      //  the zenith further to cyan, the horizon a cool white, not cream)
+      u.uSkyZenith.value.lerp(u.uSkyHorizon.value, 0.45 * day).lerp(D_CYAN.clone().multiplyScalar(zl * 1.08), 0.6 * day)
+      u.uSkyHorizon.value.lerp(D_CREAM.clone().multiplyScalar(hl * 1.14), 0.78 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.1), 0.45 * low)
+      u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 1.3), 0.55 * dk * (1 - THREE.MathUtils.smoothstep(s, -0.25, 0.0)))
     }
     for (const c of [u.uSkyZenith.value, u.uSkyHorizon.value]) {
       const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
       c.lerp(new THREE.Color(l * 0.95, l, l * 1.04), 0.75 * overcast)
     }
-    u.uFogRange.value.y = this.hazeLen * (this.desert ? 1.7 : 1) * (1 - 0.45 * u.uRain.value)
+    // THE DUST: the sand's own warm orange, as bright as the horizon is (darker overhead, dim at night) — the sky goes
+    // to it; the haze, the light and the bounce follow below
+    const hlum = 0.2126 * u.uSkyHorizon.value.r + 0.7152 * u.uSkyHorizon.value.g + 0.0722 * u.uSkyHorizon.value.b
+    u.uDustColor.value.copy(DUST).multiplyScalar(hlum * 0.82)
+    if (dust > 0) {
+      u.uSkyHorizon.value.lerp(u.uDustColor.value, 0.85 * dust)
+      u.uSkyZenith.value.lerp(DUST.clone().multiplyScalar(hlum * 0.6), 0.75 * dust)
+      u.uSunGlow.value.multiplyScalar(1 - 0.5 * dust)
+    }
+    // (the desert's air clearer still: its aerial views were pale and washed out — frame 221 196 170 vs their 213 175 158)
+    u.uFogRange.value.y = this.hazeLen * (1 + 1.3 * dk) * (1 - 0.45 * u.uRain.value)
     const amb = a.amb + (b.amb - a.amb) * f
     const night = THREE.MathUtils.smoothstep(-s, 0.06, 0.2)
     u.uNight.value = night
@@ -204,7 +240,7 @@ export class Atmosphere {
     // sky fill: the sky's average (bluer than its horizon); ground bounce: warm by day, cool and dim by night
     u.uAmbSky.value.copy(u.uSkyZenith.value).lerp(u.uSkyHorizon.value, 0.4).multiplyScalar(0.62 * amb)
     u.uAmbSky.value.lerp(MOON.clone().multiplyScalar(0.07), night * 0.8)
-    u.uAmbGround.value.setRGB(this.desert ? 0.6 : 0.42, this.desert ? 0.4 : 0.34, this.desert ? 0.25 : 0.22).multiplyScalar((0.55 * amb + 0.12 * sunI) * (this.desert ? 1.2 : 1)).lerp(MOON.clone().multiplyScalar(0.025), night)
+    u.uAmbGround.value.setRGB(0.42 + 0.18 * dk, 0.34 + 0.06 * dk, 0.22 + 0.03 * dk).multiplyScalar((0.55 * amb + 0.12 * sunI) * (1 + 0.2 * dk)).lerp(MOON.clone().multiplyScalar(0.025), night)
     // the LIGHT ON THE LAND keeps every colour true at every hour (the user: "when the time changes to evening, night,
     // morning, the terrain, grass and trees all change colour with it"): the sun's, the sky's and the bounce's light
     // lose most of their tint — a warm / cool hint is left, the brightness still follows the day; the SKY itself (its
@@ -220,16 +256,20 @@ export class Atmosphere {
     // the HAZE's colour: the horizon leaning to the zenith, much of its tint kept — far ridges go blue-grey in layers
     keepTint(u.uFogColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.42), 0.75)
     // (the desert's haze: the sand's own warm colour in it)
-    if (this.desert) { const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b; u.uFogColor.value.lerp(D_SANDHAZE.clone().multiplyScalar(fl), 0.4) }
+    if (dk > 0) { const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b; u.uFogColor.value.lerp(D_SANDHAZE.clone().multiplyScalar(fl), 0.12 * dk).lerp(u.uSkyHorizon.value, 0.45 * dk * THREE.MathUtils.smoothstep(s, 0.12, 0.35)) } // (by day the far land melts into a pale cyan-white, as theirs does)
+    // the MIST's colour: the horizon's brightness as a cool grey-white (dark at night, rosy-grey at dusk)
+    keepTint(u.uMistColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.2), 0.18).multiplyScalar(0.92)
   }
 }
 
 /** The desert's grade (Atmosphere.desert): colours of unit luminance-ish, scaled to the keyframe's brightness. */
-const D_CYAN = new THREE.Color(0.86, 1.0, 1.08)
-const D_CREAM = new THREE.Color(1.08, 1.0, 0.9)
+const D_CYAN = new THREE.Color(0.8, 1.0, 1.12)
+const D_CREAM = new THREE.Color(0.94, 1.0, 1.04) // (a cool white now: their horizon is pale cyan, never cream)
 const D_PINK = new THREE.Color(1.5, 0.62, 0.78)
 const D_PURPLE = new THREE.Color(0.75, 0.42, 1.1)
 const D_SANDHAZE = new THREE.Color(1.12, 0.96, 0.82)
+/** The sandstorm's dust (unit-ish luminance): Over the Hill's orange-brown haze. */
+const DUST = new THREE.Color(1.42, 0.86, 0.5)
 
 /** First line of every world fragment shader (GLSL3: three's tone-map / colour-space chunks write gl_FragColor). */
 export const FRAG_OUT = /* glsl */ `
@@ -265,6 +305,16 @@ uniform float uRain;
 uniform float uWet;
 uniform vec2 uWind;
 uniform float uGlow;
+uniform float uMist;
+uniform vec3 uMistColor;
+uniform float uDust;
+uniform vec3 uDustColor;
+// (the player's own car takes less of the mist — MIST_K 0.45, Vehicle.ts: it stays readable a few metres off)
+#ifndef MIST_K
+#define MIST_K 1.0
+#endif
+// how far the sky and the haze have gone to the mist (0 … 1)
+float mistK() { return smoothstep(0.05, 0.55, uMist); }
 
 // HEADLIGHTS, PAINTED (the user, 2026-10-27: "the light comes from the centre of the front, not the headlamps — use a
 // light like paint, not an actual light"): from EACH lamp a beam whose footprint is an ellipse in angle space (wide,
@@ -323,6 +373,11 @@ vec3 skyColor(vec3 d) {
   c += uSunGlow * (0.3 * pow(s, 4.0) + 0.6 * pow(s, 24.0)) * (0.6 + 0.4 * (1.0 - up));
   // (the lower sky is the fog: the fogged land melts into it, no horizon line)
   c = mix(c, uFogColor + uSunGlow * (0.18 * pow(s, 6.0)) * (1.0 - uNight), 1.0 - smoothstep(-0.02, 0.2, y));
+  // (in the crossing's cloud the sky is the mist, a touch brighter overhead where the sun comes through)
+  // (a sandstorm: the sky is the blowing dust, a little brighter toward the sun)
+  if (uDust > 0.001) c = mix(c, uDustColor * (1.0 + 0.25 * pow(s, 4.0)), smoothstep(0.05, 0.7, uDust) * 0.92);
+  // (no brighter overhead once it's thick: the far ridges, fogged to the mist's own colour, must not show against it)
+  if (uMist > 0.001) c = mix(c, uMistColor * (1.0 + 0.12 * up * (1.0 - uMist)) + uSunGlow * 0.05 * pow(s, 3.0) * (1.0 - uNight), mistK());
   return c;
 }
 
@@ -334,13 +389,21 @@ vec3 skyColor(vec3 d) {
 vec3 fogColor(vec3 d) {
   float s = max(dot(d, uSunDir), 0.0);
   // (without the post pass the bloom's spread over the hazy ridges toward the sun is painted here: wider, warmer)
-  return uFogColor + uSunGlow * (0.18 * pow(s, 6.0) + uGlow * (0.22 * pow(s, 3.0) + 0.35 * pow(s, 24.0))) * (1.0 - uNight);
+  vec3 c = uFogColor + uSunGlow * (0.18 * pow(s, 6.0) + uGlow * (0.22 * pow(s, 3.0) + 0.35 * pow(s, 24.0))) * (1.0 - uNight);
+  if (uDust > 0.001) c = mix(c, uDustColor * (1.0 + 0.25 * pow(s, 4.0)), smoothstep(0.05, 0.6, uDust));
+  return uMist > 0.001 ? mix(c, uMistColor + uSunGlow * 0.05 * pow(s, 3.0) * (1.0 - uNight), mistK()) : c;
 }
 float fogAmount(vec3 wpos) {
   float d = max(length(wpos - uCamPos) - uFogRange.x, 0.0);
   float a = 1.0 - exp(-d / uFogRange.y);
   float low = exp(-max(wpos.y - 30.0, 0.0) / 380.0);
-  return min(a * (0.86 + 0.14 * low), 0.94);
+  float f = min(a * (0.86 + 0.14 * low), 0.94);
+  // THE CROSSING'S MIST: a fog round the camera itself (no clear air) — at 1 the land 85 % gone 10 m off, ~15 m to
+  // see; ~100 m at 0.55, ~600 m at 0.3 — whichever is thicker
+  if (uMist > 0.001) f = max(f, 1.0 - exp(-length(wpos - uCamPos) * 0.19 * MIST_K * uMist * uMist * uMist));
+  // THE SANDSTORM: the dust round the camera — ~110 m to see at its height (never quite solid: shapes in it)
+  if (uDust > 0.001) f = max(f, (1.0 - exp(-length(wpos - uCamPos) * 0.028 * MIST_K * uDust * uDust)) * 0.97);
+  return f;
 }
 vec3 applyAtmos(vec3 col, vec3 wpos) {
   return mix(col, fogColor(normalize(wpos - uCamPos)), fogAmount(wpos));

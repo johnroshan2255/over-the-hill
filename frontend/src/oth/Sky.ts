@@ -75,6 +75,14 @@ export class Sky {
             float tw = 0.7 + 0.3 * sin(uTime * (2.0 + h * 5.0) + h * 40.0);
             c += vec3(0.9, 0.93, 1.0) * star * tw * uNight * smoothstep(0.02, 0.25, d.y) * (0.6 + 2.0 * fract(h * 97.0)) * (1.0 - cl);
           }
+          // (in the crossing's mist the sun, the clouds and the stars are gone: the sky is the cloud you're in — skyColor)
+          if (uMist > 0.001) { float mk = mistK(); c = mix(c, skyColor(d), mk); cl = mix(cl, 1.0, mk); }
+          // (a sandstorm: the clouds and stars gone in the dust, the sun a pale disc through it)
+          if (uDust > 0.001) {
+            float dk = smoothstep(0.05, 0.7, uDust) * 0.92;
+            c = mix(c, skyColor(d), dk) + uSunDisc * 0.6 * smoothstep(0.9992, 0.9996, s) * dk * (1.0 - uNight);
+            cl = mix(cl, 1.0, dk);
+          }
           // alpha 0 marks the SKY for the god rays (Post): everything else writes 1 — a cloud mostly (rays through gaps)
           // (a hair of dither: the post pass did it — without it the sky's long gradients band in 8 bits)
           c += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * (1.5 / 255.0) * uGlow;

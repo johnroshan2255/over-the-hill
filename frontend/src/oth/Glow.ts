@@ -20,6 +20,10 @@ import type { MapData } from './MapData'
  */
 const SHAFTS = 28
 
+/** The page's vignette, shared by the worlds alive (counted). */
+let vignette: HTMLDivElement | null = null
+let vignettes = 0
+
 export class Glow {
   readonly group = new THREE.Group()
   private readonly glare: THREE.Mesh
@@ -38,7 +42,7 @@ export class Glow {
   private overlay: HTMLDivElement | null = null
 
   /** Off the page (another world: World.dispose — the geometry and materials go with the world's group). */
-  dispose(): void { this.overlay?.remove() }
+  dispose(): void { if (this.overlay && --vignettes === 0) this.overlay.remove() }
 
   constructor(private readonly map: MapData, private readonly atmos: Atmosphere) {
     const u = atmos.uniforms
@@ -148,16 +152,18 @@ export class Glow {
     //  in WebGL it was a full-screen blend over every MSAA sample: 0.11 ms at 1080p. The WebGL one stays for ?vignette=gl)
     if (new URLSearchParams(location.search).get('vignette') === 'gl') this.group.add(this.vignette)
     else {
-      const v = (this.overlay = document.createElement('div'))
+      // (one on the page however many worlds are built: the next is built while this one plays — Crossing.ts)
+      const v = (this.overlay = vignette ??= document.createElement('div'))
       v.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse 85% 100% at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.16) 100%)'
-      document.body.appendChild(v)
+      if (vignettes++ === 0) document.body.appendChild(v)
     }
   }
 
   update(camera: THREE.PerspectiveCamera, dt: number): void {
     const u = this.atmos.uniforms, sun = u.uSunDir.value, night = u.uNight.value, cloud = u.uCloud.value
     const day = (1 - night) * THREE.MathUtils.smoothstep(sun.y, -0.03, 0.03)
-    const clear = 1 - THREE.MathUtils.smoothstep(cloud, 0.45, 0.9)
+    // (the crossing's mist hides the sun as a heavy sky does)
+    const clear = (1 - THREE.MathUtils.smoothstep(cloud, 0.45, 0.9)) * (1 - THREE.MathUtils.smoothstep(u.uMist.value, 0.05, 0.55)) * (1 - THREE.MathUtils.smoothstep(u.uDust.value, 0.1, 0.6))
     // the sun above the terrain's horizon from here? (32 steps along its bearing, 8 m … 3 km)
     const c = camera.position, hl = Math.hypot(sun.x, sun.z) || 1, ux = sun.x / hl, uz = sun.z / hl, el = sun.y / hl
     let hor = -1

@@ -18,14 +18,22 @@ export interface Pond { cx: number; cz: number; rx: number; rz: number; rot: num
 /** A LANDMARK (scripts/oth/scenery.mjs, Landmarks.ts): a place to find — its kind, name, pad centre / height, the way
  *  its front faces (rad: local +z turned by rot about +y) and its pad's radius (m). */
 export interface Landmark { id: number; kind: 'tower' | 'view' | 'cabin' | 'shack' | 'sawmill' | 'mine' | 'meteorite' | 'falls' | 'meadow' | 'camp' | 'oasis' | 'aqueduct' | 'arch' | 'spires' | 'gorge' | 'ksar' | 'dunes'; name: string; x: number; z: number; y: number; rot: number; r: number }
-export interface Bridge { x0: number; z0: number; x1: number; z1: number; y: number; y0: number; y1: number; w: number }
+/** A bridge: deck ends (x0, z0) → (x1, z1), the deck's top there y0 → y1, width w; a ROPE bridge (the desert's gorge)
+ *  hangs `sag` m below that line at its middle (a parabola). */
+export interface Bridge { x0: number; z0: number; x1: number; z1: number; y: number; y0: number; y1: number; w: number; kind?: 'rope'; sag?: number }
+/** The deck's top at t (0 … 1 along it). */
+export function deckY(b: Bridge, t: number): number {
+  const s = Math.min(1, Math.max(0, t))
+  return b.y0 + (b.y1 - b.y0) * s - (b.sag ?? 0) * 4 * s * (1 - s)
+}
 export interface MapMeta {
   id: string
   name: string
   /** 'desert' (the second world: its own palette, plants and weather — every world material's OTH_DESERT) */
   biome?: 'desert'
-  /** The CROSSING's pass road (World / Crossing.ts): where the cloud is thickest, the car heading `heading` (0 = −z). */
-  gate?: { x: number; z: number; y: number; heading: number }
+  /** The CROSSING's pass road (World / Crossing.ts): where the cloud is thickest, the way out of this world `heading`
+   *  (0 = −z); its MIST thickens from height y0 to y1 within r m of it. */
+  gate?: { x: number; z: number; y: number; heading: number; mist?: { y0: number; y1: number; r: number } }
   inner: Grid
   far: Grid
   mask: { n: number; step: number; origin: number }
@@ -233,7 +241,7 @@ export class MapData {
       const t = ((x - b.x0) * dx + (z - b.z0) * dz) / L2
       if (t < -0.02 || t > 1.02) continue
       const ox = x - b.x0 - t * dx, oz = z - b.z0 - t * dz
-      if (ox * ox + oz * oz <= (b.w * 0.5 + 0.3) ** 2) return b.y0 + (b.y1 - b.y0) * Math.min(1, Math.max(0, t))
+      if (ox * ox + oz * oz <= (b.w * 0.5 + 0.3) ** 2) return deckY(b, t)
     }
     return null
   }

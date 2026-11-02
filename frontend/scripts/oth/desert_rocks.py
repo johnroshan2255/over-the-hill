@@ -11,6 +11,8 @@
 # foot, a lip over the ledge — pinched in at a crack every 12–35 m. Smooth across the bulge, crisp at the lip.
 # The meshes go out per 256 m CELL (the game culls them by cell and distance — Formations.ts) as formations.glb, Draco
 # compressed. (They're skin: the terrain under them is the collider — they stand ≤ 1.3 m off it.)
+# And the STRUCTURES (2026-11-02): the natural arch, the aqueduct, the ksar, the gorge's blocks — their own meshes in the
+# same file, their colliders in structures.json.
 import sys, os, math, time
 import numpy as np
 import bpy, bmesh
@@ -168,6 +170,222 @@ for kb in range(lo, hi + 1):
         nb += 1
 log(f'  {nb} bands in {len(cells)} cells, {sum(c[2] for c in cells.values())} vertices')
 
+# ---------------------------------------------------------------------------------------------------------- structures
+# THE DESERT'S LANDMARKS in sandstone (NEXT.md 4; Over the Hill's Algeria): the natural ARCH the road crosses over the
+# slot, the Roman AQUEDUCT on the plain behind the lagoon, the KSAR (a ruined fortified village the road runs through),
+# the GORGE's huge fallen blocks. All of the one low-poly piece — a SLAB: a box whose top edges are chamfered (flat top,
+# rounded shoulders), its corners jittered — stacked, the formations' sandstone colouring them. Their colliders (boxes:
+# the arch's deck is ground, the rest walls) go to structures.json for the game's physics (Formations.ts).
+import json
+structs = {}
+colliders = []
+srng = np.random.default_rng(23)
+def store(name):
+    return structs.setdefault(name, [[], [], 0])
+def put(name, P, faces):
+    """Quads of the points P into mesh `name`, each turned to face away from P's middle (the game culls back faces)."""
+    ctr = P.mean(0)
+    out = []
+    for f in faces:
+        n = np.cross(P[f[1]] - P[f[0]], P[f[2]] - P[f[0]])
+        out.append(f if np.dot(n, P[list(f)].mean(0) - ctr) > 0 else f[::-1])
+    s = store(name)
+    s[0].append(P); s[1].append(np.array(out) + s[2]); s[2] += len(P)
+SLAB_FACES = [(0, 1, 2, 3)] + [(k, (k + 1) % 4, 4 + (k + 1) % 4, 4 + k) for k in range(4)] + \
+             [(4 + k, 4 + (k + 1) % 4, 8 + (k + 1) % 4, 8 + k) for k in range(4)] + [(8, 9, 10, 11)]
+def slab(name, c, a, hu, hh, hw, bev=0.6, jit=0.25, flat_top=False, top_drop=(0.0, 0.0)):
+    """A slab centred at c (x, y, z), turned a about +y (its u axis (cos a, 0, sin a)), half sizes hu (along), hh (up),
+    hw (across); bev: the chamfer of its top edges; jit: corner jitter; flat_top: its top exactly level (a deck);
+    top_drop: how far its top sinks at its −u / +u ends (tucked under the ground)."""
+    U = np.array([math.cos(a), 0.0, math.sin(a)]); W = np.array([-math.sin(a), 0.0, math.cos(a)]); Y = np.array([0.0, 1.0, 0.0])
+    c = np.array(c, float)
+    b = min(bev, hu * 0.45, hw * 0.45, hh * 0.9)
+    pts = []
+    for (ly, inset, bulge) in ((-hh, 0.0, 1.0), (hh - b, 0.0, 1.03), (hh, b, 1.0)):
+        for (su, sw) in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            p = c + U * su * (hu - inset) * bulge + W * sw * (hw - inset) * bulge + Y * ly
+            j = srng.uniform(-jit, jit, 3)
+            if flat_top and ly > -hh: j[1] = 0.0
+            if ly > -hh: p = p - Y * (top_drop[0] if su < 0 else top_drop[1])
+            pts.append(p + j)
+    put(name, np.array(pts), SLAB_FACES)
+def collide(c, a, hu, hh, hw, ground=False):
+    t = -a
+    colliders.append({'c': [round(float(v), 2) for v in c], 'h': [round(float(hu), 2), round(float(hh), 2), round(float(hw), 2)],
+                      'q': [0.0, round(math.sin(t / 2), 5), 0.0, round(math.cos(t / 2), 5)], 'ground': ground})
+def ground(x, z): return float(sample(H2[::2, ::2], np.array([x]), np.array([z]))[0])
+
+# THE ARCH: a rock bridge over the slot, its deck the road (desert.py levels the road's ends to it); its underside an
+# arch from the slot's walls, the body stacked beds ~3.3 m thick, each a little out of line with the next, wider lower
+ax_, az_, ay_ = (float(v) for v in D['arch'])
+floor_y = min(ground(ax_ + dx, az_) for dx in range(-12, 13, 2))
+A_SPAN, CROWN = 27.0, 9.5               # the opening's half span at the floor, the rock over the crown
+b_open = ay_ - CROWN - floor_y
+def open_half(y): return A_SPAN * math.sqrt(max(0.0, 1 - ((y - floor_y) / b_open) ** 2)) if y < floor_y + b_open else 0.0
+def wall_x(y, side):
+    """Where the slot's wall reaches height y (x), searched outward from the arch's middle on `side` (−1 west, 1 east)."""
+    for d in range(0, 70):
+        if ground(ax_ + side * d, az_) >= y: return ax_ + side * d
+    return ax_ + side * 70
+DECK_HALF = 40.0
+layers = []
+y = ay_
+while y > floor_y + 2: layers.append((y - 3.3, y)); y -= 3.3
+for li, (y0, y1) in enumerate(layers):
+    hh = (y1 - y0) / 2 * 1.02
+    ym = (y0 + y1) / 2
+    width = 10.0 + 0.16 * (ay_ - ym) + srng.uniform(-0.4, 0.4)
+    zc = az_ + srng.uniform(-0.5, 0.5) * (li > 0)
+    oh = open_half(ym)
+    if li == 0:
+        # the DECK: blocks along the span, their tops level with the road; the end ones tucked down under it
+        xs = np.linspace(ax_ - DECK_HALF - 6, ax_ + DECK_HALF + 6, 10)
+        for k in range(len(xs) - 1):
+            xa, xb = xs[k] + 0.08, xs[k + 1] - 0.08
+            drop = (0.4 if k == 0 else 0.0, 0.4 if k == len(xs) - 2 else 0.0)
+            slab('arch', ((xa + xb) / 2, y1 - hh, zc), 0.0, (xb - xa) / 2, hh, width / 2, bev=0.9, jit=0.18, flat_top=True, top_drop=drop)
+        # the LIPS along its edges (where the rails are)
+        for sd in (-1, 1):
+            x = ax_ - DECK_HALF + 4
+            while x < ax_ + DECK_HALF - 4:
+                L_ = srng.uniform(3.5, 6.5)
+                slab('arch', (x + L_ / 2, y1 + 0.35, zc + sd * (width / 2 - 0.7)), srng.uniform(-0.05, 0.05), L_ / 2 - 0.1, 0.45, 0.6, bev=0.3, jit=0.12)
+                x += L_ + srng.uniform(0.2, 1.4)
+        continue
+    pieces = [(ax_ - DECK_HALF - 4, ax_ + DECK_HALF + 4)] if oh <= 0 else [(min(wall_x(ym, -1) - 5, ax_ - oh - 1), ax_ - oh), (ax_ + oh, max(wall_x(ym, 1) + 5, ax_ + oh + 1))]
+    for (xa, xb) in pieces:
+        xa += srng.uniform(-0.6, 0.6); xb += srng.uniform(-0.6, 0.6)
+        if xb - xa < 2: continue
+        n = max(1, int((xb - xa) / srng.uniform(7, 11)))
+        cuts = np.linspace(xa, xb, n + 1)
+        for k in range(n):
+            slab('arch', ((cuts[k] + cuts[k + 1]) / 2, ym, zc), srng.uniform(-0.02, 0.02), (cuts[k + 1] - cuts[k]) / 2 - 0.1, hh, width / 2, bev=1.1, jit=0.3)
+deck_w = 10.0 - 2 * 1.3
+collide((ax_, ay_ - 1.0, az_), 0.0, DECK_HALF + 2, 1.0, deck_w / 2, ground=True)
+for sd in (-1, 1): collide((ax_, ay_ + 0.75, az_ + sd * (deck_w / 2 + 0.15)), 0.0, DECK_HALF, 0.75, 0.15)
+log(f'  the arch: {len(layers)} beds, the deck at {ay_:.1f} m over the slot floor {floor_y:.1f} m')
+
+# THE AQUEDUCT: piers every 12 m, a ring of voussoirs over each bay, the haunches filled, the channel's band and its two
+# parapets on top — level all along (the ground falls away under it); three bays fallen, their stones on the ground
+qx0, qz0, qx1, qz1 = (float(v) for v in D['aqueduct'])
+qa = math.atan2(qz1 - qz0, qx1 - qx0)
+QL = math.hypot(qx1 - qx0, qz1 - qz0)
+QU = np.array([math.cos(qa), 0.0, math.sin(qa)]); QW = np.array([-math.sin(qa), 0.0, math.cos(qa)])
+BAY, PIER_U, PIER_W = 12.0, 1.4, 1.9
+nb_ = int(QL / BAY)
+gs = [ground(qx0 + QU[0] * BAY * i, qz0 + QU[2] * BAY * i) for i in range(nb_ + 1)]
+TOP = max(gs) + 15.0
+RR = BAY / 2 - PIER_U                     # the arches' radius
+CROWN_Y = TOP - 3.2
+SPRING = CROWN_Y - RR
+fallen = set(int(v) for v in srng.choice(np.arange(3, nb_ - 3), 3, replace=False))
+def qp(s, y=0.0): return np.array([qx0 + QU[0] * s, y, qz0 + QU[2] * s])
+for i in range(nb_ + 1):
+    name = f'aqueduct_{i * 3 // (nb_ + 1)}'
+    s = BAY * i
+    g = gs[i] - 1.0
+    if i in fallen and (i - 1) in fallen: continue
+    # the pier: two courses, the upper set back a little
+    hm = (SPRING - g) / 2
+    slab(name, qp(s, g + hm / 2), qa, PIER_U, hm / 2 + 0.05, PIER_W + 0.15, bev=0.25, jit=0.12)
+    slab(name, qp(s, g + hm * 1.5), qa, PIER_U * 0.94, hm / 2 + 0.05, PIER_W, bev=0.25, jit=0.1)
+    collide(qp(s, (g + SPRING) / 2), qa, PIER_U, (SPRING - g) / 2, PIER_W)
+    if i == nb_ or i in fallen: continue
+    # the arch: 9 voussoirs round the semicircle to the next pier, the haunches filled, the band and parapets on top
+    sc = s + BAY / 2
+    for k in range(9):
+        t = (k + 0.5) / 9 * math.pi
+        P0 = qp(sc - math.cos(t) * (RR + 0.45), SPRING + math.sin(t) * (RR + 0.45))
+        U2 = QU * math.sin(t) + np.array([0.0, 1.0, 0.0]) * math.cos(t)
+        Y2 = np.cross(QW, U2); Y2 /= np.linalg.norm(Y2)
+        hl = (math.pi * (RR + 0.45) / 9) / 2 - 0.06
+        pts = [P0 + U2 * su * hl + QW * sw * PIER_W * 0.95 + Y2 * ly + srng.uniform(-0.05, 0.05, 3)
+               for ly in (-0.5, 0.5) for (su, sw) in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+        put(name, np.array(pts), [(0, 1, 2, 3), (4, 5, 6, 7)] + [(k2, (k2 + 1) % 4, 4 + (k2 + 1) % 4, 4 + k2) for k2 in range(4)])
+    for hs in (s + PIER_U + RR * 0.32, s + BAY - PIER_U - RR * 0.32):
+        y_lo = SPRING + RR * 0.55
+        slab(name, qp(hs, (y_lo + CROWN_Y + 0.4) / 2), qa, RR * 0.34, (CROWN_Y + 0.4 - y_lo) / 2, PIER_W * 0.97, bev=0.1, jit=0.06)
+    slab(name, qp(sc, CROWN_Y + 1.25), qa, BAY / 2 - 0.05, 1.3, PIER_W + 0.05, bev=0.15, jit=0.08)
+    for sd in (-1, 1):
+        slab(name, qp(sc, TOP - 0.3) + QW * sd * (PIER_W - 0.25), qa, BAY / 2 - 0.08, 0.5, 0.25, bev=0.1, jit=0.05)
+# the fallen bays' stones, tumbled on the ground under them
+for i in fallen:
+    for _ in range(9):
+        p = qp(BAY * (i + srng.uniform(0.1, 0.9))) + QW * srng.uniform(-5, 5)
+        g = ground(p[0], p[2])
+        hu, hh, hw = srng.uniform(0.6, 1.4), srng.uniform(0.4, 0.8), srng.uniform(0.5, 1.1)
+        slab('aqueduct_ruin', (p[0], g + hh * 0.6, p[2]), srng.uniform(0, math.pi), hu, hh, hw, bev=0.3, jit=0.15)
+log(f'  the aqueduct: {nb_} bays over {QL:.0f} m, its channel at {TOP:.1f} m, bays {sorted(fallen)} fallen')
+
+# THE KSAR: a walled village of mud-brick and sandstone, ruined — corner towers in two stages, the wall in blocks (some
+# fallen, the tops ragged), houses inside on lanes; the road runs through it (a gate wherever it crosses the wall)
+kx, kz = (float(v) for v in D['ksar'])
+road = None
+for L_ in json.load(open(os.path.join(OUT, 'meta.json')))['trails']['lines']:
+    A_ = np.array(L_, float)
+    if np.hypot(A_[:, 0] - kx, A_[:, 1] - kz).min() < 25: road = A_ if road is None else np.vstack([road, A_])
+def road_dist(x, z):
+    return 1e9 if road is None else float(np.min(np.hypot(road[:, 0] - x, road[:, 1] - z)))
+near = road[np.hypot(road[:, 0] - kx, road[:, 1] - kz) < 70] if road is not None else np.zeros((0, 2))
+ka = math.atan2(near[-1, 1] - near[0, 1], near[-1, 0] - near[0, 0]) if len(near) > 1 else 0.0
+KU = np.array([math.cos(ka), 0.0, math.sin(ka)]); KW = np.array([-math.sin(ka), 0.0, math.cos(ka)])
+KHU, KHW = 38.0, 30.0                      # the enclosure's half sizes along / across the road
+def kp(u, w): return np.array([kx, 0.0, kz]) + KU * u + KW * w
+def kslab(u, w, hu, hh, hw, a_off=0.0, bev=0.4, jit=0.2):
+    p = kp(u, w)
+    g = ground(p[0], p[2])
+    slab('ksar', (p[0], g - 0.6 + hh, p[2]), ka + a_off, hu, hh, hw, bev=bev, jit=jit)
+    collide((p[0], g - 0.6 + hh, p[2]), ka + a_off, hu, hh, hw)
+    return g
+for (u0, w0, u1, w1) in ((-KHU, -KHW, KHU, -KHW), (KHU, -KHW, KHU, KHW), (KHU, KHW, -KHU, KHW), (-KHU, KHW, -KHU, -KHW)):
+    Lw = math.hypot(u1 - u0, w1 - w0)
+    n = int(Lw / 6)
+    along_u = abs(u1 - u0) > 1
+    for k in range(n):
+        t = (k + 0.5) / n
+        u, w = u0 + (u1 - u0) * t, w0 + (w1 - w0) * t
+        p = kp(u, w)
+        if road_dist(p[0], p[2]) < 6.5 or srng.random() < 0.08: continue
+        h = srng.uniform(5.2, 6.8) if srng.random() > 0.2 else srng.uniform(1.5, 3.5)
+        kslab(u, w, (Lw / n) / 2 - 0.05 if along_u else 0.75, h / 2, 0.75 if along_u else (Lw / n) / 2 - 0.05, bev=0.3, jit=0.25)
+for (u, w) in ((-KHU, -KHW), (KHU, -KHW), (KHU, KHW), (-KHU, KHW)):
+    p = kp(u, w)
+    if road_dist(p[0], p[2]) < 8: continue
+    h1 = srng.uniform(7, 8.5)
+    g = kslab(u, w, 3.6, h1 / 2, 3.6, bev=0.3, jit=0.15)
+    slab('ksar', (p[0], g - 0.6 + h1 + 1.8, p[2]), ka, 3.0, 1.9, 3.0, bev=0.5, jit=0.2)
+for gu in np.arange(-KHU + 9, KHU - 6, 11.0):
+    for gw in np.arange(-KHW + 8, KHW - 5, 10.5):
+        u, w = gu + srng.uniform(-1.5, 1.5), gw + srng.uniform(-1.5, 1.5)
+        p = kp(u, w)
+        if road_dist(p[0], p[2]) < 10 or srng.random() < 0.15: continue
+        hu, hw = srng.uniform(3.0, 4.6), srng.uniform(2.8, 4.2)
+        h = srng.uniform(3.8, 5.6) if srng.random() > 0.25 else srng.uniform(1.0, 2.2)
+        g = kslab(u, w, hu, h / 2, hw, a_off=srng.uniform(-0.04, 0.04), bev=0.35, jit=0.2)
+        if h > 3.5 and srng.random() < 0.4:
+            slab('ksar', (p[0] + srng.uniform(-1, 1), g - 0.6 + h + 1.4, p[2] + srng.uniform(-1, 1)), ka, hu * 0.6, 1.5, hw * 0.6, bev=0.3, jit=0.15)
+log(f'  the ksar at ({kx:.0f}, {kz:.0f}), turned {math.degrees(ka):.0f}° to its road')
+
+# THE GORGE's huge blocks: fallen from its walls onto its floor and into the rapids
+riv = D['river'].astype(np.float64)
+gorge = riv[riv[:, 0] > 900]
+nblk = 0
+for _ in range(240):
+    if nblk >= 46: break
+    k = int(srng.integers(1, len(gorge) - 1))
+    x, z = gorge[k]
+    tx, tz = gorge[k + 1] - gorge[k - 1]
+    tl = math.hypot(tx, tz) or 1.0
+    off = float(srng.choice([-1, 1])) * srng.uniform(2, 20)
+    bx, bz = x - tz / tl * off, z + tx / tl * off
+    g = ground(bx, bz)
+    s_ = srng.uniform(2.5, 7.0)
+    slab('gorge', (bx, g + s_ * 0.45, bz), srng.uniform(0, math.pi), s_ * srng.uniform(0.8, 1.3), s_ * srng.uniform(0.5, 0.8), s_ * srng.uniform(0.7, 1.1), bev=s_ * 0.25, jit=s_ * 0.08)
+    collide((bx, g + s_ * 0.3, bz), 0.0, s_ * 0.8, s_ * 0.6, s_ * 0.8)
+    nblk += 1
+log(f'  the gorge: {nblk} blocks; structures {sum(v[2] for v in structs.values())} vertices, {len(colliders)} colliders')
+with open(os.path.join(OUT, 'structures.json'), 'w') as f: json.dump({'colliders': colliders}, f)
+
 # ---------------------------------------------------------------------------------------------------------- Blender
 for o in list(bpy.data.objects): bpy.data.objects.remove(o)
 col = bpy.data.collections.new('formations'); bpy.context.scene.collection.children.link(col)
@@ -183,6 +401,17 @@ for (ci, cj), (Vs, Qs, nv) in cells.items():
     me.polygons.foreach_set('use_smooth', np.ones(len(Q), bool)) # (shared vertices: the game shades the facets flat itself)
     me.materials.append(mat)
     ob = bpy.data.objects.new(f'c_{ci}_{cj}', me)
+    col.objects.link(ob)
+# the structures: a mesh each (the aqueduct in three), quads
+for name, (Vs, Qs, nv) in structs.items():
+    V = np.vstack(Vs); Q = np.vstack(Qs)
+    me = bpy.data.meshes.new(name)
+    me.vertices.add(len(V)); me.vertices.foreach_set('co', np.stack([V[:, 0], -V[:, 2], V[:, 1]], 1).astype(np.float32).ravel())
+    me.loops.add(Q.size); me.loops.foreach_set('vertex_index', Q.astype(np.int32).ravel())
+    me.polygons.add(len(Q)); me.polygons.foreach_set('loop_start', (np.arange(len(Q)) * 4).astype(np.int32)); me.polygons.foreach_set('loop_total', np.full(len(Q), 4, np.int32))
+    me.update(calc_edges=True); me.validate()
+    me.materials.append(mat)
+    ob = bpy.data.objects.new(name, me)
     col.objects.link(ob)
 log('meshes built')
 os.makedirs(OUT, exist_ok=True)

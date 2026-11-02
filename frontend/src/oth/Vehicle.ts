@@ -53,15 +53,18 @@ export class Vehicle {
   private readonly shadowBase: Float32Array
 
   constructor(private readonly map: MapData, private readonly physics: OthPhysics, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4) {
-    this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new THREE.Color(1, 1, 1) }, uSunHere: { value: 1 } }
+    this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new THREE.Color(1, 1, 1) }, uSunHere: { value: 1 },
+      uCoat: this.coatU, uCoatColor: { value: this.coatColor }, uCarBase: this.baseU }
     void tier
     // the contact shadow: a grid that follows the ground under the car, darkest under the body, soft at the edge
     const sg = new THREE.PlaneGeometry(1, 1, 14, 14).rotateX(-Math.PI / 2)
     this.shadow = new THREE.Mesh(sg, new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
+      uniforms: { uMist: atmos.uniforms.uMist },
       vertexShader: /* glsl */ `out vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: /* glsl */ `layout(location = 0) out highp vec4 outColor; in vec2 vUv;
-        void main() { vec2 q = (vUv - 0.5) * 2.0; float d = length(q * vec2(1.0, 1.0)); outColor = vec4(0.06, 0.04, 0.05, 0.5 * (1.0 - smoothstep(0.35, 1.0, d))); }`,
+      // (fading in the crossing's mist with the car)
+      fragmentShader: /* glsl */ `layout(location = 0) out highp vec4 outColor; in vec2 vUv; uniform float uMist;
+        void main() { vec2 q = (vUv - 0.5) * 2.0; float d = length(q * vec2(1.0, 1.0)); outColor = vec4(0.06, 0.04, 0.05, 0.5 * (1.0 - smoothstep(0.35, 1.0, d)) * (1.0 - 0.75 * uMist * uMist)); }`,
       transparent: true,
       depthWrite: false,
       polygonOffset: true,
@@ -104,8 +107,12 @@ export class Vehicle {
       at = this.spawnAt
       this.spawnAt = null
     } else {
-      const L = this.map.meta.trails.lines[0]
-      const [x, z] = L[2], [x2, z2] = L[6]
+      // the start: the map's first track where it passes nearest the spawn, along it (the desert's is its pass road —
+      // which runs on out over the crossing's gate line: not from its end)
+      const L = this.map.meta.trails.lines[0], sp = this.map.meta.spawn
+      let k = 0
+      for (let i = 1; i + 4 < L.length; i++) if ((L[i][0] - sp.x) ** 2 + (L[i][1] - sp.z) ** 2 < (L[k][0] - sp.x) ** 2 + (L[k][1] - sp.z) ** 2) k = i
+      const [x, z] = L[k], [x2, z2] = L[k + 4]
       at = { x, z, heading: Math.atan2(-(x2 - x), -(z2 - z)) }
     }
     this.id = def.id
@@ -185,7 +192,8 @@ export class Vehicle {
     u.uMap.value = truck.map
     u.uPaintMask.value = truck.paintMap
     ;(u.uPaint.value as THREE.Color).set(paint)
-    const defines: Record<string, string> = { OTH_SPEC: '' }
+    // (MIST_K: the crossing's cloud takes less of the car than of the land — Atmosphere.ts)
+    const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45' }
     if (truck.map) defines.USE_MAP_OTH = ''
     if (truck.paintMap) defines.USE_PAINTMAP = ''
     const vc = (g: THREE.BufferGeometry) => !!g.attributes.color
@@ -197,7 +205,7 @@ export class Vehicle {
     const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...truck.doors.map((d) => atHinge(d.body, d.hinge))])
     const glassGeo = mergeParts([truck.glass, ...truck.doors.flatMap((d) => (d.glass ? [atHinge(d.glass, d.hinge)] : []))])
     const body = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
-    const glass = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: THREE.DoubleSide })
+    const glass = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: THREE.DoubleSide })
     const b = new THREE.Mesh(bodyGeo, body)
     const g = new THREE.Mesh(glassGeo, glass)
     b.frustumCulled = g.frustumCulled = false
@@ -321,6 +329,36 @@ export class Vehicle {
 
   /** L: headlights on / off / auto (auto = on from dusk). */
   private lightMode: 'auto' | 'on' | 'off' = 'auto'
+
+  /** THE SAND COAT (2026-11-02, the user: "sands like in Over the Hill"): dust that builds up on the body — low down
+   *  and on what faces up, in blotches — while it drives on loose sand (a minute or so to coat it), in a sandstorm,
+   *  lightly on the valley's dirt tracks; washed off by a ford or the oasis's water (a few seconds) and slowly by
+   *  rain. Its colour follows what it was picked up from. One sample of the ground a frame. */
+  private readonly coatU = { value: 0 }
+  private readonly coatColor = new THREE.Color(0.8, 0.6, 0.42)
+  private readonly baseU = { value: 0 }
+  private readonly coatTo = new THREE.Color()
+  get coat(): number { return this.coatU.value }
+  set coat(v: number) { this.coatU.value = Math.min(1, Math.max(0, v)) }
+  weather(atmos: Atmosphere, dt: number): void {
+    if (!this.sim) return
+    const p = this.pos, u = atmos.uniforms, ground = this.map.height(p.x, p.z)
+    this.baseU.value = ground
+    const speed = Math.min(1, Math.abs(this.sim.speed) / 8)
+    const lvl = this.map.waterLevel(p.x, p.z)
+    if (lvl !== null && lvl - ground > 0.2 && p.y < lvl + 0.6) { this.coat -= (dt / 3.5) * (0.3 + speed); return }
+    const m = this.map.maskAt(p.x, p.z, this.mk), onGround = p.y - ground < 1.5
+    const track = Math.max(0, Math.min(1, (this.map.meta.trails.hw + 0.3 - this.map.trailDist(p.x, p.z)) / 0.6))
+    const desert = this.map.desert
+    const sand = desert && onGround ? m[1] * (1 - Math.min(1, m[0] * 2)) * (1 - 0.6 * track) : 0
+    const dirt = onGround ? track * (desert ? 0.5 : 0.35) * (1 - u.uWet.value) : 0
+    const gain = (dt / 70) * speed * (sand + dirt) + (dt / 90) * u.uDust.value
+    if (gain > 0) {
+      this.coatTo.setRGB(desert ? 0.8 : 0.55, desert ? 0.6 : 0.45, desert ? 0.42 : 0.33)
+      this.coatColor.lerp(this.coatTo, Math.min(1, gain / Math.max(this.coat, 0.05)))
+    }
+    this.coat += gain - (dt / 80) * u.uRain.value
+  }
   private lampMesh: THREE.InstancedMesh | null = null
   private tailMesh: THREE.InstancedMesh | null = null
   private beams: THREE.Mesh | null = null
@@ -338,7 +376,8 @@ export class Vehicle {
    *  handbrake is pulled, day or night; with the headlights on the tail lamps glow dim. */
   lights(atmos: Atmosphere, dt = 1 / 60): void {
     if (!this.sim || !this.model) return
-    const on = this.lightMode === 'on' || (this.lightMode === 'auto' && atmos.uniforms.uNight.value > 0.25)
+    // (on by themselves at night and in a sandstorm)
+    const on = this.lightMode === 'on' || (this.lightMode === 'auto' && (atmos.uniforms.uNight.value > 0.25 || atmos.uniforms.uDust.value > 0.45))
     const u = atmos.uniforms, head = this.model.lamps.head, tail = this.model.lamps.tail, hz = this.model.half, q = this.root.quaternion
     const h = head ? head.c : [hz.x * 0.7, 0.9, -hz.z], t = tail ? tail.c : [hz.x * 0.75, 0.9, hz.z]
     this.lampL.set(-Math.abs(h[0]), h[1], h[2] - 0.05).applyQuaternion(q).add(this.root.position)
@@ -418,6 +457,7 @@ const OTH_PAINT: Record<string, string> = { gwagen: '#b8452e', bmw: '#efe4cc' }
 const VERT = /* glsl */ `
 in float paintMask;
 out vec3 vWorld;
+out vec3 vLocal;
 out vec3 vN;
 out vec2 vUv;
 out vec3 vCol;
@@ -429,6 +469,7 @@ void main() {
 #endif
   vec4 w = M * vec4(position, 1.0);
   vWorld = w.xyz;
+  vLocal = position;
   vN = normalize(mat3(M) * normal);
   vUv = uv;
 #ifdef USE_COLOR
@@ -449,7 +490,11 @@ ${SHADOW_GLSL}
 uniform sampler2D uMap;
 uniform sampler2D uPaintMask;
 uniform vec3 uPaint;
+uniform float uCoat;
+uniform vec3 uCoatColor;
+uniform float uCarBase;
 in vec3 vWorld;
+in vec3 vLocal;
 in vec3 vN;
 in vec2 vUv;
 in vec3 vCol;
@@ -485,6 +530,14 @@ void main() {
 #else
   float rough = mix(0.75, 0.38, m);
 #endif
+  // THE SAND COAT (Vehicle.weather): thickest low down and on what faces up, in blotches (fixed to the car)
+  if (uCoat > 0.002) {
+    float blot = texture(uNoise, (vLocal.xz + vLocal.y * 0.7) * 0.45).r;
+    float k = uCoat * (0.12 + 0.88 * (1.0 - smoothstep(0.3, 1.5, vWorld.y - uCarBase)) + 0.3 * max(N.y, 0.0));
+    k = clamp(k * smoothstep(0.35, 0.8, blot + k * 0.4), 0.0, 0.8);
+    albedo = mix(albedo, uCoatColor, k);
+    rough = mix(rough, 0.95, k);
+  }
   vec3 c = shade(albedo, N, V, rough, 0.05, 1.0, sun, 0.25);
   // a little painted rim light so the car reads against the field
   c += albedo * uSunColor * pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.12 * sun;

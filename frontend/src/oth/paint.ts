@@ -103,9 +103,10 @@ struct Ground { vec3 col; float rock; float forest; float snow; float bed; float
 // 128), red-orange SANDSTONE in BEDS 9 m thick (≈ 213 140 111 in the sun, 181 116 99 in shade) — each bed its own tone,
 // a darker undercut at its foot, sand dusting the flat tops; damp sand by the water, olive ground under the oasis's
 // growth, light compacted sand on the tracks. Mask: R rock, G loose sand, B wet / water, A the oasis's growth.
-const vec3 SAND        = vec3(0.47, 0.32, 0.19);
-const vec3 SAND_DEEP   = vec3(0.42, 0.26, 0.15);
-const vec3 SAND_PALE   = vec3(0.52, 0.37, 0.23);
+// (2026-11-02: a step deeper and more orange — on screen the sand measured 223 191 154 against their 213 173 128)
+const vec3 SAND        = vec3(0.42, 0.26, 0.13);
+const vec3 SAND_DEEP   = vec3(0.37, 0.21, 0.105);
+const vec3 SAND_PALE   = vec3(0.47, 0.31, 0.165);
 const vec3 STONE       = vec3(0.44, 0.19, 0.115);
 const vec3 STONE_PALE  = vec3(0.5, 0.26, 0.155);
 const vec3 STONE_DEEP  = vec3(0.3, 0.12, 0.075);
