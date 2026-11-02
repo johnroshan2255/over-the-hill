@@ -209,7 +209,8 @@ export class Props {
   private readonly pv = new THREE.Matrix4()
   private readonly cellBox = new THREE.Box3()
   // fires: the camps' (world) and the player's own (the last slot)
-  private readonly fires: THREE.Vector3[] = []
+  /** Every campfire (the campsites', then the player's camp: off at y −1e5 while it's not pitched). */
+  readonly fires: THREE.Vector3[] = []
   /** The fires' parts: flames, sparks, smoke (one draw each; the player's fire = each one's last `per` entries). */
   private readonly fireParts: { mesh: THREE.Mesh; attr: THREE.InstancedBufferAttribute; per: number }[] = []
   private readonly camp: THREE.Mesh

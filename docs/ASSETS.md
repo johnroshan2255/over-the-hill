@@ -1,0 +1,41 @@
+# overhill — assets and credits
+
+Everything the game ships that wasn't made for it, where it came from and under what licence. Add a row with every
+new asset.
+
+## Models — `frontend/src/assets/models/vehicles/`
+
+| Model | File | Author | Source | Licence | Processing |
+|---|---|---|---|---|---|
+| "2015 Mercedes-Benz G500 4x4² concept" | `mercedes_g500_4x4.lod0.glb` | **TODO: author from the Sketchfab download page** (carried over from DARK's list unresolved) | Sketchfab | CC-BY-4.0 (verify) | textures stripped to flat colours, doors cut, 39.5 k → 29.7 k tris, matte materials (DARK's `scripts/blender/`) |
+| "Low Poly Car - BMW E30 1985 White" | `bmw_e30.lod0.glb` | tedpermana (https://sketchfab.com/tedpermana) | https://sketchfab.com/3d-models/low-poly-car-bmw-e30-1985-white-9dea494b447e442fafbddfc7eccbf158 | CC-BY-4.0 | mm → m, own wheels per corner, plate painted out, matte materials, doors, cockpit parts; 15.2 k tris |
+| Amphibious boat hull | `boat_hull.lod0.glb` | own (DARK's `scripts/blender/boat_hull.py`) | — | project | — |
+
+CC-BY-4.0 needs the credit shown to players too (a credits screen) — not in the game yet.
+
+## Images — `frontend/src/assets/ui/`
+
+| Image | File | Source |
+|---|---|---|
+| Title-screen key art | `key-art.jpg`, `key-art-sm.jpg` | DARK's landing image (its origin isn't recorded in DARK's asset list) |
+
+## Sound — `frontend/public/oth/audio/` (all CC0 — public domain; credit not required, given anyway)
+
+Played by `src/oth/Audio.ts`. The engine, the rain and the ridge wind are synthesized (no recordings).
+
+| Sound | File | Source | Author | Processing |
+|---|---|---|---|---|
+| Music "Etirwer" | `music_etirwer.ogg` | https://opengameart.org/content/etirwer | Kistol | as downloaded |
+| Music "In the middle of nowhere" | `music_middle_of_nowhere.mp3` | https://opengameart.org/content/in-the-middle-of-nowhere | Centurion_of_war | as downloaded |
+| Forest by day (birds, wind) | `amb_forest.ogg` | https://bigsoundbank.com/forest-4-s2749.html | Joseph Sardin (BigSoundBank) | as downloaded |
+| Wind in tall grass | `amb_wind_grass.ogg` | https://bigsoundbank.com/wind-in-tall-grass-s0908.html | Joseph Sardin | as downloaded |
+| Night meadow (crickets, frogs) | `amb_night.mp3` | https://bigsoundbank.com/campaign-at-night-4-s1880.html | Joseph Sardin | as downloaded |
+| Mountain stream | `amb_stream.ogg` | https://bigsoundbank.com/mountain-stream-7-s3222.html | Joseph Sardin | as downloaded |
+| Small waterfall | `amb_waterfall.ogg` | https://bigsoundbank.com/small-waterfall-2-s0219.html | Joseph Sardin | as downloaded |
+| Tyre squeal | `tyre_squeal.wav` | https://bigsoundbank.com/screeching-tires-4-s2371.html | Joseph Sardin | 1.2 s loop from 4.65 s |
+| Gravel scrub / roll | `tyre_gravel.wav` | https://bigsoundbank.com/bike-on-gravel-mtb-1-s1284.html | Joseph Sardin | 4.6 s loop from 7.5 s |
+| Campfire crackle (2026-11-02) | `amb_fire.mp3` | https://bigsoundbank.com/big-branching-fire-1-s0987.html | Joseph Sardin | 6–36 s, the tail crossfaded into the head (1.5 s): a 28.5 s loop; mono, −24 LUFS target, MP3 96 k |
+| Pond by day: frogs, birds (2026-11-02) | `amb_pond.mp3` | https://bigsoundbank.com/pond-in-a-field-s0691.html | Joseph Sardin | 30–72 s, crossfaded loop (2 s): 40 s; mono, −24 LUFS, MP3 96 k |
+| Tawny owl hoots (2026-11-02) | `owl_1.mp3`, `owl_2.mp3` | https://bigsoundbank.com/tawny-owl-1-s1763.html, https://bigsoundbank.com/tawny-owl-2-s1764.html | Joseph Sardin | silence trimmed, levelled, mono MP3 96 k |
+| One frog at night (2026-11-02) | `frog.mp3` | https://bigsoundbank.com/one-frog-s0819.html | Joseph Sardin | silence trimmed, levelled, mono MP3 96 k |
+| Common blackbird song (2026-11-02) | `bird_1.mp3` … `bird_4.mp3` | https://bigsoundbank.com/common-blackbird-7-s3480.html, …-13-s3486, …-17-s3490, …-21-s3494 | Le tiroir du fond (BigSoundBank) | silence trimmed, levelled, mono MP3 96 k |

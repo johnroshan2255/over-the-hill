@@ -6,7 +6,7 @@ waterfalls, cabins, fire lookouts, hidden places. Three.js + Rapier, TypeScript,
 ```
 frontend/   the game (Vite + TypeScript + three + Rapier)   → frontend/README section below, docs/ARCHITECTURE.md
 backend/    the server (Rust: multiplayer rooms + save API)  → coming next
-docs/       ARCHITECTURE.md (the world, the renderer, the front end, the saves)
+docs/       ARCHITECTURE.md (the world, the renderer, the front end, the saves), ASSETS.md (credits)
 ```
 
 ## Frontend

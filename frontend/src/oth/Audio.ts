@@ -12,11 +12,29 @@ import type { Vehicle } from './Vehicle'
  *     (`preload: none`), paused again after a while silent;
  *   the ENGINE: SYNTHESIZED (engineSynth.ts — an AudioWorklet, each car's own engine modelled from its cylinders,
  *     firing and exhaust) from the sim's rpm, load and throttle; it starts, stops and dips at a gear change;
- *   the TYRES (a squeal on hard ground, a gravel scrub on dirt): small buffers fetched in the background.
- * Streams and falls fade in as the camera nears them, panned to their side. M mutes everything.
+ *   the TYRES (a squeal on hard ground, a gravel scrub on dirt): small buffers fetched in the background;
+ *   the PLACES (2026-11-02, the user: "add the sounds"): a CAMPFIRE's crackle by every fire and the frogs and birds
+ *     of a POND by day (streamed beds, like the others); CALLS from round the camera — blackbirds in the trees by
+ *     day, an owl from the woods at night (now and then another answers), frogs along the nearest pond's shore from
+ *     dusk — small decoded clips fetched the first time they're wanted, each at a spot in the world (quieter and
+ *     duller the further, panned and re-panned as the camera turns), never more than MAX_VOICES at once; the WIND
+ *     over the RIDGES (synthesized: noise through a wandering band-pass, in slow gusts) where the land is high and
+ *     open.
+ * Streams, falls, fires and ponds fade in as the camera nears them, panned to their side. M mutes everything.
  */
 const BASE = '/oth/audio/'
 const MUSIC = ['music_etirwer.ogg', 'music_middle_of_nowhere.mp3']
+/** The calls' clips (CC0, docs/ASSETS.md): a few of each, one picked at random, its pitch varied a little. */
+const CALLS = {
+  bird: ['bird_1.mp3', 'bird_2.mp3', 'bird_3.mp3', 'bird_4.mp3'],
+  owl: ['owl_1.mp3', 'owl_2.mp3'],
+  frog: ['frog.mp3'],
+} as const
+type CallKind = keyof typeof CALLS
+/** At most this many calls at once (on top of the beds). */
+const MAX_VOICES = 5
+/** A call playing: where it is (it's re-panned as the camera turns). */
+interface Voice { kind: CallKind; x: number; z: number; pan: StereoPannerNode }
 
 /** A streamed, looping bed: an <audio> element through a gain (and a pan), played only while it's heard. */
 class Bed {
@@ -71,7 +89,19 @@ export class OthAudio {
 
   /** Off (the Sound setting, M): set before the first key / tap starts the sound, or any time after. */
   muted = false
-  private beds: Record<'forest' | 'wind' | 'night' | 'stream' | 'fall', Bed> | null = null
+  private beds: Record<'forest' | 'wind' | 'night' | 'stream' | 'fall' | 'fire' | 'pond', Bed> | null = null
+  /** Every campfire (Props.fires — the player's camp's among them, at y −1e5 while it isn't pitched). */
+  fires: readonly THREE.Vector3[] = []
+  private amb!: GainNode
+  private readonly clips = new Map<string, AudioBuffer | null>()
+  private readonly voices: Voice[] = []
+  private readonly nextCall: Record<CallKind, number> = { bird: 2, owl: 9, frog: 3 }
+  private owlAnswered = false
+  /** The lake and the ponds (their shores: the frogs). */
+  private readonly ponds: { cx: number; cz: number; rx: number; rz: number; rot: number; level: number }[]
+  /** The ridge wind: its gain and its howl's band-pass. */
+  private windGain: GainNode | null = null
+  private windHowl!: BiquadFilterNode
   private music: HTMLAudioElement | null = null
   private musicIndex = 0
   // the engine: the synth's worklet, through the distance's low-pass and gain
@@ -84,7 +114,7 @@ export class OthAudio {
   private squeal: { src: AudioBufferSourceNode; gain: GainNode } | null = null
   private gravel: { src: AudioBufferSourceNode; gain: GainNode } | null = null
   private sense = 0
-  private near = { stream: 1e9, streamPan: 0, fall: 1e9, fallPan: 0, forest: 0 }
+  private near = { stream: 1e9, streamPan: 0, fall: 1e9, fallPan: 0, forest: 0, fire: 1e9, firePan: 0, pond: 1e9, pondPan: 0, pondIdx: -1, ridge: 0 }
   private readonly mk: [number, number, number, number] = [0, 0, 0, 0]
   private readonly flowPts: number[] = []
   private readonly right = new THREE.Vector3()
@@ -95,6 +125,7 @@ export class OthAudio {
     // every point of the flowing water (the river, the streams) — the camera's nearest, a few times a second
     const W = map.meta.water
     for (const L of [W.river, ...(W.streams ?? [])]) for (let i = 0; i < L.x.length; i += 2) this.flowPts.push(L.x[i], L.z[i])
+    this.ponds = [W.lake, ...(W.ponds ?? [])]
     const start = () => {
       for (const t of ['keydown', 'pointerdown', 'touchstart']) window.removeEventListener(t, start)
       this.init()
@@ -116,7 +147,7 @@ export class OthAudio {
     this.master = ctx.createGain()
     this.master.gain.value = this.muted ? 0 : 0.9
     this.master.connect(ctx.destination)
-    const amb = ctx.createGain()
+    const amb = (this.amb = ctx.createGain())
     amb.gain.value = 1
     amb.connect(this.master)
     this.beds = {
@@ -125,6 +156,8 @@ export class OthAudio {
       night: new Bed(ctx, BASE + 'amb_night.mp3', amb),
       stream: new Bed(ctx, BASE + 'amb_stream.ogg', amb),
       fall: new Bed(ctx, BASE + 'amb_waterfall.ogg', amb),
+      fire: new Bed(ctx, BASE + 'amb_fire.mp3', amb),
+      pond: new Bed(ctx, BASE + 'amb_pond.mp3', amb),
     }
     // the RAIN: 2 s of noise (each sample a little toward the last: a soft hiss, not a white one) looped through a
     // band-pass — the hiss of rain on grass and the car's roof; silent (0 gain) until it rains
@@ -142,6 +175,29 @@ export class OthAudio {
     this.rainGain.gain.value = 0
     ns.connect(bp).connect(this.rainGain).connect(amb)
     ns.start()
+    // the WIND over the ridges: 6 s of brown noise (a deep rush) through a band-pass that wanders with the gusts (the
+    // howl) and a low-pass (the roar); silent down in the valley
+    const wb = ctx.createBuffer(1, ctx.sampleRate * 6, ctx.sampleRate), wd = wb.getChannelData(0)
+    let br = 0
+    for (let i = 0; i < wd.length; i++) { br = (br + (Math.random() * 2 - 1) * 0.02) / 1.02; wd[i] = br * 3.5 }
+    const ws = ctx.createBufferSource()
+    ws.buffer = wb
+    ws.loop = true
+    this.windHowl = ctx.createBiquadFilter()
+    this.windHowl.type = 'bandpass'
+    this.windHowl.frequency.value = 450
+    this.windHowl.Q.value = 1.8
+    const roar = ctx.createBiquadFilter()
+    roar.type = 'lowpass'
+    roar.frequency.value = 240
+    const howlGain = ctx.createGain()
+    howlGain.gain.value = 1.6
+    this.windGain = ctx.createGain()
+    this.windGain.gain.value = 0
+    ws.connect(this.windHowl).connect(howlGain).connect(this.windGain)
+    ws.connect(roar).connect(this.windGain)
+    this.windGain.connect(amb)
+    ws.start()
     // the MUSIC: the two tracks one after the other, quietly under the world
     const music = (this.music = new Audio())
     music.preload = 'auto'
@@ -237,7 +293,107 @@ export class OthAudio {
     B.stream.pan.pan.value = this.near.streamPan * 0.7
     B.fall.target = 0.85 * smooth(110, 10, this.near.fall)
     B.fall.pan.pan.value = this.near.fallPan * 0.7
+    // a campfire: loud close by, gone past ~34 m; a pond's frogs and birds by day (at night: the frogs' own calls)
+    B.fire.target = 2.4 * (2.5 / Math.max(this.near.fire, 2.5)) * smooth(34, 20, this.near.fire)
+    B.fire.pan.pan.value = this.near.firePan * 0.6
+    B.pond.target = day * 0.6 * smooth(90, 12, this.near.pond) * (1 - 0.6 * this.atmos.uniforms.uRain.value)
+    B.pond.pan.pan.value = this.near.pondPan * 0.6
     for (const k of Object.keys(B) as (keyof typeof B)[]) B[k].update(dt)
+    // the RIDGE WIND: high and open ground, in slow gusts, more under a heavy sky
+    if (this.windGain) {
+      const gust = 0.55 + 0.25 * Math.sin(t * 0.37) + 0.15 * Math.sin(t * 0.83 + 1) + 0.1 * Math.sin(t * 1.9 + 2)
+      const sky = 0.6 + 0.4 * this.atmos.uniforms.uCloud.value
+      this.windGain.gain.setTargetAtTime(0.5 * this.near.ridge * gust * sky, t, 0.4)
+      this.windHowl.frequency.setTargetAtTime(330 + 300 * gust, t, 0.5)
+    }
+    this.calls(dt, camera.position)
+  }
+
+  /** CALLS round the camera, each kind on its own uneven clock: blackbirds in the trees by day, an owl from the woods
+   *  at night (a third of the time another answers from elsewhere a few seconds later), frogs along the nearest
+   *  pond's shore from dusk (frogs don't mind the rain; the birds and owls keep quiet in it). */
+  private calls(dt: number, cam: THREE.Vector3): void {
+    const u = this.atmos.uniforms, night = u.uNight.value, lamps = u.uLamps.value, rain = u.uRain.value, N = this.nextCall
+    const f = this.near.forest
+    if ((N.bird -= dt) <= 0) {
+      N.bird = 2 + Math.random() * 7 * (1.3 - f) // (more often deep in the trees)
+      if (lamps < 0.5 && rain < 0.3 && f > 0.15) {
+        const [x, z] = this.spot(cam, 12, 55)
+        if (!this.call('bird', x, this.map.height(x, z) + 4 + Math.random() * 9, z, 0.8, 14, 0.9 + Math.random() * 0.22, cam)) N.bird = 1
+      }
+    }
+    if ((N.owl -= dt) <= 0) {
+      const answer = !this.owlAnswered && Math.random() < 0.35
+      N.owl = answer ? 2.5 + Math.random() * 2.5 : 14 + Math.random() * 30
+      this.owlAnswered = answer
+      if (night > 0.6 && rain < 0.3 && f > 0.1) {
+        const [x, z] = this.spot(cam, 35, 110)
+        if (!this.call('owl', x, this.map.height(x, z) + 10, z, 0.55, 30, 0.95 + Math.random() * 0.09, cam)) N.owl = 1
+      }
+    }
+    if ((N.frog -= dt) <= 0) {
+      N.frog = 4 + Math.random() * 7
+      const P = this.ponds[this.near.pondIdx]
+      if (P && lamps > 0.4 && this.near.pond < 90 && this.voices.filter((v) => v.kind === 'frog').length < 3) {
+        // a spot on its shore, round the side nearest the camera
+        const c = Math.cos(P.rot), s = Math.sin(P.rot), dx = cam.x - P.cx, dz = cam.z - P.cz
+        const a = Math.atan2((-dx * s + dz * c) / P.rz, (dx * c + dz * s) / P.rx) + (Math.random() - 0.5) * 1.8
+        const lx = P.rx * Math.cos(a), lz = P.rz * Math.sin(a)
+        if (!this.call('frog', P.cx + lx * c - lz * s, P.level, P.cz + lx * s + lz * c, 0.9, 14, 0.86 + Math.random() * 0.28, cam)) N.frog = 1
+      }
+    }
+  }
+
+  /** A spot r0–r1 m from the camera, the most wooded of four tries. */
+  private spot(cam: THREE.Vector3, r0: number, r1: number): [number, number] {
+    let bx = cam.x, bz = cam.z, bf = -1
+    for (let i = 0; i < 4; i++) {
+      const a = Math.random() * Math.PI * 2, r = r0 + Math.random() * (r1 - r0)
+      const x = cam.x + Math.sin(a) * r, z = cam.z + Math.cos(a) * r, w = this.map.maskAt(x, z, this.mk)[3]
+      if (w > bf) { bf = w; bx = x; bz = z }
+    }
+    return [bx, bz]
+  }
+
+  /** Play one of `kind`'s clips at (x, y, z): `base` loud at `ref` m, quieter (ref / (ref + d)) and duller the further.
+   *  False when it couldn't yet (its clip still on its way, or too many playing): try again soon. */
+  private call(kind: CallKind, x: number, y: number, z: number, base: number, ref: number, rate: number, cam: THREE.Vector3): boolean {
+    const ctx = this.ctx!, files = CALLS[kind]
+    for (const f of files) this.clip(f) // (all of its kind on their way)
+    const buf = this.clip(files[Math.floor(Math.random() * files.length)])
+    if (!buf || this.voices.length >= MAX_VOICES) return false
+    const d = Math.hypot(x - cam.x, y - cam.y, z - cam.z)
+    const src = ctx.createBufferSource(), lp = ctx.createBiquadFilter(), g = ctx.createGain(), pan = ctx.createStereoPanner()
+    src.buffer = buf
+    src.playbackRate.value = rate
+    lp.type = 'lowpass'
+    lp.frequency.value = 2500 + 15000 / (1 + d / 25)
+    g.gain.value = (base * ref) / (ref + d)
+    pan.pan.value = this.side(x, z, cam) * 0.8
+    src.connect(lp).connect(g).connect(pan).connect(this.amb)
+    const v: Voice = { kind, x, z, pan }
+    this.voices.push(v)
+    src.onended = () => {
+      this.voices.splice(this.voices.indexOf(v), 1)
+      pan.disconnect()
+    }
+    src.start()
+    return true
+  }
+
+  /** A clip, decoded — or null while it's being fetched (asked for the first time: fetched now). */
+  private clip(file: string): AudioBuffer | null {
+    const c = this.clips.get(file)
+    if (c !== undefined) return c
+    this.clips.set(file, null)
+    void fetch(BASE + file).then((r) => r.arrayBuffer()).then((b) => this.ctx!.decodeAudioData(b)).then((buf) => this.clips.set(file, buf)).catch(() => {})
+    return null
+  }
+
+  /** −1 (left) … 1 (right): where (x, z) is from the camera (its right: listen). */
+  private side(x: number, z: number, p: THREE.Vector3): number {
+    const dx = x - p.x, dz = z - p.z, l = Math.hypot(dx, dz) || 1
+    return (dx * this.right.x + dz * this.right.z) / l
   }
 
   /** For the harness / a debug view: the context, what's loaded, every layer's level. */
@@ -250,7 +406,9 @@ export class OthAudio {
       squeal: this.squeal ? r(this.squeal.gain.gain.value) : null, gravel: this.gravel ? r(this.gravel.gain.gain.value) : null,
       beds: this.beds ? Object.fromEntries(Object.entries(this.beds).map(([k, b]) => [k, { target: r(b.target), level: r(b.gain.gain.value), playing: !b.el.paused }])) : null,
       music: this.music ? { src: this.music.src.split('/').pop(), playing: !this.music.paused, t: r(this.music.currentTime) } : null,
-      near: { stream: Math.round(this.near.stream), fall: Math.round(this.near.fall), forest: r(this.near.forest) },
+      near: { stream: Math.round(this.near.stream), fall: Math.round(this.near.fall), forest: r(this.near.forest), fire: Math.round(this.near.fire), pond: Math.round(this.near.pond), ridge: r(this.near.ridge) },
+      voices: this.voices.map((v) => v.kind), clips: [...this.clips].filter(([, b]) => b).map(([f]) => f),
+      wind: this.windGain ? r(this.windGain.gain.value) : null,
     }
   }
 
@@ -275,7 +433,7 @@ export class OthAudio {
       const d = (P[i] - p.x) ** 2 + (P[i + 1] - p.z) ** 2
       if (d < best) { best = d; bx = P[i]; bz = P[i + 1] }
     }
-    const side = (x: number, z: number) => { const dx = x - p.x, dz = z - p.z, l = Math.hypot(dx, dz) || 1; return (dx * this.right.x + dz * this.right.z) / l }
+    const side = (x: number, z: number) => this.side(x, z, p)
     this.near.stream = Math.sqrt(best)
     this.near.streamPan = side(bx, bz)
     best = 1e9
@@ -288,6 +446,33 @@ export class OthAudio {
     let f = 0
     for (const [dx, dz] of [[0, 0], [35, 0], [-35, 0], [0, 35], [0, -35]]) f += this.map.maskAt(p.x + dx, p.z + dz, this.mk)[3]
     this.near.forest = Math.min(1, f / 5 / 0.6)
+    // the nearest campfire (a struck camp's is far below)
+    best = 1e9
+    for (const F of this.fires) {
+      if (F.y < -1e4) continue
+      const d = Math.hypot(F.x - p.x, F.y - p.y, F.z - p.z)
+      if (d < best) { best = d; bx = F.x; bz = F.z }
+    }
+    this.near.fire = best
+    this.near.firePan = best < 1e8 ? side(bx, bz) : 0
+    // the nearest shore of the lake or a pond (along the line to its centre: near enough)
+    best = 1e9
+    this.ponds.forEach((P, i) => {
+      const c = Math.cos(P.rot), s = Math.sin(P.rot), dx = p.x - P.cx, dz = p.z - P.cz
+      const r = Math.hypot(dx, dz), q = Math.hypot((dx * c + dz * s) / P.rx, (-dx * s + dz * c) / P.rz)
+      const d = q > 1e-4 ? Math.abs(r - r / q) : Math.min(P.rx, P.rz)
+      if (d < best) { best = d; this.near.pondIdx = i; bx = P.cx; bz = P.cz }
+    })
+    this.near.pond = best
+    this.near.pondPan = side(bx, bz) * Math.min(1, best / 30)
+    // the RIDGES: how far the ground here stands over the ground round it (140 m), how high, how high the camera is
+    const g0 = this.map.height(p.x, p.z)
+    let ring = 0
+    for (let i = 0; i < 8; i++) ring += this.map.height(p.x + Math.sin(i * 0.785) * 140, p.z + Math.cos(i * 0.785) * 140)
+    const crest = smooth(4, 45, g0 - ring / 8), high = smooth(120, 420, g0), up = smooth(4, 60, p.y - g0)
+    this.near.ridge = Math.min(1, 0.75 * crest + 0.35 * high + 0.3 * up)
+    // the calls playing: re-panned as the camera turns
+    for (const v of this.voices) v.pan.pan.value = this.side(v.x, v.z, p) * 0.8
   }
 }
 

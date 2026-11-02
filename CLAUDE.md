@@ -5,6 +5,7 @@
 | `frontend/` | the game: Vite + TypeScript + three r186 + Rapier (`src/oth/` the world, `src/ui/` the menus, `src/main.ts` entry) |
 | `backend/` | the server (Rust): multiplayer rooms + save API — the client uses localStorage until it switches over |
 | `docs/ARCHITECTURE.md` | read first: the world, the renderer, the front end, the saves |
+| `docs/ASSETS.md` | every model / image / sound not made here: source, author, licence — add a row with each new one |
 
 - Run each side's commands from its own folder (`cd frontend && npm test`).
 - Every feature states and measures its cost per quality tier (uncapped 1080p A/B, interleaved, `npm run shot`), and is

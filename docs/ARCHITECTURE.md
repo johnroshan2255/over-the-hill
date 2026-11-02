@@ -375,3 +375,13 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   clock. Paths repeat every 1 600 m round the camera (shrunk to nothing at 576–752 m first), so there are birds
   wherever you are; 35–130 m over the ground (the height texture, looked ahead 70 / 150 m). They roost one by one from
   dusk (not drawn at night) and shelter in the rain. Cost: ~0.01 ms (noise) on ultra.
+- **Place sounds** `oth/Audio.ts` (2026-11-02; every tier — sound costs no GPU): a CAMPFIRE's crackle by every fire
+  (loud at 2.5 m, gone past 34 m) and a POND's frogs and birds by day (streamed beds like the others); CALLS round the
+  camera — blackbirds in the trees by day (every 2–9 s, 12–55 m off, more often deep in the woods), a tawny owl from
+  the woods at night (every 14–44 s, 35–110 m off; a third of the time another answers), frogs along the nearest
+  shore from dusk (rain or not; ≤ 3) — decoded clips fetched the first time they're wanted, each at a spot in the
+  world: 1 / distance, a low-pass that dulls the far ones, panned and re-panned as the camera turns; ≤ 5 calls at once.
+  The RIDGE WIND is synthesized (brown noise → a band-pass wandering with slow gusts + a low-pass roar) and swells
+  with how far the ground stands over its surroundings (140 m ring), its height and the camera's — silent in the
+  valley. Main thread: the camera's surroundings 4× a second (a few height samples). Sources and processing:
+  `docs/ASSETS.md`. No CC0 hawk / eagle cry was found (the birds of prey are silent for now).

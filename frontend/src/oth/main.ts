@@ -207,6 +207,7 @@ async function boot() {
   const ui = driveUi(car)
   // SOUND: the engine, the tyres, the music and the valley's ambience (starts on the first key / tap — Audio.ts)
   const audio = new OthAudio(map, car, atmos)
+  audio.fires = props.fires
   const readouts = gameHud(journal.coins)
   if (q.get('sound') === '0') audio.muted = true
   fullscreenButton()
