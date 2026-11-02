@@ -124,6 +124,16 @@ export class Vehicle {
     this.loading = false
   }
 
+  /** Moved by (dx, dy, dz) as it drives — the same speed, the same spin (the crossing: the same road in another world). */
+  shift(dx: number, dy: number, dz: number): void {
+    if (!this.sim) return
+    const t = this.sim.body.translation()
+    this.sim.body.setTranslation({ x: t.x + dx, y: t.y + dy, z: t.z + dz }, false)
+    this.curP.x += dx; this.curP.y += dy; this.curP.z += dz
+    this.prevP.x += dx; this.prevP.y += dy; this.prevP.z += dz
+    this.physics.follow(t.x + dx, t.z + dz)
+  }
+
   /** R: back on its wheels where it is, same heading. */
   reset(): void {
     if (!this.sim) return

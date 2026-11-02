@@ -7,35 +7,22 @@ import { Menu } from '../ui/Menu'
 import { installToneMap } from './toneMap'
 import { Atmosphere } from './Atmosphere'
 import { OthAudio } from './Audio'
-import { Birds } from './Birds'
-import { Bridges } from './Bridges'
-import { Bushes } from './Bushes'
 import { Dust } from './Dust'
-import { Falls } from './Falls'
 import { ChaseCam } from './ChaseCam'
 import { FlyCam } from './FlyCam'
-import { Glow } from './Glow'
-import { Grass } from './Grass'
-import { Horizon } from './Horizon'
-import { Landmarks } from './Landmarks'
 import { MapData } from './MapData'
 import { MapView } from './MapView'
 import { OthPhysics } from './Physics'
-import { placeThings } from './Places'
-import { Props } from './Props'
 import { createPaintTexture } from './noiseTex'
 import { Post } from './Post'
 import { Rain } from './Rain'
-import { Rocks } from './Rocks'
 import { pickTier } from './quality'
 import { Sky } from './Sky'
-import { Terrain } from './Terrain'
 import { TerrainShadow } from './TerrainShadow'
-import { Trees } from './Trees'
 import { TyreTracks } from './TyreTracks'
 import { Vehicle } from './Vehicle'
-import { Water } from './Water'
 import { Winch } from './Winch'
+import { liveMap, World, type WorldEnv, type WorldId, WORLDS } from './World'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -77,8 +64,13 @@ async function boot() {
   renderer.info.autoReset = false
   document.body.appendChild(renderer.domElement)
 
-  status.textContent = 'Loading the valley…'
-  const map = await MapData.load('/oth/valley', (f) => (status.textContent = `Loading the valley… ${Math.round(f * 100)}%`))
+  // THE WORLD to start in (World.ts): the valley, or where the saved journey was (CONTINUE), or ?world=
+  const saved = continueRequested() ? loadProgress() : null
+  requestContinue(false)
+  const startId: WorldId = q.get('world') === 'desert' || (!q.has('world') && saved?.map === 'desert') ? 'desert' : 'valley'
+  const loading = (f: number) => (status.textContent = `Loading ${WORLDS[startId].name}… ${Math.round(f * 100)}%`)
+  loading(0)
+  const first = await MapData.load(WORLDS[startId].path, tier.terrainLeaf, loading)
   const noise = createPaintTexture()
   const atmos = new Atmosphere(noise)
   atmos.uniforms.uFogRange.value.set(tier.fogNear, tier.haze)
@@ -110,59 +102,48 @@ async function boot() {
 
   const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, num('far', tier.far)) // (?far= m: cost tests)
   const scene = new THREE.Scene()
-  const shadow = new TerrainShadow(map)
+  const shadow = new TerrainShadow(first)
   let shadowReady = false
   shadow.onBaked = () => (shadowReady = true)
-  const terrain = new Terrain(map, atmos, tier, shadow)
-  const rocks = new Rocks(map, atmos, shadow, tier, terrain.uniforms.uFarGrid.value)
-  const grass = new Grass(map, atmos, terrain, tier, rocks.footprint)
-  const water = new Water(map, atmos, terrain, tier, rocks.footprint)
-  const falls = new Falls(map, atmos)
   const sky = new Sky(atmos, !!tier.bloom) // (the sky marks itself for the god rays when Post draws)
-  const trees = new Trees(map, atmos, shadow, tier, rocks)
-  trees.bakeImpostors(renderer)
-  const bushes = new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture)
-  // OCCLUSION CULLING: what the hills hide (trees, rocks, bushes behind them are skipped); ?occlusion=0 turns it off
-  const horizon = new Horizon(map, Math.max(tier.treeReach, tier.rockReach))
-  horizon.enabled = q.get('occlusion') !== '0'
-  trees.horizon = rocks.horizon = bushes.horizon = terrain.horizon = horizon
-  const bridges = new Bridges(map, atmos, shadow, tier, terrain.uniforms.uFarGrid.value)
   const rain = new Rain(atmos, tier)
-  // without the post pass: the bloom and the god rays painted forward (Glow.ts)
-  const glow = tier.bloom ? null : new Glow(map, atmos)
-  atmos.uniforms.uGlow.value = glow ? 1 : 0
-  if (glow) scene.add(glow.group)
-  // THE VALLEY'S SMALL THINGS (Places.ts picks where, seeded): the CAMPS join the landmarks (built, found, on the map
-  // like them); the signposts, tables, fences, log piles, cairns, trucks, supply crates and fireflies are Props.ts
-  const places = placeThings(map, rocks, trees)
-  const allPlaces = (map.meta.landmarks = [...(map.meta.landmarks ?? []), ...places.camps])
-  const landmarks = new Landmarks(map, atmos, shadow, tier, terrain.uniforms.uFarGrid.value)
   const journal = loadJournal()
-  landmarks.onDiscover = (l, n, total) => {
-    const pay = l.kind === 'camp' ? REWARD.camp : REWARD.place
-    journal.coins += pay
-    saveJournal(journal)
-    readouts.coins(journal.coins, pay)
-    toast(`Discovered · ${l.name}   +${pay} ◆   ${n} / ${total}`, 4200)
-    audio.chime('place')
+  const env: WorldEnv = {
+    renderer, camera, scene, atmos, tier, shadow,
+    farGrid: new THREE.Vector4(),
+    // BIRDS in the sky: ULTRA on a PC only, for now (the user, 2026-11-02); ?birds=1 / 0 forces them
+    birds: q.get('birds') === '1' || (q.get('birds') !== '0' && tier.name === 'ultra' && !isMobileDevice()),
+    // OCCLUSION CULLING: what the hills hide is skipped; ?occlusion=0 turns it off
+    occlusion: q.get('occlusion') !== '0',
+    crates: journal.crates,
   }
-  const props = new Props(places.props, allPlaces, places.swarms, atmos, shadow, tier, terrain.uniforms.uFarGrid.value, journal.crates, rocks.footprint, map.inner)
-  journal.totals = { crates: props.crateCount, places: allPlaces.length }
-  saveJournal(journal)
-  landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
-  scene.add(props.group)
-  // BIRDS in the sky: ULTRA on a PC only, for now (the user, 2026-11-02); ?birds=1 / 0 forces them
-  const birds = q.get('birds') === '1' || (q.get('birds') !== '0' && tier.name === 'ultra' && !isMobileDevice()) ? new Birds(atmos, terrain) : null
-  if (birds) scene.add(birds.mesh)
-  scene.add(landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group, sky.mesh, rain.mesh)
+  let world = await World.build(startId, env, undefined, undefined, first)
+  // what lasts across worlds reads the current one's map through this
+  const map = liveMap(() => world.map)
+  const enterWorld = (w: World) => {
+    w.landmarks.onDiscover = (l, n, total) => {
+      const pay = l.kind === 'camp' ? REWARD.camp : REWARD.place
+      journal.coins += pay
+      saveJournal(journal)
+      readouts.coins(journal.coins, pay)
+      toast(`Discovered · ${l.name}   +${pay} ◆   ${n} / ${total}`, 4200)
+      audio.chime('place')
+    }
+    atmos.desert = w.map.desert
+    journal.totals = { crates: w.props.crateCount, places: w.places.length }
+    saveJournal(journal)
+    scene.add(w.group)
+  }
+  enterWorld(world)
+  scene.add(sky.mesh, rain.mesh)
 
   // THE 4×4: the game's vehicle physics on this map's ground and rocks
   status.textContent = 'Loading the 4×4…'
-  const physics = await OthPhysics.create(map, rocks)
-  physics.trees = trees
-  physics.addLandmarks(landmarks.colliders)
-  physics.addPropColliders(props.colliders)
-  const car = new Vehicle(map, physics, atmos, shadow, tier, terrain.uniforms.uFarGrid.value)
+  const physics = await OthPhysics.create(world.map, world.rocks)
+  physics.trees = world.trees
+  physics.addLandmarks(world.landmarks.colliders)
+  physics.addPropColliders(world.props.colliders)
+  const car = new Vehicle(map, physics, atmos, shadow, tier, env.farGrid)
   if (q.get('paint')) car.paint = '#' + q.get('paint')!.replace('#', '')
   // the GARAGE's driving settings
   car.driving = {
@@ -171,8 +152,6 @@ async function boot() {
     offroadAssist: q.get('offroad') !== '0',
   }
   // CONTINUE (the title screen, APPLY & RESTART): back where the journey was saved, at its time of day
-  const saved = continueRequested() ? loadProgress() : null
-  requestContinue(false)
   if (saved && saved.map === map.meta.id) {
     car.spawnAt = { x: saved.x, z: saved.z, heading: saved.heading }
     if (!q.has('hour')) atmos.hour = saved.hour
@@ -184,10 +163,10 @@ async function boot() {
   scene.add(dust.mesh)
   const tyreTracks = new TyreTracks(map, tier)
   scene.add(tyreTracks.mesh)
-  const winch = new Winch(map, car, trees, rocks)
+  const winch = new Winch(map, car, world.trees, world.rocks)
   winch.onMessage = (m) => toast(m)
   scene.add(winch.mesh)
-  const mapView = new MapView(map, landmarks, camera, () => car.pos, () => car.sim?.heading ?? 0)
+  let mapView = new MapView(world.map, world.landmarks, camera, () => car.pos, () => car.sim?.heading ?? 0)
   const chase = new ChaseCam(camera, map, car, renderer.domElement)
   chase.snap()
   let driving = q.get('drive') !== '0'
@@ -207,7 +186,7 @@ async function boot() {
   const ui = driveUi(car)
   // SOUND: the engine, the tyres, the music and the valley's ambience (starts on the first key / tap — Audio.ts)
   const audio = new OthAudio(map, car, atmos)
-  audio.fires = props.fires
+  audio.fires = world.props.fires
   const readouts = gameHud(journal.coins)
   if (q.get('sound') === '0') audio.muted = true
   fullscreenButton()
@@ -216,6 +195,28 @@ async function boot() {
     if (driving) chase.zoom(k)
     else { camera.fov = THREE.MathUtils.clamp(camera.fov * k, 18, 80); camera.updateProjectionMatrix() }
   })
+
+  // ANOTHER WORLD (the crossing — Crossing.ts — or ?world / the harness): built a step a frame while this one plays,
+  // then everything that lasts is pointed at it and this one is DISPOSED whole (World.dispose: its GPU memory back)
+  const keep = new Set<THREE.Texture>([noise, shadow.box, shadow.world, shadow.treeTex])
+  const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
+  const buildWorld = (id: WorldId) => World.build(id, env, nextFrame)
+  const enter = (next: World) => {
+    const old = world
+    next.adoptShadow(shadow)
+    world = next
+    enterWorld(next)
+    physics.setWorld(next.map, next.rocks, next.trees)
+    physics.addLandmarks(next.landmarks.colliders)
+    physics.addPropColliders(next.props.colliders)
+    winch.setWorld(next.trees, next.rocks)
+    mapView.dispose()
+    mapView = new MapView(next.map, next.landmarks, camera, () => car.pos, () => car.sim?.heading ?? 0)
+    audio.fires = next.props.fires
+    audio.setWorld()
+    myCamp = null
+    old.dispose(keep)
+  }
 
   const post = tier.bloom ? new Post(num('levels', tier.bloom), num('samples', tier.samples), num('bloom', 0.42), num('rays', 2.0), tier.bloomStart, tier.rayDiv) : null // (?levels= ?samples= ?rays=0: cost tests)
   const baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100 // (?maxdpr=: the pixel-ratio cap, cost tests)
@@ -253,7 +254,7 @@ async function boot() {
   const safe = { x: Number.NaN, z: 0, heading: 0 }
   // the player's own camp (pitched with C), back where it was
   let myCamp: { x: number; y: number; z: number; rot: number } | null = saved?.camp ?? null
-  if (myCamp) props.pitch(myCamp)
+  if (myCamp) world.props.pitch(myCamp)
   const lastPos = new THREE.Vector3().copy(car.pos)
   const save = () => {
     if (Number.isNaN(safe.x)) return
@@ -291,10 +292,9 @@ async function boot() {
   // CAMPING (C, or the CAMP button): stopped on your wheels, on dry ground — at a campsite (≤ 22 m) you rest there,
   // by your own camp you rest at it, anywhere else you PITCH one beside the car. Resting skips to the hour you pick
   // (or waits out the weather) behind a fade, and saves the journey (a checkpoint)
-  const campSites = allPlaces.filter((l) => l.kind === 'camp')
   const campHere = (): { name: string; own: boolean } | null => {
     const p = car.pos
-    const site = campSites.find((l) => (l.x - p.x) ** 2 + (l.z - p.z) ** 2 < 22 * 22)
+    const site = world.places.find((l) => l.kind === 'camp' && (l.x - p.x) ** 2 + (l.z - p.z) ** 2 < 22 * 22)
     if (site) return { name: site.name, own: false }
     if (myCamp && (myCamp.x - p.x) ** 2 + (myCamp.z - p.z) ** 2 < 25 * 25) return { name: 'Your camp', own: true }
     return null
@@ -318,7 +318,7 @@ async function boot() {
       const h = car.sim!.heading, p = car.pos
       const spot = [4.6, -4.6].map((side) => [p.x + Math.cos(h) * side, p.z - Math.sin(h) * side]).find(([x, z]) => map.waterLevel(x, z) === null) ?? [p.x, p.z]
       myCamp = { x: spot[0], y: map.height(spot[0], spot[1]), z: spot[1], rot: h + Math.PI / 2 }
-      props.pitch(myCamp)
+      world.props.pitch(myCamp)
       toast('Camp pitched · progress saved')
       here = { name: 'Your camp', own: true }
     }
@@ -333,7 +333,7 @@ async function boot() {
         { label: 'Rest until evening', note: '17:30', go: () => rest(() => (atmos.hour = 17.5)) },
         { label: 'Rest until night', note: '21:30', go: () => rest(() => (atmos.hour = 21.5)) },
         ...(wet ? [{ label: 'Wait out the weather', note: 'clear skies', go: () => rest(() => atmos.clearSky()) }] : []),
-        ...(here.own ? [{ label: 'Pack up camp', go: () => { myCamp = null; props.pitch(null); save(); closeMenu(); toast('Camp packed up') } }] : []),
+        ...(here.own ? [{ label: 'Pack up camp', go: () => { myCamp = null; world.props.pitch(null); save(); closeMenu(); toast('Camp packed up') } }] : []),
         { label: 'Back on the road', go: closeMenu },
       ],
     })
@@ -342,11 +342,11 @@ async function boot() {
   readouts.onCamp(openCamp)
   // the SIGNPOST you've stopped by (≤ 15 m): its boards — the nearest places, which way (from where you look) and how far
   const signHud = () => {
-    const s = driving ? props.signNear(car.pos.x, car.pos.z, 15) : null
+    const s = driving ? world.props.signNear(car.pos.x, car.pos.z, 15) : null
     if (!s) { readouts.sign(null); return }
     camera.getWorldDirection(signDir)
     const head = Math.atan2(signDir.x, -signDir.z)
-    const near = allPlaces.map((l) => ({ l, d: Math.hypot(l.x - s.x, l.z - s.z) })).filter((o) => o.d > 60).sort((a, b) => a.d - b.d).slice(0, 4)
+    const near = world.places.map((l) => ({ l, d: Math.hypot(l.x - s.x, l.z - s.z) })).filter((o) => o.d > 60).sort((a, b) => a.d - b.d).slice(0, 4)
     readouts.sign(near.map(({ l, d }) => ({ name: l.name, d, turn: Math.atan2(l.x - s.x, -(l.z - s.z)) - head })))
   }
   const signDir = new THREE.Vector3()
@@ -382,13 +382,13 @@ async function boot() {
     if (car.sim && car.grounded() && map.waterLevel(car.pos.x, car.pos.z) === null) { safe.x = car.pos.x; safe.z = car.pos.z; safe.heading = car.sim.heading }
     if ((saveT += dt) > 20) { saveT = 0; save() }
     // the supply crates the car reaches
-    const got = props.pickUp(dt, car.pos.x, car.pos.y, car.pos.z)
+    const got = world.props.pickUp(dt, car.pos.x, car.pos.y, car.pos.z)
     if (got.length) {
       for (const id of got) journal.crates.push(id)
       journal.coins += REWARD.crate * got.length
       saveJournal(journal)
       readouts.coins(journal.coins, REWARD.crate * got.length)
-      toast(`Supply crate · +${REWARD.crate * got.length} ◆   ${journal.crates.length} / ${props.crateCount}`)
+      toast(`Supply crate · +${REWARD.crate * got.length} ◆   ${journal.crates.length} / ${world.props.crateCount}`)
       audio.chime('crate')
     }
     // the HUD's slow parts (4× a second): the signpost, the camp prompt
@@ -402,31 +402,18 @@ async function boot() {
     audio.update(dt, camera)
     atmos.tick(dt)
     atmos.update(camera.position, clock.elapsedTime)
-    props.fireLight(camera.position, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value)
-    birds?.update()
     rain.update()
-    glow?.update(camera, dt)
-    landmarks.update(dt, car.pos.x, car.pos.z)
     mapView.update(dt)
     winch.update(camera)
     shadow.update(atmos.uniforms.uSunDir.value)
     const t0 = performance.now()
-    horizon.update(camera.position)
-    terrain.update(camera)
-    grass.update(camera)
-    rocks.update(camera)
-    trees.update(camera)
-    bushes.update(camera)
-    props.update(camera)
+    world.update(camera, dt, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, car.pos.x, car.pos.z)
     // (what's out of view or behind the hills isn't drawn: 2026-11-02)
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     view.setFromProjectionMatrix(viewPV, THREE.WebGLCoordinateSystem, camera.reversedDepth)
-    car.cull(view, horizon)
-    dust.cull(view, horizon)
+    car.cull(view, world.horizon)
+    dust.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
-    landmarks.cull()
-    bridges.cull()
-    falls.cull()
     if (timer && query) {
       const ready = gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)
       if (ready && !gl.getParameter(timer.GPU_DISJOINT_EXT)) gpuMs += (gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6 - gpuMs) * 0.15
@@ -444,7 +431,7 @@ async function boot() {
       hud.style.display = 'block'
       const p = camera.position
       hud.textContent = `${tier.name.toUpperCase()}  res ${Math.round(dprScale * 100)}%  ${(1000 / frameMs).toFixed(0)} fps  frame ${frameMs.toFixed(1)} ms  cpu ${cpuMs.toFixed(2)} ms  gpu ${timer ? gpuMs.toFixed(2) : '–'} ms\n` +
-        `draws ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  patches ${terrain.patches}  blades ${(grass.blades / 1000).toFixed(0)}k  trees ${trees.drawn.join('/')} of ${trees.count}  culled: trees ${trees.occluded} tiles behind hills, rocks ${rocks.culled.frustum} off-view / ${rocks.culled.occluded} hidden cells, ${rocks.culled.small} tiny\n` +
+        `draws ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  patches ${world.terrain.patches}  blades ${(world.grass.blades / 1000).toFixed(0)}k  trees ${world.trees.drawn.join('/')} of ${world.trees.count}  culled: trees ${world.trees.occluded} tiles behind hills, rocks ${world.rocks.culled.frustum} off-view / ${world.rocks.culled.occluded} hidden cells, ${world.rocks.culled.small} tiny\n` +
         `x ${p.x.toFixed(0)} z ${p.z.toFixed(0)} y ${p.y.toFixed(0)} (agl ${(p.y - map.height(p.x, p.z)).toFixed(1)})  yaw ${fly.yaw.toFixed(2)} pitch ${fly.pitch.toFixed(2)}  hour ${atmos.hour.toFixed(1)}`
     } else if (!showHud) hud.style.display = 'none'
     requestAnimationFrame(frame)
@@ -457,11 +444,11 @@ async function boot() {
   ;(window as unknown as { __oth: unknown }).__oth = {
     get ready() { return shadowReady },
     tier: tier.name,
-    props,
-    birds,
+    get props() { return world.props },
+    get birds() { return world.birds },
+    get world() { return world },
     journal,
     openCamp,
-    placesMs: places.ms,
     view: (x: number, z: number, h: number, yaw: number, pitch: number) => { driving = false; fly.place(x, z, h, yaw, pitch) },
     car,
     rain,
@@ -473,23 +460,33 @@ async function boot() {
     atmos,
     /** The sound's state (Audio.ts debug). */
     audio: () => audio.debug(),
+    /** Build world `id` behind the play, enter it, the car at its spawn (the harness: a crossing's swap without the road). */
+    swapTo: async (id: WorldId) => {
+      const w = await buildWorld(id)
+      enter(w)
+      const sp = w.map.meta.spawn
+      physics.follow(sp.x, sp.z)
+      car.sim?.place(sp.x, w.map.height(sp.x, sp.z) + 0.6, sp.z, sp.yaw)
+      return w.timings
+    },
+    gpuMemory: () => ({ ...renderer.info.memory, programs: renderer.info.programs?.length ?? 0 }),
     /** Drive mode on / off (the chase camera). */
     drive: (on: boolean) => { driving = on; if (on) chase.snap() },
     setHour: (h: number) => { atmos.hour = h; atmos.update(camera.position, 0) },
     sunDir: () => atmos.uniforms.uSunDir.value.toArray(),
-    stats: () => ({ fps: 1000 / frameMs, cpuMs, gpuMs, draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: terrain.patches, blades: grass.blades, rocks: rocks.count, trees: trees.drawn.slice(), bushes: bushes.drawn.slice(), culled: { terrainPatches: terrain.occluded, treeTiles: trees.occluded, rocks: { ...rocks.culled }, horizonBuilds: horizon.builds }, pos: camera.position.toArray().map((v) => +v.toFixed(1)), ground: +map.height(camera.position.x, camera.position.z).toFixed(1) }),
+    stats: () => ({ fps: 1000 / frameMs, cpuMs, gpuMs, draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: world.terrain.patches, blades: world.grass.blades, rocks: world.rocks.count, trees: world.trees.drawn.slice(), bushes: world.bushes.drawn.slice(), culled: { terrainPatches: world.terrain.occluded, treeTiles: world.trees.occluded, rocks: { ...world.rocks.culled }, horizonBuilds: world.horizon.builds }, pos: camera.position.toArray().map((v) => +v.toFixed(1)), ground: +map.height(camera.position.x, camera.position.z).toFixed(1) }),
     height: (x: number, z: number) => map.height(x, z),
-    rockNear: (x: number, z: number, r: number) => rocks.biggestNear(x, z, r),
-    treeNear: (x: number, z: number, r: number, species: number, minH: number) => trees.nearest(x, z, r, species, minH),
+    rockNear: (x: number, z: number, r: number) => world.rocks.biggestNear(x, z, r),
+    treeNear: (x: number, z: number, r: number, species: number, minH: number) => world.trees.nearest(x, z, r, species, minH),
     /** The densest broadleaf grove within r of (x, z) (≥ n trees of species ≥ 3 within 25 m of its centre). */
     grove: (x: number, z: number, r: number, n: number) => {
-      const d = trees.data, S = 8
+      const d = world.trees.data, S = 8
       let best: [number, number] | null = null, bc = 0
-      for (let i = 0; i < trees.count; i++) {
+      for (let i = 0; i < world.trees.count; i++) {
         const o = i * S
         if (d[o + 5] < 3 || (d[o] - x) ** 2 + (d[o + 2] - z) ** 2 > r * r) continue
         let c = 0
-        for (let k = 0; k < trees.count; k++) { const q = k * S; if (d[q + 5] >= 3 && (d[q] - d[o]) ** 2 + (d[q + 2] - d[o + 2]) ** 2 < 625) c++ }
+        for (let k = 0; k < world.trees.count; k++) { const q = k * S; if (d[q + 5] >= 3 && (d[q] - d[o]) ** 2 + (d[q + 2] - d[o + 2]) ** 2 < 625) c++ }
         if (c > bc) { bc = c; best = [d[o], d[o + 2]] }
       }
       return bc >= n ? { x: best![0], z: best![1], count: bc } : null
@@ -510,16 +507,16 @@ async function boot() {
         for (let d = 0; d <= 45 && good; d += 5) for (const sd of [-12, 0, 12]) {
           if (!ok(cx + fx * d - fz * sd * (d / 45), cz + fz * d + fx * sd * (d / 45))) { good = false; break }
         }
-        if (good && trees.clearLine(cx, cz, cx + fx * 60, cz + fz * 60, 9)) return [cx, cz]
+        if (good && world.trees.clearLine(cx, cz, cx + fx * 60, cz + fz * 60, 9)) return [cx, cz]
       }
       return null
     },
-    clearLineTrees: (ax: number, az: number, bx: number, bz: number, r: number) => trees.clearLine(ax, az, bx, bz, r),
-    treeShot: (x: number, z: number, species: number, minH: number, dist: number, yaw: number) => trees.clearShot(x, z, species, minH, dist, yaw),
+    clearLineTrees: (ax: number, az: number, bx: number, bz: number, r: number) => world.trees.clearLine(ax, az, bx, bz, r),
+    treeShot: (x: number, z: number, species: number, minH: number, dist: number, yaw: number) => world.trees.clearShot(x, z, species, minH, dist, yaw),
     rockShot: (x: number, z: number, r: number, dist: number, yaw: number) => {
-      for (const k of rocks.candidates(x, z, r)) {
+      for (const k of world.rocks.candidates(x, z, r)) {
         const d = k.s * dist, cx = k.x + Math.sin(yaw) * d, cz = k.z + Math.cos(yaw) * d
-        if (trees.clearLine(cx, cz, k.x, k.z, 7)) return { ...k, cx, cz }
+        if (world.trees.clearLine(cx, cz, k.x, k.z, 7)) return { ...k, cx, cz }
       }
       return null
     },

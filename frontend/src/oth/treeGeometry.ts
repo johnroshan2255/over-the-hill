@@ -257,3 +257,71 @@ export function broadleafGeometry(lod: number, seed = 11): THREE.BufferGeometry 
   g.setIndex(idx)
   return g
 }
+
+/**
+ * A DATE PALM (the desert's oasis — Over the Hill's Algeria, 2026-11-02): unit height, a slender TRUNK leaning and
+ * curving up (ringed: its segments alternate a little in tone), a CROWN of long FRONDS at the top — each a card along a
+ * drooping arc, folded along its stem, showing the frond texture (leafTexture.ts: a stem with leaflets, fingered at its
+ * end — the conifer's frond read as a palm's). The same attributes as the spruce: leaf = (s, across, −(1 + tile +
+ * tint × 0.9)) on a frond. Trees.ts draws it in the broadleaf family's place in the desert (its impostor baked the same).
+ * LOD 0: 13 fronds × 5 segments; LOD 1: 7 × 3.
+ */
+export function palmGeometry(lod: number, seed = 23): THREE.BufferGeometry {
+  const rnd = rng(seed + lod * 71)
+  const pos: number[] = [], nor: number[] = [], col: number[] = [], leaf: number[] = [], idx: number[] = []
+  const vert = (p: THREE.Vector3, n: THREE.Vector3, ao: number, fol: number, lu = 0, lv = 0, lz = 0) => {
+    pos.push(p.x, p.y, p.z); nor.push(n.x, n.y, n.z); col.push(ao, fol, Math.max(0, Math.min(1, p.y))); leaf.push(lu, lv, lz)
+    return pos.length / 3 - 1
+  }
+  // the TRUNK: a gentle lean and curve, tapering a little, ringed
+  const segs = lod === 0 ? 7 : 4, sides = lod === 0 ? 6 : 4, crownY = 0.86
+  const lean = new THREE.Vector3(0.09, 0, 0.03)
+  const at = (t: number) => new THREE.Vector3(lean.x * t * t, t * crownY, lean.z * t * t)
+  const ringBase: number[] = []
+  for (let s = 0; s <= segs; s++) {
+    const t = s / segs, c = at(t), r = 0.026 - 0.008 * t
+    ringBase.push(pos.length / 3)
+    for (let k = 0; k < sides; k++) {
+      const a = (k / sides) * Math.PI * 2, d = new THREE.Vector3(Math.cos(a), 0, Math.sin(a))
+      vert(c.clone().addScaledVector(d, r * (s % 2 ? 0.92 : 1)), d, s % 2 ? 0.72 : 0.9, 0)
+    }
+  }
+  for (let s = 0; s < segs; s++) for (let k = 0; k < sides; k++) {
+    const a = ringBase[s] + k, b = ringBase[s] + ((k + 1) % sides), c = ringBase[s + 1] + k, d = ringBase[s + 1] + ((k + 1) % sides)
+    idx.push(a, b, c, b, d, c)
+  }
+  // the CROWN: fronds out from the top, rising then drooping, folded along their stems
+  const top = at(1)
+  const nF = lod === 0 ? 13 : 7, nS = lod === 0 ? 5 : 3
+  for (let f = 0; f < nF; f++) {
+    const az = (f / nF) * Math.PI * 2 + rnd() * 0.4
+    const up = 0.55 - 0.9 * (f % 3) / 3 - 0.2 * rnd()  // (some reach up, most arch out and droop)
+    const len = 0.36 + 0.08 * rnd(), w = 0.07
+    const dir = new THREE.Vector3(Math.cos(az), 0, Math.sin(az))
+    const side = new THREE.Vector3(-dir.z, 0, dir.x)
+    const lz = -(1 + Math.floor(rnd() * 4) + rnd() * 0.9)
+    const base = pos.length / 3
+    for (let s = 0; s <= nS; s++) {
+      const t = s / nS
+      // along the arc: out, up at first, then down (gravity), the frond's tip hanging
+      const c = top.clone().addScaledVector(dir, len * t).add(new THREE.Vector3(0, len * (up * t - 0.75 * t * t), 0))
+      const fold = 0.25 * w * (1 - t * 0.5) // (folded along its stem like a roof)
+      const nUp = new THREE.Vector3(0, 1, 0).addScaledVector(dir, 0.3).normalize()
+      for (const k of [-1, 0, 1]) {
+        const p = c.clone().addScaledVector(side, k * w * (1 - 0.55 * t)).add(new THREE.Vector3(0, k === 0 ? fold : 0, 0))
+        vert(p, nUp, 0.6 + 0.4 * t, 1, t, k, lz)
+      }
+    }
+    for (let s = 0; s < nS; s++) for (let k = 0; k < 2; k++) {
+      const a = base + s * 3 + k, b = a + 1, c = a + 3, d = a + 4
+      idx.push(a, b, d, a, d, c)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3))
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+  g.setAttribute('leaf', new THREE.Float32BufferAttribute(leaf, 3))
+  g.setIndex(idx)
+  return g
+}

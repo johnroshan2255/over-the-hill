@@ -30,17 +30,43 @@ export class OthPhysics {
   /** The forests (set once they're placed): trunks near the car become cylinders. */
   trees: Trees | null = null
   private readonly rockBody: RAPIER.RigidBody
+  /** The world's fixed pieces (the box's walls, the bridges, the landmarks): removed whole for another world. */
+  private statics: RAPIER.RigidBody[] = []
   private lastTile = Number.NaN
   private lastRockCell = Number.NaN
   private readonly m = new THREE.Matrix4()
   private readonly v = new THREE.Vector3()
 
-  private constructor(R: typeof RAPIER, private readonly map: MapData, private readonly rockSet: Rocks) {
+  private constructor(R: typeof RAPIER, private map: MapData, private rockSet: Rocks) {
     this.R = R
     this.pw = new PhysicsWorld(R)
     this.rockBody = this.pw.world.createRigidBody(R.RigidBodyDesc.fixed())
+    this.buildStatic()
+  }
+
+  /** ANOTHER WORLD (World.ts — the crossing): every collider of this one goes (the ground's tiles, the rocks, trunks,
+   *  props, walls, bridges, landmarks), the new world's are built (the ground round the car at the next follow). The
+   *  car's own body stays — it drives on. */
+  setWorld(map: MapData, rocks: Rocks, trees: Trees | null): void {
+    const W = this.pw.world
+    for (const b of this.tiles.values()) W.removeRigidBody(b)
+    for (const c of [...this.rocks.values(), ...this.trunks.values(), ...this.propCols.values()]) W.removeCollider(c, false)
+    for (const b of this.statics) W.removeRigidBody(b)
+    this.tiles.clear(); this.rocks.clear(); this.trunks.clear(); this.propCols.clear()
+    this.statics = []
+    this.props = []
+    this.map = map
+    this.rockSet = rocks
+    this.trees = trees
+    this.lastTile = this.lastRockCell = Number.NaN
+    this.buildStatic()
+  }
+
+  private buildStatic(): void {
+    const R = this.R, map = this.map
     // the box's edge: tall walls 40 m inside it (the far world beyond has no colliders)
     const h = map.half - 40, walls = this.pw.world.createRigidBody(R.RigidBodyDesc.fixed())
+    this.statics.push(walls)
     for (const [x, z, hx, hz] of [[h, 0, 2, h], [-h, 0, 2, h], [0, h, h, 2], [0, -h, h, 2]] as const) {
       this.pw.world.createCollider(R.ColliderDesc.cuboid(hx, 600, hz).setTranslation(x, 300, z).setCollisionGroups(group(Groups.Static, 0xffff)), walls)
     }
@@ -80,6 +106,7 @@ export class OthPhysics {
   /** The LANDMARKS' colliders (Landmarks.ts): boxes; a dock's deck is GROUND (the wheel rays see it). */
   addLandmarks(cols: { c: THREE.Vector3; h: THREE.Vector3; q: THREE.Quaternion; ground: boolean }[]): void {
     const body = this.pw.world.createRigidBody(this.R.RigidBodyDesc.fixed())
+    this.statics.push(body)
     for (const k of cols) {
       this.pw.world.createCollider(this.R.ColliderDesc.cuboid(k.h.x, k.h.y, k.h.z).setTranslation(k.c.x, k.c.y, k.c.z)
         .setRotation({ x: k.q.x, y: k.q.y, z: k.q.z, w: k.q.w })

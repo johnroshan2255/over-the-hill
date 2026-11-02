@@ -30,7 +30,7 @@ export class Water {
     const material = (rapids: boolean) => new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}), ...map.biomeDefines },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,

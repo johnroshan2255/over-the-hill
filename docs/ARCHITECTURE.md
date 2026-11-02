@@ -385,3 +385,16 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   with how far the ground stands over its surroundings (140 m ring), its height and the camera's — silent in the
   valley. Main thread: the camera's surroundings 4× a second (a few height samples). Sources and processing:
   `docs/ASSETS.md`. No CC0 hawk / eagle cry was found (the birds of prey are silent for now).
+
+## Worlds, the desert (2026-11-02 — the to-do list: docs/NEXT.md)
+
+- **World.ts**: everything built from one map under one group, built a step a frame while playing, disposed whole
+  (verified: GPU memory back to the same counts after every swap). What lasts — renderer, camera, Atmosphere, car,
+  physics (`setWorld`), sound (`setWorld`), HUD, terrain shadow (`setMap`) — reads the current map via `liveMap()`.
+- **Workers**: `mapLoad.worker.ts` + `mapPrep.ts` (fetch + heights, normals, distance fields, the terrain's pyramid);
+  Draco in DRACOLoader's workers; textures uploaded and shaders compiled a step at a time before a world is entered.
+- **The desert** (`public/oth/desert`, `?world=desert`): `scripts/oth/desert.py` (terrain, beds terraced, ledge roads,
+  masks, meta with `biome` + `gate`), `scripts/oth/desert_rocks.py` (Blender: the sandstone slabs' low-poly skins →
+  `formations.glb`, drawn by `Formations.ts`); `OTH_DESERT` in every world material (sand / sandstone palette, wind
+  ripples, oasis-only grass, date palms, Over the Hill's bushes, the desert sky grade).
+

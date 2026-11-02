@@ -1,4 +1,9 @@
 import * as THREE from 'three'
+import type { PreparedMap } from './mapPrep'
+
+/** The map loader's worker (one for every load) and its request count. */
+let loader: Worker | null = null
+let loads = 0
 
 /**
  * The map's baked data (scripts/oth/terrain.py → public/oth/<id>/): two height grids — the 4 km playable box at 2 m
@@ -12,11 +17,15 @@ export interface Grid { n: number; step: number; origin: number; min: number; ra
 export interface Pond { cx: number; cz: number; rx: number; rz: number; rot: number; level: number }
 /** A LANDMARK (scripts/oth/scenery.mjs, Landmarks.ts): a place to find — its kind, name, pad centre / height, the way
  *  its front faces (rad: local +z turned by rot about +y) and its pad's radius (m). */
-export interface Landmark { id: number; kind: 'tower' | 'view' | 'cabin' | 'shack' | 'sawmill' | 'mine' | 'meteorite' | 'falls' | 'meadow' | 'camp'; name: string; x: number; z: number; y: number; rot: number; r: number }
+export interface Landmark { id: number; kind: 'tower' | 'view' | 'cabin' | 'shack' | 'sawmill' | 'mine' | 'meteorite' | 'falls' | 'meadow' | 'camp' | 'oasis' | 'aqueduct' | 'arch' | 'spires' | 'gorge' | 'ksar' | 'dunes'; name: string; x: number; z: number; y: number; rot: number; r: number }
 export interface Bridge { x0: number; z0: number; x1: number; z1: number; y: number; y0: number; y1: number; w: number }
 export interface MapMeta {
   id: string
   name: string
+  /** 'desert' (the second world: its own palette, plants and weather — every world material's OTH_DESERT) */
+  biome?: 'desert'
+  /** The CROSSING's pass road (World / Crossing.ts): where the cloud is thickest, the car heading `heading` (0 = −z). */
+  gate?: { x: number; z: number; y: number; heading: number }
   inner: Grid
   far: Grid
   mask: { n: number; step: number; origin: number }
@@ -58,31 +67,19 @@ class HeightGrid {
   readonly tex: THREE.DataTexture
   readonly normalTex: THREE.DataTexture
 
-  constructor(readonly g: Grid, raw: Uint16Array) {
+  constructor(readonly g: Grid, raw: Uint16Array, h: Float32Array, nb: Uint8Array) {
     this.n = g.n
     this.step = g.step
     this.origin = g.origin
-    this.h = new Float32Array(raw.length)
-    const k = g.range / 65535
-    for (let i = 0; i < raw.length; i++) this.h[i] = raw[i] * k + g.min
+    this.h = h
     this.tex = new THREE.DataTexture(raw, g.n, g.n, THREE.RedIntegerFormat, THREE.UnsignedShortType)
     this.tex.internalFormat = 'R16UI'
     this.tex.minFilter = this.tex.magFilter = THREE.NearestFilter
     this.tex.generateMipmaps = false
     this.tex.unpackAlignment = 1
     this.tex.needsUpdate = true
-    // normals: central differences, x / z components in 0..255 (y rebuilt in the shader)
-    const n = g.n, nb = new Uint8Array(n * n * 2), s2 = 2 * g.step
-    for (let j = 0; j < n; j++) {
-      const j0 = Math.max(0, j - 1) * n, j1 = Math.min(n - 1, j + 1) * n, r = j * n
-      for (let i = 0; i < n; i++) {
-        const dx = (this.h[r + Math.min(n - 1, i + 1)] - this.h[r + Math.max(0, i - 1)]) / s2
-        const dz = (this.h[j1 + i] - this.h[j0 + i]) / s2
-        const inv = 1 / Math.sqrt(dx * dx + 1 + dz * dz)
-        nb[(r + i) * 2] = Math.round((-dx * inv * 0.5 + 0.5) * 255)
-        nb[(r + i) * 2 + 1] = Math.round((-dz * inv * 0.5 + 0.5) * 255)
-      }
-    }
+    // normals (mapPrep.ts): x / z components in 0..255 (y rebuilt in the shader)
+    const n = g.n
     this.normalTex = new THREE.DataTexture(nb, n, n, THREE.RGFormat, THREE.UnsignedByteType)
     this.normalTex.minFilter = THREE.LinearMipmapLinearFilter
     this.normalTex.magFilter = THREE.LinearFilter
@@ -117,13 +114,25 @@ export class MapData {
    *  sink — G wildflowers: the grass blossoms). */
   readonly mud: Uint8Array
   readonly mudTex: THREE.DataTexture
+  /** The desert's world (meta.biome): the materials' OTH_DESERT. */
+  get desert(): boolean { return this.meta.biome === 'desert' }
+  /** Its shader define (none for the valley). */
+  get biomeDefines(): Record<string, string> { return this.desert ? { OTH_DESERT: '' } : {} }
   /** The playable box's half size (m) and the world's. */
   readonly half: number
   readonly farHalf: number
 
-  private constructor(readonly meta: MapMeta, inner: Uint16Array, far: Uint16Array, mask: Uint8Array, trail: Uint8Array, mud: Uint8Array) {
-    this.inner = new HeightGrid(meta.inner, inner)
-    this.far = new HeightGrid(meta.far, far)
+  /** The terrain quadtree's min / max heights (mapPrep.ts: computed with the map, for Terrain's leaf size). */
+  readonly pyramid: PreparedMap['pyramid']
+
+  private constructor(p: PreparedMap) {
+    const meta = (this.meta = p.meta), mask = p.mask, trail = p.trail, mud = p.mud
+    this.inner = new HeightGrid(meta.inner, p.innerRaw, p.innerH, p.innerNormals)
+    this.far = new HeightGrid(meta.far, p.farRaw, p.farH, p.farNormals)
+    this.pyramid = p.pyramid
+    this.trackFar = p.fields.track
+    this.riverFar = p.fields.river
+    this.farN = p.fields.n
     this.half = -meta.inner.origin
     this.farHalf = -meta.far.origin
     this.mask = mask
@@ -179,16 +188,25 @@ export class MapData {
     return ((M[k] * (1 - u) + M[k + 2] * u) * (1 - v) + (M[k + r] * (1 - u) + M[k + r + 2] * u) * v) / 255
   }
 
-  static async load(base: string, onProgress?: (f: number) => void): Promise<MapData> {
-    const meta = (await (await fetch(`${base}/meta.json`)).json()) as MapMeta
-    let done = 0
-    const get = async (f: string) => {
-      const b = await (await fetch(`${base}/${f}`)).arrayBuffer()
-      onProgress?.(++done / 5)
-      return b
-    }
-    const [h, f, m, t, u] = await Promise.all([get('height.bin'), get('far.bin'), get('mask.bin'), get('trail.bin'), meta.mud ? get('mud.bin') : Promise.resolve(new ArrayBuffer(0))])
-    return new MapData(meta, new Uint16Array(h), new Uint16Array(f), new Uint8Array(m), new Uint8Array(t), new Uint8Array(u))
+  readonly meta: MapMeta
+
+  /** Load a world's map (`leaf`: the terrain's finest patch, m — its height pyramid comes with it): fetched and
+   *  prepared in the map loader's worker (mapLoad.worker.ts), the arrays handed over without a copy. */
+  static async load(base: string, leaf: number, onProgress?: (f: number) => void): Promise<MapData> {
+    const w = (loader ??= new Worker(new URL('./mapLoad.worker.ts', import.meta.url), { type: 'module' }))
+    const id = ++loads
+    const p = await new Promise<PreparedMap>((resolve, reject) => {
+      const on = (e: MessageEvent) => {
+        if (e.data.id !== id) return
+        if (e.data.progress !== undefined) { onProgress?.(e.data.progress); return }
+        w.removeEventListener('message', on)
+        if (e.data.error) reject(new Error(e.data.error))
+        else resolve(e.data.map as PreparedMap)
+      }
+      w.addEventListener('message', on)
+      w.postMessage({ id, base, leaf })
+    })
+    return new MapData(p)
   }
 
   /** Inside the playable box's 2 m grid (with a cell of margin). */
@@ -202,52 +220,11 @@ export class MapData {
     return this.inBox(x, z) ? this.inner.sample(x, z) : this.far.sample(x, z)
   }
 
-  /** Coarse distance fields (4 m cells over the box, Float32 m, capped): to the nearest TRACK centre line (≤ 48 m) and
-   *  to the RIVER / lake shore (≤ 80 m) — the woods, bushes and boulders line the tracks and the banks with them. */
-  private trackFar: Float32Array | null = null
-  private riverFar: Float32Array | null = null
-  private farN = 0
-  private buildFar(): void {
-    const half = this.half, C = 4, n = (this.farN = Math.ceil((2 * half) / C) + 1)
-    const stamp = (out: Float32Array, pts: [number, number][], cap: number) => {
-      out.fill(cap)
-      const r = Math.ceil(cap / C)
-      for (const [x, z] of pts) {
-        const ci = Math.round((x + half) / C), cj = Math.round((z + half) / C)
-        for (let j = Math.max(0, cj - r); j <= Math.min(n - 1, cj + r); j++) for (let i = Math.max(0, ci - r); i <= Math.min(n - 1, ci + r); i++) {
-          const d = Math.hypot(i * C - half - x, j * C - half - z)
-          if (d < out[j * n + i]) out[j * n + i] = d
-        }
-      }
-    }
-    // the polylines resampled every 4 m
-    const dense = (xs: number[], zs: number[]) => {
-      const out: [number, number][] = []
-      for (let k = 0; k < xs.length - 1; k++) {
-        const L = Math.hypot(xs[k + 1] - xs[k], zs[k + 1] - zs[k]), m = Math.max(1, Math.ceil(L / 4))
-        for (let s = 0; s < m; s++) out.push([xs[k] + ((xs[k + 1] - xs[k]) * s) / m, zs[k] + ((zs[k + 1] - zs[k]) * s) / m])
-      }
-      return out
-    }
-    this.trackFar = new Float32Array(n * n)
-    stamp(this.trackFar, this.meta.trails.lines.flatMap((l) => dense(l.map((p) => p[0]), l.map((p) => p[1]))), 48)
-    this.riverFar = new Float32Array(n * n)
-    const r = this.meta.water.river, L = this.meta.water.lake
-    const shore: [number, number][] = dense(r.x, r.z)
-    for (let a = 0; a < 200; a++) { // the lake's ellipse
-      const t = (a / 200) * Math.PI * 2, c = Math.cos(L.rot), s = Math.sin(L.rot), ex = Math.cos(t) * L.rx, ez = Math.sin(t) * L.rz
-      shore.push([L.cx + ex * c - ez * s, L.cz + ex * s + ez * c])
-    }
-    for (const P of this.meta.water.ponds ?? []) { // (and every pond's and small lake's shore)
-      const c = Math.cos(P.rot), s = Math.sin(P.rot), rx = P.rx / 1.16, rz = P.rz / 1.16
-      const m = Math.max(24, Math.ceil((2 * Math.PI * Math.max(rx, rz)) / 6))
-      for (let a = 0; a < m; a++) {
-        const t = (a / m) * Math.PI * 2, ex = Math.cos(t) * rx, ez = Math.sin(t) * rz
-        shore.push([P.cx + ex * c - ez * s, P.cz + ex * s + ez * c])
-      }
-    }
-    stamp(this.riverFar, shore, 80)
-  }
+  /** Coarse distance fields (4 m cells over the box, m, capped — mapPrep.ts): to the nearest TRACK centre line
+   *  (≤ 48 m) and to the RIVER / lake shore (≤ 80 m) — the woods, bushes and boulders line the tracks and the banks. */
+  private readonly trackFar: Float32Array
+  private readonly riverFar: Float32Array
+  private readonly farN: number
 
   /** The bridge deck under (x, z): its top (m), or null off every bridge (the tyres, the dust). */
   bridgeAt(x: number, z: number): number | null {
@@ -262,13 +239,11 @@ export class MapData {
   }
   /** Distance (m, ≤ 48) to the nearest track centre line. */
   trackDist(x: number, z: number): number {
-    if (!this.trackFar) this.buildFar()
     const i = Math.round((x + this.half) / 4), j = Math.round((z + this.half) / 4)
     return i < 0 || j < 0 || i >= this.farN || j >= this.farN ? 48 : this.trackFar![j * this.farN + i]
   }
   /** Distance (m, ≤ 80) to the river's centre line / the lake's and the ponds' shores. */
   riverDist(x: number, z: number): number {
-    if (!this.riverFar) this.buildFar()
     const i = Math.round((x + this.half) / 4), j = Math.round((z + this.half) / 4)
     return i < 0 || j < 0 || i >= this.farN || j >= this.farN ? 80 : this.riverFar![j * this.farN + i]
   }

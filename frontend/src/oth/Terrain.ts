@@ -112,7 +112,7 @@ export class Terrain {
     const mat = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: this.uniforms,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines },
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
@@ -125,38 +125,12 @@ export class Terrain {
     this.mesh.renderOrder = 10
   }
 
-  /** Min / max heights per leaf cell (from both grids), then reduced 2 × 2 up the levels. */
+  /** Min / max heights per node, per level: the map's (computed with it in the loader's worker, mapPrep.ts). */
   private buildPyramid(): void {
-    const m = this.map, cells = 2 ** this.levels, L = this.leaf
-    const mn = new Float32Array(cells * cells).fill(1e9), mx = new Float32Array(cells * cells).fill(-1e9)
-    const put = (x: number, z: number, h: number) => {
-      const i = Math.floor((x - this.origin) / L), j = Math.floor((z - this.origin) / L)
-      // a sample on a cell edge belongs to both cells
-      for (let dj = -1; dj <= 0; dj++) for (let di = -1; di <= 0; di++) {
-        const ii = di === 0 ? i : Math.floor((x - this.origin - 0.01) / L), jj = dj === 0 ? j : Math.floor((z - this.origin - 0.01) / L)
-        if (ii < 0 || jj < 0 || ii >= cells || jj >= cells) continue
-        const k = jj * cells + ii
-        if (h < mn[k]) mn[k] = h
-        if (h > mx[k]) mx[k] = h
-      }
-    }
-    for (const grid of [m.far, m.inner]) {
-      const n = grid.n
-      for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) put(grid.origin + i * grid.step, grid.origin + j * grid.step, grid.h[j * n + i])
-    }
-    // cells with no sample (smaller than the far grid's 16 m, outside the box): their surroundings
-    for (let k = 0; k < mn.length; k++) if (mn[k] > mx[k]) { const x = this.origin + ((k % cells) + 0.5) * L, z = this.origin + (Math.floor(k / cells) + 0.5) * L; mn[k] = mx[k] = m.height(x, z) }
-    this.minH.push(mn); this.maxH.push(mx)
-    for (let l = 1; l <= this.levels; l++) {
-      const c = cells >> l, pmn = this.minH[l - 1], pmx = this.maxH[l - 1], pc = c * 2
-      const a = new Float32Array(c * c), b = new Float32Array(c * c)
-      for (let j = 0; j < c; j++) for (let i = 0; i < c; i++) {
-        const k0 = 2 * j * pc + 2 * i
-        a[j * c + i] = Math.min(pmn[k0], pmn[k0 + 1], pmn[k0 + pc], pmn[k0 + pc + 1])
-        b[j * c + i] = Math.max(pmx[k0], pmx[k0 + 1], pmx[k0 + pc], pmx[k0 + pc + 1])
-      }
-      this.minH.push(a); this.maxH.push(b)
-    }
+    const P = this.map.pyramid
+    if (P.leaf !== this.leaf || P.levels !== this.levels) throw new Error('Terrain: the map was prepared for another leaf size')
+    this.minH.push(...P.minH)
+    this.maxH.push(...P.maxH)
   }
 
   /** Pick this frame's patches. */
@@ -338,9 +312,15 @@ void main() {
   if (box) {
     m = texture(uMask, gridUv(uMaskGrid, xz));
   } else {
+#ifdef OTH_DESERT
+    // (the far desert: sandstone where it's steep, sand everywhere else — loose in broad drifts; nothing grows)
+    float rock = smoothstep(0.12, 0.26, steep + (p.big.b - 0.5) * 0.12);
+    m = vec4(rock, 0.55 + (p.big.g - 0.5) * 0.7, 0.0, 0.0);
+#else
     float rock = smoothstep(0.1, 0.24, steep + (p.big.b - 0.5) * 0.12) + smoothstep(700.0, 1100.0, h) * smoothstep(0.04, 0.14, steep);
     float forest = smoothstep(0.52, 0.62, p.big.r + p.mid.g * 0.25) * (1.0 - smoothstep(560.0, 820.0, h + (p.mid.r - 0.5) * 160.0));
     m = vec4(clamp(rock, 0.0, 1.0), 0.6 + (p.big.g - 0.5) * 0.6, 0.0, forest);
+#endif
   }
   float trail = box ? texture(uTrail, gridUv(uInGrid, xz)).r * 8.0 : 8.0;
   Ground g = groundPaint(xz, m, h, steep, p, foot, trail, uTrailHW, farG ? 0.0 : smoothstep(uBushR * 0.7, uBushR, dcam)); // (painted shrub dots only beyond the real bushes)
@@ -353,11 +333,28 @@ void main() {
   N = rockRelief(vWorld, N, max(g.rock, g.scree * 0.6) * (1.0 - g.trail), dFdx(vWorld), dFdy(vWorld), cav); // (never on a track)
 #endif
   col *= 1.0 + (facetRand(Nf) - 0.5) * 0.1 * facet;
+#ifdef OTH_DESERT
+  // WIND RIPPLES in the loose sand (Over the Hill's dunes): fine ridges across the wind (~0.35 m), their lines
+  // wandering, the light only — strongest on the loose, gone on rock, tracks, the damp and wherever a ripple would be
+  // smaller than a pixel or two
+  float loose = m.g * (1.0 - g.rock) * (1.0 - g.trail) * (1.0 - smoothstep(0.3, 0.7, m.b)) * (1.0 - smoothstep(0.05, 0.12, foot));
+  if (loose > 0.01) {
+    vec2 wd = normalize(vec2(0.83, 0.56));
+    float warp = (p.mid.g - 0.5) * 9.0 + (p.fine.b - 0.5) * 2.2;
+    float ph = dot(xz, wd) * 17.0 + warp;
+    float rip = cos(ph) * 0.5 + 0.5 * cos(ph * 2.03 + 1.1) * 0.35;
+    N = normalize(N + vec3(wd.x, 0.0, wd.y) * rip * 0.16 * loose);
+  }
+#endif
   // CLIFF FACES (2026-10-27, "cliffs … the colour is the key"): a steep rock face reads as LAYERED stone — horizontal
   // strata ~3.4 m apart (their lines wandering), each band its own tone between a warm sandy grey and a cool blue
   // grey, a dark seam where two meet; darker water streaks running down from the ledges; moss and grass on the ledges
   // (the facets that face up). Rock only, large marks (every tier: no texture, one noise fetch).
+#ifdef OTH_DESERT
+  float cliffK = 0.0; // (the desert's beds are its own paint: groundPaint)
+#else
   float cliffK = g.rock * smoothstep(0.22, 0.5, steep) * (1.0 - g.trail);
+#endif
   if (cliffK > 0.01) {
     float hb = h / 3.4 + (p.mid.g - 0.5) * 1.8 + (p.fine.r - 0.5) * 0.45;
     float bi = floor(hb), bf = hb - bi;
@@ -396,6 +393,9 @@ void main() {
   float ao = mix(1.0, 0.7, g.forest) * mix(1.0, 0.85, g.bed) * cav;
   vec3 V = normalize(uCamPos - vWorld);
   float sun = sunVisibility(xz);
+#ifdef OTH_DESERT
+  sun = mix(sun, 1.0, smoothstep(0.35, 0.7, steep)); // (the 4 m bake on a near-vertical face: stripes — its facing shades it)
+#endif
   // under the grass the ground lies in the blades' shade (it shows between them); the shade lifts toward the
   // grass's edge, where the ground alone must look like the field from afar
   float under = grassy0(m, g.rock, g.forest) * (1.0 - smoothstep(0.02, 0.1, g.scree)) * (1.0 - g.trail) * (1.0 - smoothstep(uGrassR * 0.3, uGrassR * 0.95, length(vWorld - uCamPos)));

@@ -1,0 +1,221 @@
+import * as THREE from 'three'
+import type { Atmosphere } from './Atmosphere'
+import { Birds } from './Birds'
+import { Bridges } from './Bridges'
+import { Bushes } from './Bushes'
+import { Falls } from './Falls'
+import { Formations } from './Formations'
+import { Glow } from './Glow'
+import { Grass } from './Grass'
+import { Horizon } from './Horizon'
+import { Landmarks } from './Landmarks'
+import { type Landmark, MapData } from './MapData'
+import { placeThings } from './Places'
+import { Props } from './Props'
+import type { Tier } from './quality'
+import { Rocks } from './Rocks'
+import { Terrain } from './Terrain'
+import type { TerrainShadow } from './TerrainShadow'
+import { Trees } from './Trees'
+import { Water } from './Water'
+
+/**
+ * A WORLD (2026-11-02, the user: "go through a fog, the old world disappears, we entirely remove it … then load the
+ * other world"): everything built from one map — its ground, grass, rocks, trees, bushes, water, falls, bridges,
+ * landmarks, the small things (Places / Props), the birds — under one group, built in steps (`pace` between them: a
+ * world built behind the fog while the car drives lets the frames through) and DISPOSED whole: every geometry,
+ * material, texture and render target it made goes back to the GPU, nothing of it stays behind.
+ *
+ * What lasts across worlds lives in main.ts: the renderer, the camera, the sky and the light (Atmosphere), the car
+ * and the physics (OthPhysics.setWorld swaps the colliders), the sound, the HUD, the terrain shadow (its worker gets the
+ * new ground: TerrainShadow.setMap). They see the current world's map through liveMap().
+ */
+export type WorldId = 'valley' | 'desert'
+export const WORLDS: Record<WorldId, { path: string; name: string }> = {
+  valley: { path: '/oth/valley', name: 'the valley' },
+  desert: { path: '/oth/desert', name: 'the desert' },
+}
+
+export interface WorldEnv {
+  renderer: THREE.WebGLRenderer
+  /** The view and the scene the world will be drawn in (its shaders compiled for them before it's entered). */
+  camera: THREE.PerspectiveCamera
+  scene: THREE.Scene
+  atmos: Atmosphere
+  tier: Tier
+  /** The terrain shadow (lasts across worlds; set to each world's ground in turn — adoptShadow). */
+  shadow: TerrainShadow
+  /** The far grid every world's materials read (the same Vector4 always: the car's material holds it). */
+  farGrid: THREE.Vector4
+  birds: boolean
+  occlusion: boolean
+  /** The supply crates already picked up (the journal). */
+  crates: number[]
+}
+
+export class World {
+  readonly group = new THREE.Group()
+  /** How long each step took to build (ms) — the dev stats, the crossing's budget. */
+  readonly timings: Record<string, number> = {}
+  private constructor(
+    readonly id: WorldId,
+    readonly map: MapData,
+    readonly terrain: Terrain,
+    readonly rocks: Rocks,
+    readonly grass: Grass,
+    readonly water: Water,
+    readonly falls: Falls,
+    readonly trees: Trees,
+    readonly bushes: Bushes,
+    readonly horizon: Horizon,
+    readonly bridges: Bridges,
+    readonly glow: Glow | null,
+    readonly landmarks: Landmarks,
+    readonly props: Props,
+    readonly birds: Birds | null,
+    /** The desert's sandstone (Blender's slabs — Formations.ts); none in the valley. */
+    readonly formations: Formations | null,
+    /** Every landmark and camp (the signposts, the map, the journal count them). */
+    readonly places: Landmark[],
+  ) {}
+
+  /** Build world `id` (its files fetched first); `pace` runs between the steps (a frame, when built while playing). */
+  static async build(id: WorldId, env: WorldEnv, pace: () => Promise<void> = async () => {}, onProgress?: (f: number) => void, loaded?: MapData): Promise<World> {
+    const timings: Record<string, number> = {}
+    const t0 = performance.now()
+    const map = loaded ?? (await MapData.load(WORLDS[id].path, env.tier.terrainLeaf, onProgress))
+    timings.load = performance.now() - t0
+    const step = async <T>(label: string, f: () => T): Promise<T> => {
+      const t = performance.now()
+      const r = f()
+      timings[label] = performance.now() - t
+      await pace()
+      return r
+    }
+    const { atmos, tier, shadow } = env
+    await step('shadow', () => shadow.setMap(map))
+    const terrain = await step('terrain', () => {
+      const t = new Terrain(map, atmos, tier, shadow)
+      // (the far grid the car's material holds: this world's values in the same Vector4)
+      env.farGrid.copy(t.uniforms.uFarGrid.value)
+      t.uniforms.uFarGrid.value = env.farGrid
+      return t
+    })
+    const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid))
+    const grass = await step('grass', () => new Grass(map, atmos, terrain, tier, rocks.footprint))
+    const water = await step('water', () => new Water(map, atmos, terrain, tier, rocks.footprint))
+    const falls = await step('falls', () => new Falls(map, atmos))
+    const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks))
+    await step('impostors', () => trees.bakeImpostors(env.renderer))
+    const bushes = await step('bushes', () => new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture))
+    // OCCLUSION CULLING: what the hills hide (trees, rocks, bushes behind them are skipped)
+    const horizon = await step('horizon', () => new Horizon(map, Math.max(tier.treeReach, tier.rockReach)))
+    horizon.enabled = env.occlusion
+    trees.horizon = rocks.horizon = bushes.horizon = terrain.horizon = horizon
+    const bridges = await step('bridges', () => new Bridges(map, atmos, shadow, tier, env.farGrid))
+    // without the post pass: the bloom and the god rays painted forward (Glow.ts)
+    const glow = tier.bloom ? null : await step('glow', () => new Glow(map, atmos))
+    atmos.uniforms.uGlow.value = glow ? 1 : 0
+    // THE SMALL THINGS (Places.ts picks where, seeded): the CAMPS join the landmarks (built, found, on the map like
+    // them); the signposts, tables, fences, log piles, cairns, trucks, supply crates and fireflies are Props.ts
+    const placed = await step('places', () => placeThings(map, rocks, trees))
+    const places = (map.meta.landmarks = [...(map.meta.landmarks ?? []), ...placed.camps])
+    const landmarks = await step('landmarks', () => new Landmarks(map, atmos, shadow, tier, env.farGrid))
+    const props = await step('props', () => new Props(placed.props, places, placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner))
+    landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
+    const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
+    // (the desert's sandstone slabs: fetched, Draco-decoded in the loader's workers)
+    const tf = performance.now()
+    const formations = map.desert ? await Formations.load(`${WORLDS[id].path}/formations.glb`, atmos, shadow, tier, env.farGrid) : null
+    timings.formations = performance.now() - tf
+    if (formations) formations.horizon = horizon
+    const w = new World(id, map, terrain, rocks, grass, water, falls, trees, bushes, horizon, bridges, glow, landmarks, props, birds, formations, places)
+    Object.assign(w.timings, timings)
+    w.group.add(props.group, landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group)
+    if (glow) w.group.add(glow.group)
+    if (birds) w.group.add(birds.mesh)
+    if (formations) w.group.add(formations.group)
+    // WARM: its textures on the GPU (one a frame — ~35 MB went up in the first frame after a swap) and its shaders
+    // compiled (in parallel where the browser can) before it's ever drawn
+    const textures = new Set<THREE.Texture>()
+    w.group.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.ShaderMaterial | undefined
+      if (m?.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k]?.value; if (v instanceof THREE.Texture) textures.add(v) }
+    })
+    for (const t of textures) await step('upload', () => env.renderer.initTexture(t))
+    const tc = performance.now()
+    await env.renderer.compileAsync(w.group, env.camera, env.scene)
+    w.timings.compile = performance.now() - tc
+    w.timings.total = performance.now() - t0
+    return w
+  }
+
+  /** The terrain shadow back to this world's ground and trees (a world built behind the fog and then not entered). */
+  adoptShadow(shadow: TerrainShadow): void {
+    shadow.setMap(this.map)
+    this.trees.reshade(shadow)
+  }
+
+  /** What's drawn this frame: each system's own culling and lists (the camera has moved). */
+  update(camera: THREE.PerspectiveCamera, dt: number, t: number, lamps: number, fire: THREE.Vector4, carX: number, carZ: number): void {
+    this.props.fireLight(camera.position, t, lamps, fire)
+    this.birds?.update()
+    this.glow?.update(camera, dt)
+    this.landmarks.update(dt, carX, carZ)
+    this.horizon.update(camera.position)
+    this.terrain.update(camera)
+    this.grass.update(camera)
+    this.rocks.update(camera)
+    this.trees.update(camera)
+    this.bushes.update(camera)
+    this.props.update(camera)
+    this.formations?.update(camera)
+    this.landmarks.cull()
+    this.bridges.cull()
+    this.falls.cull()
+  }
+
+  /** Everything this world made goes back: geometries, materials, the textures they read (but not `keep` — the
+   *  sky's noise, the terrain shadow's: they last), the impostor atlas, the glow's page overlay. The group leaves the
+   *  scene; the JS objects go with the last reference. */
+  dispose(keep: Set<THREE.Texture>): void {
+    this.group.removeFromParent()
+    const textures = new Set<THREE.Texture>()
+    const take = (v: unknown) => { if (v instanceof THREE.Texture && !keep.has(v) && !v.userData.shared) textures.add(v) }
+    this.group.traverse((o) => {
+      const m = o as THREE.Mesh
+      m.geometry?.dispose()
+      for (const mat of m.material ? (Array.isArray(m.material) ? m.material : [m.material]) : []) {
+        for (const v of Object.values(mat as unknown as Record<string, unknown>)) take(v)
+        const u = (mat as THREE.ShaderMaterial).uniforms
+        if (u) for (const k in u) take(u[k]?.value)
+        mat.dispose()
+      }
+    })
+    const M = this.map
+    for (const t of [M.inner.tex, M.far.tex, M.inner.normalTex, M.far.normalTex, M.maskTex, M.trailTex, M.mudTex, this.rocks.footprint]) take(t)
+    for (const t of textures) t.dispose()
+    this.trees.atlas?.dispose()
+    this.glow?.dispose()
+  }
+}
+
+/**
+ * The CURRENT world's map for what lasts across worlds (the car, the cameras, the dust, the tracks, the winch, the
+ * sound): every read goes to the map `get()` returns now — its methods bound once per map.
+ */
+export function liveMap(get: () => MapData): MapData {
+  let cur: MapData | null = null
+  const bound = new Map<PropertyKey, unknown>()
+  return new Proxy({} as MapData, {
+    get(_, k) {
+      const m = get()
+      if (m !== cur) { cur = m; bound.clear() }
+      const v = (m as unknown as Record<PropertyKey, unknown>)[k]
+      if (typeof v !== 'function') return v
+      let f = bound.get(k)
+      if (!f) bound.set(k, (f = v.bind(m)))
+      return f
+    },
+  })
+}

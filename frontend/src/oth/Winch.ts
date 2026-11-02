@@ -29,7 +29,7 @@ export class Winch {
   /** Messages (main.ts: the toast). */
   onMessage: ((m: string) => void) | null = null
 
-  constructor(private readonly map: MapData, private readonly car: Vehicle, private readonly trees: Trees, private readonly rocks: Rocks) {
+  constructor(private readonly map: MapData, private readonly car: Vehicle, private trees: Trees, private rocks: Rocks) {
     this.pos = new Float32Array((SEG + 1) * 2 * 3)
     this.geo = new THREE.BufferGeometry()
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage))
@@ -43,6 +43,13 @@ export class Winch {
   }
 
   get attached(): boolean { return this.anchor !== null }
+
+  /** Another world's trees and rocks (the crossing); a line still hooked lets go. */
+  setWorld(trees: Trees, rocks: Rocks): void {
+    if (this.attached) this.toggle()
+    this.trees = trees
+    this.rocks = rocks
+  }
 
   toggle(): void {
     if (this.anchor) { this.anchor = null; this.mesh.visible = false; this.onMessage?.('Winch released'); return }

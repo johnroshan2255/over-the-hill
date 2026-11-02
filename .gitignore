@@ -9,3 +9,5 @@ backend/target
 !.env.example
 *.log
 .DS_Store
+frontend/scripts/oth/.cache
+__pycache__/

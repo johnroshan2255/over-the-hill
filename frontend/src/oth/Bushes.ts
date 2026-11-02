@@ -50,7 +50,7 @@ export class Bushes {
     const mat = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new THREE.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: { value: leafTex } },
-      defines: { ...(tier.msaa ? { A2C: '' } : {}) }, // (no specular: leaves of roughness 0.9 never showed one)
+      defines: { ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines }, // (no specular: leaves of roughness 0.9 never showed one)
       vertexColors: true,
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -95,14 +95,17 @@ export class Bushes {
         // (+ thick along the river banks, lining the tracks and round the spawn — the user: "bushes near the river, near
         //  the trees")
         const td = map.trackDist(x, z), rd = map.riverDist(x, z), sd = Math.hypot(x - map.meta.spawn.x, z - map.meta.spawn.z)
-        const p = 0.05 + 0.18 * green + 0.3 * edge + 0.12 * Math.min(1, mk[2] / 0.6) - 0.15 * Math.max(0, mk[3] - 0.6)
+        // (the DESERT — Over the Hill's, not the valley's, the user: round light yellow-green bushes thick along the
+        //  oasis and in its growth, a few scattered over the open sand, none on the dunes' loose crests)
+        const p = map.desert ? 0.03 + 0.4 * Math.min(1, mk[3] / 0.4) + (rd > 9 && rd < 70 ? 0.3 : 0) + (td > hw + 1.5 && td < 10 ? 0.06 : 0) - 0.025 * Math.max(0, mk[1] - 0.8) / 0.2
+          : 0.05 + 0.18 * green + 0.3 * edge + 0.12 * Math.min(1, mk[2] / 0.6) - 0.15 * Math.max(0, mk[3] - 0.6)
           + (rd > 11 && rd < 34 ? 0.45 : 0) + (td > hw + 1.5 && td < 12 ? 0.3 : 0) + (sd > 12 && sd < 150 ? 0.25 : 0)
         if (rnd() > p) continue
         if (map.trailDist(x, z) < hw + 1.2) continue
         const gi = Math.round((x - g.origin) / g.step), gj = Math.round((z - g.origin) / g.step)
         if (fp[gj * g.n + gi] > 60) continue
-        const size = 0.7 + 1.4 * Math.pow(rnd(), 1.6)
-        const r = rnd(), kind = r < 0.06 ? 2 : r < 0.3 ? 1 : 0
+        const size = map.desert ? 0.9 + 1.3 * Math.pow(rnd(), 1.4) : 0.7 + 1.4 * Math.pow(rnd(), 1.6)
+        const r = rnd(), kind = map.desert ? 0 : r < 0.06 ? 2 : r < 0.3 ? 1 : 0
         out.push(x, map.height(x, z) - 0.12 * size, z, size, rnd() * Math.PI * 2, kind, rnd())
       }
     }
@@ -233,6 +236,10 @@ void main() {
   vec3 juniper = mix(vec3(0.02, 0.05, 0.03), vec3(0.06, 0.14, 0.07), 0.55 + j * 0.4);
   vec3 autumn = mix(vec3(0.35, 0.08, 0.02), vec3(0.7, 0.2, 0.04), 0.55 + j * 0.4);
   vAlb = (aB1.y > 1.5 ? autumn : aB1.y > 0.5 ? juniper : green) * PLANT_VALUE; // (paint.ts: the plants' value)
+#ifdef OTH_DESERT
+  // (Over the Hill's desert bushes: a light yellow-green, sunlit ≈ sRGB 135 160 50)
+  vAlb = mix(vec3(0.15, 0.24, 0.035), vec3(0.3, 0.4, 0.07), 0.5 + j * 0.5) * PLANT_VALUE * 1.3;
+#endif
   vSun = sunVisibility(aB0.xz);
   // THE LIGHT, PER VERTEX (2026-10-27, 400 fps at 1080p: the clumps are many cards deep): it is linear in the leaf's
   // colour — the sun, the sky, the headlights' paint, the back-lit rim and the haze come down to a multiplier and an

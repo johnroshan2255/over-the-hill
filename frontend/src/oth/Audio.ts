@@ -98,7 +98,7 @@ export class OthAudio {
   private readonly nextCall: Record<CallKind, number> = { bird: 2, owl: 9, frog: 3 }
   private owlAnswered = false
   /** The lake and the ponds (their shores: the frogs). */
-  private readonly ponds: { cx: number; cz: number; rx: number; rz: number; rot: number; level: number }[]
+  private ponds: { cx: number; cz: number; rx: number; rz: number; rot: number; level: number }[] = []
   /** The ridge wind: its gain and its howl's band-pass. */
   private windGain: GainNode | null = null
   private windHowl!: BiquadFilterNode
@@ -116,16 +116,13 @@ export class OthAudio {
   private sense = 0
   private near = { stream: 1e9, streamPan: 0, fall: 1e9, fallPan: 0, forest: 0, fire: 1e9, firePan: 0, pond: 1e9, pondPan: 0, pondIdx: -1, ridge: 0 }
   private readonly mk: [number, number, number, number] = [0, 0, 0, 0]
-  private readonly flowPts: number[] = []
+  private flowPts: number[] = []
   private readonly right = new THREE.Vector3()
   /** RAIN (no recording: synthesized): looped noise through a soft band-pass, its level the weather's rain. */
   private rainGain: GainNode | null = null
 
   constructor(private readonly map: MapData, private readonly car: Vehicle, private readonly atmos: Atmosphere) {
-    // every point of the flowing water (the river, the streams) — the camera's nearest, a few times a second
-    const W = map.meta.water
-    for (const L of [W.river, ...(W.streams ?? [])]) for (let i = 0; i < L.x.length; i += 2) this.flowPts.push(L.x[i], L.z[i])
-    this.ponds = [W.lake, ...(W.ponds ?? [])]
+    this.setWorld()
     const start = () => {
       for (const t of ['keydown', 'pointerdown', 'touchstart']) window.removeEventListener(t, start)
       this.init()
@@ -140,6 +137,16 @@ export class OthAudio {
       if (!this.ctx) return
       if (document.hidden) { void this.ctx.suspend(); this.music?.pause() } else { void this.ctx.resume(); void this.music?.play().catch(() => {}) }
     })
+  }
+
+  /** The world's water (the map's — main.ts gives a live one: called again at a crossing): every point of the flowing
+   *  water (the river, the streams; the camera's nearest, a few times a second), the lake and the ponds. */
+  setWorld(): void {
+    const W = this.map.meta.water
+    this.flowPts = []
+    for (const L of [W.river, ...(W.streams ?? [])]) for (let i = 0; i < L.x.length; i += 2) this.flowPts.push(L.x[i], L.z[i])
+    this.ponds = [W.lake, ...(W.ponds ?? [])]
+    this.near.pondIdx = -1
   }
 
   private init(): void {

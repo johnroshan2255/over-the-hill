@@ -98,6 +98,57 @@ struct Ground { vec3 col; float rock; float forest; float snow; float bed; float
 // trail = distance (m) to the nearest dirt track's centre line, hw its half width
 // far = 0 within the grass's reach … 1 beyond it: the shrub dots are a far-hillside breakup only (near, a bush is a
 // real bush, not a disc painted on the ground)
+#ifdef OTH_DESERT
+// THE DESERT (Over the Hill's Algeria, their Steam shots measured, 2026-11-02): pale orange SAND (sunlit ≈ sRGB 213 173
+// 128), red-orange SANDSTONE in BEDS 9 m thick (≈ 213 140 111 in the sun, 181 116 99 in shade) — each bed its own tone,
+// a darker undercut at its foot, sand dusting the flat tops; damp sand by the water, olive ground under the oasis's
+// growth, light compacted sand on the tracks. Mask: R rock, G loose sand, B wet / water, A the oasis's growth.
+const vec3 SAND        = vec3(0.47, 0.32, 0.19);
+const vec3 SAND_DEEP   = vec3(0.42, 0.26, 0.15);
+const vec3 SAND_PALE   = vec3(0.52, 0.37, 0.23);
+const vec3 STONE       = vec3(0.44, 0.19, 0.115);
+const vec3 STONE_PALE  = vec3(0.5, 0.26, 0.155);
+const vec3 STONE_DEEP  = vec3(0.3, 0.12, 0.075);
+const vec3 DAMP        = vec3(0.24, 0.15, 0.085);
+const vec3 OASIS_FLOOR = vec3(0.16, 0.15, 0.06);
+const vec3 TRACK_SAND  = vec3(0.5, 0.36, 0.23);
+// (a bed's tone: 0..1 per bed, the beds wobbling a little in height like the generator's)
+float bedTone(float h, Paint p) { float b = floor((h + (p.big.g - 0.5) * 5.0) / 9.0); return fract(sin(b * 12.9898 + 4.1) * 43758.5453); }
+Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
+  Ground g;
+  g.snow = 0.0; g.scree = 0.0; g.screeNear = 0.0;
+  float near = 1.0 - smoothstep(0.35, 1.2, foot);
+  float grain = mix(1.0, (0.86 + 0.28 * p.micro.g) * (0.95 + 0.1 * p.micro.b), near);
+  // sand: the loose (dunes, drifts) paler and yellower, the compact redder; broad soft drifts of tone
+  vec3 col = mix(SAND_DEEP, mix(SAND, SAND_PALE, p.mid.r), 0.35 + 0.65 * m.g);
+  col *= (0.93 + 0.1 * p.fine.g + (p.big.r - 0.5) * 0.12 + (p.mid.b - 0.5) * 0.06) * grain;
+  // damp sand toward the water, the oasis's olive floor under its palms and scrub
+  float wet = min(m.b / 0.85, 1.0);
+  col = mix(col, DAMP * (0.9 + 0.2 * p.fine.g), smoothstep(0.3, 0.85, wet) * 0.7);
+  g.forest = smoothstep(0.25, 0.75, m.a + (p.mid.b - 0.5) * 0.3);
+  col = mix(col, OASIS_FLOOR * (0.85 + 0.3 * p.grain.r), g.forest * 0.45);
+  // SANDSTONE: the beds' tones, a darker undercut at each bed's foot (steep faces only), sand on the flat tops
+  float rv = m.r + (p.mid.b - 0.5) * 0.3 + (p.grain.b - 0.5) * 0.1;
+  g.rock = smoothstep(0.42, 0.58, rv);
+  g.rockNear = smoothstep(0.27, 0.433, rv);
+  float bt = bedTone(h, p);
+  vec3 stone = mix(STONE, STONE_PALE, bt * 0.8 + (p.mid.r - 0.5) * 0.3) * (0.92 + 0.12 * p.fine.g);
+  float hb = (h + (p.big.g - 0.5) * 5.0) / 9.0, bf = hb - floor(hb);
+  stone = mix(stone, STONE_DEEP, (1.0 - smoothstep(0.0, 0.16, bf)) * smoothstep(0.2, 0.45, steep) * 0.55);
+  stone = mix(stone, SAND_PALE * 0.96, (1.0 - smoothstep(0.03, 0.12, steep)) * 0.55); // (sand on the tops)
+  col = mix(col, stone, g.rock);
+  // the water's bed: wet gravel and sand
+  g.bed = smoothstep(0.9, 0.97, m.b);
+  col = mix(col, DAMP * (0.75 + 0.3 * p.grain.g) * mix(vec3(1.0), vec3(0.92, 0.97, 0.95), p.mid.g), g.bed);
+  // the TRACKS: compacted lighter sand, two wheel ruts a touch darker
+  g.trail = trail < hw + 1.2 ? trackMask(xz, trail, hw) * (1.0 - g.bed) : 0.0;
+  float rut = (1.0 - smoothstep(0.15, 0.45, abs(trail - 0.85))) * near;
+  vec3 track = TRACK_SAND * (0.94 + 0.08 * p.fine.g + 0.05 * p.mid.r) * mix(1.0, 0.95 + 0.1 * p.micro.g, near) * (1.0 - 0.07 * rut);
+  col = mix(col, track, g.trail);
+  g.col = col;
+  return g;
+}
+#else
 Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
   Ground g;
   vec3 col = grassPaint(m.g, p);
@@ -175,6 +226,8 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   g.col = col;
   return g;
 }
+
+#endif
 
 // WILDFLOWERS (mud.bin G): a drift's colour — one kind per patch (a slow noise picks it), a few of the next kind mixed
 // in (pick: a per-plant random). White daisies, buttercups, lilac lupines, pink campion, poppies, cornflowers; linear

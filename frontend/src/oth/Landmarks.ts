@@ -41,7 +41,7 @@ export class Landmarks {
     for (const l of this.list) {
       const from = b.count, cols: [THREE.Vector3, THREE.Vector3, boolean][] = []
       const col = (cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ground = false) => cols.push([new THREE.Vector3(cx, cy, cz), new THREE.Vector3(hx, hy, hz), ground])
-      KINDS[l.kind](b, l, col, map)
+      KINDS[l.kind]?.(b, l, col, map) // (the desert's kinds: their shapes are Blender's — formations.glb)
       const S = SCALE[l.kind] ?? 1
       const m = new THREE.Matrix4().compose(new THREE.Vector3(l.x, l.y, l.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), l.rot), new THREE.Vector3(S, S, S))
       b.transform(from, m)
@@ -120,7 +120,7 @@ function windowAt(b: Builder, c: THREE.Vector3, out: THREE.Vector3, along: THREE
   b.setGlow(0)
 }
 
-const KINDS: Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col, map: MapData) => void> = {
+const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col, map: MapData) => void>> = {
   /** FIRE LOOKOUT: four splayed log legs 13 m up, X-braced, a ladder; on top a catwalk with a rail round the cab (lit
    *  windows all round), its RED hip roof seen from afar. */
   tower(b, _l, col) {

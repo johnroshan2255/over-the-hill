@@ -7,7 +7,7 @@ import type { Rocks } from './Rocks'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 import { createFrondTexture, createLeafTexture, FROND_GLSL, LEAF_GLSL } from './leafTexture'
 import { PLANT_VALUE_GLSL } from './paint'
-import { broadleafGeometry, CROWN, spruceGeometry } from './treeGeometry'
+import { broadleafGeometry, palmGeometry, CROWN, spruceGeometry } from './treeGeometry'
 
 /**
  * THE FORESTS — Over-the-Hill woods, four trees in five a green spruce (the stylized conifer); the rest in small groves:
@@ -74,7 +74,7 @@ export class Trees {
     }
     // the forests' shade: stamped by the terrain shadow's worker at every sun position (off the main thread — at a low
     // sun every shadow is long: stamping 25 000 of them froze the game 100–180 ms each time, all evening and night)
-    const sh = new Float32Array(this.count * 4)
+    const sh = (this.shade = new Float32Array(this.count * 4))
     for (let i = 0; i < this.count; i++) { const o = i * TREE_STRIDE; sh.set([this.data[o], this.data[o + 2], this.data[o + 3], this.data[o + 5]], i * 4) }
     shadow.setTrees(sh, CROWN)
     this.leafU = { value: createLeafTexture() }
@@ -83,7 +83,7 @@ export class Trees {
       glslVersion: THREE.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new THREE.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU },
       vertexColors: true,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines },
       vertexShader: VERT,
       fragmentShader: FRAG,
       side: THREE.DoubleSide,
@@ -96,7 +96,7 @@ export class Trees {
         ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new THREE.Vector4(map.far.n, map.far.step, map.far.origin, 0) },
         uImpAlb: { value: null }, uImpNor: { value: null }, uImpSize: { value: new THREE.Vector2(IMP.cols * IMP.fw, IMP.rows * IMP.fh) },
       },
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), IMP_NA: IMP.cols.toFixed(1), IMP_ROWS: IMP.rows.toFixed(1), IMP_FW: IMP.FW.toFixed(3), IMP_FH: IMP.FH.toFixed(3), IMP_CY: IMP.CY.toFixed(3), IMP_E1: ((IMP.elev[0] + IMP.elev[1]) / 2).toFixed(3), IMP_E2: ((IMP.elev[1] + IMP.elev[2]) / 2).toFixed(3) },
+      defines: { ...map.biomeDefines, ...(tier.spec ? { OTH_SPEC: '' } : {}), IMP_NA: IMP.cols.toFixed(1), IMP_ROWS: IMP.rows.toFixed(1), IMP_FW: IMP.FW.toFixed(3), IMP_FH: IMP.FH.toFixed(3), IMP_CY: IMP.CY.toFixed(3), IMP_E1: ((IMP.elev[0] + IMP.elev[1]) / 2).toFixed(3), IMP_E2: ((IMP.elev[1] + IMP.elev[2]) / 2).toFixed(3) },
       vertexShader: IMP_VERT,
       fragmentShader: IMP_FRAG,
       // MSAA tiers: the alpha edge resolves to smooth coverage (no hard, shimmering cut-out); LOW keeps the test
@@ -109,7 +109,8 @@ export class Trees {
     for (let l = 0; l < 5; l++) {
       const [r0, r1] = ring[l]
       const max = Math.min(l === 4 ? 60000 : 30000, Math.ceil(Math.PI * (r1 * r1 - r0 * r0) * dens * 0.6) + 64)
-      const src = l === 4 ? impostorQuad() : l < 2 ? spruceGeometry(l) : broadleafGeometry(l - 2)
+      // (the desert: its palms in the broadleaf family's place — their LODs, their impostors)
+      const src = l === 4 ? impostorQuad() : l < 2 ? spruceGeometry(l) : map.desert ? palmGeometry(l - 2) : broadleafGeometry(l - 2)
       const geo = new THREE.InstancedBufferGeometry()
       for (const n of l < 4 ? ['position', 'normal', 'color', 'leaf'] : ['position']) geo.setAttribute(n, src.getAttribute(n))
       geo.setIndex(src.getIndex()) // (indexed: the near tree is 947 shared vertices)
@@ -131,6 +132,23 @@ export class Trees {
   /** Deterministic placement from the forest mask. */
   private place(rocks: Rocks): Float32Array {
     const map = this.map, out: number[] = []
+    if (map.desert) {
+      // THE DESERT'S PALMS: the oasis (mask A, its growth) — groves along the water, a few strays; 9–17 m tall,
+      // green (species 5: the broadleaf family, drawn as palms)
+      let s2 = 0x2c1b3c6d
+      const r2 = () => ((s2 = (Math.imul(s2 ^ (s2 >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+      const mk: [number, number, number, number] = [0, 0, 0, 0], G2 = 7.5, h2 = map.half - 50
+      for (let z = -h2; z < h2; z += G2) for (let x = -h2; x < h2; x += G2) {
+        const px = x + (r2() - 0.5) * G2 * 1.2, pz = z + (r2() - 0.5) * G2 * 1.2
+        map.maskAt(px, pz, mk)
+        if (mk[3] < 0.08 || mk[2] > 0.86 || mk[0] > 0.3 || map.trailDist(px, pz) < map.meta.trails.hw + 2.5 || map.waterLevel(px, pz) !== null) continue
+        if (r2() > 0.15 + 0.75 * Math.min(1, (mk[3] - 0.08) / 0.5)) continue
+        if (rocks.biggestNear(px, pz, 3)) continue
+        const y = map.height(px, pz), H = 9 + 8 * Math.pow(r2(), 0.8)
+        out.push(px, y - 0.3, pz, H, r2() * Math.PI * 2, 5, r2(), r2())
+      }
+      return new Float32Array(out)
+    }
     const G = 6.5, half = map.half - 50
     let s = 0x7f4a7c15
     const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
@@ -338,8 +356,8 @@ export class Trees {
     const W = IMP.cols * IMP.fw, Hh = IMP.rows * IMP.fh
     const rt = new THREE.WebGLRenderTarget(W, Hh, { count: 2, type: THREE.UnsignedByteType, depthBuffer: true, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter })
     for (const t of rt.textures) { t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.colorSpace = THREE.NoColorSpace }
-    const bake = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: { uSpecies: { value: 0 }, uNoise: this.noiseU, uLeafTex: this.leafU, uFrondTex: this.frondU }, vertexColors: true, vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, side: THREE.DoubleSide })
-    const scene = new THREE.Scene(), geos = [spruceGeometry(0), broadleafGeometry(0)], mesh = new THREE.Mesh(geos[0], bake)
+    const bake = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: { uSpecies: { value: 0 }, uNoise: this.noiseU, uLeafTex: this.leafU, uFrondTex: this.frondU }, vertexColors: true, defines: { ...this.map.biomeDefines }, vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, side: THREE.DoubleSide })
+    const scene = new THREE.Scene(), geos = [spruceGeometry(0), this.map.desert ? palmGeometry(0) : broadleafGeometry(0)], mesh = new THREE.Mesh(geos[0], bake)
     scene.add(mesh)
     const cam = new THREE.OrthographicCamera(-IMP.FW / 2, IMP.FW / 2, IMP.FH / 2, -IMP.FH / 2, 0.01, 10)
     const prevRT = renderer.getRenderTarget(), prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha()
@@ -385,6 +403,10 @@ export class Trees {
   }
   /** The impostor atlas (two textures: albedo, normal) — kept for the harness / a debug view. */
   atlas: THREE.WebGLRenderTarget | null = null
+  /** Every tree's x, z, height, species — the terrain shadow's worker stamps their shade (World.adoptShadow). */
+  readonly shade: Float32Array
+  /** Their shade to the terrain shadow again (it was another world's). */
+  reshade(shadow: TerrainShadow): void { shadow.setTrees(this.shade, CROWN) }
 
 
 }
@@ -428,6 +450,11 @@ vec3 leafTone(vec3 albedo, float tint, float species) {
   return tint > 0.88 && species < 3.5 ? mix(albedo, vec3(0.42, 0.5, 0.08) * PLANT_VALUE, 0.6) : albedo;
 }
 vec3 treeAlbedo(float species, float fol, float j) {
+#ifdef OTH_DESERT
+  // (the desert's palms: a warm grey-brown trunk, deep green fronds lighter at their tips)
+  if (fol < 0.5) return vec3(0.3, 0.22, 0.15);
+  return mix(vec3(0.07, 0.16, 0.035), vec3(0.2, 0.32, 0.07), 0.5 + j * 0.6) * PLANT_VALUE * 1.25;
+#endif
   if (fol < 0.5) {
     if (species > 2.5) return vec3(0.7, 0.68, 0.62);          // birch / aspen: white bark
     return species > 1.5 ? vec3(0.36, 0.33, 0.29) : vec3(0.1, 0.055, 0.03); // (a snag's weathered silver-grey · the spruce's dark brown)

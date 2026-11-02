@@ -77,7 +77,7 @@ export class Grass {
       const mat = new THREE.ShaderMaterial({
         glslVersion: THREE.GLSL3,
         uniforms: { ...uniforms, uBuild: { value: density }, uRin: { value: bounds[r] }, uRout: { value: bounds[r + 1] }, uFan: { value: blades[r] } },
-        defines: {}, // (no specular: on blades of roughness 0.85 it never showed)
+        defines: { ...map.biomeDefines }, // (no specular: on blades of roughness 0.85 it never showed)
         vertexShader: VERT,
         fragmentShader: FRAG,
         side: THREE.DoubleSide,
@@ -238,6 +238,11 @@ void main() {
   // (never on rock: none where the ground shows any rock or scree tint at all — the user: "never put grass on rock")
   float grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * (1.0 - 0.6 * g.forest) * (1.0 - g.snow) * (1.0 - smoothstep(0.02, 0.1, g.scree));
   grow *= (1.0 - smoothstep(0.3, 0.6, onTrack)); // (off the track)
+#ifdef OTH_DESERT
+  // THE DESERT: grass only in the oasis (its growth, the damp banks) — the open sand stays bare
+  float oasis = max(smoothstep(0.15, 0.5, m.a), smoothstep(0.45, 0.8, m.b / 0.85));
+  grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * oasis * (1.0 - smoothstep(0.3, 0.6, onTrack));
+#endif
   vec2 mudB = textureLod(uMud, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0).rg;
   float mud = mudB.r;
   // WILDFLOWERS (mud.bin G): where the field blossoms, one blade in ~5 is a flower — a grass blade in bloom at its
@@ -280,7 +285,13 @@ void main() {
   float face = dot(dir, normalize(uSunDir.xz + vec2(1e-4)));
   // (one blade in eight stands in its neighbours' shade: the field's darker strokes)
   float br = fract(aTuft.w * 31.7 + aBlade.x * 3.1);
+#ifdef OTH_DESERT
+  // (the oasis's grass is green, not the sand under it: a fresh green by the water, olive and dry farther off)
+  vec3 field = mix(vec3(0.075, 0.13, 0.03), vec3(0.2, 0.19, 0.06), smoothstep(0.4, 0.9, 1.0 - m.b / 0.85)) * PLANT_VALUE * 1.3;
+  vColor = field * (1.0 + face * 0.04 + (br - 0.5) * 0.1) * (br < 0.12 ? 0.8 : 1.0) * (1.0 + gust * 0.08);
+#else
   vColor = g.col * (1.0 + face * 0.04 + (br - 0.5) * 0.1) * (br < 0.12 ? 0.8 : 1.0) * (1.0 + gust * 0.08);
+#endif
   // the ground's light: its soft normal, leaning a little with the blade
   vN = normalize(N + vec3(dir.x, 0.0, dir.y) * 0.18);
   vSun = sunVisibility(root);

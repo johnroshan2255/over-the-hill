@@ -34,6 +34,12 @@ export class Glow {
   private readonly v = new THREE.Vector3()
   private readonly dir = new THREE.Vector3()
 
+  /** The vignette's page overlay (dispose). */
+  private overlay: HTMLDivElement | null = null
+
+  /** Off the page (another world: World.dispose — the geometry and materials go with the world's group). */
+  dispose(): void { this.overlay?.remove() }
+
   constructor(private readonly map: MapData, private readonly atmos: Atmosphere) {
     const u = atmos.uniforms
     // THE SUN GLARE
@@ -142,7 +148,7 @@ export class Glow {
     //  in WebGL it was a full-screen blend over every MSAA sample: 0.11 ms at 1080p. The WebGL one stays for ?vignette=gl)
     if (new URLSearchParams(location.search).get('vignette') === 'gl') this.group.add(this.vignette)
     else {
-      const v = document.createElement('div')
+      const v = (this.overlay = document.createElement('div'))
       v.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse 85% 100% at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.16) 100%)'
       document.body.appendChild(v)
     }

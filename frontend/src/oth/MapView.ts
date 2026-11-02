@@ -11,7 +11,7 @@ import type { Landmark, MapData } from './MapData'
  * ahead (within 2.5 km, ±80°) as markers — a "?" for the ones not found yet — and the nearest one's distance.
  * The chart is painted once, the first time it opens (~0.2 s); the compass redraws ten times a second (DOM, no canvas).
  */
-const ICON: Record<Landmark['kind'], string> = { tower: '♜', view: '◭', cabin: '⌂', shack: '⌂', sawmill: '▤', mine: '⛏', meteorite: '✶', falls: '≋', meadow: '✿', camp: '▲' }
+const ICON: Record<Landmark['kind'], string> = { tower: '♜', view: '◭', cabin: '⌂', shack: '⌂', sawmill: '▤', mine: '⛏', meteorite: '✶', falls: '≋', meadow: '✿', camp: '▲', oasis: '≈', aqueduct: '⌓', arch: '⌒', spires: '▴', gorge: '≍', ksar: '▦', dunes: '∿' }
 
 export class MapView {
   private readonly root: HTMLDivElement
@@ -28,6 +28,17 @@ export class MapView {
   private compassT = 0
   private readonly dir = new THREE.Vector3()
 
+  private readonly off = new AbortController()
+  private readonly btn: HTMLButtonElement
+
+  /** Off the page (another world gets its own map: World / main.ts). */
+  dispose(): void {
+    this.off.abort()
+    this.root.remove()
+    this.btn.remove()
+    this.compass.remove()
+  }
+
   constructor(private readonly map: MapData, private readonly lm: Landmarks, private readonly camera: THREE.Camera, private readonly carPos: () => THREE.Vector3, private readonly carHeading: () => number) {
     this.root = document.createElement('div')
     this.root.className = 'oth-map'
@@ -43,11 +54,12 @@ export class MapView {
     btn.textContent = 'MAP'
     btn.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.toggle() })
     document.body.appendChild(btn)
+    this.btn = btn
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Tab') { e.preventDefault(); this.toggle() }
       if (e.code === 'KeyZ' && this.open) { this.zoom = !this.zoom; this.draw() }
       if (e.code === 'Escape' && this.open) this.toggle()
-    })
+    }, { signal: this.off.signal })
     // the compass: a strip of ticks / letters every 15° and a marker per landmark, laid out by bearing each update
     this.compass = document.createElement('div')
     this.compass.className = 'oth-compass'

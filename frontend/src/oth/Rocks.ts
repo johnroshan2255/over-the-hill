@@ -46,7 +46,7 @@ export class Rocks {
     const mat = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid } },
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines },
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
@@ -342,7 +342,11 @@ ${SHADOW_GLSL}
 in vec3 vWorld;
 in vec3 vN;
 in float vUp;
+#ifdef OTH_DESERT
+const vec3 STONE = vec3(0.42, 0.2, 0.125); // (red sandstone, paint.ts's STONE)
+#else
 const vec3 STONE = vec3(0.2, 0.205, 0.23);
+#endif
 float fhash(vec3 n) { return fract(sin(dot(floor(n * 300.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 void main() {
   vec3 N = normalize(vN);

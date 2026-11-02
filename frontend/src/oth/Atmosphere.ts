@@ -150,6 +150,11 @@ export class Atmosphere {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
   }
 
+  /** The world's air (World / main.ts: set on entering one): the DESERT's grade — Over the Hill's Algeria measured
+   *  (2026-11-02): a pale cyan-white sky by day (their ≈ sRGB 229 244 251), a warm cream horizon, sand-coloured haze,
+   *  clearer air; hot pink sunsets, a purple night; the sand's warm bounce light. */
+  desert = false
+
   update(cam: THREE.Vector3, t: number): void {
     const u = this.uniforms
     u.uCamPos.value.copy(cam)
@@ -169,11 +174,19 @@ export class Atmosphere {
     u.uSkyZenith.value.copy(a.zen).lerp(b.zen, f)
     u.uSkyHorizon.value.copy(a.hor).lerp(b.hor, f)
     u.uSunGlow.value.copy(a.glow).lerp(b.glow, f).multiplyScalar(1 - 0.8 * overcast)
+    if (this.desert) {
+      const day = THREE.MathUtils.smoothstep(s, 0.12, 0.35), low = THREE.MathUtils.smoothstep(s, -0.04, 0.06) * (1 - day)
+      const zl = 0.2126 * u.uSkyZenith.value.r + 0.7152 * u.uSkyZenith.value.g + 0.0722 * u.uSkyZenith.value.b
+      const hl = 0.2126 * u.uSkyHorizon.value.r + 0.7152 * u.uSkyHorizon.value.g + 0.0722 * u.uSkyHorizon.value.b
+      u.uSkyZenith.value.lerp(u.uSkyHorizon.value, 0.45 * day).lerp(D_CYAN.clone().multiplyScalar(zl * 1.05), 0.35 * day)
+      u.uSkyHorizon.value.lerp(D_CREAM.clone().multiplyScalar(hl * 1.04), 0.45 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.1), 0.45 * low)
+      u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 1.3), 0.55 * (1 - THREE.MathUtils.smoothstep(s, -0.25, 0.0)))
+    }
     for (const c of [u.uSkyZenith.value, u.uSkyHorizon.value]) {
       const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
       c.lerp(new THREE.Color(l * 0.95, l, l * 1.04), 0.75 * overcast)
     }
-    u.uFogRange.value.y = this.hazeLen * (1 - 0.45 * u.uRain.value)
+    u.uFogRange.value.y = this.hazeLen * (this.desert ? 1.7 : 1) * (1 - 0.45 * u.uRain.value)
     const amb = a.amb + (b.amb - a.amb) * f
     const night = THREE.MathUtils.smoothstep(-s, 0.06, 0.2)
     u.uNight.value = night
@@ -191,7 +204,7 @@ export class Atmosphere {
     // sky fill: the sky's average (bluer than its horizon); ground bounce: warm by day, cool and dim by night
     u.uAmbSky.value.copy(u.uSkyZenith.value).lerp(u.uSkyHorizon.value, 0.4).multiplyScalar(0.62 * amb)
     u.uAmbSky.value.lerp(MOON.clone().multiplyScalar(0.07), night * 0.8)
-    u.uAmbGround.value.setRGB(0.42, 0.34, 0.22).multiplyScalar(0.55 * amb + 0.12 * sunI).lerp(MOON.clone().multiplyScalar(0.025), night)
+    u.uAmbGround.value.setRGB(this.desert ? 0.6 : 0.42, this.desert ? 0.4 : 0.34, this.desert ? 0.25 : 0.22).multiplyScalar((0.55 * amb + 0.12 * sunI) * (this.desert ? 1.2 : 1)).lerp(MOON.clone().multiplyScalar(0.025), night)
     // the LIGHT ON THE LAND keeps every colour true at every hour (the user: "when the time changes to evening, night,
     // morning, the terrain, grass and trees all change colour with it"): the sun's, the sky's and the bounce's light
     // lose most of their tint — a warm / cool hint is left, the brightness still follows the day; the SKY itself (its
@@ -206,8 +219,17 @@ export class Atmosphere {
     floorLum(u.uAmbGround.value, THREE.MathUtils.lerp(0.09, 0.006, night))
     // the HAZE's colour: the horizon leaning to the zenith, much of its tint kept — far ridges go blue-grey in layers
     keepTint(u.uFogColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.42), 0.75)
+    // (the desert's haze: the sand's own warm colour in it)
+    if (this.desert) { const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b; u.uFogColor.value.lerp(D_SANDHAZE.clone().multiplyScalar(fl), 0.4) }
   }
 }
+
+/** The desert's grade (Atmosphere.desert): colours of unit luminance-ish, scaled to the keyframe's brightness. */
+const D_CYAN = new THREE.Color(0.86, 1.0, 1.08)
+const D_CREAM = new THREE.Color(1.08, 1.0, 0.9)
+const D_PINK = new THREE.Color(1.5, 0.62, 0.78)
+const D_PURPLE = new THREE.Color(0.75, 0.42, 1.1)
+const D_SANDHAZE = new THREE.Color(1.12, 0.96, 0.82)
 
 /** First line of every world fragment shader (GLSL3: three's tone-map / colour-space chunks write gl_FragColor). */
 export const FRAG_OUT = /* glsl */ `

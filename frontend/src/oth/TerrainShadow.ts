@@ -51,8 +51,7 @@ export class TerrainShadow {
     this.uniforms.uTreeSh.value = this.treeTex
     this.uniforms.uTreeShGrid.value.set(tn, map.inner.step, map.inner.origin, 0)
     this.worker = new Worker(new URL('./terrainShadow.worker.ts', import.meta.url), { type: 'module' })
-    const g = (h: MapData['inner']) => ({ h: h.h.slice(), n: h.n, step: h.step, origin: h.origin })
-    this.worker.postMessage({ type: 'init', inner: g(map.inner), far: g(map.far) })
+    this.setMap(map)
     this.worker.onmessage = (e) => {
       const m = e.data
       this.busy = false
@@ -71,6 +70,23 @@ export class TerrainShadow {
   }
 
   onBaked?: () => void
+  /** The ground the worker has (setMap). */
+  private current: MapData | null = null
+
+  /** Another world's ground (World.ts — every world's grids are the same size): its heights to the worker, all lit
+   *  until its first bake (the next update re-bakes; a bake of the old ground still under way is dropped). */
+  setMap(map: MapData): void {
+    if (map === this.current) return
+    this.current = map
+    if ((map.inner.n - 1) / 2 + 1 !== this.boxN || map.far.n !== this.world.image.width) throw new Error('TerrainShadow: a world of another size')
+    const g = (h: MapData['inner']) => ({ h: h.h.slice(), n: h.n, step: h.step, origin: h.origin })
+    this.worker.postMessage({ type: 'init', inner: g(map.inner), far: g(map.far) })
+    for (const t of [this.box, this.world, this.treeTex]) { (t.image.data as Uint8Array).fill(255); t.needsUpdate = true }
+    this.uniforms.uShOn.value = this.uniforms.uTreeShOn.value = 0
+    this.baked.set(0, -1, 0)
+    this.busy = false
+    this.id++
+  }
 
   /** The trees (x, z, height, species per tree) whose shade the worker stamps at every bake; crown = crown radius /
    *  height. Re-bakes at the next update. */

@@ -14,6 +14,13 @@ import * as THREE from 'three'
 export const LEAF_TILES = 2 // per side
 
 export function createLeafTexture(): THREE.DataTexture {
+  return (leafTex ??= shared(makeLeafTexture()))
+}
+let leafTex: THREE.DataTexture | null = null
+/** Made once for every world (~70 ms of painting — World.dispose leaves `shared` textures be). */
+function shared(t: THREE.DataTexture): THREE.DataTexture { t.userData.shared = true; return t }
+
+function makeLeafTexture(): THREE.DataTexture {
   const N = 512, T = N / LEAF_TILES
   const data = new Uint8Array(N * N * 4)
   for (let i = 0; i < N * N; i++) { data[i * 4] = 150; data[i * 4 + 1] = 200; data[i * 4 + 2] = 0; data[i * 4 + 3] = 0 }
@@ -98,6 +105,11 @@ vec4 leafCard(vec2 cardUv, float lz) {
  * The transparent texels keep a mid tone (no dark fringe when the mipmaps average them in).
  */
 export function createFrondTexture(): THREE.DataTexture {
+  return (frondTex ??= shared(makeFrondTexture()))
+}
+let frondTex: THREE.DataTexture | null = null
+
+function makeFrondTexture(): THREE.DataTexture {
   const W = 1024, H = 512, TW = W / 2, TH = H / 2, SS = 3, SW = TW * SS, SH = TH * SS
   const data = new Uint8Array(W * H * 4)
   for (let i = 0; i < W * H; i++) { data[i * 4] = 180; data[i * 4 + 1] = 200; data[i * 4 + 2] = 0; data[i * 4 + 3] = 0 }
