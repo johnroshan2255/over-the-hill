@@ -1,0 +1,11 @@
+# frontend
+frontend/node_modules
+frontend/dist
+# backend
+backend/target
+# env / logs / OS
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

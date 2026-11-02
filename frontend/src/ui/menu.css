@@ -1,0 +1,106 @@
+/*
+ * THE FRONT END — title screen, garage, settings and the pause menu. GTA-style: square edges everywhere (no radius),
+ * flat near-black panels, white bars for the selection, condensed upper-case type, one accent (the valley's amber).
+ * Only transforms and opacity animate (the compositor's work, never layout), and nothing here runs while playing.
+ */
+:root {
+  --oh-ink: #f4efe6;
+  --oh-dim: rgba(244, 239, 230, 0.62);
+  --oh-panel: rgba(8, 8, 10, 0.78);
+  --oh-panel-2: rgba(8, 8, 10, 0.55);
+  --oh-line: rgba(244, 239, 230, 0.16);
+  --oh-accent: #f2a93b;
+  --oh-accent-ink: #120c04;
+  --oh-sel: #f4efe6;
+  --oh-sel-ink: #0b0b0d;
+  --oh-title: 'Anton', 'Impact', 'Arial Narrow Bold', sans-serif;
+  --oh-ui: 'Barlow Condensed', 'Arial Narrow', 'Roboto Condensed', system-ui, sans-serif;
+}
+
+.oh-front { position: fixed; inset: 0; z-index: 20; overflow: hidden; background: #0b0b0d; color: var(--oh-ink); font-family: var(--oh-ui); user-select: none; -webkit-user-select: none; }
+.oh-front.oh-pause { background: rgba(6, 6, 8, 0.55); }
+.oh-front * { box-sizing: border-box; border-radius: 0; }
+/* (the button reset at zero specificity: every .oh-* rule below wins over it) */
+:where(.oh-front button) { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; touch-action: manipulation; }
+
+/* the key art, drifting slowly (a transform: no repaint) */
+.oh-art { position: absolute; inset: -3%; background-size: cover; background-position: 60% 50%; animation: oh-drift 38s ease-in-out infinite alternate; will-change: transform; }
+@keyframes oh-drift { from { transform: scale(1.02) translate3d(0, 0, 0); } to { transform: scale(1.08) translate3d(-1.5%, -1%, 0); } }
+.oh-shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(5, 5, 7, 0.86) 0%, rgba(5, 5, 7, 0.55) 34%, rgba(5, 5, 7, 0.05) 64%), linear-gradient(0deg, rgba(5, 5, 7, 0.7) 0%, rgba(5, 5, 7, 0) 30%); }
+.oh-pause .oh-art, .oh-pause .oh-shade { display: none; }
+
+/* the brand */
+.oh-brand { position: absolute; left: clamp(20px, 5vw, 72px); top: clamp(18px, 6vh, 64px); }
+.oh-brand h1 { margin: 0; font-family: var(--oh-title); font-weight: 400; font-size: clamp(48px, 8.5vw, 112px); line-height: 0.86; letter-spacing: 0.01em; text-transform: uppercase; text-shadow: 0 4px 0 rgba(0, 0, 0, 0.35); }
+.oh-brand p { margin: 10px 0 0; display: inline-block; padding: 4px 10px 3px; background: var(--oh-accent); color: var(--oh-accent-ink); font-weight: 700; font-size: clamp(13px, 1.4vw, 17px); letter-spacing: 0.22em; text-transform: uppercase; }
+
+/* the main list */
+.oh-main { position: absolute; left: clamp(20px, 5vw, 72px); bottom: clamp(70px, 14vh, 150px); width: min(380px, calc(100vw - 40px)); display: flex; flex-direction: column; gap: 4px; }
+.oh-item { display: flex; align-items: baseline; justify-content: space-between; width: 100%; padding: 9px 16px 8px; background: var(--oh-panel-2); border-left: 4px solid transparent; font-size: clamp(20px, 2.3vw, 27px); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; text-align: left; transition: background 0.08s, color 0.08s; }
+.oh-item small { font-size: 0.5em; font-weight: 600; letter-spacing: 0.1em; color: var(--oh-dim); }
+.oh-item.sel { background: var(--oh-sel); color: var(--oh-sel-ink); border-left-color: var(--oh-accent); }
+.oh-item.sel small { color: rgba(11, 11, 13, 0.6); }
+.oh-item[disabled] { opacity: 0.38; cursor: default; }
+
+/* a panel: the garage, the settings */
+.oh-panel { position: absolute; left: clamp(12px, 5vw, 72px); right: clamp(12px, 5vw, 72px); top: clamp(12px, 5vh, 54px); bottom: clamp(56px, 9vh, 80px); display: none; flex-direction: column; max-width: 1080px; }
+.oh-panel.on { display: flex; }
+.oh-head { display: flex; align-items: stretch; gap: 4px; margin-bottom: 4px; }
+.oh-head h2 { margin: 0; padding: 8px 16px 6px; background: var(--oh-accent); color: var(--oh-accent-ink); font-family: var(--oh-title); font-weight: 400; font-size: clamp(22px, 2.6vw, 32px); letter-spacing: 0.04em; text-transform: uppercase; }
+.oh-tabs { display: flex; gap: 4px; flex: 1; overflow-x: auto; scrollbar-width: none; }
+.oh-tab { padding: 10px 18px 8px; background: var(--oh-panel); font-size: clamp(15px, 1.5vw, 19px); font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; white-space: nowrap; color: var(--oh-dim); }
+.oh-tab.sel { background: var(--oh-sel); color: var(--oh-sel-ink); }
+.oh-body { flex: 1; min-height: 0; display: flex; gap: 4px; }
+.oh-list { flex: 1.15; min-width: 0; background: var(--oh-panel); overflow-y: auto; scrollbar-width: thin; }
+.oh-side { flex: 0.85; min-width: 0; background: var(--oh-panel); padding: 18px 20px; overflow-y: auto; }
+@media (max-width: 760px) { .oh-body { flex-direction: column; } .oh-side { flex: none; max-height: 34%; } }
+
+/* rows: a label, a value with arrows (← → change it) */
+.oh-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 46px; padding: 6px 16px; border-bottom: 1px solid var(--oh-line); font-size: clamp(16px, 1.6vw, 20px); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; text-align: left; }
+.oh-row.sel { background: var(--oh-sel); color: var(--oh-sel-ink); }
+.oh-val { display: flex; align-items: center; gap: 4px; font-weight: 700; }
+.oh-val b { min-width: 120px; text-align: center; font-weight: 700; }
+.oh-arrow { width: 30px; height: 30px; display: grid; place-items: center; font-size: 18px; }
+.oh-row:not(.sel) .oh-arrow { opacity: 0.5; }
+.oh-row.sel .oh-arrow:active { background: var(--oh-accent); }
+
+/* garage: the cars, the paint */
+.oh-cars { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; }
+.oh-car { padding: 14px 16px 12px; background: rgba(244, 239, 230, 0.06); border: 2px solid transparent; text-align: left; }
+.oh-car.sel { border-color: var(--oh-ink); background: rgba(244, 239, 230, 0.12); }
+.oh-car.chosen { border-color: var(--oh-accent); }
+.oh-car h3 { margin: 0 0 4px; font-family: var(--oh-title); font-weight: 400; font-size: clamp(20px, 2.2vw, 28px); letter-spacing: 0.03em; text-transform: uppercase; }
+.oh-car p { margin: 0; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--oh-dim); }
+.oh-tag { display: inline-block; margin-top: 8px; padding: 2px 8px 1px; background: var(--oh-accent); color: var(--oh-accent-ink); font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+.oh-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 4px; padding: 10px 16px 14px; }
+.oh-swatch { aspect-ratio: 1; border: 3px solid rgba(0, 0, 0, 0.25); }
+.oh-swatch.chosen { border-color: var(--oh-ink); box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.55); }
+.oh-swatch.sel { outline: 3px solid var(--oh-accent); outline-offset: 1px; }
+.oh-swatch.own { background: repeating-linear-gradient(45deg, #2a2a2e 0 6px, #3a3a40 6px 12px); color: var(--oh-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; }
+
+/* the side panel: what the selection means */
+.oh-side h4 { margin: 0 0 6px; font-family: var(--oh-title); font-weight: 400; font-size: clamp(22px, 2.4vw, 30px); letter-spacing: 0.03em; text-transform: uppercase; }
+.oh-side p { margin: 0 0 14px; font-size: 16px; line-height: 1.35; color: var(--oh-dim); letter-spacing: 0.02em; }
+.oh-stats { display: grid; gap: 7px; }
+.oh-stat { display: grid; grid-template-columns: 112px 1fr 70px; align-items: center; gap: 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.oh-stat i { display: block; height: 8px; background: rgba(244, 239, 230, 0.14); position: relative; }
+.oh-stat i::after { content: ''; position: absolute; inset: 0; width: var(--w); background: var(--oh-ink); }
+.oh-stat span:last-child { text-align: right; color: var(--oh-dim); }
+.oh-keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; }
+.oh-keys kbd { justify-self: start; padding: 2px 8px 1px; border: 2px solid var(--oh-ink); font: 700 13px var(--oh-ui); letter-spacing: 0.08em; }
+
+/* the hints along the bottom */
+.oh-hints { position: absolute; left: clamp(12px, 5vw, 72px); right: clamp(12px, 5vw, 72px); bottom: clamp(12px, 3vh, 26px); display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: flex-end; font-size: 14px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--oh-dim); }
+.oh-hints kbd { margin-right: 6px; padding: 1px 6px 0; background: var(--oh-ink); color: var(--oh-sel-ink); font: 700 12px var(--oh-ui); }
+.oh-hints button { display: flex; align-items: center; }
+.oh-loading { position: absolute; left: clamp(20px, 5vw, 72px); bottom: clamp(24px, 6vh, 60px); font-size: 16px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; }
+.oh-loading i { display: block; width: min(320px, 70vw); height: 4px; margin-top: 8px; background: rgba(244, 239, 230, 0.2); }
+.oh-loading i::after { content: ''; display: block; height: 100%; width: var(--p, 0%); background: var(--oh-accent); transition: width 0.2s; }
+
+/* coins (the garage / journal header), a paint's price, a camp's title */
+.oh-coins { margin-left: auto; padding: 8px 14px 6px; background: var(--oh-panel); color: var(--oh-accent); font-family: var(--oh-title); font-size: clamp(18px, 2vw, 24px); letter-spacing: 0.04em; white-space: nowrap; }
+.oh-swatch { position: relative; }
+.oh-swatch.locked { filter: saturate(0.55) brightness(0.7); }
+.oh-price { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 0; background: rgba(8, 8, 10, 0.78); color: var(--oh-accent); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+.oh-note { color: var(--oh-accent) !important; font-weight: 700; }
+.oh-brand-camp h1 { font-size: clamp(36px, 6vw, 76px); }

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#e9c9a8" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>overhill</title>
+    <link rel="icon" href="data:," />
+    <!-- the UI's type: Anton (titles), Barlow Condensed (everything else) — condensed, upper-case, GTA-like -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow+Condensed:wght@500;600;700&display=swap" />
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0b0d; overscroll-behavior: none; }
+      body { touch-action: none; user-select: none; -webkit-user-select: none; font-family: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif; }
+      canvas { display: block; }
+      button { border-radius: 0; }
+      #status { position: fixed; inset: 0; display: grid; place-items: center; color: #f4efe6; font: 700 16px 'Barlow Condensed', system-ui; letter-spacing: .2em; text-transform: uppercase; }
+      /* the speedometer: bottom right, a plate (HUD info — the menus' square look) */
+      #drive { position: fixed; right: 16px; bottom: 14px; color: #f4efe6; pointer-events: none; text-align: right; }
+      #drive .spd { display: inline-block; min-width: 128px; padding: 4px 12px 6px; background: rgba(8, 8, 10, .55); border-right: 4px solid #f2a93b; }
+      #drive .spd b { font-size: 48px; font-weight: 700; letter-spacing: 0; line-height: 1; }
+      #drive .spd span { font-size: 15px; margin-left: 4px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; opacity: .8; }
+      #drive .spd i { display: block; font-style: normal; font-size: 15px; font-weight: 700; letter-spacing: .14em; opacity: .85; }
+      #drive .spd em { display: block; font-style: normal; font-size: 14px; font-weight: 600; letter-spacing: .14em; opacity: .7; }
+      #drive .help { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 3px 10px; background: rgba(8, 8, 10, .5); font-size: 13px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; opacity: .85; white-space: nowrap; }
+      /* the CONTROLS: round, light, see-through — easy to hit, easy to see past (the menus stay square) */
+      .oth-fs, .oth-zoom button, .oth-mapbtn, .oth-pausebtn, .oth-touch button {
+        border-radius: 50%; border: 2px solid rgba(255, 255, 255, .55); background: rgba(10, 10, 12, .28); color: #fff;
+        font: 700 18px 'Barlow Condensed', system-ui; line-height: 1; touch-action: none; user-select: none; -webkit-user-select: none;
+        -webkit-tap-highlight-color: transparent; transition: background .08s, transform .08s;
+      }
+      .oth-fs, .oth-mapbtn, .oth-pausebtn { position: fixed; width: 42px; height: 42px; z-index: 5; }
+      .oth-fs { left: 14px; top: 14px; }
+      .oth-zoom { position: fixed; left: 14px; top: 64px; display: flex; flex-direction: column; gap: 8px; z-index: 5; }
+      .oth-zoom button { width: 42px; height: 42px; font-size: 24px; }
+      .oth-mapbtn { left: 14px; top: 164px; font-size: 12px; letter-spacing: .06em; }
+      .oth-pausebtn { left: 14px; top: 214px; font-size: 15px; letter-spacing: .02em; }
+      .oth-fs:active, .oth-zoom button:active, .oth-mapbtn:active, .oth-pausebtn:active, .oth-touch button:active { background: rgba(242, 169, 59, .85); color: #120c04; transform: scale(.94); }
+      /* the thumb pads (touch screens) */
+      .oth-touch button { position: fixed; z-index: 5; display: grid; place-items: center; letter-spacing: .08em; }
+      .oth-touch [data-k=left], .oth-touch [data-k=right] { bottom: calc(18px + env(safe-area-inset-bottom)); width: 78px; height: 78px; font-size: 24px; }
+      .oth-touch [data-k=left] { left: calc(16px + env(safe-area-inset-left)); }
+      .oth-touch [data-k=right] { left: calc(106px + env(safe-area-inset-left)); }
+      .oth-touch [data-k=gas] { right: calc(16px + env(safe-area-inset-right)); bottom: calc(26px + env(safe-area-inset-bottom)); width: 92px; height: 92px; font-size: 17px; }
+      .oth-touch [data-k=brake] { right: calc(118px + env(safe-area-inset-right)); bottom: calc(14px + env(safe-area-inset-bottom)); width: 74px; height: 74px; font-size: 15px; }
+      .oth-touch [data-k=up], .oth-touch [data-k=down] { right: calc(130px + env(safe-area-inset-right)); width: 46px; height: 46px; font-size: 15px; }
+      .oth-touch [data-k=up] { bottom: calc(150px + env(safe-area-inset-bottom)); }
+      .oth-touch [data-k=down] { bottom: calc(98px + env(safe-area-inset-bottom)); }
+      .oth-touch [data-k=reset], .oth-touch [data-k=winch] { top: calc(10px + env(safe-area-inset-top)); width: 40px; height: 40px; }
+      .oth-touch [data-k=reset] { right: calc(12px + env(safe-area-inset-right)); font-size: 20px; }
+      .oth-touch [data-k=winch] { right: calc(60px + env(safe-area-inset-right)); font-size: 10px; letter-spacing: .04em; }
+      /* PHONES: more of the screen for the game — the small buttons in one row top left, no + / − (pinch to zoom),
+         the speed a slim read-out between the thumbs */
+      body.touch .oth-zoom { display: none; }
+      body.touch .oth-fs, body.touch .oth-mapbtn, body.touch .oth-pausebtn { top: calc(10px + env(safe-area-inset-top)); width: 40px; height: 40px; }
+      body.touch .oth-pausebtn { left: calc(12px + env(safe-area-inset-left)); }
+      body.touch .oth-mapbtn { left: calc(60px + env(safe-area-inset-left)); }
+      body.touch .oth-fs { left: calc(108px + env(safe-area-inset-left)); }
+      body.touch #drive { left: 50%; right: auto; bottom: calc(10px + env(safe-area-inset-bottom)); transform: translateX(-50%); text-align: center; }
+      body.touch #drive .spd { min-width: 0; padding: 2px 10px 3px; background: rgba(8, 8, 10, .32); border-right: 0; border-bottom: 3px solid #f2a93b; }
+      body.touch #drive .spd b { font-size: 30px; }
+      body.touch #drive .spd span { font-size: 12px; }
+      body.touch #drive .spd i, body.touch #drive .spd em { display: inline; margin-left: 8px; font-size: 12px; }
+      body.touch .oth-compass { top: calc(8px + env(safe-area-inset-top)); max-width: calc(100vw - 330px); min-width: 160px; }
+      body.touch #hud { left: 160px; }
+      /* (portrait: no room between the thumbs — the speed sits above the pads, the compass under the top row) */
+      @media (orientation: portrait) {
+        body.touch #drive { bottom: calc(112px + env(safe-area-inset-bottom)); }
+        body.touch .oth-compass { top: calc(58px + env(safe-area-inset-top)); max-width: calc(100vw - 24px); }
+        body.touch .oth-touch [data-k=up], body.touch .oth-touch [data-k=down] { right: calc(22px + env(safe-area-inset-right)); }
+        body.touch .oth-touch [data-k=up] { bottom: calc(196px + env(safe-area-inset-bottom)); }
+        body.touch .oth-touch [data-k=down] { bottom: calc(144px + env(safe-area-inset-bottom)); }
+      }
+      /* coins: top right, a pop of "+25" when they change */
+      .oth-coins { position: fixed; right: 16px; top: 14px; padding: 4px 12px 3px; background: rgba(8, 8, 10, .55); border-right: 4px solid #f2a93b; color: #f2a93b; font: 400 22px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .04em; pointer-events: none; z-index: 4; }
+      .oth-coins::after { content: attr(data-d); position: absolute; right: 8px; top: 100%; color: #f4efe6; font: 700 16px 'Barlow Condensed', system-ui; opacity: 0; }
+      .oth-coins.pop::after { animation: oth-pop 1.4s ease-out; }
+      @keyframes oth-pop { 0% { opacity: 0; transform: translateY(6px); } 15% { opacity: 1; transform: translateY(0); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
+      /* the signpost's boards (GTA-like plate, bottom left) */
+      .oth-sign { position: fixed; left: 16px; bottom: 54px; min-width: 250px; padding: 8px 12px 9px; background: rgba(8, 8, 10, .66); border-left: 4px solid #f2a93b; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; z-index: 4; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; }
+      .oth-sign.on { opacity: 1; transform: none; }
+      .oth-sign b { display: block; margin-bottom: 4px; color: #f2a93b; font: 400 18px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .06em; }
+      .oth-sign div { display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
+      .oth-sign i { width: 18px; font-style: normal; color: #f2a93b; }
+      .oth-sign span { margin-left: auto; padding-left: 14px; opacity: .7; }
+      /* the camp prompt (keyboard) and button (touch) */
+      .oth-prompt { position: fixed; left: 50%; bottom: 48px; transform: translateX(-50%); padding: 5px 12px 4px; background: rgba(8, 8, 10, .62); color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; z-index: 4; display: none; }
+      .oth-prompt.on { display: block; }
+      .oth-prompt kbd { margin-right: 8px; padding: 0 6px; background: #f4efe6; color: #0b0b0d; font: 700 13px 'Barlow Condensed', system-ui; }
+      .oth-campbtn { display: none; position: fixed; z-index: 5; width: 50px; height: 50px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .55); background: rgba(242, 169, 59, .4); color: #fff; font: 700 12px 'Barlow Condensed', system-ui; letter-spacing: .06em; touch-action: none; }
+      body.touch .oth-campbtn.on { display: grid; place-items: center; right: calc(108px + env(safe-area-inset-right)); top: calc(8px + env(safe-area-inset-top)); }
+      body.touch .oth-prompt { display: none; }
+      body.touch .oth-coins { top: calc(58px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); font-size: 18px; padding: 2px 9px 1px; }
+      body.touch .oth-sign { left: calc(14px + env(safe-area-inset-left)); bottom: auto; top: calc(60px + env(safe-area-inset-top)); min-width: 210px; font-size: 13px; }
+      /* a rest: the screen fades to black and back */
+      .oth-fade { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #050506; color: #f4efe6; font: 400 28px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; opacity: 0; transition: opacity .6s; pointer-events: none; }
+      .oth-fade.on { opacity: 1; }
+      /* the map */
+      .oth-map { position: fixed; inset: 0; display: none; place-items: center; align-content: center; gap: 8px; background: rgba(6, 6, 8, .62); z-index: 8; }
+      .oth-map.on { display: grid; }
+      .oth-map canvas { border: 3px solid #f4efe6; box-shadow: 0 0 0 4px rgba(8, 8, 10, .6); cursor: zoom-in; }
+      .oth-map-title { padding: 3px 10px; background: #f2a93b; color: #120c04; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .16em; text-transform: uppercase; }
+      /* the compass: a square strip */
+      .oth-compass { position: fixed; left: 50%; top: 10px; width: 420px; max-width: calc(100vw - 140px); transform: translateX(-50%); pointer-events: none; z-index: 4; }
+      .oth-compass-strip { position: relative; height: 28px; overflow: hidden; background: linear-gradient(90deg, rgba(8,8,10,0), rgba(8,8,10,.55) 16%, rgba(8,8,10,.55) 84%, rgba(8,8,10,0)); }
+      .oth-compass-strip::after { content: ''; position: absolute; left: 50%; top: 0; width: 3px; height: 7px; margin-left: -1px; background: #f2a93b; }
+      .oth-tick, .oth-mark { position: absolute; left: 0; top: 0; width: 30px; margin-left: -15px; text-align: center; line-height: 28px; color: rgba(244, 239, 230, .55); font: 700 12px 'Barlow Condensed', system-ui; letter-spacing: .06em; }
+      .oth-tick-l { color: #f4efe6; font-size: 15px; }
+      .oth-mark { top: 0; color: #f2a93b; font-size: 16px; }
+      .oth-mark.found { color: #f4efe6; }
+      .oth-compass-near { display: table; margin: 3px auto 0; padding: 1px 8px; background: rgba(8, 8, 10, .5); color: #f4efe6; font: 700 13px 'Barlow Condensed', system-ui; letter-spacing: .12em; text-transform: uppercase; }
+      /* messages: a square banner */
+      .oth-toast { position: fixed; left: 50%; top: 64px; transform: translate(-50%, -8px); padding: 8px 18px 7px; border-left: 4px solid #f2a93b; background: rgba(8, 8, 10, .72); color: #f4efe6; font: 700 17px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; opacity: 0; transition: opacity .35s, transform .35s; pointer-events: none; z-index: 6; white-space: nowrap; }
+      .oth-toast.on { opacity: 1; transform: translate(-50%, 0); }
+      #hud { display: none; position: fixed; left: 66px; top: 10px; padding: 6px 9px; background: rgba(8, 8, 10, .62); color: #f4efe6; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div id="status">Loading…</div>
+    <div id="hud"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
