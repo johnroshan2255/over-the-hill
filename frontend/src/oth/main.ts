@@ -7,6 +7,7 @@ import { Menu } from '../ui/Menu'
 import { installToneMap } from './toneMap'
 import { Atmosphere } from './Atmosphere'
 import { OthAudio } from './Audio'
+import { Birds } from './Birds'
 import { Bridges } from './Bridges'
 import { Bushes } from './Bushes'
 import { Dust } from './Dust'
@@ -150,6 +151,9 @@ async function boot() {
   saveJournal(journal)
   landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
   scene.add(props.group)
+  // BIRDS in the sky: ULTRA on a PC only, for now (the user, 2026-11-02); ?birds=1 / 0 forces them
+  const birds = q.get('birds') === '1' || (q.get('birds') !== '0' && tier.name === 'ultra' && !isMobileDevice()) ? new Birds(atmos, terrain) : null
+  if (birds) scene.add(birds.mesh)
   scene.add(landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group, sky.mesh, rain.mesh)
 
   // THE 4×4: the game's vehicle physics on this map's ground and rocks
@@ -398,6 +402,7 @@ async function boot() {
     atmos.tick(dt)
     atmos.update(camera.position, clock.elapsedTime)
     props.fireLight(camera.position, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value)
+    birds?.update()
     rain.update()
     glow?.update(camera, dt)
     landmarks.update(dt, car.pos.x, car.pos.z)
@@ -452,6 +457,7 @@ async function boot() {
     get ready() { return shadowReady },
     tier: tier.name,
     props,
+    birds,
     journal,
     openCamp,
     placesMs: places.ms,

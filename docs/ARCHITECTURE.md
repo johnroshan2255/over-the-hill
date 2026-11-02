@@ -368,3 +368,10 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
 - **Cost** (uncapped 1080p, all of it shown vs hidden, interleaved ×5, a trimmed mean): ultra +0.03 ms at the spawn,
   +0.14 ms beside a lit camp at night (343 vs 361 fps), +0.07 ms at a cabin at dusk, +0.04 ms from the air; LOW
   +0.02–0.08 ms. CPU: the rebuild 15 µs (when moving), the fire light 0.2 µs, the crate check 0.02 µs.
+- **Birds** `oth/Birds.ts` (2026-11-02, ULTRA on a PC only for now; `?birds=1|0` forces them): seen from far below, so
+  low things — 8 triangles a bird (head, tail, two wings bent at the elbow), dark silhouettes in the haze. 7 FLOCKS
+  (a V of 7–11, or a loose band of 4–10) crossing the sky weaving, 6 LONE birds of prey circling (banked, gliding, a
+  few slow beats now and then); 63 birds, ONE draw, no CPU per frame: the vertex shader moves and flaps them from the
+  clock. Paths repeat every 1 600 m round the camera (shrunk to nothing at 576–752 m first), so there are birds
+  wherever you are; 35–130 m over the ground (the height texture, looked ahead 70 / 150 m). They roost one by one from
+  dusk (not drawn at night) and shelter in the rain. Cost: ~0.01 ms (noise) on ultra.
