@@ -109,11 +109,11 @@ uniform vec4 uFarGrid;
 ${SHADOW_GLSL}
 in vec3 vWorld;
 in vec3 vN;
-// (paint.ts's desert sandstone: the same beds as the ground's)
-const vec3 STONE      = vec3(0.44, 0.19, 0.115);
-const vec3 STONE_PALE = vec3(0.5, 0.26, 0.155);
-const vec3 STONE_DEEP = vec3(0.3, 0.12, 0.075);
-const vec3 SAND_PALE  = vec3(0.52, 0.37, 0.23);
+// (paint.ts's desert sandstone and sand: the same beds as the ground's — keep them in step)
+const vec3 STONE      = vec3(0.23, 0.133, 0.076);
+const vec3 STONE_PALE = vec3(0.29, 0.18, 0.105);
+const vec3 STONE_DEEP = vec3(0.15, 0.082, 0.048);
+const vec3 SAND_PALE  = vec3(0.47, 0.235, 0.103);
 float facetRand(vec3 n) { return fract(sin(dot(floor(n * 400.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 void main() {
   // LOW-POLY like the valley's rock (the user): each facet lit flat (its own normal, from the screen derivatives — a

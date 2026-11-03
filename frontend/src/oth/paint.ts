@@ -114,9 +114,12 @@ struct Ground { vec3 col; float rock; float forest; float snow; float bed; float
 const vec3 SAND        = vec3(0.42, 0.193, 0.082);
 const vec3 SAND_DEEP   = vec3(0.37, 0.155, 0.067);
 const vec3 SAND_PALE   = vec3(0.47, 0.235, 0.103);
-const vec3 STONE       = vec3(0.44, 0.19, 0.115);
-const vec3 STONE_PALE  = vec3(0.5, 0.26, 0.155);
-const vec3 STONE_DEEP  = vec3(0.3, 0.12, 0.075);
+// (2026-11-03, DESERT_MATCH round 3 — the photographed sandstone (Tassili, Iherir, Wadi Rum) is a tan-brown to golden,
+//  hue ≈ 26–38°, about half as bright as ours was (a pink-orange 20°, 235 170 137 on screen): darker, browner; the
+//  formations (Formations.ts) keep the same three)
+const vec3 STONE       = vec3(0.23, 0.133, 0.076);
+const vec3 STONE_PALE  = vec3(0.29, 0.18, 0.105);
+const vec3 STONE_DEEP  = vec3(0.15, 0.082, 0.048);
 const vec3 DAMP        = vec3(0.24, 0.15, 0.085);
 const vec3 OASIS_FLOOR = vec3(0.16, 0.15, 0.06);
 const vec3 TRACK_SAND  = vec3(0.5, 0.28, 0.16);
