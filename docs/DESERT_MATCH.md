@@ -272,6 +272,7 @@ Fix these **before** scoring; a broken edge ruins every view that sees it.
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 0 | 2026-11-03 | baseline: the desert after §8 (terrain integrity), real-desert references | 36.4 | 33.4 | 32.0 | 35.0 | 44.6 | 40.7 | 23.1 | 45.4 | 21.9 | 58.5 | 23.3 | 27.0 | 45.5 | **35.9** |
 | 1 | 2026-11-03 | the day sky a desert blue (Atmosphere.ts: zenith deep blue, horizon pale blue — was a pale cyan-white) | 43.3 | 60.4 | 33.6 | 35.5 | 47.6 | 48.1 | 23.2 | 54.3 | 24.3 | 61.9 | 24.2 | 31.5 | 49.8 | **41.4** |
+| 2 | 2026-11-03 | the sand's palette to a real desert's orange-red (paint.ts SAND*, TRACK_SAND: hue 32° → 25°, a little darker) | 43.4 | 60.5 | 63.8 | 68.1 | 48.7 | 47.5 | 23.2 | 53.8 | 24.3 | 61.6 | 24.0 | 32.6 | 49.8 | **46.3** |
 
 ---
 

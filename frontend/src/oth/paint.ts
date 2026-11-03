@@ -108,16 +108,18 @@ struct Ground { vec3 col; float rock; float forest; float snow; float bed; float
 // 128), red-orange SANDSTONE in BEDS 9 m thick (≈ 213 140 111 in the sun, 181 116 99 in shade) — each bed its own tone,
 // a darker undercut at its foot, sand dusting the flat tops; damp sand by the water, olive ground under the oasis's
 // growth, light compacted sand on the tracks. Mask: R rock, G loose sand, B wet / water, A the oasis's growth.
-// (2026-11-02: a step deeper and more orange — on screen the sand measured 223 191 154 against their 213 173 128)
-const vec3 SAND        = vec3(0.42, 0.26, 0.13);
-const vec3 SAND_DEEP   = vec3(0.37, 0.21, 0.105);
-const vec3 SAND_PALE   = vec3(0.47, 0.31, 0.165);
+// (2026-11-03, DESERT_MATCH round 2 — real Saharan / Wadi Rum sand, photographed: an orange-red ≈ 25° hue (sRGB 248 157
+//  97 open, 243 189 150 compacted); ours read 32° (233 189 140, 244 211 173), a pale yellow-beige: redder and a
+//  little darker)
+const vec3 SAND        = vec3(0.42, 0.193, 0.082);
+const vec3 SAND_DEEP   = vec3(0.37, 0.155, 0.067);
+const vec3 SAND_PALE   = vec3(0.47, 0.235, 0.103);
 const vec3 STONE       = vec3(0.44, 0.19, 0.115);
 const vec3 STONE_PALE  = vec3(0.5, 0.26, 0.155);
 const vec3 STONE_DEEP  = vec3(0.3, 0.12, 0.075);
 const vec3 DAMP        = vec3(0.24, 0.15, 0.085);
 const vec3 OASIS_FLOOR = vec3(0.16, 0.15, 0.06);
-const vec3 TRACK_SAND  = vec3(0.5, 0.36, 0.23);
+const vec3 TRACK_SAND  = vec3(0.5, 0.28, 0.16);
 // (a bed's tone: 0..1 per bed, the beds wobbling a little in height like the generator's)
 float bedTone(float h, Paint p) { float b = floor((h + (p.big.g - 0.5) * 5.0) / 9.0); return fract(sin(b * 12.9898 + 4.1) * 43758.5453); }
 Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
