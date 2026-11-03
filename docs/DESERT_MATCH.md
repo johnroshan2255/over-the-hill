@@ -277,6 +277,7 @@ Fix these **before** scoring; a broken edge ruins every view that sees it.
 | 4 | 2026-11-03 | the desert's water a guelta's (Water.ts OTH_DESERT: an olive body, dark where deep; low reflections the canyon's sandstone; the river's calm reaches the same) | 53.6 | 60.6 | 63.8 | 68.1 | 51.4 | 57.0 | 31.5 | 62.7 | 33.6 | 61.8 | 24.1 | 35.0 | 61.3 | **51.1** |
 | 5 | 2026-11-03 | the oasis grass olive-khaki (Grass.ts OTH_DESERT field colour: hue 85° → ≈ 50°, a little darker) | 53.5 | 60.5 | 63.8 | 68.1 | 50.9 | 57.0 | 31.5 | 62.7 | 33.6 | 61.8 | 28.1 | 35.0 | 61.3 | **51.4** |
 | 6 | 2026-11-03 | stable scattering (Rocks / Trees / Bushes: in the desert each cell / item draws from its own seed — one stream for the map moved every stone and palm after any mask change) | 53.6 | 60.6 | 63.6 | 68.1 | 50.8 | 57.0 | 31.5 | 62.6 | 33.6 | 61.7 | 28.7 | 34.7 | 61.3 | **51.4** |
+| 7 | 2026-11-03 | the erg's mesas sandstone (desert.py: the erg's 'sand, never rock or beds' only off the mesas — they were smooth sand-coloured blocks; regenerated, desert_rocks.py 624 → 674 bands) | 53.3 | 60.3 | 63.6 | 68.1 | 50.3 | 57.0 | 31.2 | 62.6 | 33.6 | 61.7 | 28.8 | 45.7 | 61.4 | **52.1** |
 
 ---
 

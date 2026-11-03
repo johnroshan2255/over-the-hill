@@ -209,7 +209,10 @@ H = np.where(Ds < 40, np.minimum(H, slot_floor + (H - slot_floor) * smoothstep(9
 # steps in benches — flat ledges and steep risers, the beds wobbling a little in height
 gz, gx = np.gradient(H, CELL)
 slope = np.hypot(gx, gz)
-wall = smoothstep(0.45, 0.9, blur(slope, 2)) * (1 - smoothstep(0.05, 0.3, ERG))  # (a dune's slip face is sand: never beds)
+# (the erg's own sand, not over a mesa: a dune's slip face is sand — never beds, never rock — but the mesas standing in
+#  the erg are sandstone like the rest; DESERT_MATCH round 6: they had no beds and no rock, smooth sand-coloured blocks)
+ERG_OPEN = ERG * (1 - smoothstep(0.05, 0.4, MESAK))
+wall = smoothstep(0.45, 0.9, blur(slope, 2)) * (1 - smoothstep(0.05, 0.3, ERG_OPEN))
 phase = 2.5 * fbm(X / 500, Z / 500, SEED + 30, 2)
 H = H + (terrace(H, 0.4, phase) - H) * wall
 PHASE = phase
@@ -445,7 +448,7 @@ log('masks (4 m)')
 H4 = H[::2, ::2]; X4, Z4 = X[::2, ::2], Z[::2, ::2]
 gz4, gx4 = np.gradient(H4, 4.0)
 sl = np.hypot(gx4, gz4)
-Dr4 = DrW[::2, ::2]; Sr4 = Sr[::2, ::2]; Lq4 = Lq[::2, ::2]; Dt4 = Dt[::2, ::2]; ERG4 = ERG[::2, ::2]
+Dr4 = DrW[::2, ::2]; Sr4 = Sr[::2, ::2]; Lq4 = Lq[::2, ::2]; Dt4 = Dt[::2, ::2]; ERG4 = ERG_OPEN[::2, ::2]
 rh4 = river_hw(Sr4)
 water4 = (Dr4 < rh4) | (Lq4 < 1.0)
 near_water = np.maximum(1 - smoothstep(rh4 + 8, rh4 + 70, Dr4), 1 - smoothstep(1.05, 1.6, Lq4))
