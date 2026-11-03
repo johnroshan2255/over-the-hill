@@ -38,7 +38,11 @@ export class Grass {
   /** Blades drawn last frame (after the tile cull, before the per-tuft density cull). */
   blades = 0
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture) {
+  /** THE FIELD (2026-11-03): what a tuft's root reads off the map — its paint, whether and how tall it grows — baked
+   *  into world-space texels round the camera; every blade vertex reads two texels, not the map + groundPaint. */
+  private readonly field: GrassField
+
+  constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture, renderer: GFX.WebGLRenderer) {
     const R = tier.grassRadius, D0 = tier.grassDensity * AMOUNT
     const mg = map.meta.mask
     const t = terrain.uniforms
@@ -59,6 +63,8 @@ export class Grass {
       // fewer tufts on the lower tiers → each blade wider by the square root: the coverage stays HIGH's
       uWidthK: { value: Math.max(1, Math.sqrt((REF_DENSITY * REF_FAN) / (tier.grassDensity * tier.grassFan))) },
     }
+    this.field = new GrassField(renderer, R, uniforms, map.biomeDefines)
+    Object.assign(uniforms, this.field.uniforms)
     // (2026-10-27, 400 fps at 1080p: each ring is built at its INNER edge's density and the rank cull thins it outward —
     //  the culled tufts still cost a vertex each; the near ring (to 0.25 R) split in two halves those: its outer half
     //  built at half the density, straight blades)
@@ -91,7 +97,11 @@ export class Grass {
     }
   }
 
+  /** (the world goes: its field's target with it) */
+  dispose(): void { this.field.dispose() }
+
   update(camera: GFX.PerspectiveCamera): void {
+    this.field.update(camera.position.x, camera.position.z)
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z
@@ -179,9 +189,17 @@ function tuftTile(T: number, density: number, fan: number, segs: number, seed: n
   return geo
 }
 
+/** The grass vertex shader's view of the FIELD: uField = (texels a side, metres a texel, 1 / the side in metres). */
+const FIELD_GLSL = /* glsl */ `
+uniform sampler2D uFieldA;
+uniform sampler2D uFieldB;
+uniform vec4 uField;
+`
+
 const VERT = /* glsl */ `
 ${ATMOS_GLSL}
 ${HEIGHT_GLSL}
+#define PAINT_TEX(uv) textureLod(uNoise, uv, 0.0)
 ${PAINT_GLSL}
 ${SHADOW_GLSL}
 uniform sampler2D uMask;
@@ -197,6 +215,7 @@ uniform float uRin;
 uniform float uRout;
 uniform float uRadius;
 uniform float uWidthK;
+${FIELD_GLSL}
 in vec4 aTuft;  // local x, local z, rank, seed
 in vec4 aBlade; // fan angle, lean, height ×, width ×
 in vec2 aV;     // t (0 root … 1 tip), side
@@ -225,41 +244,16 @@ void main() {
     gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
     return;
   }
-  // THE GROUND HERE: height, mask, soft normal, and its colour — the blade's colour
+  // THE GROUND HERE: its height and soft normal; what the root reads off the map, from the field
   float h = terrainHeight(root);
-  vec4 m = textureLod(uMask, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0);
   vec3 N = unpackN(textureLod(uNIn, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 2.5).rg);
-  float trail = textureLod(uTrail, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0).r * 8.0;
-  // (the blade's colour is the FIELD's: painted without the track, so the blades at its edge don't take the earth)
-  Ground g = groundPaint(root, m, h, 1.0 - N.y, paintNoise(root), 0.0, 99.0, uTrailHW, 0.0); // (no painted shrub dots under the grass: the bushes are real there)
-  float tx = trail < uTrailHW + 3.5 ? trackEdge(root, trail) : trail; // (beyond its reach the edge changes nothing: exact)
-  float onTrack = 1.0 - smoothstep(uTrailHW - 0.35, uTrailHW + 0.15, tx); // (trackMask, its ragged distance kept)
-  // (none on rock, snow, the water's gravel and the earth band along it; thinner under the forest)
-  // (never on rock: none where the ground shows any rock or scree tint at all — the user: "never put grass on rock")
-  float grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * (1.0 - 0.6 * g.forest) * (1.0 - g.snow) * (1.0 - smoothstep(0.02, 0.1, g.scree));
-  grow *= (1.0 - smoothstep(0.3, 0.6, onTrack)); // (off the track)
-#ifdef OTH_DESERT
-  // THE DESERT: grass only in the oasis (its growth, the damp banks) — the open sand stays bare
-  float oasis = max(smoothstep(0.15, 0.5, m.a), smoothstep(0.45, 0.8, m.b / 0.85));
-  grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * oasis * (1.0 - smoothstep(0.3, 0.6, onTrack));
-#endif
-  vec2 mudB = textureLod(uMud, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0).rg;
-  float mud = mudB.r;
-  // WILDFLOWERS (mud.bin G): where the field blossoms, one blade in ~5 is a flower — a grass blade in bloom at its
-  // top (below), standing a little over the others
-  float flower = step(fract(aTuft.w * 71.37 + aBlade.x * 5.71), mudB.g * 0.22);
-  grow *= 1.0 - smoothstep(0.25, 0.55, mud); // (none in the mud: a reedy fringe round it, below)
-  vec2 inUv = ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x;
-  grow *= 1.0 - smoothstep(0.0, 0.3, textureLod(uRocks, inUv, 0.0).r); // (none at a boulder's foot)
-  // SHORTER TOWARD BARE GROUND (the user: "when the grass comes to rock or the path, its height must reduce
-  // gradually"): full height a few metres off, a tenth where it stops — the track by its ragged edge's distance (over
-  // 2.5 m), terrain rock / scree by their fields read early (~2–6 m), a boulder by its footprint blurred a mip and a
-  // half up (~3 m round it). (The water's banks keep their edge: the mask can't tell a bank from a wet meadow.)
-  float approach = smoothstep(uTrailHW, uTrailHW + 2.5, tx);
-  approach = min(approach, (1.0 - g.rockNear) * (1.0 - g.screeNear));
-  approach = min(approach, 1.0 - smoothstep(0.02, 0.45, textureLod(uRocks, inUv, 1.5).r));
-  approach = max(approach * (1.0 - smoothstep(0.1, 0.3, mud)), smoothstep(0.08, 0.25, mud) * 1.15); // (REEDS: the marsh's edge tall)
-  float tall = mix(0.95, 1.45, smoothstep(0.2, 0.8, m.g)) * aBlade.z;
+  // the root's paint and growth: the FIELD's two texels (GrassField — baked from the map as the camera moves)
+  vec4 FA = textureLod(uFieldA, root * uField.z, 0.0), FB = textureLod(uFieldB, root * uField.z, 0.0);
+  vec3 col0 = FA.rgb * FA.rgb;
+  float grow = FA.a;
+  float approach = FB.r * 1.15;
+  float flower = step(fract(aTuft.w * 71.37 + aBlade.x * 5.71), FB.b * 0.22);
+  float tall = mix(0.95, 1.45, smoothstep(0.2, 0.8, FB.g)) * aBlade.z;
   float edge = 1.0 - smoothstep(uRadius * 0.8, uRadius, d);
   float height = tall * grow * edge * keep * mix(0.1, 1.0, approach) * (1.0 + 0.12 * flower);
   // the blade: out of the tuft along its fan angle, leaning out, bending with the wind
@@ -285,13 +279,7 @@ void main() {
   float face = dot(dir, normalize(uSunDir.xz + vec2(1e-4)));
   // (one blade in eight stands in its neighbours' shade: the field's darker strokes)
   float br = fract(aTuft.w * 31.7 + aBlade.x * 3.1);
-#ifdef OTH_DESERT
-  // (the oasis's grass is green, not the sand under it: a fresh green by the water, olive and dry farther off)
-  vec3 field = mix(vec3(0.075, 0.13, 0.03), vec3(0.2, 0.19, 0.06), smoothstep(0.4, 0.9, 1.0 - m.b / 0.85)) * PLANT_VALUE * 1.3;
-  vColor = field * (1.0 + face * 0.04 + (br - 0.5) * 0.1) * (br < 0.12 ? 0.8 : 1.0) * (1.0 + gust * 0.08);
-#else
-  vColor = g.col * (1.0 + face * 0.04 + (br - 0.5) * 0.1) * (br < 0.12 ? 0.8 : 1.0) * (1.0 + gust * 0.08);
-#endif
+  vColor = col0 * (1.0 + face * 0.04 + (br - 0.5) * 0.1) * (br < 0.12 ? 0.8 : 1.0) * (1.0 + gust * 0.08);
   // the ground's light: its soft normal, leaning a little with the blade
   vN = normalize(N + vec3(dir.x, 0.0, dir.y) * 0.18);
   vSun = sunVisibility(root);
@@ -334,5 +322,150 @@ void main() {
   gl_FragColor = vec4(mix(vColor, vFlower, smoothstep(0.64, 0.68, vT)), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+}
+`
+
+
+/**
+ * THE GRASS FIELD (2026-11-03, docs/MIGRATION.md — every blade vertex read the map and ran groundPaint at its root:
+ * ~20 texture reads and the whole paint, the same ~45 times over for a tuft's blades and their vertices). What a ROOT
+ * gets from the map — its paint (the ground's colour; the desert's own grass), whether it grows (rock, water, forest,
+ * snow, scree, the tracks, mud, a boulder's foot), how far it comes up toward a track / rock (approach), the field's
+ * dryness (tall) and the wildflower drift — baked into two RGBA8 maps of world-space texels (12.5 cm) round the camera
+ * as it moves: the window kept within 2 m of centred, each texel whose ground changed re-baked (TOROIDAL — texel c holds
+ * the window's ground X ≡ c mod n, read with wrap: nothing is copied as it slides). A blade vertex reads two texels.
+ * The bake reads the paint's noise at mip 0, as the vertex shader did; the colour is stored as its square root (the
+ * dark greens keep their steps in 8 bits), approach / 1.15.
+ */
+class GrassField {
+  readonly uniforms: Record<string, GFX.IUniform>
+  private readonly n: number
+  private readonly t = 0.125
+  private readonly rt: GFX.WebGLRenderTarget
+  private readonly scene = new GFX.Scene()
+  private readonly cam = new GFX.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+  private readonly win = new GFX.Vector4()
+  private wx = NaN
+  private wz = NaN
+
+  constructor(private readonly renderer: GFX.WebGLRenderer, radius: number, grass: Record<string, GFX.IUniform>, defines: Record<string, string>) {
+    // the window: the grass's reach + 2 m of drift + a margin, in whole 16-texel steps
+    this.n = Math.ceil((2 * (radius + 6)) / this.t / 16) * 16
+    this.rt = new GFX.WebGLRenderTarget(this.n, this.n, { count: 2, type: GFX.UnsignedByteType, depthBuffer: false, minFilter: GFX.LinearFilter, magFilter: GFX.LinearFilter, repeat: true })
+    this.uniforms = {
+      uFieldA: { value: this.rt.textures[0] },
+      uFieldB: { value: this.rt.textures[1] },
+      uField: { value: new GFX.Vector4(this.n, this.t, 1 / (this.n * this.t), 0) },
+    }
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
+      uniforms: { ...grass, ...this.uniforms, uWin: { value: this.win } },
+      defines: { ...defines },
+      vertexShader: FIELD_VERT,
+      fragmentShader: FIELD_FRAG,
+      depthTest: false,
+      depthWrite: false,
+    })
+    // one triangle over the whole target; the texels whose ground didn't change discard
+    const geo = new GFX.BufferGeometry()
+    geo.setAttribute('position', new GFX.BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3))
+    const mesh = new GFX.Mesh(geo, mat)
+    mesh.frustumCulled = false
+    this.scene.add(mesh)
+  }
+
+  /** Keep the window on the camera: re-bake what a move uncovered (nothing while it stays within 2 m). */
+  update(cx: number, cz: number): void {
+    const step = 16, n = this.n, t = this.t
+    const wx = Math.floor((cx / t - n / 2) / step) * step, wz = Math.floor((cz / t - n / 2) / step) * step
+    if (wx === this.wx && wz === this.wz) return
+    // (the first bake, or a jump past the window: every texel — "before" a whole window away matches none)
+    const all = Number.isNaN(this.wx) || Math.abs(wx - this.wx) >= n || Math.abs(wz - this.wz) >= n
+    this.win.set(wx, wz, all ? wx + 4 * n : this.wx, all ? wz + 4 * n : this.wz)
+    this.wx = wx
+    this.wz = wz
+    const r = this.renderer, target = r.getRenderTarget(), auto = r.autoClear
+    r.setRenderTarget(this.rt)
+    r.autoClear = false
+    r.render(this.scene, this.cam)
+    r.setRenderTarget(target)
+    r.autoClear = auto
+  }
+
+  dispose(): void { this.rt.dispose() }
+}
+
+const FIELD_VERT = /* glsl */ `
+void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }
+`
+
+const FIELD_FRAG = /* glsl */ `
+${ATMOS_GLSL}
+${HEIGHT_GLSL}
+#define PAINT_TEX(uv) textureLod(uNoise, uv, 0.0)
+${PAINT_GLSL}
+${SHADOW_GLSL}
+uniform sampler2D uMask;
+uniform sampler2D uMud;
+uniform sampler2D uNIn;
+uniform sampler2D uRocks;
+uniform sampler2D uTrail;
+uniform float uTrailHW;
+uniform vec4 uMaskGrid;
+uniform vec4 uField;
+uniform vec4 uWin; // the window's first texel (x, z) now, and before
+layout(location = 0) out highp vec4 oA;
+layout(location = 1) out highp vec4 oB;
+
+vec3 unpackN(vec2 e) { vec2 n = e * 2.0 - 1.0; return vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y); }
+
+void main() {
+  // this texel's ground in the window, now and before
+  vec2 c = floor(gl_FragCoord.xy);
+  vec2 X = uWin.xy + mod(c - uWin.xy, uField.x);
+  vec2 X0 = uWin.zw + mod(c - uWin.zw, uField.x);
+  if (X.x == X0.x && X.y == X0.y) discard;
+  vec2 root = (X + 0.5) * uField.y;
+  // (the grass vertex shader's root, as it was before 2026-11-03)
+  float h = terrainHeight(root);
+  vec4 m = textureLod(uMask, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0);
+  vec3 N = unpackN(textureLod(uNIn, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 2.5).rg);
+  float trail = textureLod(uTrail, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0).r * 8.0;
+  // (the blade's colour is the FIELD's: painted without the track, so the blades at its edge don't take the earth)
+  Ground g = groundPaint(root, m, h, 1.0 - N.y, paintNoise(root), 0.0, 99.0, uTrailHW, 0.0); // (no painted shrub dots under the grass: the bushes are real there)
+  float tx = trail < uTrailHW + 3.5 ? trackEdge(root, trail) : trail; // (beyond its reach the edge changes nothing: exact)
+  float onTrack = 1.0 - smoothstep(uTrailHW - 0.35, uTrailHW + 0.15, tx); // (trackMask, its ragged distance kept)
+  // (none on rock, snow, the water's gravel and the earth band along it; thinner under the forest)
+  // (never on rock: none where the ground shows any rock or scree tint at all — the user: "never put grass on rock")
+  float grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * (1.0 - 0.6 * g.forest) * (1.0 - g.snow) * (1.0 - smoothstep(0.02, 0.1, g.scree));
+  grow *= (1.0 - smoothstep(0.3, 0.6, onTrack)); // (off the track)
+#ifdef OTH_DESERT
+  // THE DESERT: grass only in the oasis (its growth, the damp banks) — the open sand stays bare
+  float oasis = max(smoothstep(0.15, 0.5, m.a), smoothstep(0.45, 0.8, m.b / 0.85));
+  grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * oasis * (1.0 - smoothstep(0.3, 0.6, onTrack));
+#endif
+  vec2 mudB = textureLod(uMud, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0).rg;
+  float mud = mudB.r;
+  // WILDFLOWERS (mud.bin G): where the field blossoms, one blade in ~5 is a flower — a grass blade in bloom at its
+  // top (below), standing a little over the others
+  grow *= 1.0 - smoothstep(0.25, 0.55, mud); // (none in the mud: a reedy fringe round it, below)
+  vec2 inUv = ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x;
+  grow *= 1.0 - smoothstep(0.0, 0.3, textureLod(uRocks, inUv, 0.0).r); // (none at a boulder's foot)
+  // SHORTER TOWARD BARE GROUND (the user: "when the grass comes to rock or the path, its height must reduce
+  // gradually"): full height a few metres off, a tenth where it stops — the track by its ragged edge's distance (over
+  // 2.5 m), terrain rock / scree by their fields read early (~2–6 m), a boulder by its footprint blurred a mip and a
+  // half up (~3 m round it). (The water's banks keep their edge: the mask can't tell a bank from a wet meadow.)
+  float approach = smoothstep(uTrailHW, uTrailHW + 2.5, tx);
+  approach = min(approach, (1.0 - g.rockNear) * (1.0 - g.screeNear));
+  approach = min(approach, 1.0 - smoothstep(0.02, 0.45, textureLod(uRocks, inUv, 1.5).r));
+  approach = max(approach * (1.0 - smoothstep(0.1, 0.3, mud)), smoothstep(0.08, 0.25, mud) * 1.15); // (REEDS: the marsh's edge tall)
+#ifdef OTH_DESERT
+  // (the oasis's grass is green, not the sand under it: a fresh green by the water, olive and dry farther off)
+  vec3 col0 = mix(vec3(0.075, 0.13, 0.03), vec3(0.2, 0.19, 0.06), smoothstep(0.4, 0.9, 1.0 - m.b / 0.85)) * PLANT_VALUE * 1.3;
+#else
+  vec3 col0 = g.col;
+#endif
+  oA = vec4(sqrt(max(col0, vec3(0.0))), clamp(grow, 0.0, 1.0));
+  oB = vec4(clamp(approach / 1.15, 0.0, 1.0), m.g, mudB.g, 0.0);
 }
 `

@@ -229,21 +229,24 @@ uniform float uAgl2;
 in vec4 aNode; // x0, z0, size, level
 out vec3 vWorld;
 
+// one geomorph step: level L's vertices that its coarser parent lacks slide onto the parent's edge as dist nears L's rim
+vec2 morphStep(vec2 xz, float dist, float L, float c) {
+  float R = uNear * exp2(L);
+  float m = clamp((dist - R * 0.62) / (R * 0.38), 0.0, 1.0);
+  vec2 odd = step(vec2(0.25), fract((xz - uWorldOrigin) / (2.0 * c)));
+  return xz - odd * c * m;
+}
+
 void main() {
   float cell = aNode.z / uGridN;
   vec2 xz = aNode.xy + position.xz * cell;
   vec2 d2 = xz - uCamPos.xz;
   float dist = sqrt(dot(d2, d2) + uAgl2);
-  // geomorph through up to three coarser levels
-  for (int k = 0; k < 3; k++) {
-    float L = aNode.w + float(k);
-    float R = uNear * exp2(L);
-    float m = clamp((dist - R * 0.62) / (R * 0.38), 0.0, 1.0);
-    if (m <= 0.0) break;
-    float c = cell * exp2(float(k));
-    vec2 odd = step(vec2(0.25), fract((xz - uWorldOrigin) / (2.0 * c)));
-    xz -= odd * c * m;
-  }
+  // geomorph through up to three coarser levels (written out, no loop — rockRelief.ts says why; a level whose blend
+  // is 0 moves nothing, and every coarser one's is 0 too)
+  xz = morphStep(xz, dist, aNode.w, cell);
+  xz = morphStep(xz, dist, aNode.w + 1.0, cell * 2.0);
+  xz = morphStep(xz, dist, aNode.w + 2.0, cell * 4.0);
   float h = terrainHeight(xz);
   vWorld = vec3(xz.x, h, xz.y);
   gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);

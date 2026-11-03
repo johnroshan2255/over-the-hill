@@ -16,23 +16,23 @@ export const ROCK_RELIEF_GLSL = /* glsl */ `
 // ~0.9 m). The rock's PAINTED colour breakup (paint.ts, Rocks.ts) — the fake relief from before — fades in only as
 // this fades out (the user: "we don't need that colour now, we have real noise there")
 float reliefShow(float px) { return 1.0 - smoothstep(3.0, 5.0, log2(max(px * (256.0 / 7.0), 1e-4))); }
+// one projection's share of the relief's height: uv = p seen along one axis, wi = its weight, o = its offset
+// (written out three times, no loop: WebGPU's translators guard every loop against running forever, and the guard
+//  stops the GPU compiler unrolling it — the fetches then wait on each other; docs/MIGRATION.md)
+float reliefH1(vec2 uv, float wi, float o, float lod1, float lod2, float fine) {
+  if (wi < 0.03) return 0.0;
+  // (read a mip or so blurrier than the pixel needs: the noise's finest octaves drop out — clean creases between
+  //  smooth faces, not a busy grain)
+  vec4 a = textureLod(uNoise, uv * (1.0 / 7.0) + o * 0.31, lod1 + 1.5);
+  float g = textureLod(uNoise, uv * (1.0 / 2.3) + vec2(0.37, 0.61) + o * 0.17, lod2 + 1.0).g;
+  // ridged blotches: sharp crease lines where the noise crosses its middle; finer creases between them; the cells
+  // a faint chipping
+  return wi * (0.6 * (1.0 - abs(a.r * 2.0 - 1.0)) + 0.3 * fine * (1.0 - abs(g * 2.0 - 1.0)) + 0.12 * (1.0 - a.a));
+}
 // the relief's height (0 … ~1.1) at p; w = the three projections' weights, lod1 / lod2 = the two fetches' mip levels,
 // fine = the grain's share (fading as it shrinks under a pixel)
 float reliefH(vec3 p, vec3 w, float lod1, float lod2, float fine) {
-  float h = 0.0;
-  for (int i = 0; i < 3; i++) {
-    float wi = i == 0 ? w.x : i == 1 ? w.y : w.z;
-    if (wi < 0.03) continue;
-    vec2 uv = i == 0 ? p.zy : i == 1 ? p.xz : p.xy;
-    // (read a mip or so blurrier than the pixel needs: the noise's finest octaves drop out — clean creases between
-    //  smooth faces, not a busy grain)
-    vec4 a = textureLod(uNoise, uv * (1.0 / 7.0) + float(i) * 0.31, lod1 + 1.5);
-    float g = textureLod(uNoise, uv * (1.0 / 2.3) + vec2(0.37, 0.61) + float(i) * 0.17, lod2 + 1.0).g;
-    // ridged blotches: sharp crease lines where the noise crosses its middle; finer creases between them; the cells
-    // a faint chipping
-    h += wi * (0.6 * (1.0 - abs(a.r * 2.0 - 1.0)) + 0.3 * fine * (1.0 - abs(g * 2.0 - 1.0)) + 0.12 * (1.0 - a.a));
-  }
-  return h;
+  return reliefH1(p.zy, w.x, 0.0, lod1, lod2, fine) + reliefH1(p.xz, w.y, 1.0, lod1, lod2, fine) + reliefH1(p.xy, w.z, 2.0, lod1, lod2, fine);
 }
 // the surface normal N bent by the relief at p, strength k (0 … 1); dpx / dpy = dFdx / dFdy of p (taken outside any
 // branch); cav = out: the creases' occlusion (≈ 0.9 in a crease … 1)

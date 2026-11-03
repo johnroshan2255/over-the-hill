@@ -287,6 +287,7 @@ async function boot() {
 
   // STATS: PlayCanvas's own panel (MiniStats — FPS, frame time, draw calls, CPU / GPU timings, VRAM): F3 or ?stats=1
   let cpuMs = 0, frameMs = 16.7, last = performance.now()
+  renderer.offscreen = q.get('bench') === 'offscreen'
   let showStats = q.get('stats') === '1'
   renderer.showStats(showStats)
   window.addEventListener('keydown', (e) => { if (e.code === 'F3') { showStats = !showStats; renderer.showStats(showStats); e.preventDefault() } })
@@ -487,6 +488,8 @@ async function boot() {
     get props() { return world.props },
     get birds() { return world.birds },
     get world() { return world },
+    /** (the harness's probes: offscreen bakes re-run, targets read back) */
+    renderer,
     /** The drawn parts, each with `visible` (scripts/harness/ablate.mjs: the GPU's frame, system by system). */
     parts: () => ({ terrain: world.terrain.mesh, grass: world.grass.group, trees: world.trees.group, bushes: world.bushes.group, rocks: world.rocks.group, water: world.water.group, falls: world.falls.group, bridges: world.bridges.group, landmarks: world.landmarks.group, props: world.props.group, ...(world.glow ? { glow: world.glow.group } : {}), ...(world.formations ? { formations: world.formations.group } : {}), ...(world.birds ? { birds: world.birds.mesh } : {}), sky: sky.mesh, car: car.root, carShadow: car.shadowMesh, dust: dust.mesh, tracks: tyreTracks.mesh }),
     journal,
@@ -526,6 +529,7 @@ async function boot() {
     sunDir: () => atmos.uniforms.uSunDir.value.toArray(),
     /** Resolves when the GPU has finished what's been submitted (fps.mjs: the honest frame time — WebGPU's rAF runs ahead). */
     gpuDone: () => renderer.gpuDone(),
+    gpuTime: () => renderer.gpuTime(),
     backend: renderer.backend,
     stats: () => ({ fps: 1000 / frameMs, cpuMs, draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: world.terrain.patches, blades: world.grass.blades, rocks: world.rocks.count, trees: world.trees.drawn.slice(), bushes: world.bushes.drawn.slice(), culled: { terrainPatches: world.terrain.occluded, treeTiles: world.trees.occluded, rocks: { ...world.rocks.culled }, horizonBuilds: world.horizon.builds }, pos: camera.position.toArray().map((v) => +v.toFixed(1)), ground: +map.height(camera.position.x, camera.position.z).toFixed(1) }),
     height: (x: number, z: number) => map.height(x, z),

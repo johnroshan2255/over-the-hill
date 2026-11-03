@@ -45,14 +45,19 @@ const vec3 BED        = vec3(0.6, 0.37, 0.21);
 // (the tracks: the user's golden-valley reference — light sandy tan packed earth ≈ sRGB 205 158 121 in the sun)
 const vec3 TRAIL      = vec3(0.40, 0.27, 0.17);
 
+// (every paint-noise read goes through PAINT_TEX: a shader that bakes the paint — Grass.ts's field — reads mip 0, as
+//  a vertex shader does, where a fragment shader's texture() would pick the mip its own pixel spacing asks for)
+#ifndef PAINT_TEX
+#define PAINT_TEX(uv) texture(uNoise, uv)
+#endif
 struct Paint { vec4 fine; vec4 mid; vec4 big; vec4 grain; vec4 micro; };
 Paint paintNoise(vec2 xz) {
   Paint p;
-  p.micro = texture(uNoise, xz * (1.0 / 0.85) + vec2(0.61, 0.37));
-  p.grain = texture(uNoise, xz * (1.0 / 3.7) + vec2(0.23, 0.91));
-  p.fine = texture(uNoise, xz * (1.0 / 13.0) + vec2(0.71, 0.13));
-  p.mid = texture(uNoise, xz * (1.0 / 71.0));
-  p.big = texture(uNoise, xz * (1.0 / 389.0) + vec2(0.37, 0.59));
+  p.micro = PAINT_TEX(xz * (1.0 / 0.85) + vec2(0.61, 0.37));
+  p.grain = PAINT_TEX(xz * (1.0 / 3.7) + vec2(0.23, 0.91));
+  p.fine = PAINT_TEX(xz * (1.0 / 13.0) + vec2(0.71, 0.13));
+  p.mid = PAINT_TEX(xz * (1.0 / 71.0));
+  p.big = PAINT_TEX(xz * (1.0 / 389.0) + vec2(0.37, 0.59));
   return p;
 }
 
@@ -62,8 +67,8 @@ Paint paintNoise(vec2 xz) {
 // patches), rad / soft in metres.
 float dotsAt(vec2 xz, float cellM, float fill, float rad, float soft) {
   vec2 uv = xz / (cellM * 16.0);
-  float d = texture(uNoise, uv).a * cellM;
-  float sel = texture(uNoise, uv * 2.3 + vec2(0.17, 0.53)).g;
+  float d = PAINT_TEX(uv).a * cellM;
+  float sel = PAINT_TEX(uv * 2.3 + vec2(0.17, 0.53)).g;
   float on = smoothstep(0.62 - fill, 0.66 - fill, sel);
   return on * (1.0 - smoothstep(rad - soft, rad + soft, d));
 }
@@ -83,8 +88,8 @@ vec3 grassPaint(float dry, Paint p) {
 // scallops), a finer ragged fringe on top. trackEdge = that RAGGED distance from the centre line (m; the edge is where
 // it reaches hw), trackMask = 1 on the track … 0 off it. trail = distance to the centre line (m).
 float trackEdge(vec2 xz, float trail) {
-  float clumps = texture(uNoise, xz / 9.0 + vec2(0.41, 0.17)).r - 0.5;
-  float fringe = texture(uNoise, xz / 2.3 + vec2(0.23, 0.91)).b - 0.5;
+  float clumps = PAINT_TEX(xz / 9.0 + vec2(0.41, 0.17)).r - 0.5;
+  float fringe = PAINT_TEX(xz / 2.3 + vec2(0.23, 0.91)).b - 0.5;
   return trail + clumps * 1.5 + fringe * 0.45;
 }
 float trackMask(vec2 xz, float trail, float hw) { return 1.0 - smoothstep(hw - 0.35, hw + 0.15, trackEdge(xz, trail)); }
@@ -234,7 +239,7 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
 // in (pick: a per-plant random). White daisies, buttercups, lilac lupines, pink campion, poppies, cornflowers; linear
 // albedo near the straw's brightness (they read as colour, not as glare).
 vec3 flowerColor(vec2 xz, float pick) {
-  float k = fract(texture(uNoise, xz * (1.0 / 47.0) + vec2(0.29, 0.83)).b * 0.85 + pick * 0.3);
+  float k = fract(PAINT_TEX(xz * (1.0 / 47.0) + vec2(0.29, 0.83)).b * 0.85 + pick * 0.3);
   // (soft, not candy: daisy white and buttercup the commonest, then lilac, campion pink, a few poppies, cornflowers)
   return k < 0.27 ? vec3(0.8, 0.79, 0.72) : k < 0.52 ? vec3(0.85, 0.64, 0.12) : k < 0.71 ? vec3(0.47, 0.32, 0.72)
        : k < 0.83 ? vec3(0.84, 0.43, 0.55) : k < 0.91 ? vec3(0.74, 0.16, 0.08) : vec3(0.3, 0.42, 0.8);

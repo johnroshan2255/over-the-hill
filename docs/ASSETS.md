@@ -19,6 +19,16 @@ CC-BY-4.0 needs the credit shown to players too (a credits screen) — not in th
 |---|---|---|---|
 | Draco mesh decoder (formations.glb) | `draco_decoder.js`, `draco_decoder.wasm`, `draco_wasm_wrapper.js` | three.js `examples/jsm/libs/draco` (Google Draco) | Apache-2.0 |
 
+## Code — the WebGPU shader translators (`frontend/public/lib/`, `naga-wasm` from npm)
+
+Our shaders are GLSL; on WebGPU PlayCanvas needs WGSL, made at runtime (`src/oth/gfx/core.ts`, docs/MIGRATION.md).
+
+| What | Files | Source | Licence | Processing |
+|---|---|---|---|---|
+| naga (wgpu's shader translator, GLSL → WGSL) — the main path | npm `naga-wasm@30.2.0` (`naga_bg.wasm`, bundled by Vite) | https://github.com/kekkon-nexus/naga-wasm (naga: https://github.com/gfx-rs/wgpu) | MIT OR Apache-2.0 | — |
+| glslang (Khronos GLSL → SPIR-V) — the fallback path | `lib/glslang/glslang.js`, `glslang.wasm` | https://cdn.babylonjs.com/glslang/ (Khronos glslang, built by Babylon.js) — the build PlayCanvas's docs point to | BSD-3-Clause (glslang) | default wasm path set to `/lib/glslang/glslang.wasm`; `export default globalThis.glslang;` appended (the file is UMD) |
+| twgsl (Tint, SPIR-V → WGSL) — the fallback path | `lib/twgsl/twgsl.js`, `twgsl.wasm` | https://cdn.babylonjs.com/twgsl/ (Google Tint, built by Babylon.js) | Apache-2.0 | — |
+
 The desert's terrain, sandstone and palms are generated here (`scripts/oth/desert*.py`, `treeGeometry.ts`). Over the
 Hill's screenshots were only looked at for reference — none are in the repo.
 

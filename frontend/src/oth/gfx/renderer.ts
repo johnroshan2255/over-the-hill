@@ -19,21 +19,30 @@ export class RenderTarget {
   scissorTest = false
   /** the PlayCanvas target */
   pc: pc.RenderTarget
-  constructor(public width: number, public height: number, o: { count?: number; type?: number; format?: number; depthBuffer?: boolean; generateMipmaps?: boolean; minFilter?: number; magFilter?: number; samples?: number } = {}) {
+  constructor(public width: number, public height: number, o: { count?: number; type?: number; format?: number; depthBuffer?: boolean; generateMipmaps?: boolean; minFilter?: number; magFilter?: number; samples?: number; repeat?: boolean } = {}) {
     const n = o.count ?? 1, d = gfx().device
     const fmt = o.type === HalfFloatType ? pc.PIXELFORMAT_RGBA16F : o.type === FloatType ? pc.PIXELFORMAT_RGBA32F : pc.PIXELFORMAT_RGBA8
     const mips = !!o.generateMipmaps && (o.minFilter ?? LinearFilter) === LinearMipmapLinearFilter
     const filt = (f: number | undefined) => (f === NearestFilter ? pc.FILTER_NEAREST : f === LinearMipmapLinearFilter ? (mips ? pc.FILTER_LINEAR_MIPMAP_LINEAR : pc.FILTER_LINEAR) : pc.FILTER_LINEAR)
     const bufs: pc.Texture[] = []
-    for (let i = 0; i < n; i++) bufs.push(new pc.Texture(d, { name: 'oth-rt', width, height, format: fmt, mipmaps: mips, minFilter: filt(o.minFilter), magFilter: filt(o.magFilter), addressU: pc.ADDRESS_CLAMP_TO_EDGE, addressV: pc.ADDRESS_CLAMP_TO_EDGE }))
-    this.pc = new pc.RenderTarget({ colorBuffers: bufs, depth: o.depthBuffer ?? true, samples: o.samples ?? 1 })
+    for (let i = 0; i < n; i++) bufs.push(new pc.Texture(d, { name: 'oth-rt', width, height, format: fmt, mipmaps: mips, minFilter: filt(o.minFilter), magFilter: filt(o.magFilter), addressU: o.repeat ? pc.ADDRESS_REPEAT : pc.ADDRESS_CLAMP_TO_EDGE, addressV: o.repeat ? pc.ADDRESS_REPEAT : pc.ADDRESS_CLAMP_TO_EDGE }))
+    // (a DEPTH TEXTURE, not just "depth": PlayCanvas stores a target's depth after a pass only when it is a texture —
+    //  otherwise it's discarded at the pass's end, and a later render into the target without clearing (three's
+    //  autoClear = false: the impostor bake's tiles) loads garbage depth: on WebGPU every fragment failed the test)
+    const depth = (o.depthBuffer ?? true) && (o.samples ?? 1) <= 1
+    this.depthTex = depth ? new pc.Texture(d, { name: 'oth-rt-depth', width, height, format: pc.PIXELFORMAT_DEPTH, mipmaps: false, minFilter: pc.FILTER_NEAREST, magFilter: pc.FILTER_NEAREST }) : null
+    // (ORIGIN BOTTOM: the target's rows laid out as on WebGL2 on both backends — three's / GL's convention, which our
+    //  viewports, the impostor atlas's tiles and every shader sampling a target assume; on WebGPU PlayCanvas flips the
+    //  projection into it. Its default, NATIVE, left WebGPU's targets upside down: every impostor stood on its head)
+    this.pc = new pc.RenderTarget({ colorBuffers: bufs, ...(this.depthTex ? { depthBuffer: this.depthTex } : { depth: o.depthBuffer ?? true }), samples: o.samples ?? 1, origin: pc.RENDERTARGET_ORIGIN_BOTTOM })
     this.textures = bufs.map((b) => new TargetTexture(b))
     this.viewport = new Vector4(0, 0, width, height)
     this.scissor = new Vector4(0, 0, width, height)
     void RGBAFormat; void UnsignedByteType
   }
+  private readonly depthTex: pc.Texture | null
   get texture(): TargetTexture { return this.textures[0] }
-  dispose(): void { this.pc.destroy(); for (const t of this.textures) t.pcTexture().destroy() }
+  dispose(): void { this.pc.destroy(); for (const t of this.textures) t.pcTexture().destroy(); this.depthTex?.destroy() }
 }
 export { RenderTarget as WebGLRenderTarget }
 
@@ -90,7 +99,7 @@ export class Renderer {
     let e = this.cams.get(cam)
     if (!e) {
       e = new pc.Entity(`oth-cam-${cam.id}`)
-      e.addComponent('camera', { clearColorBuffer: true, clearDepthBuffer: true, clearStencilBuffer: false, frustumCulling: true, aspectRatioMode: pc.ASPECT_MANUAL })
+      e.addComponent('camera', { clearColorBuffer: true, clearDepthBuffer: true, clearStencilBuffer: true, frustumCulling: true, aspectRatioMode: pc.ASPECT_MANUAL })
       gfx().app.root.addChild(e)
       e.enabled = false
       this.cams.set(cam, e)
@@ -102,12 +111,28 @@ export class Renderer {
    *  globals written, this camera made the one PlayCanvas renders with. */
   prepare(scene: Scene, camera: Camera): void {
     this.setup(scene, camera)
+    if (this.offscreen && !this.target) this.active!.camera!.renderTarget = this.benchTarget()
     this.main = this.active
     this.info.render.calls = scene.info.calls
     this.info.render.triangles = scene.info.triangles
     this.info.render.frame++
   }
   private main: pc.Entity | null = null
+  /** (the harness's yardstick, ?bench=offscreen: the frame drawn into a target of the canvas's size and samples that
+   *  is never shown — the GPU's own time for the work, without the browser's wait on the compositor round the
+   *  canvas; scripts/harness/gpuprof.mjs) */
+  offscreen = false
+  private bench: pc.RenderTarget | null = null
+  private benchTarget(): pc.RenderTarget {
+    const d = gfx().device
+    if (!this.bench || this.bench.width !== d.width || this.bench.height !== d.height) {
+      this.bench?.destroyTextureBuffers()
+      this.bench?.destroy()
+      const tex = new pc.Texture(d, { name: 'oth-bench', width: d.width, height: d.height, format: pc.PIXELFORMAT_RGBA8, mipmaps: false })
+      this.bench = new pc.RenderTarget({ colorBuffer: tex, depth: true, samples: d.samples })
+    }
+    return this.bench
+  }
 
   /** Draw now (offscreen: the impostor bake) — the frame's camera held off while it does. */
   render(scene: Scene, camera: Camera): void {
@@ -177,6 +202,9 @@ export class Renderer {
     c.clearColor = _c
     c.clearColorBuffer = this.autoClear
     c.clearDepthBuffer = this.autoClear
+    // (PlayCanvas's depth always carries a stencil: cleared with the depth — never loaded, and the canvas's transient
+    //  (memoryless) depth must be cleared, not loaded)
+    c.clearStencilBuffer = this.autoClear
   }
 
   /** Start PlayCanvas's frame loop: `update(dt)` runs the game each frame, then PlayCanvas renders. */
@@ -187,6 +215,17 @@ export class Renderer {
   }
   /** (a paused game draws nothing) */
   set drawing(on: boolean) { gfx().app.autoRender = on }
+
+  /** The GPU's own time for the last frame (ms, PlayCanvas's GPU profiler — WebGPU timestamp queries / WebGL timer
+   *  queries), and per render pass; switched on by the first call. */
+  gpuTime(): { frame: number | undefined; passes: Record<string, number> } {
+    const pr = gfx().device.gpuProfiler as unknown as { enabled: boolean; frameTime?: number; passTimings?: Map<string, number> } | undefined
+    if (!pr) return { frame: undefined, passes: { noProfiler: 1 } }
+    const d = gfx().device as unknown as { supportsTimestampQuery?: boolean }
+    if (!d.supportsTimestampQuery) return { frame: undefined, passes: { noTimestampQuery: 1 } }
+    pr.enabled = true
+    return { frame: pr.frameTime, passes: Object.fromEntries(pr.passTimings ?? []) }
+  }
 
   /** Resolve when the GPU has finished all the work submitted so far (the harness's honest frame time). */
   async gpuDone(): Promise<void> {

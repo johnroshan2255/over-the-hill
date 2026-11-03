@@ -1,0 +1,65 @@
+<!doctype html><html><body style="margin:0;background:#000"><canvas id="c" width="1920" height="1080" style="width:1920px;height:1080px;display:block"></canvas>
+<script type="module">
+// (docs/MIGRATION.md) which fragment-shader operations Chrome's WebGPU runs slower than its WebGL2 on this machine: a
+// full-screen triangle whose fragment shader loops one operation N times; the GPU-drained time per frame.
+const q = new URLSearchParams(location.search), api = q.get('api') || 'webgl2', op = q.get('op') || 'mad', N = Number(q.get('n') || 48)
+const BODY = {
+  mad: ['v = v * 1.0001 + 0.0013;', 'v = v * 1.0001 + 0.0013;'],
+  pow: ['v = pow(abs(v) + 0.1, vec4(1.003)) ;', 'v = pow(abs(v) + 0.1, vec4f(1.003));'],
+  sin: ['v = sin(v) * 1.1;', 'v = sin(v) * 1.1;'],
+  exp: ['v = exp(-abs(v)) + 0.3;', 'v = exp(-abs(v)) + 0.3;'],
+  smooth: ['v = smoothstep(vec4(0.0), vec4(1.3), v) + 0.1;', 'v = smoothstep(vec4f(0.0), vec4f(1.3), v) + 0.1;'],
+  norm: ['v = vec4(normalize(v.xyz + 0.01), v.w) * 1.01;', 'v = vec4f(normalize(v.xyz + 0.01), v.w) * 1.01;'],
+  tex: ['v += texture(t, v.xy * 0.37 + uv);', 'v += textureSample(t, s, v.xy * 0.37 + uv);'],
+  fract: ['v = fract(sin(dot(v.xy, vec2(12.9898, 78.233))) * vec4(43758.5453));', 'v = fract(sin(dot(v.xy, vec2f(12.9898, 78.233))) * vec4f(43758.5453));'],
+  none: ['', ''],
+  // independent fetches (the paint's way: each its own scale / offset), as a loop or written out
+  texf: ['v += fk(uv, float(i));', 'v += fk(uv, f32(i));'],
+  texi: ['v += texture(t, uv * (1.0 + float(i) * 0.37) + float(i) * 0.13);', 'v += textureSample(t, s, uv * (1.0 + f32(i) * 0.37) + f32(i) * 0.13);'],
+}[op]
+const UNROLL = q.get('unroll') === '1'
+const body = (k, b) => UNROLL ? Array.from({ length: N }, (_, i) => b.replaceAll('float(i)', `${i}.0`).replaceAll('f32(i)', `${i}.0`)).join('\n') : (k === 0 ? `for (int i = 0; i < ${N}; i++) { ${b} }` : `for (var i = 0; i < ${N}; i++) { ${b} }`)
+let draw, sync
+const c = document.getElementById('c')
+if (api === 'webgpu') {
+  const ad = await navigator.gpu.requestAdapter(), dev = await ad.requestDevice(), ctx = c.getContext('webgpu'), fmt = navigator.gpu.getPreferredCanvasFormat()
+  ctx.configure({ device: dev, format: fmt, alphaMode: 'opaque' })
+  const code = `@group(0) @binding(0) var t: texture_2d<f32>; @group(0) @binding(1) var s: sampler;
+  @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { let p = vec2f(f32((i << 1) & 2), f32(i & 2)); return vec4f(p * 2.0 - 1.0, 0.0, 1.0); }
+  fn fk(uv: vec2f, k: f32) -> vec4f { let a = textureSample(t, s, uv * (1.0 + k * 0.37) + k * 0.13); let b = textureSample(t, s, uv * (0.5 + k * 0.21) + k * 0.29); return a * 0.6 + b * 0.4; }
+  @fragment fn fs(@builtin(position) fc: vec4f) -> @location(0) vec4f { let uv = fc.xy / vec2f(1920.0, 1080.0); var v = vec4f(uv, uv.yx);
+    ${body(1, BODY[1])} return vec4f(fract(v.xyz), 1.0); }`
+  const mod = dev.createShaderModule({ code })
+  const pipe = dev.createRenderPipeline({ layout: 'auto', vertex: { module: mod, entryPoint: 'vs' }, fragment: { module: mod, entryPoint: 'fs', targets: [{ format: fmt }] } })
+  const tex = dev.createTexture({ size: [256, 256], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST, mipLevelCount: 1 })
+  const data = new Uint8Array(256 * 256 * 4).map(() => Math.random() * 255)
+  dev.queue.writeTexture({ texture: tex }, data, { bytesPerRow: 1024 }, [256, 256])
+  const bg = dev.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: tex.createView() }, { binding: 1, resource: dev.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' }) }] })
+  draw = () => { const e = dev.createCommandEncoder(); const p = e.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] }); p.setPipeline(pipe); p.setBindGroup(0, bg); p.draw(3); p.end(); dev.queue.submit([e.finish()]) }
+  sync = () => dev.queue.onSubmittedWorkDone()
+} else {
+  const gl = c.getContext('webgl2', { antialias: false, alpha: false, depth: false })
+  const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(x)); return x }
+  const pr = gl.createProgram()
+  gl.attachShader(pr, sh(gl.VERTEX_SHADER, `#version 300 es
+  void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`))
+  gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, `#version 300 es
+  precision highp float; uniform sampler2D t; out vec4 o;
+  vec4 fk(vec2 uv, float k) { vec4 a = texture(t, uv * (1.0 + k * 0.37) + k * 0.13); vec4 b = texture(t, uv * (0.5 + k * 0.21) + k * 0.29); return a * 0.6 + b * 0.4; }
+  void main() { vec2 uv = gl_FragCoord.xy / vec2(1920.0, 1080.0); vec4 v = vec4(uv, uv.yx);
+    ${body(0, BODY[0])} o = vec4(fract(v.xyz), 1.0); }`))
+  gl.linkProgram(pr)
+  const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(256 * 256 * 4).map(() => Math.random() * 255))
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+  const vao = gl.createVertexArray()
+  draw = () => { gl.useProgram(pr); gl.bindVertexArray(vao); gl.drawArrays(gl.TRIANGLES, 0, 3) }
+  sync = async () => { gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4)) }
+}
+const frames = (n) => new Promise((r) => { let k = 0; const f = () => { draw(); if (++k < n) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
+await frames(60); await sync()
+const runs = []
+for (let k = 0; k < 3; k++) { const t0 = performance.now(); await frames(150); await sync(); runs.push((performance.now() - t0) / 150) }
+runs.sort((a, b) => a - b)
+window.__ms = runs[1]
+</script></body></html>

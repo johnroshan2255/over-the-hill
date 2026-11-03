@@ -50,6 +50,9 @@ export class Trees {
   private readonly pv = new GFX.Matrix4()
   private readonly box = new GFX.Box3()
   private readonly lastPos = new GFX.Vector3(1e9, 0, 0)
+  /** (update's scratch: per LOD slot the trees picked — distance, data offset, growth — and a sort order) */
+  private readonly pick: number[][] = [[], [], [], [], []]
+  private readonly ord: number[] = []
   private readonly lastDir = new GFX.Vector3()
   private readonly ranges: number[]
   drawn = [0, 0, 0, 0, 0]
@@ -199,7 +202,8 @@ export class Trees {
     this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = this.ranges
     const reach = R[3]
-    for (const l of this.lods) l.n = 0
+    const pick = this.pick
+    for (const P of pick) P.length = 0
     this.occluded = 0
     const i0 = Math.floor((cx - reach) / TILE), i1 = Math.floor((cx + reach) / TILE), j0 = Math.floor((cz - reach) / TILE), j1 = Math.floor((cz + reach) / TILE)
     const d = this.data
@@ -229,16 +233,26 @@ export class Trees {
             grow = Math.min(1.45, Math.pow(1 / share, 0.35))
           }
         }
-        const L = this.lods[slot]
-        if (L.n >= L.max) continue
-        const a = L.a0.array as Float32Array, b = L.a1.array as Float32Array, w = L.n * 4
-        a[w] = d[o]; a[w + 1] = d[o + 1]; a[w + 2] = d[o + 2]; a[w + 3] = d[o + 3]
-        b[w] = d[o + 4]; b[w + 1] = d[o + 5]; b[w + 2] = d[o + 6]; b[w + 3] = grow
-        L.n++
+        pick[slot].push(dist, o, grow)
       }
     }
+    // NEAR → FAR (2026-11-03, every GPU): each LOD's trees written nearest first — a leaf card drawn first fills the
+    // depth buffer, and the leaves of every tree behind it fail the early depth test unshaded (a leaf card's discard /
+    // alpha-to-coverage keeps a tiled GPU from sorting that out itself; a desktop GPU never does). Over the budget the
+    // farthest go, not whichever tile came last.
+    const ord = this.ord
     for (let l = 0; l < 5; l++) {
-      const L = this.lods[l]
+      const L = this.lods[l], P = pick[l], n = P.length / 3
+      ord.length = n
+      for (let k = 0; k < n; k++) ord[k] = k * 3
+      ord.sort((u, v) => P[u] - P[v])
+      L.n = Math.min(n, L.max)
+      const a = L.a0.array as Float32Array, b = L.a1.array as Float32Array
+      for (let k = 0; k < L.n; k++) {
+        const q = ord[k], o = P[q + 1], w = k * 4
+        a[w] = d[o]; a[w + 1] = d[o + 1]; a[w + 2] = d[o + 2]; a[w + 3] = d[o + 3]
+        b[w] = d[o + 4]; b[w + 1] = d[o + 5]; b[w + 2] = d[o + 6]; b[w + 3] = P[q + 2]
+      }
       L.geo.instanceCount = L.n
       L.a0.addUpdateRange(0, L.n * 4); L.a1.addUpdateRange(0, L.n * 4)
       L.a0.needsUpdate = L.a1.needsUpdate = true

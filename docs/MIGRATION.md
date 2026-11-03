@@ -76,6 +76,45 @@ available (`?api=webgpu`, our GLSL transpiled at runtime) and is re-measured on 
    cheaper AA on ULTRA…) until `fps.mjs ultra` ≥ 500 on every view; LOW / MEDIUM / HIGH re-measured; WebGPU
    re-measured.
 
+## Measuring the GPU here (what the port taught us — read before trusting a number)
+
+- **The yardstick is GPU-drained wall-clock** (`fps.mjs`, `gpubase.mjs`, `ablate.mjs`): N frames submitted, then wait
+  until the GPU has finished them (`__oth.gpuDone()`). rAF timing alone lies on WebGPU in headless Chrome (rAF runs
+  ahead of the GPU); WebGPU timestamp queries (PlayCanvas's `gpuProfiler`, `gpuprof.mjs`) work but on this M4 they
+  read ~2.2 ms for a pass with nothing in it — they include the GPU's clock ramp / waits, not only the work.
+- **Never subtract WebGL2's "nothing drawn" from its frame**: ANGLE's ~1.2 ms fixed cost is mostly CPU / GPU-process
+  time that OVERLAPS the GPU's shading, so "frame − nothing" under-reads WebGL2's real shading. (That subtraction
+  made WebGPU look 3–15× slower at shading than WebGL2; GPU-bound spikes (`spike/ops.html`: 64 / 128 independent
+  fetches, helper functions, loops) show the two equal — Dawn's Metal code is not slower than ANGLE's.)
+- **A/B on small costs: `?scale=200`** (the frame at 3840×2160) — the pixel work ×4 against the same fixed cost, so
+  a shader change shows above the noise (1080p A/B noise is ±0.3 ms on this machine).
+- **Never measure a shader cut short by an early `return`** (the old `TDEBUG` stops): the compiler then drops work
+  the stop didn't mean to, and what's drawn is not the ground (checked by screenshot — the stops drew flat colour).
+  Cut a FEATURE (its code skipped, its result a plausible constant) and screenshot it.
+- **WebGPU loops**: Tint guards every WGSL loop that isn't a plain `for` with a 64-bit counter (infinite-loop
+  safety), and the guard stops the GPU compiler unrolling it (DXC on Windows, Metal here) — naga writes GLSL `for`
+  loops as `loop {}`. Our two shader loops (rockRelief, the terrain's geomorph) are written out instead.
+
 ## Progress
 
 - 2026-11-03: plan, measurements, spike (`frontend/spike/`), yardsticks (`fps.mjs`, `cpuprof.mjs`, `ablate.mjs`).
+- 2026-11-03: steps 1–6 — the game renders on PlayCanvas (commit 74de3b3); WebGPU on desktop, WebGL2 on phones and
+  as the fallback, our GLSL → WGSL at runtime (naga; glslang + twgsl the fallback), MiniStats (F3 / `?stats=1`)
+  (commit 962e2d3). WebGPU ULTRA 1080p mean 2.86 ms (350 fps) — spawn 3.75, forest 2.95, lake 3.61, cliff 3.18,
+  oasis 2.16, plain 1.48 ms.
+- 2026-11-03, the GPU, understood (`abgpu.mjs` A/B at 4K, `gpubase.mjs`, ablation): the frame is PIXEL work — 4K costs
+  4.2× 1080p; the vertex stage hides behind it (halving the grass, or a 4× coarser terrain mesh, moves 4K by nothing).
+  At the spawn (4K): terrain 49 %, trees 17 %, the rest < 3 % each; MSAA 4× costs ~0.7 ms at 1080p on this tiled GPU
+  (its tiles shrink; it isn't memory traffic — memoryless attachments changed nothing here). Inside the terrain's
+  shader (each feature cut, 4K): the paint (noise + mask + groundPaint) up to −37 % of the whole frame, the rock
+  relief −10 %, the haze −6 %; the terrain shadow −1 %. Near ground (< 100 m) is 50–66 % of the screen at a driver's
+  height. Dawn on Metal uses VERTEX PULLING (robustness: attributes read from buffers in the shader) — a Mac-only
+  cost (D3D12 / Vulkan fetch robustly in hardware); hidden here behind the pixels.
+- 2026-11-03, fixes and cuts: WebGPU IMPOSTORS were missing (every far tree): a target's depth was discarded after
+  each pass (now a depth TEXTURE — PlayCanvas stores only those) and WebGPU's targets were upside down (now
+  `RENDERTARGET_ORIGIN_BOTTOM`: GL's layout on both backends) — the WebGPU numbers before this were missing the far
+  trees. The canvas's MSAA colour + depth TRANSIENT (memoryless on tiled GPUs; the stencil cleared, was loaded each
+  frame). The GRASS FIELD (Grass.ts: each root's paint / growth baked into world-space texels round the camera — a
+  blade vertex reads 2 texels, not ~20 reads + groundPaint, the same 45 times a tuft). Trees drawn nearest first.
+  WebGPU ULTRA 1080p mean 2.89 ms (346 fps): spawn 4.24, forest 2.82, lake 3.85, cliff 2.88, oasis 2.12, plain 1.46
+  (this machine ran slower through the afternoon — compare within one A/B run only).

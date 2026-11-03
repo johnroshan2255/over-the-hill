@@ -4,6 +4,25 @@ The game was map 3 ("Over the Hill") of DARK until 2026-11-02, when it became it
 notes below are carried over from DARK's ARCHITECTURE.md §10 (paths now relative to `frontend/`: `oth.html` → `index.html`,
 `scripts/oth-shot.mjs` → `scripts/shot.mjs`); the front end and the saves are new (bottom).
 
+## The renderer (2026-11-03: PlayCanvas — branch `playcanvas-migration`, docs/MIGRATION.md)
+
+- **PlayCanvas 2.23 as a library** (no editor): `src/oth/gfx/` is the game's graphics layer — three's API shape (math,
+  `BufferGeometry`, `ShaderMaterial`, `Mesh` / `InstancedMesh`, `Scene`, `Renderer`, `RenderTarget`, `GLTFLoader` +
+  Draco) over PlayCanvas's device, meshes, mesh instances and render targets; the game modules import `./gfx` as
+  `GFX` and keep their own GLSL. three.js is gone from the game.
+- **Backends**: WebGPU on desktops, WebGL2 on phones and wherever WebGPU is missing (`?api=webgl2` / `?api=webgpu`).
+  On WebGPU our GLSL becomes WGSL at runtime — naga (`naga-wasm`) first, glslang + twgsl (`public/lib/`) for any
+  shader naga can't read (`gfx/core.ts` `fastWgsl`).
+- **Shaders** (`gfx/material.ts` `convert`): three's built-ins → PlayCanvas's, `in` / `out` → `attribute` / `varying`,
+  MRT outputs → `pcFragColorN`, `#include <tonemapping_fragment>` / `<colorspace_fragment>` → our hue-keeping Neutral
+  tone map + sRGB (`OTH_OUTPUT_GLSL`, switched per target as three's are); WebGPU's separate texture + sampler
+  rewritten in. No shader loops with a data-dependent trip count in hot paths — write them out (MIGRATION.md: WebGPU's
+  loop guard stops unrolling).
+- **Frame**: PlayCanvas's own loop (`renderer.start`); the game runs in `app.on('update')`, `renderer.prepare(scene,
+  camera)` syncs the scene (world matrices, culling, draw order — `renderOrder`, then material; transparent back to
+  front) and PlayCanvas draws. Offscreen draws (the impostor bake) use `renderer.render(scene, camera)`.
+- **Stats**: PlayCanvas's MiniStats (FPS, frame / CPU / GPU time, draw calls, VRAM) — F3 or `?stats=1`.
+
 ## The world (`frontend/src/oth/`)
 
 2026-10-26: map 3 is a NEW project inside this repo — "Over the Hill" stylized realism (painterly ground, art-directed
@@ -38,8 +57,8 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   world 16 m), soft penumbra, re-baked when the sun moves ~1°; one fetch per pixel / blade root, no shadow-map pass.
 - **Water** (`Water.ts`): lake disc + river ribbon; depth from the height grid in the fragment shader (no depth
   pre-pass) → see-through shallows → teal, shore line, Fresnel sky, glints, downstream flow.
-- **Post** (`Post.ts`, MEDIUM+): HDR target (MSAA 4) → dual-filter bloom, vignette, Neutral tone map, dither. LOW
-  draws straight to the canvas (same tone map, no bloom).
+- **Post** (`Post.ts`): REMOVED in the PlayCanvas port (2026-11-03; off by default since 2026-10-27 — the user's call):
+  every tier draws straight to the canvas, each shader tone-mapping its own output (the sky paints the sun's glow).
 - **Tiers** (`quality.ts`, `?tier=`; DEFAULT ULTRA on every device — the user's call, 2026-10-26; with trees, bushes,
   rocks and the car, M4 1280×720 uncapped: LOW 1.4–1.7 ms GPU, MEDIUM 2.6–2.7, HIGH 4.2–4.6, ULTRA 6.4–7.2, phone
   viewport ULTRA 6.3–7.2): LOW terrain 16-quad patches / near 80 m, grass 38 m @ 9 tufts/m² × 6 blades,

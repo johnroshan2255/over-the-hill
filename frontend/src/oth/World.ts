@@ -114,7 +114,7 @@ export class World {
       return t
     })
     const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid))
-    const grass = await step('grass', () => new Grass(map, atmos, terrain, tier, rocks.footprint))
+    const grass = await step('grass', () => new Grass(map, atmos, terrain, tier, rocks.footprint, env.renderer))
     const water = await step('water', () => new Water(map, atmos, terrain, tier, rocks.footprint))
     const falls = await step('falls', () => new Falls(map, atmos))
     const treeData: number[] = []
@@ -218,6 +218,7 @@ export class World {
     for (const t of [M.inner.tex, M.far.tex, M.inner.normalTex, M.far.normalTex, M.maskTex, M.trailTex, M.mudTex, this.rocks.footprint]) take(t)
     for (const t of textures) t.dispose()
     this.trees.atlas?.dispose()
+    this.grass.dispose()
     this.glow?.dispose()
   }
 }
