@@ -124,36 +124,63 @@ export class ConvexHull {
     bd = eps
     for (let i = 0; i < n; i++) { const d = Math.abs(pn.dot(new Vector3().subVectors(points[i], points[i0]))); if (d > bd) { bd = d; i3 = i } }
     if (i3 < 0) throw new Error('ConvexHull: points on a plane')
-    type F = { v: [number, number, number]; n: Vector3; d: number; live: boolean }
+    // QUICKHULL (2026-11-03 — the first port rebuilt a string-keyed edge map for every point: the car's hull
+    // decomposition took 24 s at the game's start). Each face keeps the points outside it (its conflict list); the
+    // farthest of a face's points is added — the faces it sees found by walking the neighbours (directed-edge map,
+    // kept up to date), the horizon closed with new faces to it, the orphaned points handed to the new faces.
+    type F = { v: [number, number, number]; n: Vector3; d: number; live: boolean; out: number[] }
     const faces: F[] = []
+    const edges = new Map<number, F>() // directed edge a → b (key a·n + b) → its face
+    const key = (a: number, b: number) => a * n + b
     const make = (a: number, b: number, c: number): F => {
       const nn = new Vector3().subVectors(points[b], points[a]).cross(new Vector3().subVectors(points[c], points[a])).normalize()
-      return { v: [a, b, c], n: nn, d: nn.dot(points[a]), live: true }
+      return { v: [a, b, c], n: nn, d: nn.dot(points[a]), live: true, out: [] }
     }
+    const add = (f: F) => { faces.push(f); for (let k = 0; k < 3; k++) edges.set(key(f.v[k], f.v[(k + 1) % 3]), f) }
+    const dist = (f: F, i: number) => f.n.dot(points[i]) - f.d
     const centroid = new Vector3().add(points[i0]).add(points[i1]).add(points[i2]).add(points[i3]).multiplyScalar(0.25)
     for (const [a, b, c] of [[i0, i1, i2], [i0, i1, i3], [i0, i2, i3], [i1, i2, i3]]) {
       let f = make(a, b, c)
       if (f.n.dot(centroid) - f.d > 0) f = make(a, c, b)
-      faces.push(f)
+      add(f)
     }
-    const used = new Set([i0, i1, i2, i3])
-    for (let p = 0; p < n; p++) {
-      if (used.has(p)) continue
-      const P = points[p]
-      const visible = faces.filter((f) => f.live && f.n.dot(P) - f.d > eps)
-      if (!visible.length) continue
-      // the horizon: edges of visible faces whose other face isn't visible
-      const vis = new Set(visible), edgeFace = new Map<string, F>()
-      for (const f of faces) if (f.live) for (let k = 0; k < 3; k++) edgeFace.set(`${f.v[k]},${f.v[(k + 1) % 3]}`, f)
-      const horizon: [number, number][] = []
-      for (const f of visible) for (let k = 0; k < 3; k++) {
-        const a = f.v[k], b = f.v[(k + 1) % 3], other = edgeFace.get(`${b},${a}`)
-        if (!other || !vis.has(other)) horizon.push([a, b])
+    // every other point to the first face it's outside (inside them all: never on the hull)
+    const assign = (i: number, among: F[]) => { for (const f of among) if (dist(f, i) > eps) { f.out.push(i); return } }
+    const first = faces.slice()
+    for (let i = 0; i < n; i++) if (i !== i0 && i !== i1 && i !== i2 && i !== i3) assign(i, first)
+    const work = faces.slice()
+    while (work.length) {
+      const f0 = work.pop()!
+      if (!f0.live || !f0.out.length) continue
+      // the eye: the farthest point outside this face
+      let eye = f0.out[0], best = -Infinity
+      for (const i of f0.out) { const d = dist(f0, i); if (d > best) { best = d; eye = i } }
+      // the faces it sees (a walk from f0 over the neighbours) and the horizon round them (edges in visible order)
+      const visible: F[] = [f0], seen = new Set<F>([f0]), horizon: [number, number][] = []
+      f0.live = false
+      for (let q = 0; q < visible.length; q++) {
+        const f = visible[q]
+        for (let k = 0; k < 3; k++) {
+          const a = f.v[k], b = f.v[(k + 1) % 3], g = edges.get(key(b, a))
+          if (g && !seen.has(g)) {
+            seen.add(g)
+            if (g.live && dist(g, eye) > eps) { g.live = false; visible.push(g); continue }
+          }
+          if (!g || g.live) horizon.push([a, b])
+        }
       }
-      for (const f of visible) f.live = false
-      for (const [a, b] of horizon) faces.push(make(a, b, p))
-      for (let i = faces.length - 1; i >= 0; i--) if (!faces[i].live) faces.splice(i, 1)
+      const orphans: number[] = []
+      for (const f of visible) {
+        for (let k = 0; k < 3; k++) { const e = key(f.v[k], f.v[(k + 1) % 3]); if (edges.get(e) === f) edges.delete(e) }
+        for (const i of f.out) if (i !== eye) orphans.push(i)
+        f.out.length = 0
+      }
+      const made: F[] = []
+      for (const [a, b] of horizon) { const f = make(a, b, eye); add(f); made.push(f) }
+      for (const i of orphans) assign(i, made)
+      for (const f of made) if (f.out.length) work.push(f)
     }
+    for (let i = faces.length - 1; i >= 0; i--) if (!faces[i].live) faces.splice(i, 1)
     this.faces = faces.map((f) => {
       const [a, b, c] = f.v.map((i) => points[i])
       const area = new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a)).length() / 2
