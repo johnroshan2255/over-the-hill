@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5200",
-    "dev:lan": "vite --host --port 5200",
+    "dev:lan": "LAN=1 vite --host --port 5300",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview --port 5200",
+    "preview:lan": "LAN=1 vite preview --host --port 5300",
     "test": "npm run test:drivetrain",
     "test:drivetrain": "rolldown tests/drivetrain.test.ts --format esm --platform node --external @dimforge/rapier3d-compat -o node_modules/.cache/tests/drivetrain.test.mjs --log-level warn && node node_modules/.cache/tests/drivetrain.test.mjs",
     "shot": "node scripts/shot.mjs"

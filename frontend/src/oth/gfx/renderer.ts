@@ -155,6 +155,7 @@ export class Renderer {
       this.stats = new pc.MiniStats(gfx().app, o as never)
     }
     if (this.stats) this.stats.enabled = on
+    document.body.classList.toggle('oth-stats', on)
   }
   private stats: pc.MiniStats | null = null
 
@@ -186,7 +187,9 @@ export class Renderer {
     }
     c.nearClip = camera.near
     c.farClip = camera.far
-    if (c.layers.length !== 1 || c.layers[0] !== scene.layer.id) c.layers = [scene.layer.id]
+    // (to the screen with the stats up: PlayCanvas's UI layer too — MiniStats draws its panel there)
+    const ui = !this.target && !!this.stats?.enabled
+    if (c.layers.length !== (ui ? 2 : 1) || c.layers[0] !== scene.layer.id) c.layers = ui ? [scene.layer.id, pc.LAYERID_UI] : [scene.layer.id]
     const rt = this.target
     c.renderTarget = (rt ? rt.pc : null) as pc.RenderTarget
     const W = rt ? rt.width : G.device.width, H = rt ? rt.height : G.device.height

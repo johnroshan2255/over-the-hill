@@ -78,6 +78,9 @@
       .oth-coins { position: fixed; right: 16px; top: 14px; padding: 4px 12px 3px; background: rgba(8, 8, 10, .55); border-right: 4px solid #f2a93b; color: #f2a93b; font: 400 22px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .04em; pointer-events: none; z-index: 4; }
       .oth-coins::after { content: attr(data-d); position: absolute; right: 8px; top: 100%; color: #f4efe6; font: 700 16px 'Barlow Condensed', system-ui; opacity: 0; }
       .oth-coins.pop::after { animation: oth-pop 1.4s ease-out; }
+      /* PlayCanvas's MiniStats (F3 / ?stats=1) draws into the game's canvas, bottom left: the signpost and the radar
+         step aside while it shows */
+      body.oth-stats .oth-radar, body.oth-stats .oth-sign { left: 196px; }
       @keyframes oth-pop { 0% { opacity: 0; transform: translateY(6px); } 15% { opacity: 1; transform: translateY(0); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
       /* the signpost's boards (GTA-like plate, bottom left) */
       .oth-sign { position: fixed; left: 16px; bottom: 248px; min-width: 250px; padding: 8px 12px 9px; background: rgba(8, 8, 10, .66); border-left: 4px solid #f2a93b; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; z-index: 4; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; }

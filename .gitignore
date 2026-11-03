@@ -11,3 +11,6 @@ backend/target
 .DS_Store
 frontend/scripts/oth/.cache
 __pycache__/
+
+# the LAN test certificate (frontend: npm run preview:lan)
+frontend/.cert

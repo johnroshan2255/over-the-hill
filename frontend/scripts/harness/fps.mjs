@@ -6,6 +6,8 @@
 import puppeteer from 'puppeteer-core'
 const tier = process.argv[2] || 'ultra'
 const extra = process.argv[3] ? `&${process.argv[3]}` : ''
+// (PORT=5201: the same views on main — the three.js build — for a like-for-like A/B)
+const PORT = process.env.PORT || 5200
 const CHROME = process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const ANGLE = process.platform === 'win32' ? 'd3d11' : 'metal'
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
@@ -29,6 +31,7 @@ const measure = () => p.evaluate(() => new Promise((r) => {
 // GPU in headless Chrome — rAF timing alone lies there; on WebGL2 the two agree)
 const drained = () => p.evaluate(async () => {
   const o = window.__oth
+  if (!o.gpuDone) return NaN // (a build without it — main: WebGL2, where rAF timing is honest)
   await o.gpuDone()
   const t0 = performance.now()
   await new Promise((r) => { let n = 0; const f = () => { if (++n < 300) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
@@ -46,7 +49,7 @@ const VIEWS = [
 ]
 let loaded = '', total = 0
 for (const [world, name, drive, x, z, h, yaw, pitch] of VIEWS) {
-  const url = `http://localhost:5200/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&world=${world}&sound=0&save=0${extra}`
+  const url = `http://localhost:${PORT}/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&world=${world}&sound=0&save=0${extra}`
   if (url !== loaded) {
     await p.goto(url, { waitUntil: 'load' })
     await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car?.sim, { timeout: 180000, polling: 250 })
@@ -56,8 +59,8 @@ for (const [world, name, drive, x, z, h, yaw, pitch] of VIEWS) {
   await sleep(2500)
   const r = await measure()
   const d = await drained()
-  const s = await p.evaluate(() => { const t = window.__oth.stats(); return { draws: t.draws, tris: t.tris, backend: window.__oth.backend } })
-  const ms = Math.max(r.ms, d)
+  const s = await p.evaluate(() => { const t = window.__oth.stats(); return { draws: t.draws, tris: t.tris, backend: window.__oth.backend ?? 'three' } })
+  const ms = Number.isNaN(d) ? r.ms : Math.max(r.ms, d)
   total += ms
   console.log(`${tier.padEnd(6)} ${s.backend.padEnd(6)} ${world.padEnd(7)} ${name.padEnd(12)} ${ms.toFixed(3)} ms  ${(1000 / ms).toFixed(0).padStart(4)} fps   (rAF ${r.ms.toFixed(3)}, GPU-drained ${d.toFixed(3)})   js ${r.js.toFixed(3)} ms   draws ${s.draws}  tris ${(s.tris / 1000).toFixed(0)}k`)
 }
