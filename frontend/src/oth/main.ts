@@ -518,6 +518,8 @@ async function boot() {
     get props() { return world.props },
     get birds() { return world.birds },
     get world() { return world },
+    /** The drawn parts, each with `visible` (scripts/harness/ablate.mjs: the GPU's frame, system by system). */
+    parts: () => ({ terrain: world.terrain.mesh, grass: world.grass.group, trees: world.trees.group, bushes: world.bushes.group, rocks: world.rocks.group, water: world.water.group, falls: world.falls.group, bridges: world.bridges.group, landmarks: world.landmarks.group, props: world.props.group, ...(world.glow ? { glow: world.glow.group } : {}), ...(world.formations ? { formations: world.formations.group } : {}), ...(world.birds ? { birds: world.birds.mesh } : {}), sky: sky.mesh, car: car.root, carShadow: car.shadowMesh, dust: dust.mesh, tracks: tyreTracks.mesh }),
     journal,
     openCamp,
     view: (x: number, z: number, h: number, yaw: number, pitch: number) => { driving = false; fly.place(x, z, h, yaw, pitch) },

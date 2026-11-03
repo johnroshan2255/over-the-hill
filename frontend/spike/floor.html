@@ -1,0 +1,20 @@
+<!doctype html><html><body style="margin:0;background:#000"><canvas id="c" width="1920" height="1080" style="width:1920px;height:1080px;display:block"></canvas>
+<script type="module">
+const mode = new URLSearchParams(location.search).get('api') || 'webgl2'
+const c = document.getElementById('c')
+let draw
+if (mode === 'webgpu') {
+  const ad = await navigator.gpu?.requestAdapter({ powerPreference: 'high-performance' })
+  window.__info = { adapter: ad ? (ad.info?.vendor + ' ' + ad.info?.architecture + ' ' + ad.info?.description) : null }
+  const dev = await ad.requestDevice(), ctx = c.getContext('webgpu'), fmt = navigator.gpu.getPreferredCanvasFormat()
+  ctx.configure({ device: dev, format: fmt, alphaMode: 'opaque' })
+  draw = () => { const e = dev.createCommandEncoder(); const p = e.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0.2, g: 0.3, b: 0.4, a: 1 } }] }); p.end(); dev.queue.submit([e.finish()]) }
+} else {
+  const gl = c.getContext('webgl2', { antialias: false, alpha: false })
+  window.__info = { renderer: gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info')?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER) }
+  draw = () => { gl.clearColor(0.2, 0.3, 0.4, 1); gl.clear(gl.COLOR_BUFFER_BIT) }
+}
+const d = []; let l = performance.now(), t0 = l
+const tick = () => { draw(); const n = performance.now(); d.push(n - l); l = n; if (n - t0 < 4000) requestAnimationFrame(tick); else { d.splice(0, 60); d.sort((a, b) => a - b); const k = Math.floor(d.length * 0.1), m = d.slice(k, d.length - k); window.__ms = m.reduce((a, b) => a + b, 0) / m.length } }
+requestAnimationFrame(tick)
+</script></body></html>

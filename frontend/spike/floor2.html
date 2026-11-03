@@ -1,0 +1,18 @@
+<!doctype html><html><body style="margin:0;background:#000"><canvas id="c" width="1920" height="1080" style="width:1920px;height:1080px;display:block"></canvas>
+<script type="module">
+const q = new URLSearchParams(location.search), aa = q.get('aa') === '1', depthClear = q.get('dc') === '1', draws = Number(q.get('draws') ?? 0)
+const c = document.getElementById('c'), gl = c.getContext('webgl2', { antialias: aa, alpha: false, depth: true, stencil: false })
+const vs = `#version 300 es
+in vec2 p; void main(){ gl_Position = vec4(p * 0.01, 0.0, 1.0); }`, fs = `#version 300 es
+precision highp float; uniform vec3 uC; out vec4 o; void main(){ o = vec4(uC, 1.0); }`
+const sh = (t, s) => { const x = gl.createShader(t); gl.shaderSource(x, s); gl.compileShader(x); return x }
+const pr = gl.createProgram(); gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(pr)
+const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1]), gl.STATIC_DRAW)
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0)
+const uC = gl.getUniformLocation(pr, 'uC')
+gl.enable(gl.DEPTH_TEST)
+const draw = () => { gl.clearColor(0.2, 0.3, 0.4, 1); gl.clear(gl.COLOR_BUFFER_BIT | (depthClear ? gl.DEPTH_BUFFER_BIT : 0)); gl.useProgram(pr); gl.bindVertexArray(vao); const nu = q.get("u") === "0"; for (let i = 0; i < draws; i++) { if (!nu) gl.uniform3f(uC, i / 40, 0.5, 0.5); gl.drawArrays(gl.TRIANGLES, 0, 3) } }
+const d = []; let l = performance.now(), t0 = l
+const tick = () => { draw(); const n = performance.now(); d.push(n - l); l = n; if (n - t0 < 3000) requestAnimationFrame(tick); else { d.splice(0, 60); d.sort((a, b) => a - b); const k = Math.floor(d.length * 0.1), m = d.slice(k, d.length - k); window.__ms = m.reduce((a, b) => a + b, 0) / m.length } }
+requestAnimationFrame(tick)
+</script></body></html>
