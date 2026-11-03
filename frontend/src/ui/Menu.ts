@@ -57,7 +57,7 @@ const AUDIO: Choice[] = [
 
 const KEYS: [string, string][] = [
   ['W A S D', 'Drive and steer'], ['Space', 'Handbrake'], ['Shift', 'Boost'], ['X / Z', 'Gear up / down (manual)'], ['E', 'Winch'], ['R', 'Reset the car'],
-  ['C', 'Camp: pitch / rest'], ['1 / 2', 'G500 4×4² / BMW E30'], ['L', 'Lights'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Esc', 'Pause'],
+  ['C', 'Camp: pitch / rest'], ['1 / 2', 'G500 4×4² / BMW E30'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Esc', 'Pause'],
 ]
 
 const TABS: Record<Exclude<Screen, 'main'>, string[]> = { garage: ['Car', 'Paint', 'Driving'], settings: ['Graphics', 'Audio', 'Controls'], journal: ['Journal'] }

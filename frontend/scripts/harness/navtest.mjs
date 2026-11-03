@@ -14,7 +14,7 @@ const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()) })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-await p.goto('http://localhost:5200/?tier=medium&hour=11&time=0&sound=0&save=0&weather=clear', { waitUntil: 'load' })
+await p.goto('http://localhost:5200/?tier=medium&hour=11&time=0&sound=0&save=0&weather=clear&radar=1', { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car.sim, { timeout: 120000, polling: 200 })
 await sleep(2500)
 

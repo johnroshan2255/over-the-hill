@@ -16,7 +16,7 @@ const ANGLE = process.platform === 'win32' ? 'd3d11' : 'metal'
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: [`--use-angle=${ANGLE}`, '--ignore-gpu-blocklist', '--mute-audio', '--window-size=1280,720'], defaultViewport: { width: 1280, height: 720 } })
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 300)) })
-await p.goto(`http://localhost:5200/?tier=${process.env.TIER || 'low'}&dpr=fixed&time=0&hour=12&weather=clear&world=${startWorld}&sound=0&save=0`, { waitUntil: 'load' })
+await p.goto(`http://localhost:5200/?tier=${process.env.TIER || 'low'}&dpr=fixed&time=0&hour=12&weather=clear&world=${startWorld}&sound=0&save=0&radar=1`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car.sim, { timeout: 120000, polling: 200 })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 await sleep(1500)

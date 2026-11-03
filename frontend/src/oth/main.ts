@@ -192,9 +192,23 @@ async function boot() {
   const charts = (w: World) => {
     const chart = new Chart(w.map, chartSize)
     const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => car.pos, carHeading: () => car.sim?.heading ?? 0, myCamp: () => myCamp }
-    return { chart, mapView: new MapView(o), radar: q.get('radar') === '0' ? null : new Radar(o) }
+    const mapView = new MapView(o)
+    return { chart, mapView, radar: q.get('radar') === '0' ? null : new Radar({ ...o, openMap: () => mapView.toggle() }) }
   }
   let { chart, mapView, radar } = charts(world)
+  // THE MAP BUTTON (2026-11-03, the user: "move the map on top side with an icon — if I click, the map shows; else no
+  // need to show the minimap"): the minimap stays hidden until the round map button (top left) or N shows it, beside
+  // the buttons; tapping the minimap opens the full map (Tab too). ?radar=1 starts with it shown (the nav harnesses
+  // read its plate), ?radar=0 builds none — the button then opens the full map.
+  let radarOn = q.get('radar') === '1'
+  const toggleRadar = () => {
+    if (!radar) { mapView.toggle(); return }
+    radarOn = !radarOn
+    mapBtn.classList.toggle('on', radarOn)
+  }
+  const mapBtn = mapButton(toggleRadar)
+  mapBtn.classList.toggle('on', radarOn)
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyN' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) toggleRadar() })
   const chase = new ChaseCam(camera, map, car, renderer.domElement)
   chase.snap()
   let driving = q.get('drive') !== '0'
@@ -462,7 +476,7 @@ async function boot() {
     rain.update()
     sand.update()
     mapView.update(dt)
-    radar?.update(dt, driving && !mapView.isOpen, car.speedKmh)
+    radar?.update(dt, radarOn && driving && !mapView.isOpen, car.speedKmh)
     winch.update(camera)
     shadow.update(atmos.uniforms.uSunDir.value)
     const t0 = performance.now()
@@ -696,6 +710,18 @@ function pauseButton(pause: () => void): void {
   document.body.appendChild(b)
 }
 
+/** The round MAP button (top left, under + / −): a folded map; amber while the minimap shows. */
+function mapButton(press: () => void): HTMLButtonElement {
+  const b = document.createElement('button')
+  b.className = 'oth-mapbtn'
+  b.title = 'Minimap (N)'
+  b.setAttribute('aria-label', 'Minimap')
+  b.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z"/><path d="M9 4v13.5M15 6.5V20"/></svg>'
+  b.addEventListener('pointerdown', (e) => { e.stopPropagation(); press() })
+  document.body.appendChild(b)
+  return b
+}
+
 function fullscreenButton(): void {
   const b = document.createElement('button')
   b.className = 'oth-fs'
@@ -731,7 +757,7 @@ function fullscreenButton(): void {
 function driveUi(car: Vehicle): { update: (driving: boolean, time: string) => void } {
   const box = document.createElement('div')
   box.id = 'drive'
-  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · X Z gears · E winch · C camp · R reset · Tab map (click: waypoint) · G time · Shift+G weather · V free camera · Esc pause</div>'
+  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · X Z gears · E winch · C camp · R reset · N minimap · Tab map (click: waypoint) · G time · Shift+G weather · V free camera · Esc pause</div>'
   document.body.appendChild(box)
   const spd = box.querySelector('b')!, gear = box.querySelector('i')!, clk = box.querySelector('em')!, help = box.querySelector('.help') as HTMLElement
   const touch = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches

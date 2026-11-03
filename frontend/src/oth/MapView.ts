@@ -63,14 +63,12 @@ export class MapView {
   private drawT = 0
   private readonly dir = new GFX.Vector3()
   private readonly off = new AbortController()
-  private readonly btn: HTMLButtonElement
 
   /** Off the page (another world gets its own map: main.ts). */
   dispose(): void {
     this.off.abort()
     document.body.classList.remove('oth-map-open')
     this.root.remove()
-    this.btn.remove()
     this.compass.remove()
   }
 
@@ -124,12 +122,7 @@ export class MapView {
     this.root.append(bar, this.canvas, foot, hint)
     document.body.appendChild(this.root)
     this.pointer(sig)
-    const btn = document.createElement('button')
-    btn.className = 'oth-mapbtn'
-    btn.textContent = 'MAP'
-    btn.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.toggle() }, sig)
-    document.body.appendChild(btn)
-    this.btn = btn
+    // (no button of its own: the round map button shows the minimap, and tapping that opens this — main.ts)
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Tab') { e.preventDefault(); this.toggle() }
       if (!this.open) return

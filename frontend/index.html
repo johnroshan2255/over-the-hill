@@ -37,7 +37,8 @@
       .oth-fs { left: 14px; top: 14px; }
       .oth-zoom { position: fixed; left: 14px; top: 64px; display: flex; flex-direction: column; gap: 8px; z-index: 5; }
       .oth-zoom button { width: 42px; height: 42px; font-size: 24px; }
-      .oth-mapbtn { left: 14px; top: 164px; font-size: 12px; letter-spacing: .06em; }
+      .oth-mapbtn { left: 14px; top: 164px; display: grid; place-items: center; padding: 0; }
+      .oth-mapbtn.on { background: rgba(242, 169, 59, .85); border-color: #f2a93b; color: #120c04; }
       .oth-pausebtn { left: 14px; top: 214px; font-size: 15px; letter-spacing: .02em; }
       .oth-fs:active, .oth-zoom button:active, .oth-mapbtn:active, .oth-pausebtn:active, .oth-touch button:active { background: rgba(242, 169, 59, .85); color: #120c04; transform: scale(.94); }
       /* the thumb pads (touch screens) */
@@ -78,12 +79,12 @@
       .oth-coins { position: fixed; right: 16px; top: 14px; padding: 4px 12px 3px; background: rgba(8, 8, 10, .55); border-right: 4px solid #f2a93b; color: #f2a93b; font: 400 22px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .04em; pointer-events: none; z-index: 4; }
       .oth-coins::after { content: attr(data-d); position: absolute; right: 8px; top: 100%; color: #f4efe6; font: 700 16px 'Barlow Condensed', system-ui; opacity: 0; }
       .oth-coins.pop::after { animation: oth-pop 1.4s ease-out; }
-      /* PlayCanvas's MiniStats (F3 / ?stats=1) draws into the game's canvas, bottom left: the signpost and the radar
-         step aside while it shows */
-      body.oth-stats .oth-radar, body.oth-stats .oth-sign { left: 196px; }
+      /* PlayCanvas's MiniStats (F3 / ?stats=1) draws into the game's canvas, bottom left: the signpost steps aside
+         while it shows */
+      body.oth-stats .oth-sign { left: 196px; }
       @keyframes oth-pop { 0% { opacity: 0; transform: translateY(6px); } 15% { opacity: 1; transform: translateY(0); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
       /* the signpost's boards (GTA-like plate, bottom left) */
-      .oth-sign { position: fixed; left: 16px; bottom: 248px; min-width: 250px; padding: 8px 12px 9px; background: rgba(8, 8, 10, .66); border-left: 4px solid #f2a93b; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; z-index: 4; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; }
+      .oth-sign { position: fixed; left: 16px; bottom: 40px; min-width: 250px; padding: 8px 12px 9px; background: rgba(8, 8, 10, .66); border-left: 4px solid #f2a93b; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; z-index: 4; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; }
       .oth-sign.on { opacity: 1; transform: none; }
       .oth-sign b { display: block; margin-bottom: 4px; color: #f2a93b; font: 400 18px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .06em; }
       .oth-sign div { display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
@@ -121,9 +122,12 @@
       body.touch .oth-map-hint { display: none; }
       body.oth-map-open #drive, body.oth-map-open .oth-sign, body.oth-map-open .oth-prompt, body.oth-map-open .oth-compass, body.oth-map-open .oth-coins { visibility: hidden; }
       body.touch .oth-map-bar, body.touch .oth-map-foot { font-size: 13px; }
-      /* the radar: bottom left (top left on a phone) — the canvas turns and slides under a fixed frame (Radar.ts) */
-      .oth-radar { position: fixed; left: 16px; bottom: 40px; z-index: 4; pointer-events: none; }
-      .oth-radar-box { position: relative; width: 240px; height: 160px; overflow: hidden; background: #3b3a31; border: 3px solid rgba(8, 8, 10, .72); box-shadow: 0 0 0 1px rgba(244, 239, 230, .2); }
+      /* the radar: top left beside the round buttons, shown by the map button (Radar.ts) — the canvas turns and slides
+         under a fixed frame; tapping it opens the full map. The compass narrows to stay clear of it. */
+      .oth-radar { position: fixed; left: 68px; top: 14px; z-index: 4; pointer-events: none; }
+      .oth-radar-box { position: relative; width: 240px; height: 160px; overflow: hidden; background: #3b3a31; border: 3px solid rgba(8, 8, 10, .72); box-shadow: 0 0 0 1px rgba(244, 239, 230, .2); pointer-events: auto; cursor: pointer; }
+      body.oth-radar-shown .oth-compass { max-width: calc(100vw - 660px); min-width: 200px; }
+      body.touch:not(.oth-radar-shown) .oth-sign { left: calc(12px + env(safe-area-inset-left)); }
       .oth-radar-box canvas { position: absolute; will-change: transform; }
       .oth-radar-car { position: absolute; width: 18px; height: 22px; will-change: transform; }
       .oth-radar-car::before { content: ''; position: absolute; inset: 0; background: #fff; clip-path: polygon(50% 0, 100% 100%, 50% 74%, 0 100%); }

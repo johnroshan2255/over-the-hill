@@ -13,7 +13,7 @@ const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message))
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const ft = () => p.evaluate(() => new Promise((r) => { const d = []; const t = performance.now(); let l = t; const tick = () => { const n = performance.now(); d.push(n - l); l = n; if (n - t < 1500) requestAnimationFrame(tick); else { d.sort((a, b) => a - b); const k = Math.floor(d.length * 0.1), m = d.slice(k, d.length - k); r(m.reduce((a, b) => a + b, 0) / m.length) } }; requestAnimationFrame(tick) }))
-await p.goto(`http://localhost:5200/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&sound=0&save=0`, { waitUntil: 'load' })
+await p.goto(`http://localhost:5200/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&sound=0&save=0&radar=1`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car.sim, { timeout: 120000, polling: 200 })
 await sleep(3000)
 const once = await p.evaluate(async () => {

@@ -6,8 +6,10 @@ import type { MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, turnArrow } from './Nav'
 
 /**
- * THE RADAR (2026-11-03, the user: "like GTA 5 … using the map we can get there"): the minimap, bottom left (top left on
- * a phone) — the chart round the car turned with the camera (what's ahead is up), the car a red arrow a little below
+ * THE RADAR (2026-11-03, the user: "like GTA 5 … using the map we can get there"): the minimap, top left beside the
+ * round buttons — HIDDEN until the map button (or N) shows it (the user, 2026-11-03: "move the map on top side with an
+ * icon — if I click, the map shows; else no need to show the minimap"); tapping it opens the full map. The chart
+ * round the car turned with the camera (what's ahead is up), the car a red arrow a little below
  * the middle (more ahead than behind), the tracks, the places, the pass, your camp, the ROUTE in violet and the
  * WAYPOINT (held at the edge when it's off the radar), N on the rim. It zooms out with speed. Under it a plate: the
  * next turn (arrow + distance), a rock crawl coming up, how far and how long to go.
@@ -26,6 +28,8 @@ export interface RadarOptions {
   carPos: () => GFX.Vector3
   carHeading: () => number
   myCamp: () => Camp | null
+  /** Tapping the minimap: the full map. */
+  openMap?: () => void
 }
 
 /** The car's place in the box (fractions of its width / height). */
@@ -55,13 +59,14 @@ export class Radar {
   private plateT = 0
   private plateKey = ''
   private routeKey: unknown = null
-  private visible = true
+  private visible = false
   private readonly dir = new GFX.Vector3()
   private readonly off = new AbortController()
 
   constructor(private readonly o: RadarOptions) {
     this.root = document.createElement('div')
     this.root.className = 'oth-radar'
+    this.root.style.display = 'none' // (until update() shows it — measured then)
     this.box = document.createElement('div')
     this.box.className = 'oth-radar-box'
     this.cv = document.createElement('canvas')
@@ -78,11 +83,14 @@ export class Radar {
     document.body.appendChild(this.root)
     this.layout()
     addEventListener('resize', () => this.layout(), { signal: this.off.signal })
+    this.box.title = 'Open the map (Tab)'
+    this.box.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.o.openMap?.() }, { signal: this.off.signal })
   }
 
   dispose(): void {
     this.off.abort()
     this.root.remove()
+    document.body.classList.remove('oth-radar-shown')
   }
 
   /** The box's size (CSS: bigger on a PC, smaller on a phone) → the canvas: the disc the box's corners sweep as it
@@ -102,7 +110,13 @@ export class Radar {
 
   /** Per frame (after the cameras): `show` — driving, the map shut. */
   update(dt: number, show: boolean, speedKmh: number): void {
-    if (show !== this.visible) { this.visible = show; this.root.style.display = show ? '' : 'none' }
+    // (measured again as it shows: hidden, the box has no size — a resize while it was away measured nothing)
+    if (show !== this.visible) {
+      this.visible = show
+      this.root.style.display = show ? '' : 'none'
+      document.body.classList.toggle('oth-radar-shown', show) // (the compass narrows beside it — index.html)
+      if (show) this.layout()
+    }
     if (!show || !this.W) return
     const p = this.o.carPos()
     this.o.camera.getWorldDirection(this.dir)
