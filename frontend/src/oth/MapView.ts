@@ -1,65 +1,143 @@
 import * as THREE from 'three'
+import type { Camp } from '../save'
+import { bakedChart, type Chart, drawGate, drawPin, drawPlace, drawRoute, drawTracks, foundIn, ICON, label, ROUTE } from './Chart'
 import type { Landmarks } from './Landmarks'
-import type { Landmark, MapData } from './MapData'
+import type { Landmark, MapMeta } from './MapData'
+import { fmtDist, fmtTime, type Guide, type Waypoint, worldMeta } from './Nav'
+import { WORLDS, type WorldId } from './World'
 
 /**
- * THE MAP and THE COMPASS (2026-10-27, the user: "add those" — OTH's map with its highlighted places): Tab (or the MAP
- * button) opens a painted chart of the valley — hillshade, 40 m contours, the ground's colour fields (meadow green →
- * golden straw, forest, rock, snow, water, mud), the tracks (rock-crawling routes dashed), the bridges, the marsh — with
- * every LANDMARK: its icon and name once discovered, a "?" until then, and the car as an arrow. Click / Z: the whole
- * valley ⇄ zoomed round the car. The COMPASS (always on, top centre): the heading's letters and ticks, the landmarks
- * ahead (within 2.5 km, ±80°) as markers — a "?" for the ones not found yet — and the nearest one's distance.
- * The chart is painted once, the first time it opens (~0.2 s); the compass redraws ten times a second (DOM, no canvas).
+ * THE MAP and THE COMPASS (2026-10-27, the user: "add those" — OTH's map with its highlighted places; 2026-11-03, the
+ * user: "like GTA 5 — mark a destination on the map and it shows the fastest route like Google Maps"):
+ *
+ * Tab (or the MAP button) opens the CHART (Chart.ts) with the tracks (rock-crawling routes dashed), the bridges, every
+ * LANDMARK (its icon and name once discovered, a "?" until then), your camp, the car as an arrow, and the PASS to the
+ * other world (the crossing's gate: double chevrons on an amber square). Two TABS — THE VALLEY · THE DESERT — show
+ * either world (the other one's chart is baked: chart.webp), so a place over there can be picked from here.
+ *   click / tap   set the WAYPOINT there (on a place or the pass: that place); on the waypoint: clear it
+ *   drag          move the chart · wheel, + / −: zoom (about the pointer) · Z: the whole map ⇄ 800 m round the car
+ *   right-click, Delete: clear the waypoint · Tab / Esc: close
+ * The ROUTE (Nav.ts: the fastest way, along the tracks) is drawn violet, off-road legs dashed; the foot says how far and
+ * how long. A waypoint in the other world routes to this world's pass, its leg over there drawn on its own tab.
+ * The COMPASS (always on, top centre): the heading's letters and ticks, the landmarks ahead (within 2.5 km, ±80°) — a
+ * "?" for the ones not found yet — the pass (⇑), the waypoint (violet ◆), and the waypoint's distance (else the
+ * nearest place's). It redraws ten times a second (DOM, no canvas); the open map five times.
  */
-const ICON: Record<Landmark['kind'], string> = { tower: '♜', view: '◭', cabin: '⌂', shack: '⌂', sawmill: '▤', mine: '⛏', meteorite: '✶', falls: '≋', meadow: '✿', camp: '▲', oasis: '≈', aqueduct: '⌓', arch: '⌒', spires: '▴', gorge: '≍', ksar: '▦', dunes: '∿' }
+export interface MapViewOptions {
+  world: WorldId
+  lm: Landmarks
+  meta: MapMeta
+  chart: Chart
+  guide: Guide
+  camera: THREE.Camera
+  carPos: () => THREE.Vector3
+  carHeading: () => number
+  /** Your own camp in this world. */
+  myCamp: () => Camp | null
+}
 
 export class MapView {
   private readonly root: HTMLDivElement
   private readonly canvas: HTMLCanvasElement
   private readonly ctx: CanvasRenderingContext2D
-  private chart: HTMLCanvasElement | null = null
+  private readonly info: HTMLDivElement
+  private readonly foot: HTMLDivElement
+  private readonly tabs = new Map<WorldId, HTMLButtonElement>()
+  private readonly goBtn: HTMLButtonElement
+  private readonly clearBtn: HTMLButtonElement
   private open = false
-  private zoom = false
+  /** The world shown, and each one's view (centre, half width — m). */
+  private tab: WorldId
+  private readonly views = new Map<WorldId, { cx: number; cz: number; v: number }>()
+  private readonly other: WorldId
+  private otherMeta: MapMeta | null = null
+  private otherChart: HTMLImageElement | null = null
   private readonly compass: HTMLDivElement
   private readonly strip: HTMLDivElement
   private readonly marks = new Map<number, HTMLDivElement>()
   private readonly ticks: HTMLDivElement[] = []
+  private readonly wpMark: HTMLDivElement
+  private readonly gateMark: HTMLDivElement
   private readonly near: HTMLDivElement
   private compassT = 0
+  private drawT = 0
   private readonly dir = new THREE.Vector3()
-
   private readonly off = new AbortController()
   private readonly btn: HTMLButtonElement
 
-  /** Off the page (another world gets its own map: World / main.ts). */
+  /** Off the page (another world gets its own map: main.ts). */
   dispose(): void {
     this.off.abort()
+    document.body.classList.remove('oth-map-open')
     this.root.remove()
     this.btn.remove()
     this.compass.remove()
   }
 
-  constructor(private readonly map: MapData, private readonly lm: Landmarks, private readonly camera: THREE.Camera, private readonly carPos: () => THREE.Vector3, private readonly carHeading: () => number) {
+  constructor(private readonly o: MapViewOptions) {
+    this.tab = o.world
+    this.other = o.world === 'valley' ? 'desert' : 'valley'
+    void worldMeta(this.other).then((m) => { this.otherMeta = m; if (this.open) this.draw() })
+    const sig = { signal: this.off.signal }
     this.root = document.createElement('div')
     this.root.className = 'oth-map'
+    // the bar: the worlds' tabs, the places found, zoom
+    const bar = document.createElement('div')
+    bar.className = 'oth-map-bar'
+    const tabs = document.createElement('div')
+    tabs.className = 'oth-map-tabs'
+    for (const id of ['valley', 'desert'] as WorldId[]) {
+      const b = document.createElement('button')
+      b.textContent = WORLDS[id].name
+      b.addEventListener('click', () => this.show(id), sig)
+      tabs.appendChild(b)
+      this.tabs.set(id, b)
+    }
+    this.info = document.createElement('div')
+    this.info.className = 'oth-map-info'
+    const zoom = document.createElement('div')
+    zoom.className = 'oth-map-zoom'
+    for (const [t, k] of [['−', 1.6], ['+', 1 / 1.6]] as const) {
+      const b = document.createElement('button')
+      b.textContent = t
+      b.addEventListener('click', () => this.zoomBy(k), sig)
+      zoom.appendChild(b)
+    }
+    bar.append(tabs, this.info, zoom)
     this.canvas = document.createElement('canvas')
     this.ctx = this.canvas.getContext('2d')!
-    const title = document.createElement('div')
-    title.className = 'oth-map-title'
-    this.root.append(title, this.canvas)
-    this.canvas.addEventListener('pointerdown', () => { this.zoom = !this.zoom; this.draw() })
+    // the foot: the route, ROUTE TO THE OTHER WORLD, CLEAR
+    const foot = document.createElement('div')
+    foot.className = 'oth-map-foot'
+    this.foot = document.createElement('div')
+    this.foot.className = 'oth-map-route'
+    this.goBtn = document.createElement('button')
+    this.goBtn.textContent = `Route to ${WORLDS[this.other].name}`
+    this.goBtn.addEventListener('click', () => this.routeToOther(), sig)
+    this.clearBtn = document.createElement('button')
+    this.clearBtn.textContent = 'Clear'
+    this.clearBtn.addEventListener('click', () => this.setWaypoint(null), sig)
+    foot.append(this.foot, this.goBtn, this.clearBtn)
+    const hint = document.createElement('div')
+    hint.className = 'oth-map-hint'
+    hint.textContent = 'Click: set waypoint · drag: move · wheel / Z: zoom · right-click / Del: clear · Tab: close'
+    this.root.append(bar, this.canvas, foot, hint)
     document.body.appendChild(this.root)
+    this.pointer(sig)
     const btn = document.createElement('button')
     btn.className = 'oth-mapbtn'
     btn.textContent = 'MAP'
-    btn.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.toggle() })
+    btn.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.toggle() }, sig)
     document.body.appendChild(btn)
     this.btn = btn
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Tab') { e.preventDefault(); this.toggle() }
-      if (e.code === 'KeyZ' && this.open) { this.zoom = !this.zoom; this.draw() }
-      if (e.code === 'Escape' && this.open) this.toggle()
-    }, { signal: this.off.signal })
+      if (!this.open) return
+      if (e.code === 'KeyZ') this.zoomToggle()
+      if (e.code === 'Delete' || e.code === 'Backspace') this.setWaypoint(null)
+      // (Esc closes the map and nothing else: the pause menu's listener must not see it)
+      if (e.code === 'Escape') { e.stopImmediatePropagation(); this.toggle() }
+    }, sig)
     // the compass: a strip of ticks / letters every 15° and a marker per landmark, laid out by bearing each update
     this.compass = document.createElement('div')
     this.compass.className = 'oth-compass'
@@ -75,153 +153,281 @@ export class MapView {
       this.strip.appendChild(t)
       this.ticks.push(t)
     }
-    for (const l of lm.list) {
+    for (const l of o.lm.list) {
       const m = document.createElement('div')
       m.className = 'oth-mark'
       this.strip.appendChild(m)
       this.marks.set(l.id, m)
     }
+    this.gateMark = document.createElement('div')
+    this.gateMark.className = 'oth-mark oth-mark-gate'
+    this.gateMark.textContent = '⇑'
+    this.wpMark = document.createElement('div')
+    this.wpMark.className = 'oth-mark oth-mark-wp'
+    this.wpMark.textContent = '◆'
+    this.strip.append(this.gateMark, this.wpMark)
     this.near = document.createElement('div')
     this.near.className = 'oth-compass-near'
     this.compass.appendChild(this.near)
     document.body.appendChild(this.compass)
   }
 
+  get isOpen(): boolean { return this.open }
+
   toggle(): void {
     this.open = !this.open
     this.root.classList.toggle('on', this.open)
-    if (this.open) this.draw()
+    // (the HUD under it hidden — index.html)
+    document.body.classList.toggle('oth-map-open', this.open)
+    if (this.open) {
+      this.o.chart.finish()
+      this.show(this.o.world)
+    }
   }
 
-  /** Per frame: the compass (10 Hz), the open map's car arrow (5 Hz). */
+  /** Per frame: the chart painted a slice at a time, the compass (10 Hz), the open map (5 Hz). */
   update(dt: number): void {
+    this.o.chart.step(2.5)
+    if (this.open && (this.drawT -= dt) <= 0) { this.drawT = 0.2; this.draw() }
     if ((this.compassT -= dt) > 0) return
     this.compassT = 0.1
-    this.camera.getWorldDirection(this.dir)
+    this.o.camera.getWorldDirection(this.dir)
     const head = (Math.atan2(this.dir.x, -this.dir.z) * 180) / Math.PI // (0 = north = −z, 90 = east = +x)
     const W = 420, span = 160 // (the strip shows ±80°)
     const at = (bearing: number) => { let d = bearing - head; d = ((d + 540) % 360) - 180; return Math.abs(d) <= span / 2 ? W / 2 + (d / span) * W : null }
-    for (const t of this.ticks) {
-      const x = at(Number(t.dataset.a))
-      t.style.display = x === null ? 'none' : ''
-      if (x !== null) t.style.transform = `translateX(${x.toFixed(1)}px)`
+    const place = (el: HTMLElement, x: number | null) => {
+      el.style.display = x === null ? 'none' : ''
+      if (x !== null) el.style.transform = `translateX(${x.toFixed(1)}px)`
     }
-    const p = this.carPos()
+    for (const t of this.ticks) place(t, at(Number(t.dataset.a)))
+    const p = this.o.carPos(), lm = this.o.lm
+    const bearing = (x: number, z: number) => (Math.atan2(x - p.x, -(z - p.z)) * 180) / Math.PI
     let best: { l: Landmark; d: number } | null = null
-    for (const l of this.lm.list) {
-      const m = this.marks.get(l.id)!, dx = l.x - p.x, dz = l.z - p.z, d = Math.hypot(dx, dz)
-      const x = d < 2500 ? at((Math.atan2(dx, -dz) * 180) / Math.PI) : null
-      m.style.display = x === null ? 'none' : ''
+    for (const l of lm.list) {
+      const m = this.marks.get(l.id)!, d = Math.hypot(l.x - p.x, l.z - p.z)
+      const x = d < 2500 ? at(bearing(l.x, l.z)) : null
+      place(m, x)
       if (x === null) continue
-      const found = this.lm.found.has(l.id)
+      const found = lm.found.has(l.id)
       m.textContent = found ? ICON[l.kind] : '?'
       m.classList.toggle('found', found)
-      m.style.transform = `translateX(${x.toFixed(1)}px)`
       if (!best || d < best.d) best = { l, d }
     }
-    this.near.textContent = best ? `${this.lm.found.has(best.l.id) ? best.l.name : '? Unexplored'} · ${best.d < 1000 ? `${Math.round(best.d / 10) * 10} m` : `${(best.d / 1000).toFixed(1)} km`}` : ''
-    if (this.open) this.draw()
+    const G = this.o.meta.gate
+    place(this.gateMark, G && Math.hypot(G.x - p.x, G.z - p.z) < 2500 ? at(bearing(G.x, G.z)) : null)
+    // the waypoint (or the pass on the way to it): its marker, and its distance in place of the nearest place's
+    const gd = this.o.guide, w = gd.waypoint, tgt = w ? (gd.viaGate ? G : w) : null
+    place(this.wpMark, tgt ? at(bearing(tgt.x, tgt.z)) : null)
+    if (w) this.near.innerHTML = `<b>◆</b> ${esc(w.name)}${gd.viaGate ? ' · via the pass' : ''} · ${fmtDist(gd.remaining)}`
+    else this.near.textContent = best ? `${lm.found.has(best.l.id) ? best.l.name : '? Unexplored'} · ${fmtDist(best.d)}` : ''
   }
 
-  // ------------------------------------------------------------------------------------------------- the chart
-  private paintChart(): HTMLCanvasElement {
-    const S = 640, c = document.createElement('canvas')
-    c.width = c.height = S
-    const g = c.getContext('2d')!, img = g.createImageData(S, S), map = this.map, half = map.half, mk: [number, number, number, number] = [0, 0, 0, 0]
-    const cell = (2 * half) / S
-    const H = new Float32Array(S * S)
-    for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) H[j * S + i] = map.height(-half + (i + 0.5) * cell, -half + (j + 0.5) * cell)
-    for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) {
-      const x = -half + (i + 0.5) * cell, z = -half + (j + 0.5) * cell, h = H[j * S + i]
-      const m = map.maskAt(x, z, mk), mud = map.mudAt(x, z)
-      // the colour fields
-      const dry = m[1]
-      let r = 0.44 + (0.83 - 0.44) * dry, gg = 0.58 + (0.72 - 0.58) * dry, b = 0.33 + (0.45 - 0.33) * dry
-      const f = m[3]; r += (0.24 - r) * f; gg += (0.4 - gg) * f; b += (0.25 - b) * f
-      const rk = Math.min(1, m[0] * 1.3); r += (0.6 - r) * rk; gg += (0.59 - gg) * rk; b += (0.57 - b) * rk
-      const sn = Math.max(0, Math.min(1, (h - 470) / 80)); r += (0.94 - r) * sn; gg += (0.95 - gg) * sn; b += (0.97 - b) * sn
-      r += (0.42 - r) * mud; gg += (0.31 - gg) * mud; b += (0.2 - b) * mud
-      if (m[2] > 0.9) { r = 0.47; gg = 0.67; b = 0.79 }
-      // hillshade (light from the north-west) and 40 m contours
-      const hx = H[j * S + Math.min(S - 1, i + 1)] - H[j * S + Math.max(0, i - 1)], hz = H[Math.min(S - 1, j + 1) * S + i] - H[Math.max(0, j - 1) * S + i]
-      const sh = Math.max(0.55, Math.min(1.25, 1 + (-hx - hz) * 0.06))
-      let k = sh
-      if (m[2] <= 0.9 && Math.floor(h / 40) !== Math.floor(H[j * S + Math.min(S - 1, i + 1)] / 40)) k *= 0.9
-      if (m[2] <= 0.9 && Math.floor(h / 40) !== Math.floor(H[Math.min(S - 1, j + 1) * S + i] / 40)) k *= 0.9
-      // a warm paper tint over all
-      const o = (j * S + i) * 4
-      img.data[o] = Math.min(255, (r * k * 0.86 + 0.95 * 0.14) * 255)
-      img.data[o + 1] = Math.min(255, (gg * k * 0.86 + 0.9 * 0.14) * 255)
-      img.data[o + 2] = Math.min(255, (b * k * 0.86 + 0.78 * 0.14) * 255)
-      img.data[o + 3] = 255
+  // ------------------------------------------------------------------------------------------------- the map
+  private half(id: WorldId): number {
+    if (id === this.o.world) return -this.o.meta.inner.origin
+    return this.otherMeta ? -this.otherMeta.inner.origin : 2048
+  }
+
+  private view(id: WorldId): { cx: number; cz: number; v: number } {
+    let v = this.views.get(id)
+    if (!v) this.views.set(id, (v = { cx: 0, cz: 0, v: this.half(id) }))
+    return v
+  }
+
+  private show(id: WorldId): void {
+    this.tab = id
+    for (const [k, b] of this.tabs) b.classList.toggle('sel', k === id)
+    if (id === this.other && !this.otherChart) void bakedChart(id).then((im) => { this.otherChart = im; if (this.open) this.draw() })
+    this.draw()
+  }
+
+  private clampView(id: WorldId): void {
+    const V = this.view(id), H = this.half(id)
+    V.v = Math.max(150, Math.min(H, V.v))
+    V.cx = Math.max(-H + V.v, Math.min(H - V.v, V.cx))
+    V.cz = Math.max(-H + V.v, Math.min(H - V.v, V.cz))
+  }
+
+  /** Zoom by k (< 1 in) about the canvas point (px, py) — its centre by default. */
+  private zoomBy(k: number, px?: number, py?: number): void {
+    const V = this.view(this.tab)
+    const [wx, wz] = px === undefined ? [V.cx, V.cz] : this.unproject(px, py!)
+    const v = Math.max(150, Math.min(this.half(this.tab), V.v * k)), f = v / V.v
+    V.cx = wx - (wx - V.cx) * f
+    V.cz = wz - (wz - V.cz) * f
+    V.v = v
+    this.clampView(this.tab)
+    this.draw()
+  }
+
+  /** Z: the whole map ⇄ 800 m round the car (this world) / the centre (the other). */
+  private zoomToggle(): void {
+    const V = this.view(this.tab), H = this.half(this.tab)
+    if (V.v > 900) {
+      const p = this.o.carPos()
+      V.v = 800
+      if (this.tab === this.o.world) { V.cx = p.x; V.cz = p.z }
+    } else { V.v = H; V.cx = V.cz = 0 }
+    this.clampView(this.tab)
+    this.draw()
+  }
+
+  private unproject(px: number, py: number): [number, number] {
+    const V = this.view(this.tab), S = this.canvas.width
+    return [V.cx - V.v + (px / S) * 2 * V.v, V.cz - V.v + (py / S) * 2 * V.v]
+  }
+
+  private pointer(sig: { signal: AbortSignal }): void {
+    const c = this.canvas
+    let down: { x: number; y: number; cx: number; cz: number; moved: boolean } | null = null
+    const dpr = () => c.width / c.clientWidth
+    c.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return
+      const V = this.view(this.tab)
+      down = { x: e.clientX, y: e.clientY, cx: V.cx, cz: V.cz, moved: false }
+      c.setPointerCapture(e.pointerId)
+    }, sig)
+    c.addEventListener('pointermove', (e) => {
+      if (!down) return
+      const dx = e.clientX - down.x, dy = e.clientY - down.y
+      if (!down.moved && Math.hypot(dx, dy) < 6) return
+      down.moved = true
+      c.style.cursor = 'grabbing'
+      const V = this.view(this.tab), mpp = (2 * V.v) / c.clientWidth
+      V.cx = down.cx - dx * mpp
+      V.cz = down.cz - dy * mpp
+      this.clampView(this.tab)
+      this.draw()
+    }, sig)
+    c.addEventListener('pointerup', (e) => {
+      const d = down
+      down = null
+      c.style.cursor = ''
+      if (!d || d.moved) return
+      const r = c.getBoundingClientRect()
+      this.clickAt((e.clientX - r.left) * dpr(), (e.clientY - r.top) * dpr())
+    }, sig)
+    c.addEventListener('pointercancel', () => { down = null }, sig)
+    c.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      const r = c.getBoundingClientRect()
+      this.zoomBy(e.deltaY > 0 ? 1.25 : 0.8, (e.clientX - r.left) * dpr(), (e.clientY - r.top) * dpr())
+    }, { ...sig, passive: false })
+    c.addEventListener('contextmenu', (e) => { e.preventDefault(); this.setWaypoint(null) }, sig)
+  }
+
+  /** The shown world's meta, places and their found set (null: the other world's meta not here yet). */
+  private shown(): { meta: MapMeta; places: Landmark[]; found: Set<number> } | null {
+    if (this.tab === this.o.world) return { meta: this.o.meta, places: this.o.lm.list, found: this.o.lm.found }
+    const m = this.otherMeta
+    return m ? { meta: m, places: m.landmarks ?? [], found: foundIn(m.id) } : null
+  }
+
+  /** A click on the chart: on the waypoint → clear it; on a place / the pass → that; anywhere else → a waypoint there. */
+  private clickAt(px: number, py: number): void {
+    const s = this.shown()
+    if (!s) return
+    const V = this.view(this.tab), S = this.canvas.width, k = S / 640
+    const P = (x: number, z: number): [number, number] => [((x - V.cx + V.v) / (2 * V.v)) * S, ((z - V.cz + V.v) / (2 * V.v)) * S]
+    const hit = (x: number, z: number, r = 14) => { const [a, b] = P(x, z); return Math.hypot(a - px, b - py) < r * k }
+    const w = this.o.guide.waypoint
+    if (w && w.world === this.tab && hit(w.x, w.z - 15 * k * ((2 * V.v) / S), 16)) { this.setWaypoint(null); return }
+    const G = s.meta.gate
+    if (G && hit(G.x, G.z)) {
+      // the pass: to the other world (from this tab's world) — the waypoint where you come out over there
+      if (this.tab === this.o.world) this.routeToOther()
+      else this.setWaypoint({ world: this.tab, x: G.x, z: G.z, name: WORLDS[this.tab].name })
+      return
     }
-    g.putImageData(img, 0, 0)
-    // the tracks, the rock-crawling routes dashed; the bridges
-    const P = (x: number, z: number): [number, number] => [((x + half) / (2 * half)) * S, ((z + half) / (2 * half)) * S]
-    const rough = new Set(map.meta.trails.rough ?? [])
-    map.meta.trails.lines.forEach((L, i) => {
-      g.beginPath()
-      L.forEach(([x, z], k) => { const [px, py] = P(x, z); if (k) g.lineTo(px, py); else g.moveTo(px, py) })
-      g.setLineDash(rough.has(i) ? [4, 3] : [])
-      g.strokeStyle = 'rgba(250, 236, 205, 0.9)'
-      g.lineWidth = 3.2
-      g.stroke()
-      g.strokeStyle = rough.has(i) ? 'rgba(110, 70, 40, 0.95)' : 'rgba(135, 88, 50, 0.95)'
-      g.lineWidth = 1.6
-      g.stroke()
-    })
-    g.setLineDash([])
-    for (const br of map.meta.bridges ?? []) {
-      const [ax, ay] = P(br.x0, br.z0), [bx, by] = P(br.x1, br.z1)
-      g.strokeStyle = '#3b2616'; g.lineWidth = 3.5
-      g.beginPath(); g.moveTo(ax, ay); g.lineTo(bx, by); g.stroke()
-    }
-    const ms = map.meta.mud?.marsh
-    if (ms) { const [mx, my] = P(ms.x, ms.z); label(g, 'The Bog', mx, my, '#4a3423', 12, true) }
-    return c
+    for (const l of s.places) if (hit(l.x, l.z)) { this.setWaypoint({ world: this.tab, x: l.x, z: l.z, name: s.found.has(l.id) ? l.name : 'Unexplored place' }); return }
+    const [x, z] = this.unproject(px, py)
+    this.setWaypoint({ world: this.tab, x, z, name: 'Waypoint' })
+  }
+
+  /** The waypoint where the other world's pass lets you out. */
+  private routeToOther(): void {
+    const m = this.otherMeta
+    if (!m?.gate) return
+    this.setWaypoint({ world: this.other, x: m.gate.x, z: m.gate.z, name: WORLDS[this.other].name })
+  }
+
+  private setWaypoint(w: Waypoint | null): void {
+    this.o.guide.set(w, this.o.carPos())
+    this.draw()
   }
 
   private draw(): void {
-    if (!this.chart) this.chart = this.paintChart()
-    const S = Math.round(Math.min(innerWidth, innerHeight) * 0.86 * Math.min(devicePixelRatio, 2))
-    if (this.canvas.width !== S) { this.canvas.width = this.canvas.height = S; this.canvas.style.width = this.canvas.style.height = `${S / Math.min(devicePixelRatio, 2)}px` }
-    const g = this.ctx, half = this.map.half, p = this.carPos()
-    // the view: the whole box, or 1.6 km round the car
-    const view = this.zoom ? 800 : half, cx = this.zoom ? Math.max(-half + view, Math.min(half - view, p.x)) : 0, cz = this.zoom ? Math.max(-half + view, Math.min(half - view, p.z)) : 0
-    const P = (x: number, z: number): [number, number] => [((x - cx + view) / (2 * view)) * S, ((z - cz + view) / (2 * view)) * S]
-    const cs = this.chart!.width
-    g.imageSmoothingEnabled = true
-    g.drawImage(this.chart!, ((cx - view + half) / (2 * half)) * cs, ((cz - view + half) / (2 * half)) * cs, (view / half) * cs, (view / half) * cs, 0, 0, S, S)
-    const k = S / 640
-    // the landmarks
-    for (const l of this.lm.list) {
-      const [x, y] = P(l.x, l.z), found = this.lm.found.has(l.id)
-      g.fillStyle = found ? 'rgba(255, 246, 228, 0.95)' : 'rgba(60, 42, 30, 0.75)'
-      g.beginPath(); g.arc(x, y, 9 * k, 0, Math.PI * 2); g.fill()
-      g.strokeStyle = found ? '#8a3a1c' : 'rgba(255, 240, 220, 0.85)'; g.lineWidth = 1.6 * k; g.stroke()
-      g.fillStyle = found ? '#5a2a14' : '#fff6ea'
-      g.font = `${Math.round(11 * k)}px system-ui`
-      g.textAlign = 'center'; g.textBaseline = 'middle'
-      g.fillText(found ? ICON[l.kind] : '?', x, y + 0.5 * k)
-      if (found) label(g, l.name, x, y + 17 * k, '#3a2414', Math.round(10.5 * k), false)
+    if (!this.open) return
+    // (the bar, the foot and the hint round it — no hint on a phone)
+    const css = Math.max(220, Math.round(Math.min(innerWidth * 0.94, innerHeight - (document.body.classList.contains('touch') ? 84 : 132))))
+    const dpr = Math.min(devicePixelRatio, 2), S = Math.round(css * dpr)
+    if (this.canvas.width !== S) { this.canvas.width = this.canvas.height = S; this.canvas.style.width = this.canvas.style.height = `${css}px` }
+    const g = this.ctx, k = S / 640, here = this.tab === this.o.world
+    const V = this.view(this.tab), half = this.half(this.tab)
+    this.clampView(this.tab)
+    const P = (x: number, z: number): [number, number] => [((x - V.cx + V.v) / (2 * V.v)) * S, ((z - V.cz + V.v) / (2 * V.v)) * S]
+    // the ground: this world's chart, the other's baked one (plain paper until it's here)
+    g.fillStyle = '#e6d6b8'
+    g.fillRect(0, 0, S, S)
+    const src: HTMLCanvasElement | HTMLImageElement | null = here ? this.o.chart.canvas : this.otherChart
+    if (src) {
+      const cs = src.width
+      g.imageSmoothingEnabled = true
+      g.drawImage(src, ((V.cx - V.v + half) / (2 * half)) * cs, ((V.cz - V.v + half) / (2 * half)) * cs, (V.v / half) * cs, (V.v / half) * cs, 0, 0, S, S)
     }
-    // the camp (the spawn) and the car
-    const [sx, sy] = P(this.map.meta.spawn.x, this.map.meta.spawn.z)
-    label(g, '⛺ Camp', sx, sy, '#3a2414', Math.round(10.5 * k), false)
-    const [px, py] = P(p.x, p.z), h = this.carHeading()
-    g.save(); g.translate(px, py); g.rotate(-h)
-    g.fillStyle = '#e8492b'; g.strokeStyle = '#fff'; g.lineWidth = 2 * k
-    g.beginPath(); g.moveTo(0, -11 * k); g.lineTo(7 * k, 8 * k); g.lineTo(0, 4 * k); g.lineTo(-7 * k, 8 * k); g.closePath(); g.fill(); g.stroke()
-    g.restore()
-    const title = this.root.firstChild as HTMLDivElement
-    title.textContent = `${this.map.meta.name}   ·   ${this.lm.found.size} / ${this.lm.list.length} places found   ·   ${this.zoom ? 'click: whole valley' : 'click: zoom in'}   ·   Tab: close`
+    const s = this.shown()
+    const gd = this.o.guide, w = gd.waypoint
+    if (s) {
+      const zoomK = 1 + 0.8 * (1 - V.v / half)
+      drawTracks(g, s.meta, P, 1.6 * k * zoomK, { x0: V.cx - V.v, z0: V.cz - V.v, x1: V.cx + V.v, z1: V.cz + V.v })
+      const ms = s.meta.mud?.marsh
+      if (ms) { const [mx, my] = P(ms.x, ms.z); label(g, 'The Bog', mx, my, '#4a3423', Math.round(12 * k), true) }
+      // the route: this world's leg from the car on, or the other world's from its pass
+      if (here && gd.route) drawRoute(g, gd.route.pts, gd.route.off, P, 3.2 * k * zoomK, gd.route.seg, gd.route.pos())
+      if (!here && w?.world === this.tab && gd.otherLeg) drawRoute(g, gd.otherLeg.pts, gd.otherLeg.off, P, 3.2 * k * zoomK)
+      // the places
+      for (const l of s.places) {
+        const [x, y] = P(l.x, l.z), found = s.found.has(l.id)
+        drawPlace(g, l, found, x, y, k)
+        if (found) label(g, l.name, x, y + 17 * k, '#3a2414', Math.round(10.5 * k), false)
+      }
+      // the pass to the other world
+      const G = s.meta.gate
+      if (G) {
+        const [gx, gy] = P(G.x, G.z), to = WORLDS[this.tab === 'valley' ? 'desert' : 'valley'].name
+        drawGate(g, gx, gy, k, G.heading)
+        label(g, `Pass to ${to}`, gx, gy + 19 * k, '#16120d', Math.round(11.5 * k), false)
+      }
+      // the camp (the spawn), your own
+      const [sx, sy] = P(s.meta.spawn.x, s.meta.spawn.z)
+      // (the desert's camp is at its pass: the label above the pass's)
+      const byGate = G && Math.hypot(G.x - s.meta.spawn.x, G.z - s.meta.spawn.z) < 120
+      label(g, '⛺ Camp', sx, byGate ? sy - 20 * k : sy, '#3a2414', Math.round(10.5 * k), false)
+      const mine = here ? this.o.myCamp() : null
+      if (mine) { const [cx, cy] = P(mine.x, mine.z); label(g, '⛺ Your camp', cx, cy, '#5a2a14', Math.round(10.5 * k), false) }
+    }
+    // the waypoint
+    if (w?.world === this.tab) {
+      const [wx, wy] = P(w.x, w.z)
+      drawPin(g, wx, wy, k)
+    }
+    // the car
+    if (here) {
+      const p = this.o.carPos(), [px, py] = P(p.x, p.z), h = this.o.carHeading()
+      g.save(); g.translate(px, py); g.rotate(-h)
+      g.fillStyle = '#e8492b'; g.strokeStyle = '#fff'; g.lineWidth = 2 * k
+      g.beginPath(); g.moveTo(0, -11 * k); g.lineTo(7 * k, 8 * k); g.lineTo(0, 4 * k); g.lineTo(-7 * k, 8 * k); g.closePath(); g.fill(); g.stroke()
+      g.restore()
+    }
+    // the bar and the foot
+    const found = s ? s.places.filter((l) => s.found.has(l.id)).length : 0
+    this.info.textContent = s ? `${found} / ${s.places.length} places found` : ''
+    this.goBtn.style.display = this.o.meta.gate && !(w?.world === this.other && w.name === WORLDS[this.other].name) ? '' : 'none'
+    this.clearBtn.style.display = w ? '' : 'none'
+    this.foot.innerHTML = w
+      ? `<b style="color:${ROUTE}">◆</b> ${esc(w.name)}${w.world !== this.o.world ? ` <small>in ${WORLDS[w.world].name}</small>` : ''}<span>${gd.route ? `${fmtDist(gd.remaining)} · ${fmtTime(gd.remainingTime)}` : ''}${gd.viaGate ? ' · via the pass' : ''}</span>`
+      : '<small>No waypoint — click the map to set one</small>'
   }
 }
 
-/** A map label with a pale halo (legible on any ground). */
-function label(g: CanvasRenderingContext2D, t: string, x: number, y: number, color: string, size: number, italic: boolean): void {
-  g.font = `${italic ? 'italic ' : ''}600 ${size}px system-ui`
-  g.textAlign = 'center'; g.textBaseline = 'middle'
-  g.lineWidth = 3; g.strokeStyle = 'rgba(255, 248, 232, 0.85)'; g.strokeText(t, x, y)
-  g.fillStyle = color; g.fillText(t, x, y)
-}
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)

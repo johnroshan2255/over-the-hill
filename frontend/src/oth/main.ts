@@ -9,18 +9,22 @@ import { Atmosphere } from './Atmosphere'
 import { OthAudio } from './Audio'
 import { Dust } from './Dust'
 import { ChaseCam } from './ChaseCam'
+import { Chart } from './Chart'
 import { Crossing } from './Crossing'
 import { DESERT_IDS } from './Places'
 import { FlyCam } from './FlyCam'
 import { MapData } from './MapData'
 import { MapView } from './MapView'
+import { Guide, Obstacles } from './Nav'
 import { OthPhysics } from './Physics'
 import { createPaintTexture } from './noiseTex'
 import { Post } from './Post'
 import { Rain } from './Rain'
 import { pickTier } from './quality'
+import { Radar } from './Radar'
 import { Sky } from './Sky'
 import { TerrainShadow } from './TerrainShadow'
+import { TREE_STRIDE } from './Trees'
 import { TyreTracks } from './TyreTracks'
 import { Vehicle } from './Vehicle'
 import { Winch } from './Winch'
@@ -179,7 +183,25 @@ async function boot() {
   const winch = new Winch(map, car, world.trees, world.rocks)
   winch.onMessage = (m) => toast(m)
   scene.add(winch.mesh)
-  let mapView = new MapView(world.map, world.landmarks, camera, () => car.pos, () => car.sim?.heading ?? 0)
+  // THE MAP, THE RADAR and THE GPS (Nav.ts: the waypoint and the fastest way there — it lasts across worlds; the
+  // chart, the map and the radar are each world's)
+  const guide = new Guide()
+  // (what an off-road leg must go round: this world's trunks and big boulders)
+  const obstacles = (w: World) => () => {
+    const o = new Obstacles(), d = w.trees.data
+    for (let i = 0; i < w.trees.count; i++) o.add(d[i * TREE_STRIDE], d[i * TREE_STRIDE + 2], 0.6)
+    w.rocks.each((k) => { if (k.s > 1.3) o.add(k.x, k.z, 0.55 * k.s) })
+    return o
+  }
+  guide.setWorld(world.id, world.map, obstacles(world))
+  guide.onArrive = (w) => { toast(`Arrived · ${w.name}`, 3200); audio.chime('place') }
+  const chartSize = isMobileDevice() ? 768 : 1024
+  const charts = (w: World) => {
+    const chart = new Chart(w.map, chartSize)
+    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => car.pos, carHeading: () => car.sim?.heading ?? 0, myCamp: () => myCamp }
+    return { chart, mapView: new MapView(o), radar: q.get('radar') === '0' ? null : new Radar(o) }
+  }
+  let { chart, mapView, radar } = charts(world)
   const chase = new ChaseCam(camera, map, car, renderer.domElement)
   chase.snap()
   let driving = q.get('drive') !== '0'
@@ -229,7 +251,9 @@ async function boot() {
     physics.addPropColliders(next.props.colliders)
     winch.setWorld(next.trees, next.rocks)
     mapView.dispose()
-    mapView = new MapView(next.map, next.landmarks, camera, () => car.pos, () => car.sim?.heading ?? 0)
+    radar?.dispose()
+    ;({ chart, mapView, radar } = charts(next))
+    guide.setWorld(next.id, next.map, obstacles(next))
     audio.fires = next.props.fires
     audio.setWorld()
     // (your own camp is each world's: left pitched where it was, the one here back up)
@@ -416,6 +440,7 @@ async function boot() {
     crossing.update(dt, car.sim ? car.pos : null, camera.position)
     physics.pw.advance(dt, (fdt) => { car.fixed(fdt); winch.fixed(fdt) })
     car.update(physics.pw.alpha)
+    guide.update(dt, car.pos.x, car.pos.z)
     // the journey: distance driven (not the jumps of a reset / a car change), the last safe spot, the autosave
     playSeconds += dt
     const moved = Math.hypot(car.pos.x - lastPos.x, car.pos.z - lastPos.z)
@@ -449,6 +474,7 @@ async function boot() {
     rain.update()
     sand.update()
     mapView.update(dt)
+    radar?.update(dt, driving && !mapView.isOpen, car.speedKmh)
     winch.update(camera)
     shadow.update(atmos.uniforms.uSunDir.value)
     const t0 = performance.now()
@@ -518,6 +544,11 @@ async function boot() {
       return w.timings
     },
     crossing,
+    guide,
+    get mapView() { return mapView },
+    get radar() { return radar },
+    /** This world's chart, painted to the end, as a WebP data URL (scripts/harness/chartbake.mjs → chart.webp). */
+    chartWebp: () => { chart.finish(); return chart.canvas.toDataURL('image/webp', 0.86) },
     gpuMemory: () => ({ ...renderer.info.memory, programs: renderer.info.programs?.length ?? 0 }),
     /** Drive mode on / off (the chase camera). */
     drive: (on: boolean) => { driving = on; if (on) chase.snap() },
@@ -723,7 +754,7 @@ function fullscreenButton(): void {
 function driveUi(car: Vehicle): { update: (driving: boolean, time: string) => void } {
   const box = document.createElement('div')
   box.id = 'drive'
-  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · X Z gears · E winch · C camp · R reset · Tab map · G time · Shift+G weather · V free camera · Esc pause</div>'
+  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · X Z gears · E winch · C camp · R reset · Tab map (click: waypoint) · G time · Shift+G weather · V free camera · Esc pause</div>'
   document.body.appendChild(box)
   const spd = box.querySelector('b')!, gear = box.querySelector('i')!, clk = box.querySelector('em')!, help = box.querySelector('.help') as HTMLElement
   const touch = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches

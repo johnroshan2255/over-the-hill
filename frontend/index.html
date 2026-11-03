@@ -81,7 +81,7 @@
       .oth-coins.pop::after { animation: oth-pop 1.4s ease-out; }
       @keyframes oth-pop { 0% { opacity: 0; transform: translateY(6px); } 15% { opacity: 1; transform: translateY(0); } 70% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px); } }
       /* the signpost's boards (GTA-like plate, bottom left) */
-      .oth-sign { position: fixed; left: 16px; bottom: 54px; min-width: 250px; padding: 8px 12px 9px; background: rgba(8, 8, 10, .66); border-left: 4px solid #f2a93b; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; z-index: 4; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; }
+      .oth-sign { position: fixed; left: 16px; bottom: 248px; min-width: 250px; padding: 8px 12px 9px; background: rgba(8, 8, 10, .66); border-left: 4px solid #f2a93b; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; z-index: 4; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; }
       .oth-sign.on { opacity: 1; transform: none; }
       .oth-sign b { display: block; margin-bottom: 4px; color: #f2a93b; font: 400 18px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .06em; }
       .oth-sign div { display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
@@ -95,15 +95,52 @@
       body.touch .oth-campbtn.on { display: grid; place-items: center; right: calc(108px + env(safe-area-inset-right)); top: calc(8px + env(safe-area-inset-top)); }
       body.touch .oth-prompt { display: none; }
       body.touch .oth-coins { top: calc(58px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); font-size: 18px; padding: 2px 9px 1px; }
-      body.touch .oth-sign { left: calc(14px + env(safe-area-inset-left)); bottom: auto; top: calc(60px + env(safe-area-inset-top)); min-width: 210px; font-size: 13px; }
+      body.touch .oth-sign { left: calc(176px + env(safe-area-inset-left)); bottom: auto; top: calc(58px + env(safe-area-inset-top)); min-width: 210px; font-size: 13px; }
       /* a rest: the screen fades to black and back */
       .oth-fade { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #050506; color: #f4efe6; font: 400 28px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; opacity: 0; transition: opacity .6s; pointer-events: none; }
       .oth-fade.on { opacity: 1; }
-      /* the map */
-      .oth-map { position: fixed; inset: 0; display: none; place-items: center; align-content: center; gap: 8px; background: rgba(6, 6, 8, .62); z-index: 8; }
+      /* the map: the worlds' tabs over the chart, the route and its buttons under it */
+      .oth-map { position: fixed; inset: 0; display: none; place-content: center; gap: 4px; background: rgba(6, 6, 8, .62); z-index: 8; }
       .oth-map.on { display: grid; }
-      .oth-map canvas { border: 3px solid #f4efe6; box-shadow: 0 0 0 4px rgba(8, 8, 10, .6); cursor: zoom-in; }
-      .oth-map-title { padding: 3px 10px; background: #f2a93b; color: #120c04; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .16em; text-transform: uppercase; }
+      .oth-map canvas { justify-self: center; border: 3px solid #f4efe6; box-shadow: 0 0 0 4px rgba(8, 8, 10, .6); cursor: crosshair; touch-action: none; }
+      .oth-map-bar, .oth-map-foot { display: flex; align-items: stretch; gap: 4px; min-width: 0; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .14em; text-transform: uppercase; }
+      .oth-map button { padding: 5px 14px 4px; border: 0; border-radius: 0; background: rgba(8, 8, 10, .78); color: rgba(244, 239, 230, .62); font: inherit; letter-spacing: inherit; text-transform: inherit; white-space: nowrap; cursor: pointer; }
+      .oth-map-tabs { display: flex; gap: 4px; }
+      .oth-map-tabs button.sel { background: #f4efe6; color: #0b0b0d; box-shadow: inset 0 -3px 0 #f2a93b; }
+      .oth-map-info { flex: 1; min-width: 0; padding: 5px 12px 4px; background: rgba(8, 8, 10, .55); color: rgba(244, 239, 230, .75); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .oth-map-zoom { display: flex; gap: 4px; }
+      .oth-map-zoom button { width: 34px; padding: 0; color: #f4efe6; font-size: 20px; }
+      .oth-map-route { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; padding: 6px 12px 5px; background: rgba(8, 8, 10, .78); border-left: 4px solid #a24dff; white-space: nowrap; overflow: hidden; }
+      .oth-map-route small { color: rgba(244, 239, 230, .62); font-size: 13px; }
+      .oth-map-route span { margin-left: auto; padding-left: 12px; color: #f2a93b; }
+      .oth-map-foot button { color: #f4efe6; }
+      .oth-map-tabs button:not(.sel):hover, .oth-map-foot button:hover, .oth-map-zoom button:hover { background: rgba(242, 169, 59, .85); color: #120c04; }
+      .oth-map-hint { color: rgba(244, 239, 230, .62); font: 600 12px 'Barlow Condensed', system-ui; letter-spacing: .12em; text-align: center; text-transform: uppercase; }
+      body.touch .oth-map-hint { display: none; }
+      body.oth-map-open #drive, body.oth-map-open .oth-sign, body.oth-map-open .oth-prompt, body.oth-map-open .oth-compass, body.oth-map-open .oth-coins { visibility: hidden; }
+      body.touch .oth-map-bar, body.touch .oth-map-foot { font-size: 13px; }
+      /* the radar: bottom left (top left on a phone) — the canvas turns and slides under a fixed frame (Radar.ts) */
+      .oth-radar { position: fixed; left: 16px; bottom: 40px; z-index: 4; pointer-events: none; }
+      .oth-radar-box { position: relative; width: 240px; height: 160px; overflow: hidden; background: #3b3a31; border: 3px solid rgba(8, 8, 10, .72); box-shadow: 0 0 0 1px rgba(244, 239, 230, .2); }
+      .oth-radar-box canvas { position: absolute; will-change: transform; }
+      .oth-radar-car { position: absolute; width: 18px; height: 22px; will-change: transform; }
+      .oth-radar-car::before { content: ''; position: absolute; inset: 0; background: #fff; clip-path: polygon(50% 0, 100% 100%, 50% 74%, 0 100%); }
+      .oth-radar-car::after { content: ''; position: absolute; inset: 3px 3.5px 2px; background: #e8492b; clip-path: polygon(50% 0, 100% 100%, 50% 72%, 0 100%); }
+      .oth-radar-n { position: absolute; left: 0; top: 0; width: 16px; height: 16px; background: rgba(8, 8, 10, .82); color: #f4efe6; font: 700 12px/16px 'Barlow Condensed', system-ui; text-align: center; will-change: transform; }
+      .oth-radar-plate { display: none; align-items: baseline; gap: 7px; margin-top: 4px; padding: 3px 10px 3px 8px; background: rgba(8, 8, 10, .72); border-left: 4px solid #a24dff; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+      .oth-radar-plate.on { display: flex; }
+      .oth-radar-plate i { font-style: normal; font-size: 22px; line-height: .8; color: #c48bff; }
+      .oth-radar-plate small { color: rgba(244, 239, 230, .62); font-size: 12px; }
+      .oth-radar-plate span { margin-left: auto; padding-left: 10px; color: #f2a93b; }
+      body.touch .oth-radar { left: calc(12px + env(safe-area-inset-left)); top: calc(58px + env(safe-area-inset-top)); bottom: auto; }
+      body.touch .oth-radar-box { width: 150px; height: 100px; border-width: 2px; }
+      body.touch .oth-radar-plate { padding: 2px 8px 2px 6px; font-size: 12px; }
+      body.touch .oth-radar-plate i { font-size: 17px; }
+      /* (portrait: the compass takes the row under the buttons — the radar under it, the signpost under the radar) */
+      @media (orientation: portrait) {
+        body.touch .oth-radar { top: calc(112px + env(safe-area-inset-top)); }
+        body.touch .oth-sign { left: calc(14px + env(safe-area-inset-left)); top: calc(250px + env(safe-area-inset-top)); }
+      }
       /* the compass: a square strip */
       .oth-compass { position: fixed; left: 50%; top: 10px; width: 420px; max-width: calc(100vw - 140px); transform: translateX(-50%); pointer-events: none; z-index: 4; }
       .oth-compass-strip { position: relative; height: 28px; overflow: hidden; background: linear-gradient(90deg, rgba(8,8,10,0), rgba(8,8,10,.55) 16%, rgba(8,8,10,.55) 84%, rgba(8,8,10,0)); }
@@ -112,6 +149,9 @@
       .oth-tick-l { color: #f4efe6; font-size: 15px; }
       .oth-mark { top: 0; color: #f2a93b; font-size: 16px; }
       .oth-mark.found { color: #f4efe6; }
+      .oth-mark-gate { color: #f2a93b; font-size: 18px; }
+      .oth-mark-wp { color: #b77bff; font-size: 17px; text-shadow: 0 0 3px rgba(8, 8, 10, .9); }
+      .oth-compass-near b { color: #b77bff; font-weight: 700; }
       .oth-compass-near { display: table; margin: 3px auto 0; padding: 1px 8px; background: rgba(8, 8, 10, .5); color: #f4efe6; font: 700 13px 'Barlow Condensed', system-ui; letter-spacing: .12em; text-transform: uppercase; }
       /* messages: a square banner */
       .oth-toast { position: fixed; left: 50%; top: 64px; transform: translate(-50%, -8px); padding: 8px 18px 7px; border-left: 4px solid #f2a93b; background: rgba(8, 8, 10, .72); color: #f4efe6; font: 700 17px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; opacity: 0; transition: opacity .35s, transform .35s; pointer-events: none; z-index: 6; white-space: nowrap; }

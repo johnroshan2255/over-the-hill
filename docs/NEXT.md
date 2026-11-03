@@ -77,6 +77,35 @@ valley"*; *"don't use the valley trees there, use the things in Over the Hill"*.
 - `?save=0`: a session that never writes the journey or the journal — use it when testing in a real browser (a test
   drive on :5201 overwrote the user's saved journey, 2026-11-02).
 
+## Done — round 3: THE GPS (2026-11-03, the user: "an option like in GTA 5: in the map we can mark a destination and the map shows the fastest route like Google Maps"; "I don't know how to get to the other map")
+
+- **Waypoints on the map** (MapView.ts, Tab): click / tap sets one (a place or the pass snaps to it; on the pin clears;
+  right-click / Del clears); drag pans, wheel / + − zoom, Z whole ⇄ 800 m. TABS for both worlds — the other world's
+  chart is baked (`public/oth/<id>/chart.webp`, `scripts/harness/chartbake.mjs`: RE-RUN AFTER A MAP IS REBUILT), so a
+  desert place can be picked from the valley. **ROUTE TO THE DESERT / VALLEY** (the foot): straight to the other
+  world. The PASS is on the map, the radar and the compass (⇑) now — it wasn't anywhere before.
+- **The route** (Nav.ts): the fastest way by time over the tracks (a road graph from `trails.lines`), off-road legs at
+  the ends priced on the real ground (slope, forest, rock, fords; cliffs / deep water / the box edge walls; never
+  through a trunk or a big boulder), rock-crawl routes only where nothing else goes (the plate warns), drawn
+  violet (off-road dashed); a waypoint in the other world routes to this world's pass and on from the other's after the
+  crossing. Re-routes when you leave it; "Arrived · <name>" + the chime at ≤ 25 m.
+- **The radar** (Radar.ts): the minimap bottom left (top left on phones), turned with the camera, the route, the
+  waypoint held at the edge, the next turn + distance + ETA on a plate under it. Compass: the waypoint ◆ and its distance.
+- Checked in headless Chrome: `navtest.mjs` (routes to all 24 valley places ≤ 2 ms each, the cross-world waypoint
+  before / after a swap), `gpsdrive.mjs` (a bot following the GPS: the ledge road, the swap, on to the desert's Old
+  Aqueduct), `navphone.mjs` (the phone layouts). Cost (`abradar.mjs`, 1080p uncapped): radar parked ≤ 0.02 ms, driving
+  0.10 ms LOW / within noise ULTRA; a redraw 0.1 ms; the chart 29 ms at 1024² in 2.5 ms slices.
+- GPS bot drives (`gpsdrive.mjs`): the Great Cliff's foot → the pass → the swap → the desert's Old Aqueduct ARRIVED
+  (12.5 min, ≤ 3.3 m off the route, no re-route); the first try at Old Hut rolled the car on a rock-crawl route taken at
+  track speed (→ rock crawls priced 9 km/h, the plate's warning, the bot at the route's own pace), the second hit a pine
+  on an off-road leg (→ `Obstacles`), the third stalled on Old Hut's rock-crawl ledges; Birch Hollow Cabin rolled on
+  the 752 m rock-crawl stretch east of the spawn. Those stretches are UNAVOIDABLE (priced near-prohibitively the routes
+  keep the same rock-crawl metres: the only way east, 203 m on the way to the pass) — the GPS warns; the bot can't
+  crawl (a crawling bot — low speed, line choice on ledges — would be the next harness step).
+- GPS next: when the destination itself is far from every track (the lake's west-shore camps: 570–655 m), the last leg
+  falls back to a straight line that may cross trees — a hint, not a drivable line; the waypoint isn't saved with the journey (GTA doesn't either — `Progress` would need a `waypoint`, and the
+  backend's API with it); no pinch-zoom on the phone map (+ / − and drag); spoken / 3D-ground directions not done.
+
 ## Reference: Over the Hill's desert (their Algeria region)
 
 Not in the repo (their screenshots are theirs). Re-download: `curl "https://store.steampowered.com/api/appdetails?appids=2929250"`

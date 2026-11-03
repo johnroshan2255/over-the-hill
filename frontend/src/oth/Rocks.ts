@@ -97,6 +97,11 @@ export class Rocks {
 
   private key(i: number, j: number): number { return (i + 512) * 1024 + (j + 512) }
 
+  /** Every rock (the GPS: the big ones are in an off-road leg's way — Nav.ts Obstacles). */
+  each(f: (k: Inst) => void): void {
+    for (const list of this.grid.values()) for (const k of list) f(k)
+  }
+
   /** Rocks within r m of (x, z), biggest first (the shot harness). */
   candidates(x: number, z: number, r: number): Inst[] {
     const out: Inst[] = []

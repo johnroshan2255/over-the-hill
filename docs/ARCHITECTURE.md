@@ -198,7 +198,8 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
     log cabins, a lakeside shack + dock, a sawmill, a mine adit, a meteorite crater — on levelled earth pads, built from
     the bridges' kit (`Builder` / `woodMaterial`, windows glow at night), box colliders (the dock is ground);
     DISCOVERED within ~40 m (localStorage) → a toast.
-  - **Map + compass** (MapView.ts): Tab / MAP — a painted chart (hillshade, 40 m contours, colour fields, tracks — rough
+  - **Map + compass** (MapView.ts — since 2026-11-03 with waypoints, both worlds' tabs and the GPS: "The GPS" below):
+    Tab / MAP — a painted chart (hillshade, 40 m contours, colour fields, tracks — rough
     routes dashed — bridges, the bog, landmarks: icon + name found, "?" not), the car's arrow; click / Z zooms. The
     compass strip: heading + landmarks ahead and the nearest's distance.
   - **Winch** (Winch.ts, E / WINCH): hooks the nearest tree / boulder ahead within 35 m, reels in at 1.5 m/s, pulls
@@ -415,3 +416,36 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
 - **The desert's things** (`Places.ts` `desert` branches: oasis camps, wells, Bedouin tents, sandstone ruins; crate ids
   from 100000) and sound (`Audio.ts`: open-sand wind, oasis-only birds and crickets, no owls). Per world: the journal's
   `totals`, the player's camp (`Progress.camps`). `?save=0`: a test session that never saves.
+
+## The GPS: waypoint, route, radar (2026-11-03 — the user: "like GTA 5: mark a destination on the map and it shows the fastest route like Google Maps"; "I don't know how to get to the other map")
+
+- **Nav.ts** — the ROAD GRAPH (`RoadGraph.of(meta)`, once per meta): every `trails.lines` point a node, joined along
+  its track; a track's ends to the nearest point of another within 20 m, every point to the nearest point of each other
+  track within 7 m (crossings). Edge cost = seconds (40 km/h tracks, 9 km/h rock-crawl routes — only where nothing else goes; the plate warns of one). `route(from, to, map?)`:
+  Dijkstra from the track points within 320 m of the start, each reached OFF-ROAD at 22 km/h with a toll sampled every
+  8 m on the real ground (`offRoad`: grade², > 70 % a wall, forest / rock slower, fords slower, deep water and the box
+  edge walls; a tree trunk or a boulder > 1.3 m within 1.6 m of the line rules it out — `Obstacles`, a grid built the
+  first time a world plans a route, ~7 ms), to the point leaving the least off-road time to the end — or straight there when that's quicker; kinks
+  in the track data (> 120° back over < 15 m) dropped from the line. A `Route`: points, per-segment off-road / seconds,
+  the turns (junctions and leaving / joining the tracks bending > 26°), the progress (`track`: nearest point near where
+  the car was, all of it when lost). The GUIDE (one in main.ts, lasts across worlds): the WAYPOINT (`{ world, x, z,
+  name }`), this world's leg (to the waypoint, or to this world's gate when it lies in the other world — that world's
+  leg from its gate priced on the flat from its fetched meta.json), re-routing (> 40 m off a track / 70 m off-road for
+  1.5 s, 3 s apart), the arrival (≤ 25 m: a toast + the chime); `setWorld` at a crossing re-plans from the car next
+  frame. Valley graph 4.7k nodes; a route ~1–2 ms (the first ~13 with the graph built).
+- **Chart.ts** — the CHART painted a slice a frame (2.5 ms) from entering a world (1024², 768² on phones); the other
+  world's is baked: `public/oth/<id>/chart.webp` (`scripts/harness/chartbake.mjs` — RE-RUN AFTER A MAP IS REBUILT).
+  Tracks, bridges, places, the pass, the route and the pin are drawn over it as lines each time (sharp, never stale).
+- **MapView.ts** — tabs THE VALLEY · THE DESERT; click: waypoint (a place / the pass snaps to it; on the pin: clear),
+  drag pans, wheel / + − zoom about the pointer, Z whole ⇄ 800 m, right-click / Del clear, ROUTE TO THE <OTHER WORLD>
+  (the waypoint where its pass lets you out). The foot: name, distance, ETA, "via the pass". The HUD under the open map
+  is hidden (`body.oth-map-open`); Esc closes the map only (`stopImmediatePropagation`: it used to pause too). The
+  compass: the pass (⇑) and the waypoint (violet ◆); its line shows the waypoint's distance while one is set.
+- **Radar.ts** — the minimap (bottom left 240×160; top left 150×100 on phones; hidden in the free camera and under the
+  map): drawn into a canvas a few times a second (north up, round the car, a margin), turned and slid by a CSS transform
+  each frame (compositor only), the car's arrow and N on the rim DOM; zoom 1.7 → 3.4 m/px with speed; the waypoint held
+  at the edge; a plate: the next turn (arrow, distance) or the end, the total and the ETA. `?radar=0` turns it off.
+- **Checks** (headless Chrome, `frontend/scripts/harness/`): `navtest.mjs` (routes from the spawn to all 24 valley places,
+  the cross-world waypoint before / after a swap, pictures of the radar, the map, the desert tab), `gpsdrive.mjs` (a
+  steering bot that follows the guide's route until the arrival — `START=world:x,z DEST=world:name|gate|x,z`).
+
