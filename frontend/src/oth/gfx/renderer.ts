@@ -98,7 +98,42 @@ export class Renderer {
     return e
   }
 
+  /** THE FRAME (PlayCanvas's own loop draws it: main.ts runs the game in the app's 'update'): the scene synced, the
+   *  globals written, this camera made the one PlayCanvas renders with. */
+  prepare(scene: Scene, camera: Camera): void {
+    this.setup(scene, camera)
+    this.main = this.active
+    this.info.render.calls = scene.info.calls
+    this.info.render.triangles = scene.info.triangles
+    this.info.render.frame++
+  }
+  private main: pc.Entity | null = null
+
+  /** Draw now (offscreen: the impostor bake) — the frame's camera held off while it does. */
   render(scene: Scene, camera: Camera): void {
+    const G = gfx()
+    const main = this.main
+    this.setup(scene, camera)
+    if (main && main !== this.active) main.enabled = false
+    G.device.frameStart()
+    G.app.renderComposition(G.app.scene.layers)
+    G.device.frameEnd()
+    if (main && main !== this.active) { this.active!.enabled = false; main.enabled = true; this.active = main }
+  }
+
+  /** PlayCanvas's own stats panel (MiniStats: frame time, FPS, draw calls, CPU / GPU timings, VRAM) — F3 / ?stats=1. */
+  showStats(on: boolean): void {
+    if (on && !this.stats) {
+      const o = pc.MiniStats.getDefaultOptions() as { stats: { name: string; stats: string[]; decimalPlaces?: number; unitsName?: string; watermark: number }[]; startSizeIndex: number }
+      o.stats.unshift({ name: 'FPS', stats: ['frame.fps'], decimalPlaces: 0, unitsName: '', watermark: 500 })
+      o.startSizeIndex = 1
+      this.stats = new pc.MiniStats(gfx().app, o as never)
+    }
+    if (this.stats) this.stats.enabled = on
+  }
+  private stats: pc.MiniStats | null = null
+
+  private setup(scene: Scene, camera: Camera): void {
     const G = gfx()
     if (camera.parent === null) camera.updateMatrixWorld()
     camera.matrixWorld.decompose(_p, _q, _s)
@@ -142,12 +177,22 @@ export class Renderer {
     c.clearColor = _c
     c.clearColorBuffer = this.autoClear
     c.clearDepthBuffer = this.autoClear
-    G.device.frameStart()
-    G.app.renderComposition(G.app.scene.layers)
-    G.device.frameEnd()
-    this.info.render.calls += scene.info.calls
-    this.info.render.triangles += scene.info.triangles
-    this.info.render.frame++
+  }
+
+  /** Start PlayCanvas's frame loop: `update(dt)` runs the game each frame, then PlayCanvas renders. */
+  start(update: () => void): void {
+    const app = gfx().app
+    app.on('update', update)
+    app.start()
+  }
+  /** (a paused game draws nothing) */
+  set drawing(on: boolean) { gfx().app.autoRender = on }
+
+  /** Resolve when the GPU has finished all the work submitted so far (the harness's honest frame time). */
+  async gpuDone(): Promise<void> {
+    const d = gfx().device as unknown as { wgpu?: GPUDevice; gl?: WebGL2RenderingContext }
+    if (d.wgpu) await d.wgpu.queue.onSubmittedWorkDone()
+    else if (d.gl) d.gl.readPixels(0, 0, 1, 1, d.gl.RGBA, d.gl.UNSIGNED_BYTE, new Uint8Array(4))
   }
 }
 export { Renderer as WebGLRenderer }

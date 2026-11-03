@@ -20,7 +20,8 @@ export function gfx(): Gfx {
 }
 
 export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | 'webgpu'; antialias: boolean; powerPreference?: 'high-performance' | 'low-power' }): Promise<Gfx> {
-  const types = o.api === 'webgpu' ? [pc.DEVICETYPE_WEBGPU, pc.DEVICETYPE_WEBGL2] : [pc.DEVICETYPE_WEBGL2]
+  // (?api=webgpu-only: no fallback — a debug switch, so a failed WebGPU start shows its error)
+  const types = o.api === 'webgpu' ? (new URLSearchParams(location.search).get('api') === 'webgpu-only' ? [pc.DEVICETYPE_WEBGPU] : [pc.DEVICETYPE_WEBGPU, pc.DEVICETYPE_WEBGL2]) : [pc.DEVICETYPE_WEBGL2]
   const device = await pc.createGraphicsDevice(canvas, {
     deviceTypes: types,
     antialias: o.antialias,
@@ -32,6 +33,11 @@ export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | '
     twgslUrl: '/lib/twgsl/twgsl.js',
   } as never)
   device.maxPixelRatio = 1
+  // WebGPU: WGSL refuses an implicit-derivative sample (textureSample) in control flow that depends on a varying — GLSL
+  // allows it, and our shaders do it (a branch per leaf card, per material in the paint): the check turned off for the
+  // transpiled modules, as WGSL lets a module say
+  const tw = (device as unknown as { twgsl?: { convertSpirV2WGSL(c: Uint32Array): string } }).twgsl
+  if (tw) { const f = tw.convertSpirV2WGSL.bind(tw); tw.convertSpirV2WGSL = (c) => `diagnostic(off, derivative_uniformity);\n${f(c)}` }
   const opts = new pc.AppOptions()
   opts.graphicsDevice = device
   opts.componentSystems = [pc.RenderComponentSystem, pc.CameraComponentSystem]
@@ -40,7 +46,6 @@ export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | '
   app.init(opts)
   app.setCanvasFillMode(pc.FILLMODE_NONE)
   app.setCanvasResolution(pc.RESOLUTION_FIXED, canvas.width || 1, canvas.height || 1)
-  app.autoRender = false
   // (none of PlayCanvas's own lighting: every material is ours)
   app.scene.clusteredLightingEnabled = false
   const world = app.scene.layers.getLayerById(pc.LAYERID_WORLD)!
@@ -48,5 +53,7 @@ export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | '
   world.opaqueSortMode = pc.SORTMODE_MANUAL
   world.transparentSortMode = pc.SORTMODE_MANUAL
   G = { app, device, world }
+  // (the harness's handle on the engine: scripts/harness/wgslcheck.mjs reads the WebGPU transpile)
+  ;(window as unknown as { __pc: typeof pc }).__pc = pc
   return G
 }

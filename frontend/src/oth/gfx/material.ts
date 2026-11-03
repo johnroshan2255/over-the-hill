@@ -66,10 +66,11 @@ type UniformValue = number | boolean | Vector2 | Vector3 | Vector4 | Color | Mat
 // ------------------------------------------------------------------------------------------------- global uniforms
 const globals: Record<string, IUniform<UniformValue>>[] = []
 const globalObjects = new Set<IUniform<UniformValue>>()
+const globalNames = new Set<string>()
 /** Uniform objects shared by every material (the atmosphere, the terrain shadow): written once a frame to the scope. */
 export function registerGlobals(u: Record<string, IUniform<unknown>>): void {
   globals.push(u as Record<string, IUniform<UniformValue>>)
-  for (const k in u) globalObjects.add(u[k] as IUniform<UniformValue>)
+  for (const k in u) { globalObjects.add(u[k] as IUniform<UniformValue>); globalNames.add(k) }
 }
 const scratch = new Map<string, Float32Array>()
 /** A uniform's value as PlayCanvas takes it (vectors and matrices into a reused array per name). */
@@ -87,6 +88,22 @@ function pcValue(name: string, v: UniformValue): number | Float32Array | pc.Text
   if (v instanceof Matrix4 || v instanceof Matrix3) return v.elements
   return null
 }
+/** A 1×1 texture for a sampler nothing set (WebGL sampled (0, 0, 0, 1) from an empty unit). */
+const defaults = new Map<string, pc.Texture>()
+function defaultTexture(kind: 'f' | 'u' | 'i'): pc.Texture {
+  let t = defaults.get(kind)
+  if (!t) {
+    const fmt = kind === 'f' ? pc.PIXELFORMAT_RGBA8 : kind === 'u' ? pc.PIXELFORMAT_R16U : pc.PIXELFORMAT_R16I
+    t = new pc.Texture(gfx().device, { name: 'oth-default', width: 1, height: 1, format: fmt, mipmaps: false, minFilter: pc.FILTER_NEAREST, magFilter: pc.FILTER_NEAREST })
+    const d = t.lock() as unknown as { fill(v: number): void; [i: number]: number }
+    d.fill(0)
+    if (kind === 'f') d[3] = 255
+    t.unlock()
+    defaults.set(kind, t)
+  }
+  return t
+}
+
 /** The renderer's per-render state the converted shaders read (tone mapping on / off, sRGB out or linear). */
 export const outputState = { toneMap: 1, srgb: 1, exposure: 1 }
 const scopeIds = new Map<string, pc.ScopeId>()
@@ -135,6 +152,8 @@ export interface Layout {
   semantics: Record<string, string>
   /** colour outputs (more than one: an MRT shader, e.g. the impostor bake's albedo + normal) */
   outputs: number
+  /** the sampler uniforms (name → float / uint / int): a null one gets a default texture (WebGPU binds every one) */
+  samplers: Record<string, 'f' | 'u' | 'i'>
   /** the converted sources */
   vs: string
   fs: string
@@ -164,10 +183,17 @@ function convertIO(src: string, stage: 'v' | 'f'): string {
     })
 }
 
+function forWebGPU(src: string): string {
+  const floats = [...src.matchAll(/uniform\s+(?:highp\s+|mediump\s+|lowp\s+)?sampler2D\s+(\w+)\s*;/g)].map((m) => m[1])
+  for (const n of new Set(floats)) src = src.replace(new RegExp(`\\b(texture|textureLod|textureGrad|textureOffset|textureLodOffset|textureProj)\\s*\\(\\s*${n}\\s*,`, 'g'), `$1(sampler2D(${n}, ${n}_sampler),`)
+  // (a sampler as a function's parameter: integer ones read by texelFetch — a texture is enough)
+  return src.replace(/([(,]\s*)(?:highp\s+|mediump\s+|lowp\s+)?(u|i)sampler2D(\s+\w+)/g, '$1$2texture2D$3')
+}
+
 const hasWord = (src: string, w: string) => new RegExp(`\\b${w}\\b`).test(src)
 
 /** Convert one material's sources for PlayCanvas (with its defines and whether it's drawn instanced by matrix). */
-export function convert(vertex: string, fragment: string, defines: Record<string, unknown>, instanceMatrix: boolean, vertexColors = false): Layout {
+export function convert(vertex: string, fragment: string, defines: Record<string, unknown>, instanceMatrix: boolean, vertexColors = false, has: Set<string> | null = null): Layout {
   const defs = Object.entries(defines).map(([k, v]) => `#define ${k} ${v === true || v === '' ? '' : String(v)}`).join('\n')
   // the fragment: our FRAG_OUT (PlayCanvas declares its own output), three's tone-map / colour-space includes
   let fs = fragment
@@ -206,6 +232,15 @@ export function convert(vertex: string, fragment: string, defines: Record<string
   }
   vs = `${defs}\n${builtins(vs, 'v')}\n${vs}`
   fs = `${defs}\n${builtins(fs, 'f')}\n${/othToneMap|othOutput/.test(fs) ? OTH_OUTPUT_GLSL : ''}\n${fs}`
+  // an attribute the geometry doesn't have: a constant at WebGL's default (0, 0, 0, 1) — WebGPU needs every declared
+  // attribute in the vertex buffers, WebGL quietly read the default
+  if (has) {
+    vs = vs.replace(/^(\s*)attribute\s+(?:highp\s+|mediump\s+|lowp\s+)?(\w+)\s+(\w+)\s*;/gm, (m, ws: string, type: string, name: string) => {
+      if (has.has(name) || /^instanceMatrix\d$/.test(name)) return m
+      const zero = type === 'float' ? '0.0' : type === 'int' ? '0' : type === 'uint' ? '0u' : type === 'vec4' ? 'vec4(0.0, 0.0, 0.0, 1.0)' : `${type}(0)`
+      return `${ws}const ${type} ${name} = ${zero};`
+    })
+  }
   // the vertex slots: position on POSITION (location 0), every other attribute on ATTR1 … ATTR15
   const semantics: Record<string, string> = {}
   let slot = 1
@@ -218,8 +253,14 @@ export function convert(vertex: string, fragment: string, defines: Record<string
       semantics[name] = `ATTR${slot++}`
     }
   }
+  // WEBGPU: PlayCanvas splits each sampler uniform into a texture + `<name>_sampler`, and Vulkan GLSL samples a texture
+  // through `sampler2D(tex, sampler)` — every sampling call on one rewritten so; a sampler PARAMETER becomes a texture
+  // (only texelFetch reads one: samplerless). WebGL2 keeps the sources as they are.
+  if (gfx().device.isWebGPU) { vs = forWebGPU(vs); fs = forWebGPU(fs) }
+  const samplers: Record<string, 'f' | 'u' | 'i'> = {}
+  for (const m of (vs + '\n' + fs).matchAll(/uniform\s+(?:highp\s+|mediump\s+|lowp\s+)?(u|i)?sampler2D\s+(\w+)\s*;/g)) samplers[m[2]] = (m[1] as 'u' | 'i') ?? 'f'
   const key = hash(vs + '\u0000' + fs)
-  return { semantics, vs, fs, key, outputs }
+  return { semantics, vs, fs, key, outputs, samplers }
 }
 
 // ------------------------------------------------------------------------------------------------- materials
@@ -309,11 +350,11 @@ export class ShaderMaterial extends Material {
   }
 
   /** The PlayCanvas material for this material's sources + defines (and drawn instanced by matrix or not). */
-  pcMaterial(instanceMatrix: boolean): { m: pc.ShaderMaterial; layout: Layout } {
-    const sig = `${this.version}|${instanceMatrix}`
+  pcMaterial(instanceMatrix: boolean, attrs: string[]): { m: pc.ShaderMaterial; layout: Layout } {
+    const sig = `${this.version}|${instanceMatrix}|${attrs.join(',')}`
     let entry = this.layouts.get(sig)
     if (!entry) {
-      const layout = convert(this.vertexShader, this.fragmentShader, this.defines, instanceMatrix, this.vertexColors)
+      const layout = convert(this.vertexShader, this.fragmentShader, this.defines, instanceMatrix, this.vertexColors, new Set(attrs))
       const m = new pc.ShaderMaterial({ uniqueName: `oth_${layout.key}`, vertexGLSL: layout.vs, fragmentGLSL: layout.fs, attributes: layout.semantics, ...(layout.outputs > 1 ? { fragmentOutputTypes: Array(layout.outputs).fill('vec4') } : {}) })
       m.name = this.name || `oth_${this.id}`
       entry = { m, layout, state: '' }
@@ -326,13 +367,18 @@ export class ShaderMaterial extends Material {
   }
   private readonly layouts = new Map<string, { m: pc.ShaderMaterial; layout: Layout; state: string }>()
 
-  /** This frame's own (non-global) uniforms onto the PlayCanvas material. */
-  pushUniforms(m: pc.ShaderMaterial): void {
+  /** This frame's own (non-global) uniforms onto the PlayCanvas material; a sampler with no texture gets a default. */
+  pushUniforms(m: pc.ShaderMaterial, layout: Layout): void {
     for (const k in this.uniforms) {
       const u = this.uniforms[k] as IUniform<UniformValue>
       if (globalObjects.has(u)) continue
       const v = pcValue(`${this.id}:${k}`, u.value)
       if (v !== null) m.setParameter(k, v as number)
+    }
+    for (const k in layout.samplers) {
+      const u = this.uniforms[k]
+      if ((u && u.value) || (!u && globalNames.has(k))) continue
+      m.setParameter(k, defaultTexture(layout.samplers[k]) as never)
     }
   }
 

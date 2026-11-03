@@ -25,6 +25,16 @@ const measure = () => p.evaluate(() => new Promise((r) => {
   const tick = () => { const n = performance.now(); d.push(n - l); l = n; if (n - t < 2500) requestAnimationFrame(tick); else { const js = (window.__js - j0) / d.length; d.sort((a, b) => a - b); const k = Math.floor(d.length * 0.1), m = d.slice(k, d.length - k); r({ ms: m.reduce((a, b) => a + b, 0) / m.length, js }) } }
   requestAnimationFrame(tick)
 }))
+// THE GPU'S REAL PACE: 300 frames submitted, then wait until the GPU has finished them (WebGPU's rAF runs ahead of the
+// GPU in headless Chrome — rAF timing alone lies there; on WebGL2 the two agree)
+const drained = () => p.evaluate(async () => {
+  const o = window.__oth
+  await o.gpuDone()
+  const t0 = performance.now()
+  await new Promise((r) => { let n = 0; const f = () => { if (++n < 300) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
+  await o.gpuDone()
+  return (performance.now() - t0) / 300
+})
 const VIEWS = [
   // [world, name, drive?, x, z, h, yaw, pitch]
   ['valley', 'spawn (car)', true],
@@ -45,9 +55,11 @@ for (const [world, name, drive, x, z, h, yaw, pitch] of VIEWS) {
   await p.evaluate((a) => { const o = window.__oth; if (a.drive) o.drive(true); else o.view(a.x, a.z, a.h, a.yaw, a.pitch) }, { drive, x, z, h, yaw, pitch })
   await sleep(2500)
   const r = await measure()
-  const s = await p.evaluate(() => { const t = window.__oth.stats(); return { draws: t.draws, tris: t.tris } })
-  total += r.ms
-  console.log(`${tier.padEnd(6)} ${world.padEnd(7)} ${name.padEnd(12)} ${r.ms.toFixed(3)} ms  ${(1000 / r.ms).toFixed(0).padStart(4)} fps   js ${r.js.toFixed(3)} ms   draws ${s.draws}  tris ${(s.tris / 1000).toFixed(0)}k`)
+  const d = await drained()
+  const s = await p.evaluate(() => { const t = window.__oth.stats(); return { draws: t.draws, tris: t.tris, backend: window.__oth.backend } })
+  const ms = Math.max(r.ms, d)
+  total += ms
+  console.log(`${tier.padEnd(6)} ${s.backend.padEnd(6)} ${world.padEnd(7)} ${name.padEnd(12)} ${ms.toFixed(3)} ms  ${(1000 / ms).toFixed(0).padStart(4)} fps   (rAF ${r.ms.toFixed(3)}, GPU-drained ${d.toFixed(3)})   js ${r.js.toFixed(3)} ms   draws ${s.draws}  tris ${(s.tris / 1000).toFixed(0)}k`)
 }
 console.log(`mean ${(total / VIEWS.length).toFixed(3)} ms  (${(1000 / (total / VIEWS.length)).toFixed(0)} fps)`)
 console.log('errors:', errs.length ? errs : 'none')

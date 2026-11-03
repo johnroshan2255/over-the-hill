@@ -50,14 +50,14 @@ const tier = pickTier()
 const status = document.getElementById('status')!
 
 async function boot() {
-  // THE RENDERER (docs/MIGRATION.md): PlayCanvas, through the game's graphics layer (gfx/) — WebGL2 by default (on the
-  // M4 it drew this vertex-heavy world faster than WebGPU), ?api=webgpu for WebGPU (WebGL2 if the browser has none).
+  // THE RENDERER (docs/MIGRATION.md): PlayCanvas, through the game's graphics layer (gfx/) — WebGPU on a desktop, WebGL2
+  // on phones (2026-11-03, the user) and wherever the browser has no WebGPU; ?api=webgl2 / webgpu forces one.
   // An OPAQUE canvas (2026-11-02, the user: "in the morning, evening and night a border of light on all trees"): the
   // leaf cards' alpha-to-coverage leaves alpha < 1 at their edges — the page's peach background showed through there.
   // Standard depth (PlayCanvas has no reversed-Z): 24-bit, the near plane 0.3 m.
   const antialias = tier.msaa
   const canvas = document.createElement('canvas')
-  const renderer = await GFX.WebGLRenderer.create(canvas, { antialias, api: q.get('api') === 'webgpu' ? 'webgpu' : 'webgl2', powerPreference: 'high-performance' })
+  const renderer = await GFX.WebGLRenderer.create(canvas, { antialias, api: q.get('api') === 'webgl2' ? 'webgl2' : q.get('api')?.startsWith('webgpu') ? 'webgpu' : isMobileDevice() ? 'webgl2' : 'webgpu', powerPreference: 'high-performance' })
   // (?scale=: the Resolution setting, a fixed share of the full pixel ratio)
   renderer.setPixelRatio(Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100)
   renderer.setSize(innerWidth, innerHeight)
@@ -285,15 +285,11 @@ async function boot() {
     camera.updateProjectionMatrix()
   })
 
-  // stats: frame / CPU / GPU ms (a WebGL2 timer query where the browser has it), draws, triangles
-  const gl = renderer.getContext() as WebGL2RenderingContext
-  const timer = gl?.getExtension('EXT_disjoint_timer_query_webgl2') ?? null
-  let query: WebGLQuery | null = null
-  let gpuMs = 0, cpuMs = 0, frameMs = 16.7, last = performance.now()
-  const hud = document.getElementById('hud')!
-  let showHud = q.get('stats') === '1'
-  window.addEventListener('keydown', (e) => { if (e.code === 'F3') { showHud = !showHud; e.preventDefault() } })
-  let hudT = 0
+  // STATS: PlayCanvas's own panel (MiniStats — FPS, frame time, draw calls, CPU / GPU timings, VRAM): F3 or ?stats=1
+  let cpuMs = 0, frameMs = 16.7, last = performance.now()
+  let showStats = q.get('stats') === '1'
+  renderer.showStats(showStats)
+  window.addEventListener('keydown', (e) => { if (e.code === 'F3') { showStats = !showStats; renderer.showStats(showStats); e.preventDefault() } })
 
   const clock = new GFX.Clock()
   // the view's frustum, once a frame: the car, its dust (their own tests — three's cull is off for the moving parts)
@@ -407,7 +403,8 @@ async function boot() {
   let hudTick = 0
 
   const frame = () => {
-    if (pause) { requestAnimationFrame(frame); return }
+    renderer.drawing = !pause
+    if (pause) return
     const now = performance.now()
     frameMs += (now - last - frameMs) * 0.1
     // ADAPTIVE RESOLUTION, phones (PlayCanvas guidelines: device pixel ratio at runtime): once a second, a slow frame
@@ -475,28 +472,11 @@ async function boot() {
     car.cull(view, world.horizon)
     dust.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
-    if (timer && query) {
-      const ready = gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE)
-      if (ready && !gl.getParameter(timer.GPU_DISJOINT_EXT)) gpuMs += (gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6 - gpuMs) * 0.15
-      if (ready) { gl.deleteQuery(query); query = null }
-    }
-    let started = false
-    if (timer && !query) { query = gl.createQuery(); gl.beginQuery(timer.TIME_ELAPSED_EXT, query!); started = true }
-    renderer.info.reset()
-    renderer.render(scene, camera)
-    if (started) gl.endQuery(timer!.TIME_ELAPSED_EXT)
+    renderer.prepare(scene, camera)
     cpuMs += (performance.now() - t0 - cpuMs) * 0.1
-    if (showHud && now - hudT > 250) {
-      hudT = now
-      hud.style.display = 'block'
-      const p = camera.position
-      hud.textContent = `${tier.name.toUpperCase()}  res ${Math.round(dprScale * 100)}%  ${(1000 / frameMs).toFixed(0)} fps  frame ${frameMs.toFixed(1)} ms  cpu ${cpuMs.toFixed(2)} ms  gpu ${timer ? gpuMs.toFixed(2) : '–'} ms\n` +
-        `draws ${renderer.info.render.calls}  tris ${(renderer.info.render.triangles / 1000).toFixed(0)}k  patches ${world.terrain.patches}  blades ${(world.grass.blades / 1000).toFixed(0)}k  trees ${world.trees.drawn.join('/')} of ${world.trees.count}  culled: trees ${world.trees.occluded} tiles behind hills, rocks ${world.rocks.culled.frustum} off-view / ${world.rocks.culled.occluded} hidden cells, ${world.rocks.culled.small} tiny\n` +
-        `x ${p.x.toFixed(0)} z ${p.z.toFixed(0)} y ${p.y.toFixed(0)} (agl ${(p.y - map.height(p.x, p.z)).toFixed(1)})  yaw ${fly.yaw.toFixed(2)} pitch ${fly.pitch.toFixed(2)}  hour ${atmos.hour.toFixed(1)}  ${world.id}  crossing: ${crossing.state}, mist ${crossing.mist.toFixed(2)}`
-    } else if (!showHud) hud.style.display = 'none'
-    requestAnimationFrame(frame)
   }
-  requestAnimationFrame(frame)
+  // PlayCanvas's frame loop: the game in its 'update', then it renders
+  renderer.start(frame)
   status.remove()
   dispatchEvent(new Event('overhill:started')) // (the title screen closes)
 
@@ -544,7 +524,10 @@ async function boot() {
     drive: (on: boolean) => { driving = on; if (on) chase.snap() },
     setHour: (h: number) => { atmos.hour = h; atmos.update(camera.position, 0) },
     sunDir: () => atmos.uniforms.uSunDir.value.toArray(),
-    stats: () => ({ fps: 1000 / frameMs, cpuMs, gpuMs, draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: world.terrain.patches, blades: world.grass.blades, rocks: world.rocks.count, trees: world.trees.drawn.slice(), bushes: world.bushes.drawn.slice(), culled: { terrainPatches: world.terrain.occluded, treeTiles: world.trees.occluded, rocks: { ...world.rocks.culled }, horizonBuilds: world.horizon.builds }, pos: camera.position.toArray().map((v) => +v.toFixed(1)), ground: +map.height(camera.position.x, camera.position.z).toFixed(1) }),
+    /** Resolves when the GPU has finished what's been submitted (fps.mjs: the honest frame time — WebGPU's rAF runs ahead). */
+    gpuDone: () => renderer.gpuDone(),
+    backend: renderer.backend,
+    stats: () => ({ fps: 1000 / frameMs, cpuMs, draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: world.terrain.patches, blades: world.grass.blades, rocks: world.rocks.count, trees: world.trees.drawn.slice(), bushes: world.bushes.drawn.slice(), culled: { terrainPatches: world.terrain.occluded, treeTiles: world.trees.occluded, rocks: { ...world.rocks.culled }, horizonBuilds: world.horizon.builds }, pos: camera.position.toArray().map((v) => +v.toFixed(1)), ground: +map.height(camera.position.x, camera.position.z).toFixed(1) }),
     height: (x: number, z: number) => map.height(x, z),
     rockNear: (x: number, z: number, r: number) => world.rocks.biggestNear(x, z, r),
     treeNear: (x: number, z: number, r: number, species: number, minH: number) => world.trees.nearest(x, z, r, species, minH),

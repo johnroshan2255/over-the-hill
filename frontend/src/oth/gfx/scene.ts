@@ -231,7 +231,7 @@ function prepare(mesh: Mesh): Gpu | null {
   const pos = mesh.geometry.attributes.position ?? Object.values(mesh.geometry.attributes).find((a) => !a.isInstancedBufferAttribute)
   if (!pos || pos.count === 0) return null
   const instMat = mesh.instanceMatrixAttr
-  const { m: pcMat, layout } = mat.pcMaterial(!!instMat)
+  const { m: pcMat, layout } = mat.pcMaterial(!!instMat, Object.keys(mesh.geometry.attributes))
   const geo = mesh.geometry
   let g = mesh.gpu
   // (a new layout — the material's defines changed, or the geometry or its attributes: made again, back in its layer)
@@ -242,14 +242,15 @@ function prepare(mesh: Mesh): Gpu | null {
     const node = new pc.GraphNode(mesh.name || 'oth')
     const mi = new pc.MeshInstance(pcMesh, pcMat, node)
     g = mesh.gpu = { mi, pcMesh, geo, layout, matVersion: mat.version, geoLayout: geo.layoutVersion, uploaded: new Map(), vb: null, inst: [], node, world: new Float32Array(16).fill(NaN) }
-    // the instancing buffer: every instanced attribute (+ InstancedMesh's matrices as four vec4s), non-interleaved
+    // the instancing buffer: every instanced attribute (+ InstancedMesh's matrices as four vec4s), INTERLEAVED — one
+    // vertex buffer binding (WebGPU allows 8 a draw, and PlayCanvas binds each non-interleaved stream as its own)
     const streams: { name: string; attr: BufferAttribute; comps: number; sub: number }[] = []
     for (const [name, a] of Object.entries(geo.attributes)) if (a.isInstancedBufferAttribute && layout.semantics[name]) streams.push({ name, attr: a, comps: a.itemSize, sub: 0 })
     if (instMat) for (let r = 0; r < 4; r++) streams.push({ name: `instanceMatrix${r}`, attr: instMat, comps: 4, sub: r })
     if (streams.length) {
       const count = Math.max(1, ...streams.map((s) => s.attr.count))
       const desc = streams.map((s) => ({ semantic: layout.semantics[s.name], components: s.comps, type: DTYPE(s.attr.array), normalize: s.attr.normalized }))
-      const fmt = new pc.VertexFormat(gfx().device, desc, count)
+      const fmt = new pc.VertexFormat(gfx().device, desc)
       g.vb = new pc.VertexBuffer(gfx().device, fmt, count, { usage: pc.BUFFER_DYNAMIC })
       g.inst = streams.map((s, i) => ({ name: s.name, attr: s.attr, offset: fmt.elements[i].offset, ver: -1, comps: s.comps, sub: s.sub })) as Gpu['inst']
       mi.setInstancing(g.vb, false)
@@ -268,16 +269,14 @@ function prepare(mesh: Mesh): Gpu | null {
     let up = false
     for (const s of g.inst) if (s.ver !== s.attr.version) { s.ver = s.attr.version; up = true }
     if (up) {
-      const buf = g.vb.lock() as ArrayBuffer
+      const buf = g.vb.lock() as ArrayBuffer, stride = g.vb.format.size
       for (const s of g.inst as (Gpu['inst'][number] & { comps: number; sub: number })[]) {
-        const src = s.attr.array, n = Math.min(s.attr.count, g.vb.numVertices)
-        if (s.attr.itemSize === s.comps) {
-          new (src.constructor as new (b: ArrayBuffer, o: number, l: number) => TypedArray)(buf, s.offset, n * s.comps).set(src.subarray(0, n * s.comps) as never)
-        } else {
-          // (a row of a 4×4 matrix: every 16 floats, 4 of them from s.sub × 4)
-          const dst = new Float32Array(buf, s.offset, n * 4), st = s.attr.itemSize, src4 = src as Float32Array
-          for (let i = 0; i < n; i++) { const o = i * st + s.sub * 4; dst[i * 4] = src4[o]; dst[i * 4 + 1] = src4[o + 1]; dst[i * 4 + 2] = src4[o + 2]; dst[i * 4 + 3] = src4[o + 3] }
-        }
+        const src = s.attr.array, n = Math.min(s.attr.count, g.vb.numVertices), el = src.BYTES_PER_ELEMENT
+        // (a view of the buffer in the stream's own type: its components at offset + i × stride)
+        const dst = new (src.constructor as new (b: ArrayBuffer) => TypedArray)(buf), st = stride / el, off = s.offset / el, it = s.attr.itemSize, from = s.sub * 4
+        const c = s.comps
+        if (c === 4) for (let i = 0; i < n; i++) { const o = i * st + off, q = i * it + from; dst[o] = src[q]; dst[o + 1] = src[q + 1]; dst[o + 2] = src[q + 2]; dst[o + 3] = src[q + 3] }
+        else for (let i = 0; i < n; i++) for (let k = 0; k < c; k++) dst[i * st + off + k] = src[i * it + from + k]
       }
       g.vb.unlock()
     }
@@ -382,7 +381,7 @@ export class Scene extends Object3D {
   sync(camPos: Vector3): void {
     this.frame++
     this.updateMatrixWorld()
-    const seen = new Set<Mesh>(), pushed = new Set<ShaderMaterial>(), add: pc.MeshInstance[] = []
+    const seen = new Set<Mesh>(), pushed = new Set<pc.Material>(), add: pc.MeshInstance[] = []
     let calls = 0, tris = 0
     const walk = (o: Object3D, vis: boolean) => {
       const v = vis && o.visible
@@ -422,7 +421,7 @@ export class Scene extends Object3D {
               g.mi.drawOrder = o.renderOrder * 1e6 - d * 10
             } else g.mi.drawOrder = o.renderOrder * 1e6 + (o.material.id % 100000)
             const mat = o.material as ShaderMaterial
-            if (!pushed.has(mat)) { pushed.add(mat); mat.pushUniforms(g.mi.material as pc.ShaderMaterial) }
+            if (!pushed.has(g.mi.material!)) { pushed.add(g.mi.material!); mat.pushUniforms(g.mi.material as pc.ShaderMaterial, g.layout) }
             calls++
             const ib = g.pcMesh.primitive[0].count
             tris += (ib / 3) * Math.max(1, n)

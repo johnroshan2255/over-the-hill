@@ -268,11 +268,20 @@ export class Trees {
     //  mips average only the tree and IMP_FRAG divides by the coverage: an edge is the tree's own colour, never the
     //  background's. 2026-11-02: a mid colour per species was meant here, but three premultiplies a clear colour by its
     //  alpha — it was always black, and with no division every far tree had a dark rim)
+    // ONE CLEAR of the whole atlas, then the tiles drawn without clearing (they never overlap): WebGPU can't clear a
+    // two-output target tile by tile (PlayCanvas clears a scissored rect with a one-output quad)
+    renderer.setClearColor(0x000000, 0)
+    rt.scissorTest = false
+    rt.viewport.set(0, 0, W, Hh)
+    renderer.setRenderTarget(rt)
+    mesh.visible = false
+    renderer.render(scene, cam)
+    mesh.visible = true
+    renderer.autoClear = false
     for (let ri = 0; ri < IMP_SPECIES.length; ri++) {
       const sp = IMP_SPECIES[ri]
       bake.uniforms.uSpecies.value = sp
       mesh.geometry = geos[family(sp)]
-      renderer.setClearColor(0x000000, 0)
       for (let e = 0; e < IMP.elev.length; e++) {
         for (let a = 0; a < IMP.cols; a++) {
           const az = (a / IMP.cols) * Math.PI * 2, el = IMP.elev[e]
