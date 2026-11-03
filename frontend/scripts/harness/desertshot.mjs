@@ -1,14 +1,22 @@
-// desertshot.mjs <out> — the desert in the game: the views their shots show (?world=desert)
-import puppeteer from '../../node_modules/puppeteer-core/lib/esm/puppeteer/puppeteer-core.js'
+// desertshot.mjs <out> [tier] — the desert in the game: the scored views (docs/DESERT_MATCH.md §5; ?world=desert)
+// env: PORT (5200), HOUR (11), VIEWS='[[name, x, z, h, yaw, pitch], …]' (replaces the list below)
+import puppeteer from 'puppeteer-core'
+import fs from 'node:fs'
 const out = process.argv[2], tier = process.argv[3] || 'ultra'
-const b = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--mute-audio', '--window-size=1280,720'], defaultViewport: { width: 1280, height: 720 } })
+fs.mkdirSync(out, { recursive: true })
+const CHROME = process.env.CHROME || (process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+const ANGLE = process.platform === 'win32' ? 'd3d11' : 'metal'
+const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: [`--use-angle=${ANGLE}`, '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--mute-audio', '--window-size=1280,720'], defaultViewport: { width: 1280, height: 720 } })
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 300)) })
-await p.goto(`http://localhost:5200/?world=desert&tier=${tier}&hour=11&drive=0&dpr=fixed&time=0&weather=clear`, { waitUntil: 'load' })
-await p.waitForFunction(() => window.__oth && window.__oth.ready, { timeout: 120000, polling: 200 }).catch((e) => errs.push('not ready: ' + e.message))
+const hour = Number(process.env.HOUR || 11)
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?world=desert&tier=${tier}&hour=${hour}&drive=0&dpr=fixed&time=0&weather=clear&sound=0&save=0`, { waitUntil: 'load' })
+await p.waitForFunction(() => window.__oth && window.__oth.ready, { timeout: 180000, polling: 200 }).catch((e) => errs.push('not ready: ' + e.message))
+// (no HUD in a scored render: only the canvas and the vignette — a CSS gradient over it, part of the picture)
+await p.addStyleTag({ content: 'body > :not(canvas):not([style*="radial-gradient"]) { display: none !important; }' })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const shots = [
-  ['oasis_up_canyon', [-200, 330, 6, Math.PI / 2 + 0.25, 0.02]],     // from the lagoon looking west up the canyon (ss_7)
+const shots = JSON.parse(process.env.VIEWS || 'null')?.map(([n, ...v]) => [n, v]) ?? [
+  ['oasis_up_canyon', [-200, 330, 6, Math.PI / 2 + 0.25, 0.02]],     // from the lagoon looking west up the canyon
   ['oasis_down', [-900, 120, 30, -Math.PI / 2 + 0.1, -0.1]],          // from the head looking east over the oasis
   ['escarpment', [-120, 1700, 8, 0.0, -0.12]],                        // the pass road over the escarpment
   ['spires', [-600, -1000, 4, Math.PI / 2 + 0.6, 0.05]],              // the needle forest

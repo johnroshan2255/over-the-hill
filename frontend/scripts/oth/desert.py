@@ -50,6 +50,10 @@ RIVER_P = np.array([(-1640, 40), (-1380, 110), (-1100, 60), (-820, 180), (-520, 
 RIVER = spline(RIVER_P, 6.0)
 _racc = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(RIVER, axis=0).T))])
 RIVER_LEN = _racc[-1]
+# (its course on beyond the box, east to the world's edge: the far world's gorge — only there; the box keeps RIVER)
+RIVER_OUT = spline(np.array([(2400, 220), (2950, 330), (3600, 250), (4300, 420), (5100, 360), (6000, 520), (7000, 460),
+                             (8400, 600)], float), 16.0)
+RIVER_FAR = np.vstack([RIVER, RIVER_OUT[1:]])
 def river_x_at(s): return np.interp(s, _racc, RIVER[:, 0])
 # the canyon floor's half width (m) along the river: the head's amphitheatre, the wide oasis reach, the gorge
 def floor_hw(s):
@@ -114,8 +118,10 @@ def landforms(X, Z, inner=True):
     u2 = X * math.cos(wind + 0.9) + Z * math.sin(wind + 0.9); v2 = -X * math.sin(wind + 0.9) + Z * math.cos(wind + 0.9)
     saw = np.maximum(train(u, v, 210.0, SEED + 14), 0.65 * train(u2, v2, 140.0, SEED + 15))
     amp = 24 + 26 * smoothstep(-0.4, 0.4, fbm(X / 700, Z / 700, SEED + 12, 2))
-    erg = (1 - smoothstep(-250, 150, X)) * smoothstep(540, 720, Z) * (1 - smoothstep(1300, 1440, Z)) if inner else \
-        np.clip(smoothstep(2600, 3800, np.abs(X) + 0.3 * np.abs(Z)) * (0.5 + 0.5 * fbm(X / 3000, Z / 3000, SEED + 13, 2)), 0, 1)
+    # (the far world's erg carries the box's on west: it stopped at the box's edge — DESERT_MATCH.md §8)
+    band = (1 - smoothstep(-250, 150, X)) * smoothstep(540, 720, Z) * (1 - smoothstep(1300, 1440, Z))
+    erg = band if inner else \
+        np.maximum(band, np.clip(smoothstep(2600, 3800, np.abs(X) + 0.3 * np.abs(Z)) * (0.5 + 0.5 * fbm(X / 3000, Z / 3000, SEED + 13, 2)), 0, 1))
     H = H + saw * amp * erg
     return H, up, up2, erg
 
@@ -161,27 +167,32 @@ for (sx, sz, r, hgt) in SPIRES:
     H[m] = np.maximum(H[m], cone)
 
 # THE CANYON: carved along the river — the floor (its level just over the water), the walls rising to the plain or
-# the plateau over wall_w(s), then the beds terraced into them
+# the plateau over wall_w(s), then the beds terraced into them. One carving for the box (2 m) and the far world
+# (16 m): the river's gorge goes on east out of the box (DESERT_MATCH.md §8 — carved into the box only, it ended in
+# a 92 m wall at the box's edge).
+def carve_canyon(X, Z, H, L, chan=None, chan_depth=2.6):
+    """The canyon along the polyline L, cut into H. chan: the channel's (full, none) half widths (m; default the
+    river's own — the far world's 16 m cells need it wider to hold the water). Returns H, Dr (warped), DrW, Sr, fw."""
+    Dr, Sr, _ = polyline_field(X, Z, L, 520)
+    DrW = Dr.copy()   # (the river's own distance: its channel, its water, the banks — never warped)
+    # (BUTTRESSES and ALCOVES — the walls are never a straight face: the floor's edge pushed in and out by 60–90 m
+    #  every few hundred metres, smaller bays on those)
+    Dr = Dr + 70 * fbm(X / 260, Z / 260, SEED + 22, 3) + 22 * fbm(X / 70, Z / 70, SEED + 23, 2)
+    fw, ww = floor_hw(Sr), wall_w(Sr)
+    floor = river_surface(Sr) + 1.8 + 1.6 * fbm(X / 140, Z / 140, SEED + 20, 2) * smoothstep(0, 40, Dr - river_hw(Sr))
+    r = smoothstep(fw, fw + ww, Dr)
+    gorge = smoothstep(820, 900, X)
+    prof = (0.5 * smoothstep(0.0, 0.38, r) + 0.5 * smoothstep(0.62, 1.0, r)) * (1 - gorge) + r ** 0.5 * gorge
+    Hc = floor + (H - floor) * prof
+    H = np.where(Dr < 600, np.minimum(H, Hc), H)
+    # the river's channel and the banks: the water 1.2–2.5 m below the floor, gravel bars
+    rh = river_hw(Sr)
+    a, b = (rh * 0.7, rh * 1.35) if chan is None else chan
+    H = H - (1 - smoothstep(a, b, DrW)) * (chan_depth + 0.8 * fbm(X / 60, Z / 60, SEED + 21, 2))
+    return H, Dr, DrW, Sr, fw
+
 log('canyon')
-Dr, Sr, _ = polyline_field(X, Z, RIVER, 520)
-DrW = Dr.copy()   # (the river's own distance: its channel, its water, the banks — never warped)
-# (BUTTRESSES and ALCOVES — Over the Hill's walls are never a straight face: the floor's edge pushed in and out by
-#  60–90 m every few hundred metres, smaller bays on those)
-Dr = Dr + 70 * fbm(X / 260, Z / 260, SEED + 22, 3) + 22 * fbm(X / 70, Z / 70, SEED + 23, 2)
-fw, ww = floor_hw(Sr), wall_w(Sr)
-floor = river_surface(Sr) + 1.8 + 1.6 * fbm(X / 140, Z / 140, SEED + 20, 2) * smoothstep(0, 40, Dr - river_hw(Sr))
-r = smoothstep(fw, fw + ww, Dr)
-gorge = smoothstep(820, 900, X)
-prof = (0.5 * smoothstep(0.0, 0.38, r) + 0.5 * smoothstep(0.62, 1.0, r)) * (1 - gorge) + r ** 0.5 * gorge
-Hc = floor + (H - floor) * prof
-# the head: a box canyon closing at the waterfall's cliff (the river starts at its pool)
-head = smoothstep(-1560, -1720, X)
-Hc = np.where(Dr < 600, np.minimum(H, Hc), H)
-H = Hc
-# the river's channel and the banks: the water 1.2–2.5 m below the floor, gravel bars
-rh = river_hw(Sr)
-chan = 1 - smoothstep(rh * 0.7, rh * 1.35, DrW)
-H = H - chan * (2.6 + 0.8 * fbm(X / 60, Z / 60, SEED + 21, 2))
+H, Dr, DrW, Sr, fw = carve_canyon(X, Z, H, RIVER)
 # the LAGOON: a basin carved to below its level
 c_, s_ = math.cos(LAGOON['rot']), math.sin(LAGOON['rot'])
 lx = (X - LAGOON['cx']) * c_ + (Z - LAGOON['cz']) * s_
@@ -213,6 +224,9 @@ HF, _, _, _ = landforms(XF, ZF, inner=False)
 ring = smoothstep(2300, 3400, np.maximum(np.abs(XF), np.abs(ZF)))
 mes = smoothstep(0.05, 0.2, fbm(XF / 1400, ZF / 1400, SEED + 40, 3))
 HF = HF + ring * mes * (120 + 140 * smoothstep(0, 0.5, fbm(XF / 2600, ZF / 2600, SEED + 41, 2)))
+# the RIVER'S GORGE goes on out of the box, east to the world's edge (RIVER_OUT): the same canyon, its channel wide and
+# deep enough for 16 m cells to hold the water (meta water.riverOut draws it)
+HF, _, _, _, _ = carve_canyon(XF, ZF, HF, RIVER_FAR, chan=(16.0, 30.0), chan_depth=4.0)
 gzf, gxf = np.gradient(HF, 16.0)
 HF = HF + (terrace(HF, 0.4) - HF) * smoothstep(0.3, 0.7, np.hypot(gxf, gzf))
 
@@ -475,6 +489,11 @@ spawn = {'x': GATE['x'], 'z': GATE['z'] - 30, 'yaw': 0.0}
 
 # ---------------------------------------------------------------------------------------------------------- write
 k0 = int(round((FAR_HALF - HALF) / 16))
+# THE SEAM (DESERT_MATCH.md §8): within 256 m outside the box the far world eases from the box's own heights at its
+# edge (each far cell's nearest point on it) into its own — the 2 m heights and the 16 m ones meet without a step
+dout = np.maximum(np.abs(XF), np.abs(ZF)) - HALF
+edge = bilinear(H, HALF, np.clip(XF, -HALF, HALF), np.clip(ZF, -HALF, HALF))
+HF = np.where(dout > 0, edge + (HF - edge) * smoothstep(0, 256, dout), HF)
 HF[k0:k0 + 257, k0:k0 + 257] = H[::8, ::8]
 os.makedirs(OUT, exist_ok=True)
 def u16(A):
@@ -499,6 +518,9 @@ meta = {
         'river': {'x': [round(float(v), 2) for v in rv[:, 0]], 'z': [round(float(v), 2) for v in rv[:, 1]],
                   'y': [round(float(v), 3) for v in river_surface(rs)], 'hw': [round(float(v), 2) for v in river_hw(rs)]},
         'falls': falls,
+        # the river on beyond the box (drawn only — Water.ts): downstream first, at the gorge's level
+        'riverOut': {'x': [round(float(v), 2) for v in RIVER_OUT[::-3, 0]], 'z': [round(float(v), 2) for v in RIVER_OUT[::-3, 1]],
+                     'y': [round(float(river_surface(RIVER_LEN)), 3)] * len(RIVER_OUT[::-3]), 'hw': [round(float(river_hw(RIVER_LEN)), 2)] * len(RIVER_OUT[::-3])},
     },
     'spawn': spawn,
     'gate': GATE,

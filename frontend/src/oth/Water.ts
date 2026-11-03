@@ -66,11 +66,18 @@ export class Water {
     const m = new GFX.Mesh(g, still)
     m.renderOrder = 5
     this.group.add(m)
-    // the river and the streams: ribbons (the banks clip them), downstream toward index 0 — one draw for all of them
-    const r = map.meta.water.river
+    // the river (and on beyond the box, where the desert's gorge goes on) and the streams: ribbons (the banks clip
+    // them) — one draw for all of them
+    const r = map.meta.water.river, out = map.meta.water.riverOut
     const streams = map.meta.water.streams ?? []
-    this.group.add(ribbons([{ ...r, widen: 1.75 }, ...streams.map((S) => ({ ...S, widen: 1.6 }))], flowing))
+    this.group.add(ribbons([{ ...r, widen: 1.75 }, ...(out ? [{ ...out, widen: 1.75 }] : []), ...streams.map((S) => ({ ...S, widen: 1.6 }))].map(downstreamFirst), flowing))
   }
+}
+
+/** A line as the ribbons take it, downstream first: the valley's river and streams are written that way, the desert's
+ *  river from its head (104 m) down to the gorge (66 m) — read as it was, it flowed uphill and its rapids were still. */
+function downstreamFirst<L extends { x: number[]; z: number[]; y: number[]; hw: number[] }>(L: L): L {
+  return L.y[0] > L.y[L.y.length - 1] ? { ...L, x: [...L.x].reverse(), z: [...L.z].reverse(), y: [...L.y].reverse(), hw: [...L.hw].reverse() } : L
 }
 
 /** Flowing-water ribbons, one mesh: each along x / z (surface y, half width hw × widen each side), downstream toward

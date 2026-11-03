@@ -20,7 +20,7 @@ const V = JSON.parse(process.env.VIEWS || 'null') ?? [
   ['top', 1102, -1900, 2.2, 0, 0.0, 16.5],
   ['gate', 1102, -1985, 2.2, 0, 0.0, 16.5],
 ]
-await p.goto(`http://localhost:5200/?tier=${tier}&drive=0&dpr=fixed&time=0&hour=16.5&world=${process.env.WORLD || 'valley'}${process.env.Q ? '&' + process.env.Q : ''}`, { waitUntil: 'load' })
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=${tier}&drive=0&dpr=fixed&time=0&hour=16.5&world=${process.env.WORLD || 'valley'}&sound=0&save=0${process.env.Q ? '&' + process.env.Q : ''}`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready, { timeout: 120000, polling: 200 })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 for (const [name, x, z, h, yaw, pitch, hour] of V) {
@@ -28,7 +28,7 @@ for (const [name, x, z, h, yaw, pitch, hour] of V) {
   await sleep(2500)
   const s = await p.evaluate(() => ({ ...window.__oth.stats(), mist: window.__oth.crossing.mist, state: window.__oth.crossing.state }))
   await p.screenshot({ path: `${dir}/${name}.png` })
-  console.log(name.padEnd(12), `fps ${s.fps.toFixed(0)} gpu ${s.gpuMs.toFixed(2)} draws ${s.draws} tris ${(s.tris / 1e3).toFixed(0)}k  mist ${s.mist.toFixed(2)} ${s.state}  pos ${s.pos} ground ${s.ground}`)
+  console.log(name.padEnd(12), `fps ${s.fps.toFixed(0)} cpu ${s.cpuMs?.toFixed(2)} draws ${s.draws} tris ${(s.tris / 1e3).toFixed(0)}k  mist ${s.mist?.toFixed?.(2)} ${s.state}  pos ${s.pos} ground ${s.ground}`)
 }
 console.log('errors:', errs.length ? errs : 'none')
 await b.close()

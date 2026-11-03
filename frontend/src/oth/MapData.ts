@@ -42,6 +42,9 @@ export interface MapMeta {
     /** The ponds and small lakes (scripts/oth/terrain.py): each a flat disc of water at its level in its bowl. */
     ponds?: Pond[]
     river: { x: number[]; z: number[]; y: number[]; hw: number[] }
+    /** The river on beyond the box (the desert's gorge, out to the world's edge — scripts/oth/desert.py): drawn only,
+     *  downstream first. */
+    riverOut?: { x: number[]; z: number[]; y: number[]; hw: number[] }
     /** Mountain STREAMS (scripts/oth/terrain.py): centre line from the mouth (index 0) up to the source, the surface
      *  height and half width along it — rapids, falling over WATERFALLS where they drop off a step. */
     streams?: { x: number[]; z: number[]; y: number[]; hw: number[] }[]

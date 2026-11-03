@@ -155,6 +155,22 @@ def add_band(R, closed, level):
     cv = cells.setdefault(key, [[], [], 0])
     cv[0].append(V); cv[1].append(Q + cv[2]); cv[2] += len(V)
 
+def riser_runs(R, ok, closed):
+    """The stretches of a contour line R where `ok` (its ground a riser): the whole line if it is all ok, else each
+    run of ok points as an open line."""
+    if ok.all():
+        yield R, closed
+        return
+    if closed:   # (start at a gap: a run never wraps round the ends)
+        k = int(np.argmin(ok)); R = np.roll(R, -k, 0); ok = np.roll(ok, -k)
+    i, n = 0, len(R)
+    while i < n:
+        if not ok[i]: i += 1; continue
+        j = i
+        while j < n and ok[j]: j += 1
+        yield R[i:j], False
+        i = j
+
 log('contours and bands')
 lo, hi = math.floor(F[STEEP].min() / BED), math.ceil(F[STEEP].max() / BED)
 nb = 0
@@ -163,11 +179,18 @@ for kb in range(lo, hi + 1):
     for P, closed in contours(level):
         R, t_ = resample_line(P, closed, 5.0)
         if R is None: continue
-        # (a spire's tip — a loop under ~50 m round — and short open scraps make shards, not slabs: skipped)
-        L_ = len(R) * 5.0
-        if (closed and L_ < 50) or (not closed and L_ < 24): continue
-        add_band(R, closed, level)
-        nb += 1
+        # (only where the ground falls steeply ACROSS the line — a riser: where a contour turns across a narrow slot's
+        #  or a cut's gentle floor, the 4 m gradient there is its walls', along the line, and the band stood up out of
+        #  the floor as a 10 m plate — DESERT_MATCH.md §8)
+        tg = (np.roll(R, -1, 0) - np.roll(R, 1, 0)) if closed else np.gradient(R, axis=0)
+        tg /= np.linalg.norm(tg, axis=1)[:, None] + 1e-9
+        across = np.abs(-sample(gx, R[:, 0], R[:, 1]) * tg[:, 1] + sample(gz, R[:, 0], R[:, 1]) * tg[:, 0])
+        for R_, closed_ in riser_runs(R, across > 0.5, closed):
+            # (a spire's tip — a loop under ~50 m round — and short open scraps make shards, not slabs: skipped)
+            L_ = len(R_) * 5.0
+            if (closed_ and L_ < 50) or (not closed_ and L_ < 24): continue
+            add_band(R_, closed_, level)
+            nb += 1
 log(f'  {nb} bands in {len(cells)} cells, {sum(c[2] for c in cells.values())} vertices')
 
 # ---------------------------------------------------------------------------------------------------------- structures
