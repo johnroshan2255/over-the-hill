@@ -111,7 +111,7 @@ for p in SPEC:
     else:
         img = bpy.data.images.new(p['name'], sheet.shape[1], sheet.shape[0], alpha=False)
         img.pixels.foreach_set(np.concatenate([sheet[::-1], np.ones(sheet.shape[:2] + (1,), np.float32)], -1).ravel())
-        img.filepath_raw = os.path.join(OUT, p['name'] + '.jpg'); img.file_format = 'JPEG'; img.save()
+        img.filepath_raw = os.path.abspath(os.path.join(OUT, p['name'] + '.jpg')); img.file_format = 'JPEG'; img.save()
 total = sum(r['score'] for r in results) / max(len(results), 1)
 print(f'OVERALL {total:.1f}')
 json.dump(dict(overall=round(total, 1), pairs=results), open(os.path.join(OUT, 'scores.json'), 'w'), indent=1)

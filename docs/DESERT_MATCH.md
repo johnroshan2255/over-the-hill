@@ -7,6 +7,12 @@ terrain walls. Score 0 … 100, 100 = exactly Over the Hill's desert and oasis; 
 This is the hand-off for that work. It covers how the valley was matched, how to run the same loop on the desert, and
 where to make each kind of fix. Read `CLAUDE.md` and `docs/ARCHITECTURE.md` first.
 
+> **2026-11-03: the references are REAL deserts, not another game.** The loop below scores our desert against openly
+> licensed photographs of real Saharan / Arabian sandstone country (Tassili n'Ajjer and the Iherir oasis in Algeria,
+> Wadi Rum in Jordan) — not against Over the Hill's screenshots, and nothing is placed to copy their layout. The method
+> (pairs, the 0–100 score, one change per round) is unchanged; §3–§5 describe the current reference set, pairs and
+> views, §10 the rounds.
+
 ---
 
 ## 1. The scale: what the score means
@@ -64,104 +70,100 @@ npm run dev                      # the game on http://localhost:5200 (the harnes
 
 ---
 
-## 3. Step 1: the reference set (OTH's desert)
+## 3. Step 1: the reference set (real deserts)
 
-```bash
-mkdir -p scripts/oth/.cache/ref/desert && cd scripts/oth/.cache/ref/desert
-# list every store screenshot (full size, 1920×1080); the desert ones were [7..13] on 2026-11-02 — check by eye
-curl -s "https://store.steampowered.com/api/appdetails?appids=2929250" \
-  | python3 -c "import sys,json; [print(i, s['path_full']) for i, s in enumerate(json.load(sys.stdin)['2929250']['data']['screenshots'])]"
-curl -sL -o ss_07.jpg "<path_full of [7]>"     # … one per desert shot
-cd -
-```
+Openly licensed photographs from Wikimedia Commons (1920 px), kept in `scripts/oth/.cache/ref/desert/` (git-ignored;
+`README.txt` there lists each one's source page, author and licence). To rebuild it: search the Commons API
+(`action=query&generator=search&gsrnamespace=6&prop=imageinfo&iiprop=url|size|extmetadata&iiurlwidth=1920`, a
+descriptive User-Agent), download the `thumburl`s, and write README.txt. The connection here was slow (≈ 25–70 KB/s):
+1920 px is enough — the scorer resizes every region to 480 × 270.
 
-More references, if you need them:
-- **The racinggames.gg Algeria reveal image.**
-- **Frames from OTH's desert gameplay videos** (`yt-dlp` + `ffmpeg -ss <t> -i video.mp4 -frames:v 1 f_<t>.png`). Pick
-  frames at a *driver's height*, in daylight, clear weather, with no HUD in the region you crop.
+| file | Commons file | author, licence | shows | pairs |
+|---|---|---|---|---|
+| c21 | [Djanet Ihrir 1.jpg](https://commons.wikimedia.org/wiki/File:Djanet_Ihrir_1.jpg) | Kamachu87, CC BY-SA 4.0 | the Iherir oasis canyon: water between slabs, reeds, palms, walls both sides | frame, sky |
+| c35 | [Wadi rum desert.jpg](https://commons.wikimedia.org/wiki/File:Wadi_rum_desert.jpg) | Peter Chisholm, CC0 | red-orange open sand, sandstone domes | sand_open |
+| c32 | [Wadi Rum 01.jpg](https://commons.wikimedia.org/wiki/File:Wadi_Rum_01.jpg) | Bernard Gagnon, CC BY-SA 3.0 | a compacted sand track with ruts, a slab outcrop | sand_track |
+| c33 | [Wadi Rum 03.jpg](https://commons.wikimedia.org/wiki/File:Wadi_Rum_03.jpg) | Bernard Gagnon, CC BY-SA 3.0 | a sunlit stacked-slab formation on sand | rock_sun |
+| c27 | [Tassili Desert Algeria.jpg](https://commons.wikimedia.org/wiki/File:Tassili_Desert_Algeria.jpg) | magharebia, CC BY 2.0 | sandstone towers, faces in shade, a sand floor | rock_shade |
+| c22 | [Djanet Ihrir 4.jpg](https://commons.wikimedia.org/wiki/File:Djanet_Ihrir_4.jpg) | Kamachu87, CC BY-SA 4.0 | close stacked beds over water | slabs_close |
+| c30 | [Tassili N'Ajjer National Park (49465145453).jpg](https://commons.wikimedia.org/wiki/File:Tassili_N%27Ajjer_National_Park_(49465145453).jpg) | hanming_huang from Singapore, CC BY-SA 2.0 | towers on a rubble hill against the sky | spires |
+| c15 | [Ihrir.jpg](https://commons.wikimedia.org/wiki/File:Ihrir.jpg) | Yacine james, CC BY-SA 4.0 | a guelta among sandstone slabs | oasis_water |
+| c20 | [Ihrir 8.jpg](https://commons.wikimedia.org/wiki/File:Ihrir_8.jpg) | Yacine james, CC BY-SA 4.0 | palms and reeds round a pool, a wall behind | palms |
+| c16 | [Ihrir 3.jpg](https://commons.wikimedia.org/wiki/File:Ihrir_3.jpg) | Yacine james, CC BY-SA 4.0 | green scrub and palms along the water | scrub |
+| c37 | [Wadi Rum, Jordan, Infinite spaces.jpg](https://commons.wikimedia.org/wiki/File:Wadi_Rum,_Jordan,_Infinite_spaces.jpg) | Vyacheslav Argenberg, CC BY 4.0 | far massifs in haze over a plain | far_haze |
+| c40 | [Wadi Rum 077.JPG](https://commons.wikimedia.org/wiki/File:Wadi_Rum_077.JPG) | Zairon, CC BY-SA 3.0 | a natural sandstone arch (rock bridge) | arch |
 
-For every reference write one line in `scripts/oth/.cache/ref/desert/README.txt`: what it shows (oasis river, slab
-wall, spires, arch, gorge, aqueduct, dunes), the time of day, and the camera (height, looking up / down / level). You
-need those to stage our matching view.
+(`scripts/oth/.cache/ref/desert/candidates.json` holds the full shortlist — 43 photos — with each one's page,
+author and licence; README.txt the twelve in use.)
 
-What their desert shows (NEXT.md, "Reference"):
-- an **oasis river** winding along a canyon floor (palms, green scrub, round bushes on pale orange sand)
-- **red sandstone of stacked slabs** (flat tops, rounded edges)
-- tall pointed **spires** and a **natural arch** the track drives over
-- a deep **gorge** of huge blocks with rapids and a plank rope bridge
-- a **Roman aqueduct** by an oasis lagoon, and **dunes**
-- hot pink sunsets and a purple starry night
-
-Measured on their day shots: whole frame ≈ sRGB 213 175 158; sky ≈ 229 244 251; sand ≈ 213 173 128; rock in sun
-≈ 213 140 111, in shade ≈ 181 116 99; warm pixels 55–68 % of a frame.
+What a real desert of this kind shows, and the score has to see: a DEEP BLUE sky paling to the horizon; saturated
+orange-red sand with ripples and footprints; sandstone weathered grey-tan to golden, dark in shade, with strong
+contrast; dark olive water in the gueltas; grey-green scrub, reeds, palms; far massifs in a pale haze.
 
 ---
 
 ## 4. Step 2: the pairs (what gets scored)
 
-A pair is one *region*: the same kind of thing in their shot and in ours. Start with these 12. They are what
-makes the desert read as theirs:
+A pair is one *region*: the same kind of thing in the photo and in ours. 13 pairs
+(`scripts/oth/.cache/desert/pairs.json`; rects are fractions of the image, x0, y0, x1, y1, top-left origin):
 
-| pair | region in their shot | our view |
+| pair | photo, rect | ours, rect |
 |---|---|---|
-| `frame` | the whole frame of the oasis shot | `oasis_up_canyon` |
-| `sky` | the open sky | any view, top 20 % |
-| `sand_open` | open sand, sunlit, middle distance | `dunes` |
-| `sand_track` | the track's compacted sand near the camera | a view on a track |
-| `rock_sun` | a sunlit sandstone wall | `escarpment` |
-| `rock_shade` | a wall in shade | `escarpment` / `gorge` |
-| `slabs_close` | stacked slab beds, close (their flat-topped layers) | a view at a formation |
-| `spires` | the spires against the sky | `spires` |
-| `oasis_water` | the river / lagoon surface | `oasis_up_canyon` |
-| `palms` | the palm grove | `oasis_up_canyon` |
-| `scrub` | green scrub / round bushes on sand | oasis floor |
-| `far_haze` | the far escarpment in the haze | `aerial` / `escarpment` |
-
-`scripts/oth/.cache/desert/pairs.json` lists them. The rects are fractions of the image (x0, y0, x1, y1), top-left
-origin:
-
-```json
-[
-  { "name": "sand_open",  "ref": "scripts/oth/.cache/ref/desert/ss_09.jpg", "refRect": [0.05, 0.62, 0.45, 0.95],
-                          "ours": "scripts/oth/.cache/desert/r00/dunes.png", "oursRect": [0.10, 0.60, 0.50, 0.95] },
-  { "name": "rock_sun",   "ref": "scripts/oth/.cache/ref/desert/ss_07.jpg", "refRect": [0.55, 0.20, 0.95, 0.55],
-                          "ours": "scripts/oth/.cache/desert/r00/escarpment.png", "oursRect": [0.50, 0.25, 0.90, 0.60] }
-]
-```
+| `frame` | c21 [0, .125, 1, .875] (a 16:9 cut) | oasis_up_canyon [0, 0, 1, 1] |
+| `sky` | c21 [.4, .02, .85, .28] | oasis_up_canyon [.45, .02, .98, .3] |
+| `sand_open` | c35 [0, .7, 1, 1] | spires [0, .62, 1, 1] |
+| `sand_track` | c32 [.3, .78, 1, 1] | track [.25, .72, .9, 1] |
+| `rock_sun` | c33 [.33, .22, .98, .62] | oasis_up_canyon [0, .1, .35, .55] |
+| `rock_shade` | c27 [.64, .1, 1, .55] | escarpment_face [0, .1, 1, .55] |
+| `slabs_close` | c22 [.62, .02, 1, .62] | mesa_face [0, .1, .8, .62] |
+| `spires` | c30 [.28, .25, .78, .7] | spires [.12, 0, .95, .58] |
+| `oasis_water` | c15 [.3, .72, 1, .9] | oasis_up_canyon [.05, .6, .95, 1] |
+| `palms` | c20 [0, .2, 1, .42] | grove [0, .18, 1, .52] (fresh round 0 with this rect: the first, half sky, fell with a bluer sky) |
+| `scrub` | c16 [.32, .38, 1, .66] | grove [0, .55, 1, .9] |
+| `far_haze` | c37 [0, .08, 1, .47] | dunes [0, .2, 1, .42] |
+| `arch` | c40 [0, .48, 1, .92] | arch_slot [.3, .25, .6, .55] |
 
 Rules for a fair pair:
-- **Same thing at the same scale:** a wall 200 m away in theirs, about 200 m away in ours.
-- **Same light:** match their time of day with `hour=`, and use clear weather.
-- **No HUD inside the rect.** Our renders hide it; crop theirs clear of it.
-- **Keep the rects fixed across rounds**, or scores can't be compared. Change a rect only with a fresh round 0.
+- **Same thing at the same scale:** a wall 200 m away in the photo, about 200 m away in ours.
+- **Same light:** midday-ish photos — our renders are at hour 11, clear weather.
+- **No HUD inside the rect.** desertshot.mjs hides it.
+- **Keep the rects fixed across rounds**, or scores can't be compared. Change a rect only with a fresh round 0
+  (re-score every kept render with the new rect).
 
 ---
 
 ## 5. Step 3: render our views
 
-The views are `[name, x, z, h (m above ground), yaw, pitch, hour]`. `yaw 0` looks NORTH (−z); to face (tx, tz) from
+The views are `[name, x, z, h (m above ground), yaw, pitch]`. `yaw 0` looks NORTH (−z); to face (tx, tz) from
 (x, z), use `yaw = atan2(−(tx−x), −(tz−z))`.
 
 ```bash
-# the 8 views placed to match their shots (scripts/harness/desertshot.mjs — 1280×720, hour 11, clear, ULTRA)
-node scripts/harness/desertshot.mjs scripts/oth/.cache/desert/r00
-# or your own views at any hour (cliffshot.mjs):
-WORLD=desert VIEWS='[["oasis",-200,330,6,1.82,0.02,11],["slabs",-150,1650,3,0.2,0.05,16]]' \
-  node scripts/harness/cliffshot.mjs scripts/oth/.cache/desert/r00 ultra
+# a whole round: render the 11 views into rNN, score into sNN, print each pair's change from the round before
+# (needs `npm run dev` — PORT=5299 for a private one; Blender 5.2 runs the scorer)
+bash scripts/oth/.cache/desert/round.sh 07          # (the round before: 06; or give it: round.sh 07 05)
+# the views alone (scripts/harness/desertshot.mjs — 1280×720, hour 11, clear, ULTRA, no HUD; PORT, HOUR, VIEWS env):
+PORT=5299 node scripts/harness/desertshot.mjs scripts/oth/.cache/desert/r00
 ```
+
+(`round.sh` lives in the git-ignored cache: it is three commands — desertshot.mjs into rNN, pairs.json with r00 →
+rNN, `blender -b --factory-startup --python scripts/oth/compare.py -- SPEC=… OUT=sNN` — and a node one-liner
+printing the deltas.)
 
 `desertshot.mjs` views (x, z, h, yaw, pitch):
 
 | view | x, z, h, yaw, pitch | note |
 |---|---|---|
-| oasis_up_canyon | −200, 330, 6, π/2+0.25, 0.02 | like their ss_7 |
-| oasis_down | −900, 120, 30, −π/2+0.1, −0.1 | |
-| escarpment | −120, 1700, 8, 0, −0.12 | |
-| spires | −600, −1000, 4, π/2+0.6, 0.05 | |
-| arch | 1000, −700, 6, −π/2+0.2, 0 | |
-| dunes | −800, 1150, 5, π/2+0.3, −0.02 | |
-| gorge | 1420, 120, 40, π, −0.35 | |
-| aerial | 0, 900, 420, π, −0.45 | |
+| oasis_up_canyon | −200, 330, 6, π/2+0.25, 0.02 | from the lagoon up the canyon |
+| oasis_down | −900, 120, 30, −π/2+0.1, −0.1 | over the oasis from its head |
+| escarpment_face | 600, 1250, 2, π, 0.12 | the escarpment's face from the plain (the doc's first view sat in the crossing's mist) |
+| spires | −600, −1000, 4, π/2+0.6, 0.05 | the Needle Forest |
+| arch_slot | 1166, −540, 1.7, −0.09, 0.22 | up the slot to the arch (the first view missed it) |
+| dunes | −1150, 1150, 25, 1.2, −0.12 | over the erg (the first stood against a slip face) |
+| gorge | 1420, 120, 40, π, −0.35 | over the gorge |
+| aerial | 0, 900, 420, π, −0.45 | the desert from the south |
+| track | 759.6, 1086.4, 1.7, 2.40, −0.1 | on the plain's track |
+| mesa_face | 420, 1040, 1.7, 0, 0.12 | a mesa's stacked beds, 70 m off |
+| grove | −700, 140, 1.7, π/2, 0.02 | in the palm grove by the river |
 
 Always render **every view of the round** with the same build, tier and hour.
 
@@ -266,9 +268,10 @@ Fix these **before** scoring; a broken edge ruins every view that sees it.
 
 ## 10. Score log
 
-| round | date | change | sky | sand_open | sand_track | rock_sun | rock_shade | slabs_close | spires | oasis_water | palms | scrub | far_haze | frame | overall |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 0 | | baseline (desert as of 2026-11-03) | | | | | | | | | | | | | |
+| round | date | change | frame | sky | sand_open | sand_track | rock_sun | rock_shade | slabs_close | spires | oasis_water | palms | scrub | far_haze | arch | overall |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 2026-11-03 | baseline: the desert after §8 (terrain integrity), real-desert references | 36.4 | 33.4 | 32.0 | 35.0 | 44.6 | 40.7 | 23.1 | 45.4 | 21.9 | 58.5 | 23.3 | 27.0 | 45.5 | **35.9** |
+| 1 | 2026-11-03 | the day sky a desert blue (Atmosphere.ts: zenith deep blue, horizon pale blue — was a pale cyan-white) | 43.3 | 60.4 | 33.6 | 35.5 | 47.6 | 48.1 | 23.2 | 54.3 | 24.3 | 61.9 | 24.2 | 31.5 | 49.8 | **41.4** |
 
 ---
 

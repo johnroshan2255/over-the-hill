@@ -202,10 +202,11 @@ export class Atmosphere {
       const day = GFX.MathUtils.smoothstep(s, 0.12, 0.35) * dk, low = GFX.MathUtils.smoothstep(s, -0.04, 0.06) * (1 - day) * dk
       const zl = 0.2126 * u.uSkyZenith.value.r + 0.7152 * u.uSkyZenith.value.g + 0.0722 * u.uSkyZenith.value.b
       const hl = 0.2126 * u.uSkyHorizon.value.r + 0.7152 * u.uSkyHorizon.value.g + 0.0722 * u.uSkyHorizon.value.b
-      // (2026-11-02, frame stats vs theirs: our sky a warm grey 216 209 209, theirs a pale cyan-white 229 244 251 —
-      //  the zenith further to cyan, the horizon a cool white, not cream)
-      u.uSkyZenith.value.lerp(u.uSkyHorizon.value, 0.45 * day).lerp(D_CYAN.clone().multiplyScalar(zl * 1.08), 0.6 * day)
-      u.uSkyHorizon.value.lerp(D_CREAM.clone().multiplyScalar(hl * 1.14), 0.78 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.1), 0.45 * low)
+      // (2026-11-03, DESERT_MATCH round 1 — measured on real Saharan skies (Tassili n'Ajjer, Wadi Rum): a deep blue
+      //  overhead paling to a light blue at the horizon, ≈ sRGB 125 181 254 some 25° up; ours was a pale cyan-white,
+      //  214 224 233 — the zenith to the deep blue, the horizon to a pale blue, both at the keyframe's brightness)
+      u.uSkyZenith.value.lerp(D_BLUE.clone().multiplyScalar(zl), 0.85 * day)
+      u.uSkyHorizon.value.lerp(D_PALEBLUE.clone().multiplyScalar(hl * 0.85), 0.8 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.1), 0.45 * low)
       u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 1.3), 0.55 * dk * (1 - GFX.MathUtils.smoothstep(s, -0.25, 0.0)))
     }
     for (const c of [u.uSkyZenith.value, u.uSkyHorizon.value]) {
@@ -263,8 +264,8 @@ export class Atmosphere {
 }
 
 /** The desert's grade (Atmosphere.desert): colours of unit luminance-ish, scaled to the keyframe's brightness. */
-const D_CYAN = new GFX.Color(0.8, 1.0, 1.12)
-const D_CREAM = new GFX.Color(0.94, 1.0, 1.04) // (a cool white now: their horizon is pale cyan, never cream)
+const D_BLUE = new GFX.Color(0.25, 0.6, 1.65) // (a clear desert zenith: deep blue)
+const D_PALEBLUE = new GFX.Color(0.75, 1.0, 1.25) // (its horizon: a pale blue, never white or cream)
 const D_PINK = new GFX.Color(1.5, 0.62, 0.78)
 const D_PURPLE = new GFX.Color(0.75, 0.42, 1.1)
 const D_SANDHAZE = new GFX.Color(1.12, 0.96, 0.82)
