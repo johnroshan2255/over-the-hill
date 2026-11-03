@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import { Birds } from './Birds'
 import { Bridges } from './Bridges'
@@ -37,16 +37,16 @@ export const WORLDS: Record<WorldId, { path: string; name: string }> = {
 }
 
 export interface WorldEnv {
-  renderer: THREE.WebGLRenderer
+  renderer: GFX.WebGLRenderer
   /** The view and the scene the world will be drawn in (its shaders compiled for them before it's entered). */
-  camera: THREE.PerspectiveCamera
-  scene: THREE.Scene
+  camera: GFX.PerspectiveCamera
+  scene: GFX.Scene
   atmos: Atmosphere
   tier: Tier
   /** The terrain shadow (lasts across worlds; set to each world's ground in turn — World.adopt). */
   shadow: TerrainShadow
   /** The far grid every world's materials read (the same Vector4 always: the car's material holds it). */
-  farGrid: THREE.Vector4
+  farGrid: GFX.Vector4
   birds: boolean
   occlusion: boolean
   /** The supply crates already picked up (the journal). */
@@ -54,7 +54,7 @@ export interface WorldEnv {
 }
 
 export class World {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   /** How long each step took to build (ms) — the dev stats, the crossing's budget. */
   readonly timings: Record<string, number> = {}
   private constructor(
@@ -104,7 +104,7 @@ export class World {
     }
     const { atmos, tier, shadow } = env
     await step('shadow', () => (background ? shadow.prepare(map) : shadow.setMap(map)))
-    let farGrid = new THREE.Vector4()
+    let farGrid = new GFX.Vector4()
     const terrain = await step('terrain', () => {
       const t = new Terrain(map, atmos, tier, shadow)
       // (the far grid the car's material holds: this world's values in the same Vector4 — at once, or at the swap)
@@ -154,10 +154,10 @@ export class World {
     if (formations) w.group.add(formations.group)
     // WARM: its textures on the GPU (one a frame — ~35 MB went up in the first frame after a swap) and its shaders
     // compiled (in parallel where the browser can) before it's ever drawn
-    const textures = new Set<THREE.Texture>()
+    const textures = new Set<GFX.Texture>()
     w.group.traverse((o) => {
-      const m = (o as THREE.Mesh).material as THREE.ShaderMaterial | undefined
-      if (m?.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k]?.value; if (v instanceof THREE.Texture) textures.add(v) }
+      const m = (o as GFX.Mesh).material as GFX.ShaderMaterial | undefined
+      if (m?.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k]?.value; if (v instanceof GFX.Texture) textures.add(v) }
     })
     for (const t of textures) await step('upload', () => env.renderer.initTexture(t))
     const tc = performance.now()
@@ -168,7 +168,7 @@ export class World {
   }
 
   /** This world's far grid values (the shared Vector4 takes them when it's entered). */
-  private readonly farGrid = new THREE.Vector4()
+  private readonly farGrid = new GFX.Vector4()
 
   /** What lasts across worlds set to this one (entering it — main.ts): the terrain shadow to its ground and trees,
    *  the shared far grid to its values. */
@@ -179,7 +179,7 @@ export class World {
   }
 
   /** What's drawn this frame: each system's own culling and lists (the camera has moved). */
-  update(camera: THREE.PerspectiveCamera, dt: number, t: number, lamps: number, fire: THREE.Vector4, carX: number, carZ: number): void {
+  update(camera: GFX.PerspectiveCamera, dt: number, t: number, lamps: number, fire: GFX.Vector4, carX: number, carZ: number): void {
     this.props.fireLight(camera.position, t, lamps, fire)
     this.birds?.update()
     this.glow?.update(camera, dt)
@@ -200,16 +200,16 @@ export class World {
   /** Everything this world made goes back: geometries, materials, the textures they read (but not `keep` — the
    *  sky's noise, the terrain shadow's: they last), the impostor atlas, the glow's page overlay. The group leaves the
    *  scene; the JS objects go with the last reference. */
-  dispose(keep: Set<THREE.Texture>): void {
+  dispose(keep: Set<GFX.Texture>): void {
     this.group.removeFromParent()
-    const textures = new Set<THREE.Texture>()
-    const take = (v: unknown) => { if (v instanceof THREE.Texture && !keep.has(v) && !v.userData.shared) textures.add(v) }
+    const textures = new Set<GFX.Texture>()
+    const take = (v: unknown) => { if (v instanceof GFX.Texture && !keep.has(v) && !v.userData.shared) textures.add(v) }
     this.group.traverse((o) => {
-      const m = o as THREE.Mesh
+      const m = o as GFX.Mesh
       m.geometry?.dispose()
       for (const mat of m.material ? (Array.isArray(m.material) ? m.material : [m.material]) : []) {
         for (const v of Object.values(mat as unknown as Record<string, unknown>)) take(v)
-        const u = (mat as THREE.ShaderMaterial).uniforms
+        const u = (mat as GFX.ShaderMaterial).uniforms
         if (u) for (const k in u) take(u[k]?.value)
         mat.dispose()
       }

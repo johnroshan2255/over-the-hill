@@ -1,10 +1,9 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { isMobileDevice } from '../rendering/quality/DeviceProfile'
 import { loadJournal, REWARD, saveJournal } from '../journal'
 import { type Camp, continueRequested, loadProgress, requestContinue, saveProgress } from '../save'
 import { gameParams } from '../settings'
 import { Menu } from '../ui/Menu'
-import { installToneMap } from './toneMap'
 import { Atmosphere } from './Atmosphere'
 import { OthAudio } from './Audio'
 import { Dust } from './Dust'
@@ -18,7 +17,6 @@ import { MapView } from './MapView'
 import { Guide, Obstacles } from './Nav'
 import { OthPhysics } from './Physics'
 import { createPaintTexture } from './noiseTex'
-import { Post } from './Post'
 import { Rain } from './Rain'
 import { pickTier } from './quality'
 import { Radar } from './Radar'
@@ -52,24 +50,19 @@ const tier = pickTier()
 const status = document.getElementById('status')!
 
 async function boot() {
-  // REVERSED-Z (the user: no Z-fighting far away): depth 1 at the near plane … 0 at the far one, in Post's 32-bit float
-  // depth (Post.ts) — even precision from 0.3 m to the horizon (24-bit standard depth: ~20 cm steps at 1 km, ~7 m at
-  // 6 km). three falls back to standard depth where the browser lacks EXT_clip_control. LOW draws to the canvas's
-  // 24-bit depth: reversed there, no finer than before.
-  // An OPAQUE canvas (2026-11-02, the user: "in the morning, evening and night a border of light on all trees"): three
-  // always asks for an alpha channel, and the leaf cards' alpha-to-coverage leaves alpha < 1 at their edges — the
-  // page's peach background showed through there, a light rim round every tree and bush, plainest against the dark.
-  const antialias = tier.msaa && !tier.bloom
+  // THE RENDERER (docs/MIGRATION.md): PlayCanvas, through the game's graphics layer (gfx/) — WebGL2 by default (on the
+  // M4 it drew this vertex-heavy world faster than WebGPU), ?api=webgpu for WebGPU (WebGL2 if the browser has none).
+  // An OPAQUE canvas (2026-11-02, the user: "in the morning, evening and night a border of light on all trees"): the
+  // leaf cards' alpha-to-coverage leaves alpha < 1 at their edges — the page's peach background showed through there.
+  // Standard depth (PlayCanvas has no reversed-Z): 24-bit, the near plane 0.3 m.
+  const antialias = tier.msaa
   const canvas = document.createElement('canvas')
-  const context = canvas.getContext('webgl2', { alpha: false, antialias, depth: true, stencil: false, powerPreference: 'high-performance' }) ?? undefined
-  const renderer = new THREE.WebGLRenderer({ canvas, context, antialias, powerPreference: 'high-performance', stencil: false, reversedDepthBuffer: true })
+  const renderer = await GFX.WebGLRenderer.create(canvas, { antialias, api: q.get('api') === 'webgpu' ? 'webgpu' : 'webgl2', powerPreference: 'high-performance' })
   // (?scale=: the Resolution setting, a fixed share of the full pixel ratio)
   renderer.setPixelRatio(Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100)
   renderer.setSize(innerWidth, innerHeight)
-  const tm = q.get('tm') ?? 'neutral-hue'
-  // (the default: Neutral with a hue-keeping toe — toneMap.ts; ?tm=neutral the original, ?tm=aces / agx)
-  installToneMap()
-  renderer.toneMapping = tm === 'aces' ? THREE.ACESFilmicToneMapping : tm === 'agx' ? THREE.AgXToneMapping : tm === 'neutral' ? THREE.NeutralToneMapping : THREE.CustomToneMapping
+  // (the tone map: Neutral with a hue-keeping toe — gfx/material.ts OTH_OUTPUT_GLSL; ?tm=none: off, linear → sRGB only)
+  renderer.toneMapping = q.get('tm') === 'none' ? GFX.NoToneMapping : GFX.CustomToneMapping
   renderer.toneMappingExposure = num('exp', 1.0)
   renderer.info.autoReset = false
   document.body.appendChild(renderer.domElement)
@@ -111,19 +104,19 @@ async function boot() {
   if (wq === 'clear' || wq === 'cloudy' || wq === 'rain' || wq === 'sandstorm') atmos.weather = wq
   let settled = false
 
-  const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, num('far', tier.far)) // (?far= m: cost tests)
-  const scene = new THREE.Scene()
+  const camera = new GFX.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, num('far', tier.far)) // (?far= m: cost tests)
+  const scene = new GFX.Scene()
   const shadow = new TerrainShadow(first)
   let shadowReady = false
   shadow.onBaked = () => (shadowReady = true)
-  const sky = new Sky(atmos, !!tier.bloom) // (the sky marks itself for the god rays when Post draws)
+  const sky = new Sky(atmos, false)
   const rain = new Rain(atmos, tier)
   const sand = new Rain(atmos, tier, 'sand')
   const journal = loadJournal()
   const keepJournal = () => { if (saving) saveJournal(journal) }
   const env: WorldEnv = {
     renderer, camera, scene, atmos, tier, shadow,
-    farGrid: new THREE.Vector4(),
+    farGrid: new GFX.Vector4(),
     // BIRDS in the sky: ULTRA on a PC only, for now (the user, 2026-11-02); ?birds=1 / 0 forces them
     birds: q.get('birds') === '1' || (q.get('birds') !== '0' && tier.name === 'ultra' && !isMobileDevice()),
     // OCCLUSION CULLING: what the hills hide is skipped; ?occlusion=0 turns it off
@@ -214,7 +207,7 @@ async function boot() {
     if (e.code !== 'KeyV') return
     driving = !driving
     if (!driving) {
-      const d = camera.getWorldDirection(new THREE.Vector3())
+      const d = camera.getWorldDirection(new GFX.Vector3())
       fly.place(camera.position.x, camera.position.z, camera.position.y - map.height(camera.position.x, camera.position.z), Math.atan2(-d.x, -d.z), Math.asin(d.y))
     } else chase.snap()
   })
@@ -228,14 +221,14 @@ async function boot() {
   // ZOOM buttons (+ / −): the chase camera's distance while driving, the field of view in the free camera
   zoomButtons((k) => {
     if (driving) chase.zoom(k)
-    else { camera.fov = THREE.MathUtils.clamp(camera.fov * k, 18, 80); camera.updateProjectionMatrix() }
+    else { camera.fov = GFX.MathUtils.clamp(camera.fov * k, 18, 80); camera.updateProjectionMatrix() }
   })
 
   // ANOTHER WORLD (the crossing — Crossing.ts — or ?world / the harness): built a step a frame while this one plays
   // (in the background: what lasts is left alone until the swap), then everything that lasts is pointed at it; the
   // world left is DISPOSED whole (World.dispose: its GPU memory back) — by the crossing once the car is away from the
   // gate, at once by the harness
-  const keep = new Set<THREE.Texture>([noise, shadow.box, shadow.world, shadow.treeTex])
+  const keep = new Set<GFX.Texture>([noise, shadow.box, shadow.world, shadow.treeTex])
   const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
   const buildWorld = (id: WorldId) => World.build(id, env, nextFrame, undefined, undefined, true)
   /** Enter `next`; returns the world left (out of the scene, still built). */
@@ -280,24 +273,21 @@ async function boot() {
   })
   crossing.onSwap = (_, to) => regionTitle(WORLDS[to.id].name)
 
-  const post = tier.bloom ? new Post(num('levels', tier.bloom), num('samples', tier.samples), num('bloom', 0.42), num('rays', 2.0), tier.bloomStart, tier.rayDiv) : null // (?levels= ?samples= ?rays=0: cost tests)
   const baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100 // (?maxdpr=: the pixel-ratio cap, cost tests)
   let dprScale = 1, dprT = performance.now() + 4000
   // (phones only: on a PC / laptop the resolution never drops — the user: "don't reduce resolution automatically, turn it
   //  off on PC / laptop"; ?adaptive=1 forces it on, ?dpr=fixed / ?adaptive=0 off)
   const adaptive = q.get('adaptive') === '1' || (isMobileDevice() && q.get('dpr') !== 'fixed' && q.get('adaptive') !== '0')
-  const size = () => post?.setSize(Math.round(innerWidth * renderer.getPixelRatio()), Math.round(innerHeight * renderer.getPixelRatio()))
-  size()
+  const size = () => {}
   window.addEventListener('resize', () => {
     renderer.setSize(innerWidth, innerHeight)
-    size()
     camera.aspect = innerWidth / innerHeight
     camera.updateProjectionMatrix()
   })
 
-  // stats: frame / CPU / GPU ms (timer query where the browser has it), draws, triangles
+  // stats: frame / CPU / GPU ms (a WebGL2 timer query where the browser has it), draws, triangles
   const gl = renderer.getContext() as WebGL2RenderingContext
-  const timer = gl.getExtension('EXT_disjoint_timer_query_webgl2')
+  const timer = gl?.getExtension('EXT_disjoint_timer_query_webgl2') ?? null
   let query: WebGLQuery | null = null
   let gpuMs = 0, cpuMs = 0, frameMs = 16.7, last = performance.now()
   const hud = document.getElementById('hud')!
@@ -305,9 +295,9 @@ async function boot() {
   window.addEventListener('keydown', (e) => { if (e.code === 'F3') { showHud = !showHud; e.preventDefault() } })
   let hudT = 0
 
-  const clock = new THREE.Clock()
+  const clock = new GFX.Clock()
   // the view's frustum, once a frame: the car, its dust (their own tests — three's cull is off for the moving parts)
-  const viewPV = new THREE.Matrix4(), view = new THREE.Frustum()
+  const viewPV = new GFX.Matrix4(), view = new GFX.Frustum()
 
   // THE JOURNEY (save.ts): metres driven and seconds played add up over every session; saved every 20 s, when the page
   // is hidden or closed, and from the pause menu — at the car's last SAFE spot (on its wheels on the ground, out of
@@ -319,7 +309,7 @@ async function boot() {
   const camps: Partial<Record<WorldId, Camp | null>> = { ...(saved?.camps ?? {}), ...(saved?.camp && saved.map ? { [saved.map]: saved.camp } : {}) }
   let myCamp: Camp | null = camps[world.id] ?? null
   if (myCamp) world.props.pitch(myCamp)
-  const lastPos = new THREE.Vector3().copy(car.pos)
+  const lastPos = new GFX.Vector3().copy(car.pos)
   const save = () => {
     if (Number.isNaN(safe.x) || !saving) return
     saveProgress({ v: 1, map: map.meta.id, car: car.id, x: safe.x, z: safe.z, heading: safe.heading, hour: atmos.hour, travelled, playSeconds, savedAt: Date.now(), camp: myCamp, camps: { ...camps, [world.id]: myCamp } })
@@ -413,7 +403,7 @@ async function boot() {
     const near = world.places.map((l) => ({ l, d: Math.hypot(l.x - s.x, l.z - s.z) })).filter((o) => o.d > 60).sort((a, b) => a.d - b.d).slice(0, 4)
     readouts.sign(near.map(({ l, d }) => ({ name: l.name, d, turn: Math.atan2(l.x - s.x, -(l.z - s.z)) - head })))
   }
-  const signDir = new THREE.Vector3()
+  const signDir = new GFX.Vector3()
   let hudTick = 0
 
   const frame = () => {
@@ -481,7 +471,7 @@ async function boot() {
     world.update(camera, dt, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, car.pos.x, car.pos.z)
     // (what's out of view or behind the hills isn't drawn: 2026-11-02)
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-    view.setFromProjectionMatrix(viewPV, THREE.WebGLCoordinateSystem, camera.reversedDepth)
+    view.setFromProjectionMatrix(viewPV, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     car.cull(view, world.horizon)
     dust.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
@@ -493,8 +483,7 @@ async function boot() {
     let started = false
     if (timer && !query) { query = gl.createQuery(); gl.beginQuery(timer.TIME_ELAPSED_EXT, query!); started = true }
     renderer.info.reset()
-    if (post) post.render(renderer, scene, camera, atmos.uniforms.uSunDir.value)
-    else renderer.render(scene, camera)
+    renderer.render(scene, camera)
     if (started) gl.endQuery(timer!.TIME_ELAPSED_EXT)
     cpuMs += (performance.now() - t0 - cpuMs) * 0.1
     if (showHud && now - hudT > 250) {
@@ -529,7 +518,6 @@ async function boot() {
     tyreTracks,
     scene,
     camera,
-    post,
     atmos,
     /** The sound's state (Audio.ts debug). */
     audio: () => audio.debug(),

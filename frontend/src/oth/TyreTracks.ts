@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
@@ -14,32 +14,32 @@ import type { Vehicle } from './Vehicle'
  * ≈ 0.02 ms CPU (four tests a frame), the GPU a few hundred thin quads.
  */
 export class TyreTracks {
-  readonly mesh: THREE.Mesh
+  readonly mesh: GFX.Mesh
   private readonly n: number
-  private readonly a0: THREE.InstancedBufferAttribute // start xyz, birth time
-  private readonly a1: THREE.InstancedBufferAttribute // end xyz, darkness
+  private readonly a0: GFX.InstancedBufferAttribute // start xyz, birth time
+  private readonly a1: GFX.InstancedBufferAttribute // end xyz, darkness
   private head = 0
-  private readonly geo: THREE.InstancedBufferGeometry
-  private readonly last: (THREE.Vector3 | null)[] = [null, null, null, null]
-  private readonly c = new THREE.Vector3()
+  private readonly geo: GFX.InstancedBufferGeometry
+  private readonly last: (GFX.Vector3 | null)[] = [null, null, null, null]
+  private readonly c = new GFX.Vector3()
   private readonly time = { value: 0 }
   /** When the newest mark was laid (s), and round the marks laid since they last all faded: `cull`. */
   private newest = -1e9
-  private readonly box = new THREE.Box3()
+  private readonly box = new GFX.Box3()
   private readonly mk: [number, number, number, number] = [0, 0, 0, 0]
 
   constructor(private readonly map: MapData, tier: Tier, atmos: Atmosphere) {
     this.n = tier.name === 'low' ? 1400 : tier.name === 'medium' ? 2400 : 3600
-    const g = new THREE.InstancedBufferGeometry()
-    g.setAttribute('position', new THREE.Float32BufferAttribute([0, -1, 0, 0, 1, 0, 1, 1, 0, 1, -1, 0], 3)) // (x: along 0 … 1, y: across)
+    const g = new GFX.InstancedBufferGeometry()
+    g.setAttribute('position', new GFX.Float32BufferAttribute([0, -1, 0, 0, 1, 0, 1, 1, 0, 1, -1, 0], 3)) // (x: along 0 … 1, y: across)
     g.setIndex([0, 2, 1, 0, 3, 2])
-    this.a0 = new THREE.InstancedBufferAttribute(new Float32Array(this.n * 4).fill(-1e5), 4).setUsage(THREE.DynamicDrawUsage)
-    this.a1 = new THREE.InstancedBufferAttribute(new Float32Array(this.n * 4), 4).setUsage(THREE.DynamicDrawUsage)
+    this.a0 = new GFX.InstancedBufferAttribute(new Float32Array(this.n * 4).fill(-1e5), 4).setUsage(GFX.DynamicDrawUsage)
+    this.a1 = new GFX.InstancedBufferAttribute(new Float32Array(this.n * 4), 4).setUsage(GFX.DynamicDrawUsage)
     g.setAttribute('aS', this.a0)
     g.setAttribute('aE', this.a1)
     g.instanceCount = 0 // (only what's been laid: grows to n, then the ring wraps)
     this.geo = g
-    const mat = new THREE.ShaderMaterial({
+    const mat = new GFX.ShaderMaterial({
       uniforms: { ...atmos.uniforms, uTime: this.time },
       vertexShader: /* glsl */ `
         ${ATMOS_GLSL}
@@ -72,13 +72,13 @@ export class TyreTracks {
         }`,
       transparent: true,
       depthWrite: false,
-      side: THREE.DoubleSide, // (the quads' winding faces down: culled from above)
-      blending: THREE.MultiplyBlending,
+      side: GFX.DoubleSide, // (the quads' winding faces down: culled from above)
+      blending: GFX.MultiplyBlending,
       premultipliedAlpha: true,
       // (no polygon offset: with the reversed depth buffer (main.ts) a negative one pushes the marks UNDER the ground —
       //  they lie 6 cm over it instead)
     })
-    this.mesh = new THREE.Mesh(g, mat)
+    this.mesh = new GFX.Mesh(g, mat)
     this.mesh.frustumCulled = false
     this.mesh.renderOrder = 1
   }
@@ -131,7 +131,7 @@ export class TyreTracks {
 
   /** Draw the marks only while some are still there (they fade over 60–120 s, sand ruts 150–300 s) and the eye is within their 70 m
    *  (2026-11-02: drawn every frame, faded or none at all). */
-  cull(eye: THREE.Vector3, t: number): void {
+  cull(eye: GFX.Vector3, t: number): void {
     this.mesh.visible = this.geo.instanceCount > 0 && t - this.newest < 300 && this.box.distanceToPoint(eye) < 70
   }
 }

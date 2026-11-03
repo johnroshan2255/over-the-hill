@@ -1,15 +1,15 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 
 /** The SKY: a dome round the camera drawn last, on the far plane, its colour from the shared skyColor() + the sun's disc. */
 export class Sky {
-  readonly mesh: THREE.Mesh
+  readonly mesh: GFX.Mesh
 
   /** markSky: write alpha 0 (Post's god rays find the sky by it) — only when drawing into Post's target; straight
    *  to the canvas (LOW) the sky stays opaque. */
   constructor(atmos: Atmosphere, markSky = false) {
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms, uSkyAlpha: { value: markSky ? 0 : 1 } },
       vertexShader: /* glsl */ `
         out vec3 vDir;
@@ -92,9 +92,9 @@ export class Sky {
         }`,
       depthWrite: false,
       depthTest: true,
-      side: THREE.BackSide,
+      side: GFX.BackSide,
     })
-    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), mat)
+    this.mesh = new GFX.Mesh(new GFX.SphereGeometry(1, 48, 24), mat)
     this.mesh.frustumCulled = false
     this.mesh.renderOrder = 100 // last: only where nothing else wrote depth (no overdraw)
   }

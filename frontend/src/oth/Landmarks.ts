@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import { Builder, type CullPart, cullHidden, splitMeshes, woodMaterial } from './Bridges'
 import type { Horizon } from './Horizon'
@@ -17,12 +17,12 @@ import type { TerrainShadow } from './TerrainShadow'
  * and is DISCOVERED when the car comes within ~40 m of its pad — saved in this browser (localStorage), shown on the
  * map and the compass (MapView.ts).
  */
-export interface LandmarkCollider { c: THREE.Vector3; h: THREE.Vector3; q: THREE.Quaternion; ground: boolean }
+export interface LandmarkCollider { c: GFX.Vector3; h: GFX.Vector3; q: GFX.Quaternion; ground: boolean }
 
 const KEY = (id: string) => `oth.found.${id}`
 
 export class Landmarks {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   readonly list: Landmark[]
   readonly colliders: LandmarkCollider[] = []
   readonly found = new Set<number>()
@@ -33,19 +33,19 @@ export class Landmarks {
   private checkT = 0
   private parts: CullPart[] = []
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4) {
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     this.list = map.meta.landmarks ?? []
     try { for (const id of JSON.parse(localStorage.getItem(KEY(map.meta.id)) ?? '[]') as number[]) this.found.add(id) } catch { /* (private window: nothing kept) */ }
     if (!this.list.length) return
     const b = new Builder(0x51a3c7), ranges: [number, number][] = []
     for (const l of this.list) {
-      const from = b.count, cols: [THREE.Vector3, THREE.Vector3, boolean][] = []
-      const col = (cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ground = false) => cols.push([new THREE.Vector3(cx, cy, cz), new THREE.Vector3(hx, hy, hz), ground])
+      const from = b.count, cols: [GFX.Vector3, GFX.Vector3, boolean][] = []
+      const col = (cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ground = false) => cols.push([new GFX.Vector3(cx, cy, cz), new GFX.Vector3(hx, hy, hz), ground])
       KINDS[l.kind]?.(b, l, col, map) // (the desert's kinds: their shapes are Blender's — formations.glb)
       const S = SCALE[l.kind] ?? 1
-      const m = new THREE.Matrix4().compose(new THREE.Vector3(l.x, l.y, l.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), l.rot), new THREE.Vector3(S, S, S))
+      const m = new GFX.Matrix4().compose(new GFX.Vector3(l.x, l.y, l.z), new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), l.rot), new GFX.Vector3(S, S, S))
       b.transform(from, m)
-      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), l.rot)
+      const q = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), l.rot)
       for (const [c, h, ground] of cols) this.colliders.push({ c: c.applyMatrix4(m), h: h.multiplyScalar(S), q, ground })
       ranges.push([from, b.count])
     }
@@ -77,7 +77,7 @@ type RGB = [number, number, number]
  *  levelled pads). The lookout (13 m), the shack (its dock sits at the lake's level), the mine's adit and the camps
  *  are real as built. */
 const SCALE: Partial<Record<Landmark['kind'], number>> = { cabin: 1.3, sawmill: 1.25 }
-const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
+const V = (x: number, y: number, z: number) => new GFX.Vector3(x, y, z)
 const X = V(1, 0, 0), Y = V(0, 1, 0), Z = V(0, 0, 1)
 const ROOF: RGB = [0.13, 0.095, 0.075], RED_ROOF: RGB = [0.46, 0.13, 0.08], TIN: RGB = [0.4, 0.27, 0.18]
 const STONE: RGB = [0.4, 0.4, 0.41], DARK: RGB = [0.035, 0.03, 0.028], GLASS: RGB = [0.06, 0.065, 0.075]
@@ -113,7 +113,7 @@ function logWalls(b: Builder, w: number, d: number, hgt: number, r: number) {
   }
 }
 /** A window: a dark frame proud of the wall, glass that glows at night (normal along `out`). */
-function windowAt(b: Builder, c: THREE.Vector3, out: THREE.Vector3, along: THREE.Vector3, hw: number, hh: number) {
+function windowAt(b: Builder, c: GFX.Vector3, out: GFX.Vector3, along: GFX.Vector3, hw: number, hh: number) {
   b.box(c, along, Y, out, hw + 0.08, hh + 0.08, 0.05, b.wood(0.6))
   b.setGlow(1)
   b.box(c.clone().addScaledVector(out, 0.04), along, Y, out, hw, hh, 0.03, GLASS)
@@ -216,7 +216,7 @@ const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col
     const bz = d / 2 + len - 1.5, by = lake + 0.12 - l.y
     box(b, 1.75, by, bz, 0.5, 0.08, 1.4, shade([0.3, 0.42, 0.45], 1))
     for (const sx of [-1, 1]) {
-      const v = V(sx * 0.5, 1, 0).normalize(), w = new THREE.Vector3().crossVectors(Z, v)
+      const v = V(sx * 0.5, 1, 0).normalize(), w = new GFX.Vector3().crossVectors(Z, v)
       b.box(V(1.75 + sx * 0.5, by + 0.18, bz), Z, v, w, 1.4, 0.2, 0.04, [0.32, 0.46, 0.5])
     }
   },
@@ -246,7 +246,7 @@ const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col
       col(px, 1.0, pz, 1.4, 1.0, 2.7)
     }
     // the sawdust heap
-    const sd: RGB = [0.62, 0.48, 0.3], hc = V(-W / 2 - 2.6, 0, -3.5), ring: THREE.Vector3[] = []
+    const sd: RGB = [0.62, 0.48, 0.3], hc = V(-W / 2 - 2.6, 0, -3.5), ring: GFX.Vector3[] = []
     for (let a = 0; a < 8; a++) ring.push(V(hc.x + Math.cos((a / 8) * 6.283) * 2.0, -0.1, hc.z + Math.sin((a / 8) * 6.283) * 1.6))
     for (let a = 0; a < 8; a++) b.tri(ring[(a + 1) % 8], ring[a], V(hc.x, 1.1, hc.z), shade(sd, 0.9 + 0.1 * (a % 2)))
     // the office hut
@@ -291,8 +291,8 @@ const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col
   falls() {},
   meadow() {},
   meteorite(b, _l, col) {
-    const ico = new THREE.IcosahedronGeometry(1, 1), pos = ico.getAttribute('position')
-    const pts: THREE.Vector3[] = []
+    const ico = new GFX.IcosahedronGeometry(1, 1), pos = ico.getAttribute('position')
+    const pts: GFX.Vector3[] = []
     for (let i = 0; i < pos.count; i++) {
       const p = V(pos.getX(i), pos.getY(i), pos.getZ(i))
       const k = 1.5 + 0.35 * Math.sin(p.x * 5.1 + p.y * 3.3) * Math.cos(p.z * 4.7)

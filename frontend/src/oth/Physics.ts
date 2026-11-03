@@ -1,5 +1,5 @@
 import type RAPIER from '@dimforge/rapier3d-compat'
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { group, Groups, PhysicsWorld, STATIC_MESH_FILTER } from '../physics/PhysicsWorld'
 import { deckY, type MapData } from './MapData'
 import type { PropCollider } from './Props'
@@ -34,8 +34,8 @@ export class OthPhysics {
   private statics: RAPIER.RigidBody[] = []
   private lastTile = Number.NaN
   private lastRockCell = Number.NaN
-  private readonly m = new THREE.Matrix4()
-  private readonly v = new THREE.Vector3()
+  private readonly m = new GFX.Matrix4()
+  private readonly v = new GFX.Vector3()
 
   private constructor(R: typeof RAPIER, private map: MapData, private rockSet: Rocks) {
     this.R = R
@@ -77,7 +77,7 @@ export class OthPhysics {
     // slid across on its belly. Every piece meets the car's convex HULLS, never its exact body mesh
     // (STATIC_MESH_FILTER, as the game's bridges): a curb or the deck's edge that slipped into that hollow shell was
     // pushed on from both sides and flipped the car
-    const Q = new THREE.Quaternion(), E = new THREE.Euler(), V = new THREE.Vector3()
+    const Q = new GFX.Quaternion(), E = new GFX.Euler(), V = new GFX.Vector3()
     // (a ROPE bridge — the desert's gorge — sags: its deck and rails as a chain of straight pieces along the curve)
     const pieces = (map.meta.bridges ?? []).flatMap((br) => {
       const n = br.sag ? Math.max(2, Math.ceil(Math.hypot(br.x1 - br.x0, br.z1 - br.z0) / 12)) : 1
@@ -92,8 +92,8 @@ export class OthPhysics {
       Q.setFromEuler(E.set(-pitch, yaw, 0, 'YXZ'))
       const rot = { x: Q.x, y: Q.y, z: Q.z, w: Q.w }
       // (local axes: +x across, +y the deck's up, +z along)
-      const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(Q), ay = new THREE.Vector3(0, 1, 0).applyQuaternion(Q)
-      const mid = new THREE.Vector3((br.x0 + br.x1) / 2, (br.y0 + br.y1) / 2, (br.z0 + br.z1) / 2)
+      const ax = new GFX.Vector3(1, 0, 0).applyQuaternion(Q), ay = new GFX.Vector3(0, 1, 0).applyQuaternion(Q)
+      const mid = new GFX.Vector3((br.x0 + br.x1) / 2, (br.y0 + br.y1) / 2, (br.z0 + br.z1) / 2)
       const at = (ox: number, oy: number) => V.copy(mid).addScaledVector(ax, ox).addScaledVector(ay, oy)
       const box = (ox: number, oy: number, hx: number, hy: number, hz: number, friction: number, groups: number = Groups.Static) => {
         const c = at(ox, oy)
@@ -112,7 +112,7 @@ export class OthPhysics {
   }
 
   /** The LANDMARKS' colliders (Landmarks.ts): boxes; a dock's deck is GROUND (the wheel rays see it). */
-  addLandmarks(cols: { c: THREE.Vector3; h: THREE.Vector3; q: THREE.Quaternion; ground: boolean }[]): void {
+  addLandmarks(cols: { c: GFX.Vector3; h: GFX.Vector3; q: GFX.Quaternion; ground: boolean }[]): void {
     const body = this.pw.world.createRigidBody(this.R.RigidBodyDesc.fixed())
     this.statics.push(body)
     for (const k of cols) {

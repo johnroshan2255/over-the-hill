@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { Horizon } from './Horizon'
 import { type Bridge, deckY, type MapData } from './MapData'
@@ -17,12 +17,12 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
  * anchored back into the ground behind them.
  */
 export class Bridges {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   /** The hills' occlusion (main.ts). */
   horizon: Horizon | null = null
   private parts: CullPart[] = []
 
-  constructor(map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4) {
+  constructor(map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     const list = map.meta.bridges ?? []
     if (!list.length) return
     const b = new Builder(0x1b0a7d), ranges: [number, number][] = []
@@ -36,9 +36,9 @@ export class Bridges {
 
 /** The wood's (and the landmarks') material: vertex colours, a stretched grain, this world's light; `glow` (a vertex
  *  attribute) burns warm at night — a cabin's window, a lantern. */
-export function woodMaterial(atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
+export function woodMaterial(atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4): GFX.ShaderMaterial {
+  return new GFX.ShaderMaterial({
+    glslVersion: GFX.GLSL3,
     uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid } },
     defines: tier.spec ? { OTH_SPEC: '' } : {},
     vertexShader: VERT,
@@ -76,8 +76,8 @@ export class Builder {
   }
 
   /** A box: centre c, unit axes u (half size hu), v (hv), w (hw). */
-  box(c: THREE.Vector3, u: THREE.Vector3, v: THREE.Vector3, w: THREE.Vector3, hu: number, hv: number, hw: number, color: [number, number, number]): void {
-    const faces: [THREE.Vector3, THREE.Vector3, THREE.Vector3, number, number, number][] = [
+  box(c: GFX.Vector3, u: GFX.Vector3, v: GFX.Vector3, w: GFX.Vector3, hu: number, hv: number, hw: number, color: [number, number, number]): void {
+    const faces: [GFX.Vector3, GFX.Vector3, GFX.Vector3, number, number, number][] = [
       [u, v, w, hu, hv, hw], [u.clone().negate(), w, v, hu, hw, hv],
       [v, w, u, hv, hw, hu], [v.clone().negate(), u, w, hv, hu, hw],
       [w, u, v, hw, hu, hv], [w.clone().negate(), v, u, hw, hv, hu],
@@ -90,31 +90,31 @@ export class Builder {
         this.pos.push(p.x, p.y, p.z); this.nor.push(n.x, n.y, n.z); this.col.push(...color)
       }
       // (wound to face n: a × b = n for the first face; the rest are built the same way)
-      const cross = new THREE.Vector3().crossVectors(a, bb).dot(n) > 0
+      const cross = new GFX.Vector3().crossVectors(a, bb).dot(n) > 0
       if (cross) this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
       else this.idx.push(base, base + 2, base + 1, base, base + 3, base + 2)
     }
   }
 
   /** A log from a to b, radius r, 6 sides, flat-shaded, capped. */
-  log(a: THREE.Vector3, b: THREE.Vector3, r: number, color: [number, number, number]): void {
-    const axis = new THREE.Vector3().subVectors(b, a).normalize()
-    const u = new THREE.Vector3().crossVectors(axis, Math.abs(axis.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize()
-    const w = new THREE.Vector3().crossVectors(axis, u)
+  log(a: GFX.Vector3, b: GFX.Vector3, r: number, color: [number, number, number]): void {
+    const axis = new GFX.Vector3().subVectors(b, a).normalize()
+    const u = new GFX.Vector3().crossVectors(axis, Math.abs(axis.y) < 0.9 ? new GFX.Vector3(0, 1, 0) : new GFX.Vector3(1, 0, 0)).normalize()
+    const w = new GFX.Vector3().crossVectors(axis, u)
     const S = 6
-    const ring = (c: THREE.Vector3, k: number) => {
+    const ring = (c: GFX.Vector3, k: number) => {
       const t = ((k % S) / S) * Math.PI * 2 + 0.3
       return c.clone().addScaledVector(u, Math.cos(t) * r).addScaledVector(w, Math.sin(t) * r)
     }
     for (let k = 0; k < S; k++) {
       const p0 = ring(a, k), p1 = ring(a, k + 1), p2 = ring(b, k + 1), p3 = ring(b, k)
-      const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p3, p0)).normalize()
+      const n = new GFX.Vector3().subVectors(p1, p0).cross(new GFX.Vector3().subVectors(p3, p0)).normalize()
       const base = this.pos.length / 3
       const shade = 0.92 + 0.12 * this.rnd()
       for (const p of [p0, p1, p2, p3]) { this.pos.push(p.x, p.y, p.z); this.nor.push(n.x, n.y, n.z); this.col.push(color[0] * shade, color[1] * shade, color[2] * shade) }
       // (outward: flip if the normal points at the axis)
-      const mid = new THREE.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
-      const toAxis = new THREE.Vector3().subVectors(a, mid).addScaledVector(axis, -new THREE.Vector3().subVectors(a, mid).dot(axis))
+      const mid = new GFX.Vector3().addVectors(p0, p2).multiplyScalar(0.5)
+      const toAxis = new GFX.Vector3().subVectors(a, mid).addScaledVector(axis, -new GFX.Vector3().subVectors(a, mid).dot(axis))
       if (n.dot(toAxis) > 0) { for (let q = 0; q < 4; q++) { const o = (base + q) * 3; this.nor[o] *= -1; this.nor[o + 1] *= -1; this.nor[o + 2] *= -1 } this.idx.push(base, base + 2, base + 1, base, base + 3, base + 2) }
       else this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
     }
@@ -132,10 +132,10 @@ export class Builder {
 
   bridge(br: Bridge, map: MapData): void {
     // (the deck slopes from y0 to y1 with its road: planks square to it, posts and the ground plumb)
-    const a = new THREE.Vector3(br.x0, br.y0, br.z0), b = new THREE.Vector3(br.x1, br.y1, br.z1)
-    const L = a.distanceTo(b), along = new THREE.Vector3().subVectors(b, a).normalize()
-    const up = new THREE.Vector3(0, 1, 0), across = new THREE.Vector3().crossVectors(up, along).normalize()
-    const deckUp = new THREE.Vector3().crossVectors(along, across).normalize()
+    const a = new GFX.Vector3(br.x0, br.y0, br.z0), b = new GFX.Vector3(br.x1, br.y1, br.z1)
+    const L = a.distanceTo(b), along = new GFX.Vector3().subVectors(b, a).normalize()
+    const up = new GFX.Vector3(0, 1, 0), across = new GFX.Vector3().crossVectors(up, along).normalize()
+    const deckUp = new GFX.Vector3().crossVectors(along, across).normalize()
     const half = br.w / 2
     // PLANKS: across the bridge, ~0.26 m wide with a thin gap, each a little longer / shorter, skewed, its own tone
     const P = 0.29, n = Math.floor((L + 0.6) / P)
@@ -160,7 +160,7 @@ export class Builder {
       for (const sd of [-1, 1]) {
         const p = c.clone().addScaledVector(across, sd * (half + 0.18))
         const ground = map.height(p.x, p.z)
-        this.log(new THREE.Vector3(p.x, Math.min(ground, c.y - 1) - 0.6, p.z), new THREE.Vector3(p.x, c.y + 0.95, p.z), 0.15, this.wood(0.8))
+        this.log(new GFX.Vector3(p.x, Math.min(ground, c.y - 1) - 0.6, p.z), new GFX.Vector3(p.x, c.y + 0.95, p.z), 0.15, this.wood(0.8))
       }
       const cap = c.clone().addScaledVector(deckUp, -0.52)
       this.box(cap, across, deckUp, along, half + 0.35, 0.13, 0.16, this.wood(0.7))
@@ -175,18 +175,18 @@ export class Builder {
 
   /** A ROPE BRIDGE: br's deck hanging br.sag m at its middle (deckY) — planks on two cables, the handrails, towers. */
   ropeBridge(br: Bridge, map: MapData): void {
-    const a = new THREE.Vector3(br.x0, br.y0, br.z0), b = new THREE.Vector3(br.x1, br.y1, br.z1)
+    const a = new GFX.Vector3(br.x0, br.y0, br.z0), b = new GFX.Vector3(br.x1, br.y1, br.z1)
     const Lh = Math.hypot(br.x1 - br.x0, br.z1 - br.z0)
-    const along = new THREE.Vector3(br.x1 - br.x0, 0, br.z1 - br.z0).normalize()
-    const up = new THREE.Vector3(0, 1, 0), across = new THREE.Vector3().crossVectors(up, along).normalize()
+    const along = new GFX.Vector3(br.x1 - br.x0, 0, br.z1 - br.z0).normalize()
+    const up = new GFX.Vector3(0, 1, 0), across = new GFX.Vector3().crossVectors(up, along).normalize()
     const half = br.w / 2
-    const at = (t: number, side: number, dy: number) => new THREE.Vector3(br.x0 + (br.x1 - br.x0) * t, deckY(br, t) + dy, br.z0 + (br.z1 - br.z0) * t).addScaledVector(across, side)
+    const at = (t: number, side: number, dy: number) => new GFX.Vector3(br.x0 + (br.x1 - br.x0) * t, deckY(br, t) + dy, br.z0 + (br.z1 - br.z0) * t).addScaledVector(across, side)
     // PLANKS: across, square to the deck's slope where they lie; a few missing or loose-looking, each its own tone
     const P = 0.31, n = Math.floor(Lh / P)
     for (let i = 0; i < n; i++) {
       const t = (i + 0.5) / n, e = 1e-3
       const slope = (deckY(br, t + e) - deckY(br, t - e)) / (2 * e * Lh)
-      const al = along.clone().addScaledVector(up, slope).normalize(), dUp = new THREE.Vector3().crossVectors(al, across).normalize()
+      const al = along.clone().addScaledVector(up, slope).normalize(), dUp = new GFX.Vector3().crossVectors(al, across).normalize()
       const skew = (this.rnd() - 0.5) * 0.06
       const c = at(t, (this.rnd() - 0.5) * 0.12, -0.06 + (this.rnd() - 0.5) * 0.03)
       this.box(c, across.clone().applyAxisAngle(dUp, skew), dUp, al.clone().applyAxisAngle(dUp, skew), half + (this.rnd() - 0.5) * 0.2, 0.05, 0.13, this.wood(this.rnd() < 0.06 ? 0.6 : 1))
@@ -226,15 +226,15 @@ export class Builder {
   }
 
   /** A flat quad p0 → p1 → p2 → p3 (counter-clockwise seen from its front), its normal from the winding. */
-  quad(p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, p3: THREE.Vector3, color: [number, number, number]): void {
-    const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0)).normalize(), base = this.pos.length / 3
+  quad(p0: GFX.Vector3, p1: GFX.Vector3, p2: GFX.Vector3, p3: GFX.Vector3, color: [number, number, number]): void {
+    const n = new GFX.Vector3().subVectors(p1, p0).cross(new GFX.Vector3().subVectors(p2, p0)).normalize(), base = this.pos.length / 3
     for (const p of [p0, p1, p2, p3]) { this.pos.push(p.x, p.y, p.z); this.nor.push(n.x, n.y, n.z); this.col.push(...color) }
     this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
   }
 
   /** A flat triangle (counter-clockwise from its front). */
-  tri(p0: THREE.Vector3, p1: THREE.Vector3, p2: THREE.Vector3, color: [number, number, number]): void {
-    const n = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0)).normalize(), base = this.pos.length / 3
+  tri(p0: GFX.Vector3, p1: GFX.Vector3, p2: GFX.Vector3, color: [number, number, number]): void {
+    const n = new GFX.Vector3().subVectors(p1, p0).cross(new GFX.Vector3().subVectors(p2, p0)).normalize(), base = this.pos.length / 3
     for (const p of [p0, p1, p2]) { this.pos.push(p.x, p.y, p.z); this.nor.push(n.x, n.y, n.z); this.col.push(...color) }
     this.idx.push(base, base + 1, base + 2)
   }
@@ -243,8 +243,8 @@ export class Builder {
   get count(): number { return this.pos.length / 3 }
 
   /** Move vertices [from, count) by m (positions and normals). */
-  transform(from: number, m: THREE.Matrix4): void {
-    const v = new THREE.Vector3(), n3 = new THREE.Matrix3().getNormalMatrix(m)
+  transform(from: number, m: GFX.Matrix4): void {
+    const v = new GFX.Vector3(), n3 = new GFX.Matrix3().getNormalMatrix(m)
     for (let i = from; i < this.count; i++) {
       v.fromArray(this.pos, i * 3).applyMatrix4(m).toArray(this.pos, i * 3)
       v.fromArray(this.nor, i * 3).applyMatrix3(n3).normalize().toArray(this.nor, i * 3)
@@ -252,17 +252,17 @@ export class Builder {
   }
 
   /** The geometry of vertices [from, to) — everything by default; a range is one bridge / landmark (its own mesh). */
-  geometry(from = 0, to = this.count): THREE.BufferGeometry {
+  geometry(from = 0, to = this.count): GFX.BufferGeometry {
     this.setGlow(0)
     const idx: number[] = []
     for (let i = 0; i < this.idx.length; i += 3) {
       if (this.idx[i] >= from && this.idx[i] < to) idx.push(this.idx[i] - from, this.idx[i + 1] - from, this.idx[i + 2] - from)
     }
-    const g = new THREE.BufferGeometry()
-    g.setAttribute('glow', new THREE.Float32BufferAttribute(this.glw.slice(from, to), 1))
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos.slice(from * 3, to * 3), 3))
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.nor.slice(from * 3, to * 3), 3))
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.col.slice(from * 3, to * 3), 3))
+    const g = new GFX.BufferGeometry()
+    g.setAttribute('glow', new GFX.Float32BufferAttribute(this.glw.slice(from, to), 1))
+    g.setAttribute('position', new GFX.Float32BufferAttribute(this.pos.slice(from * 3, to * 3), 3))
+    g.setAttribute('normal', new GFX.Float32BufferAttribute(this.nor.slice(from * 3, to * 3), 3))
+    g.setAttribute('color', new GFX.Float32BufferAttribute(this.col.slice(from * 3, to * 3), 3))
     g.setIndex(idx)
     g.computeBoundingSphere()
     g.computeBoundingBox()
@@ -271,14 +271,14 @@ export class Builder {
 }
 
 /** A part culled whole: by the view (three, its bounding sphere) and behind the hills (`cullHidden`, its box). */
-export interface CullPart { obj: THREE.Object3D; box: THREE.Box3 }
+export interface CullPart { obj: GFX.Object3D; box: GFX.Box3 }
 
 /** One mesh per vertex range of b (a bridge, a landmark — 2026-11-02: one merged mesh over the whole map was in view
  *  from everywhere, ~0.1–0.2 ms a frame with none of them on screen), added to group. */
-export function splitMeshes(b: Builder, ranges: [number, number][], mat: THREE.Material, group: THREE.Group): CullPart[] {
+export function splitMeshes(b: Builder, ranges: [number, number][], mat: GFX.Material, group: GFX.Group): CullPart[] {
   return ranges.map(([from, to]) => {
     const g = b.geometry(from, to)
-    const mesh = new THREE.Mesh(g, mat)
+    const mesh = new GFX.Mesh(g, mat)
     group.add(mesh)
     return { obj: mesh, box: g.boundingBox! }
   })

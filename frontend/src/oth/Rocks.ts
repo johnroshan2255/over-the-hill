@@ -1,7 +1,6 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
+const { ConvexGeometry, mergeVertices, toCreasedNormals } = GFX
 import type { Horizon } from './Horizon'
-import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js'
-import { mergeVertices, toCreasedNormals } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
@@ -23,28 +22,28 @@ const CELL = 128
 export interface Inst { x: number; y: number; z: number; s: number; sy: number; rot: number; tilt: number; v: number }
 
 export class Rocks {
-  readonly group = new THREE.Group()
-  private readonly meshes: THREE.InstancedMesh[] = []
+  readonly group = new GFX.Group()
+  private readonly meshes: GFX.InstancedMesh[] = []
   private readonly grid = new Map<number, Inst[]>()
-  private readonly m = new THREE.Matrix4()
-  private readonly q = new THREE.Quaternion()
-  private readonly e = new THREE.Euler()
+  private readonly m = new GFX.Matrix4()
+  private readonly q = new GFX.Quaternion()
+  private readonly e = new GFX.Euler()
   private readonly reach: number
   private readonly near: number
   /** The rounded shapes' far LOD (rockNear on): one mesh per ROUND variant. */
-  private readonly farMeshes: THREE.InstancedMesh[] = []
+  private readonly farMeshes: GFX.InstancedMesh[] = []
   count = 0
   /** Every rock (the physics builds colliders for the ones near the car) and each shape's vertices (unit size). */
   readonly all: Inst[]
   readonly shapes: Float32Array[] = []
   /** Where the rocks stand (R8 on the box's 2 m grid, 255 = covered): the grass keeps out of them. */
-  readonly footprint: THREE.DataTexture
+  readonly footprint: GFX.DataTexture
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4) {
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     this.reach = tier.rockReach
     this.near = tier.rockNear
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid } },
       defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines },
       vertexShader: VERT,
@@ -55,17 +54,17 @@ export class Rocks {
       const geo = v < VARIANTS ? boulder(0x51ed + v * 977) : roundBoulder(0x7a3 + v * 131)
       this.shapes.push(geo.attributes.position.array as Float32Array)
       const n = all.filter((r) => r.v === v).length
-      const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, n))
+      const mesh = new GFX.InstancedMesh(geo, mat, Math.max(1, n))
       mesh.count = 0
       mesh.frustumCulled = false
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+      mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
       this.meshes.push(mesh)
       this.group.add(mesh)
       if (v >= VARIANTS) {
-        const far = new THREE.InstancedMesh(roundBoulder(0x7a3 + v * 131, 1), mat, Math.max(1, n))
+        const far = new GFX.InstancedMesh(roundBoulder(0x7a3 + v * 131, 1), mat, Math.max(1, n))
         far.count = 0
         far.frustumCulled = false
-        far.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+        far.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
         this.farMeshes.push(far)
         this.group.add(far)
       }
@@ -80,10 +79,10 @@ export class Rocks {
         if (v > fp[j * g.n + i]) fp[j * g.n + i] = v
       }
     }
-    this.footprint = new THREE.DataTexture(fp, g.n, g.n, THREE.RedFormat, THREE.UnsignedByteType)
+    this.footprint = new GFX.DataTexture(fp, g.n, g.n, GFX.RedFormat, GFX.UnsignedByteType)
     // (mipmapped: the grass reads it blurred too, shortening round a boulder — Grass.ts)
-    this.footprint.minFilter = THREE.LinearMipmapLinearFilter
-    this.footprint.magFilter = THREE.LinearFilter
+    this.footprint.minFilter = GFX.LinearMipmapLinearFilter
+    this.footprint.magFilter = GFX.LinearFilter
     this.footprint.generateMipmaps = true
     this.footprint.unpackAlignment = 1
     this.footprint.needsUpdate = true
@@ -199,21 +198,21 @@ export class Rocks {
   horizon: Horizon | null = null
   /** Per 128 m cell: the lowest base and the highest top of its rocks (the culling's box). */
   private readonly cellBox = new Map<number, [number, number]>()
-  private readonly lastPos = new THREE.Vector3(Number.NaN, 0, 0)
-  private readonly lastDir = new THREE.Vector3()
-  private readonly frustum = new THREE.Frustum()
-  private readonly pv = new THREE.Matrix4()
-  private readonly box = new THREE.Box3()
-  private readonly dir = new THREE.Vector3()
-  private readonly p = new THREE.Vector3()
-  private readonly sc = new THREE.Vector3()
+  private readonly lastPos = new GFX.Vector3(Number.NaN, 0, 0)
+  private readonly lastDir = new GFX.Vector3()
+  private readonly frustum = new GFX.Frustum()
+  private readonly pv = new GFX.Matrix4()
+  private readonly box = new GFX.Box3()
+  private readonly dir = new GFX.Vector3()
+  private readonly p = new GFX.Vector3()
+  private readonly sc = new GFX.Vector3()
   /** Cells culled at the last rebuild: outside the view, hidden behind the ground (the HUD). */
   culled = { frustum: 0, occluded: 0, small: 0 }
 
   /** A rock's world matrix (the same one it is drawn with). */
-  matrixOf(r: Inst, out: THREE.Matrix4): THREE.Matrix4 {
+  matrixOf(r: Inst, out: GFX.Matrix4): GFX.Matrix4 {
     this.q.setFromEuler(this.e.set(r.tilt, r.rot, r.tilt * 0.6))
-    return out.compose(new THREE.Vector3(r.x, r.y, r.z), this.q, new THREE.Vector3(r.s, r.sy, r.s * 0.9))
+    return out.compose(new GFX.Vector3(r.x, r.y, r.z), this.q, new GFX.Vector3(r.s, r.sy, r.s * 0.9))
   }
 
   /**
@@ -221,12 +220,12 @@ export class Rocks {
    * DISTANCE (the tier's reach), FRUSTUM (the cell's box against the view), OCCLUSION (the cell hidden behind the
    * hills: Horizon); per rock: DISTANCE again, and SMALL-FEATURE culling (a rock under ~2 px tall at its distance).
    */
-  update(camera: THREE.PerspectiveCamera): void {
+  update(camera: GFX.PerspectiveCamera): void {
     camera.getWorldDirection(this.dir)
     if (camera.position.distanceToSquared(this.lastPos) < 16 && this.dir.dot(this.lastDir) > 0.9985) return
     this.lastPos.copy(camera.position); this.lastDir.copy(this.dir)
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.pv, THREE.WebGLCoordinateSystem, camera.reversedDepth)
+    this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = this.reach
     // (a rock s m big at d m is s / d × this px tall: under 2 px it isn't drawn)
     const pxPerRad = (innerHeight * Math.min(devicePixelRatio, 2)) / (2 * Math.tan((camera.fov * Math.PI) / 360))
@@ -273,17 +272,17 @@ export class Rocks {
  * A ROUNDED boulder (unit size) — the big smooth stones of the user's reference walling the stream roads: a squashed
  * icosphere lumped by a few soft waves, its bottom flattened into the ground, smooth normals (the relief does the rest).
  */
-function roundBoulder(seed: number, detail = 3): THREE.BufferGeometry {
+function roundBoulder(seed: number, detail = 3): GFX.BufferGeometry {
   let s = seed >>> 0
   const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
   const waves = Array.from({ length: 5 }, () => {
     const a = rnd() * Math.PI * 2, b = Math.acos(2 * rnd() - 1)
-    return { d: new THREE.Vector3(Math.sin(b) * Math.cos(a), Math.cos(b), Math.sin(b) * Math.sin(a)), f: 1.5 + 2.5 * rnd(), ph: rnd() * 6.28, amp: 0.03 + 0.04 * rnd() }
+    return { d: new GFX.Vector3(Math.sin(b) * Math.cos(a), Math.cos(b), Math.sin(b) * Math.sin(a)), f: 1.5 + 2.5 * rnd(), ph: rnd() * 6.28, amp: 0.03 + 0.04 * rnd() }
   })
-  let g: THREE.BufferGeometry = new THREE.IcosahedronGeometry(0.5, detail) // (3: 1 280 triangles near; 1: 80 far)
+  let g: GFX.BufferGeometry = new GFX.IcosahedronGeometry(0.5, detail) // (3: 1 280 triangles near; 1: 80 far)
   g.deleteAttribute('normal'); g.deleteAttribute('uv')
   g = mergeVertices(g)
-  const p = g.attributes.position as THREE.BufferAttribute, v = new THREE.Vector3()
+  const p = g.attributes.position as GFX.BufferAttribute, v = new GFX.Vector3()
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i).normalize()
     let r = 0.5
@@ -301,22 +300,22 @@ function roundBoulder(seed: number, detail = 3): THREE.BufferGeometry {
  * One boulder shape (unit size): a CHAMFERED BLOCK — each corner of a box of random proportions (jittered) cut by
  * three chamfer points, a few faces bulged a little — then hulled: big flat faces, soft bevelled edges, flat-shaded.
  */
-function boulder(seed: number): THREE.BufferGeometry {
+function boulder(seed: number): GFX.BufferGeometry {
   let s = seed >>> 0
   const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
   const ex = 0.5, ey = 0.5 * (0.55 + 0.35 * rnd()), ez = 0.5 * (0.65 + 0.35 * rnd())
-  const pts: THREE.Vector3[] = []
+  const pts: GFX.Vector3[] = []
   for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
     // the top a little smaller than the base, every corner its own
     const k = sy > 0 ? 0.9 + 0.08 * rnd() : 1
     const cx = sx * ex * k * (0.85 + 0.15 * rnd()), cy = sy * ey * (0.85 + 0.15 * rnd()), cz = sz * ez * k * (0.85 + 0.15 * rnd())
     const c = 0.1 + 0.08 * rnd()
-    pts.push(new THREE.Vector3(cx - sx * c, cy, cz), new THREE.Vector3(cx, cy - sy * c, cz), new THREE.Vector3(cx, cy, cz - sz * c))
+    pts.push(new GFX.Vector3(cx - sx * c, cy, cz), new GFX.Vector3(cx, cy - sy * c, cz), new GFX.Vector3(cx, cy, cz - sz * c))
   }
   // bulged sides (a facet or two more); the top stays flat
   for (let i = 0; i < 3; i++) {
     const a = rnd() * Math.PI * 2
-    pts.push(new THREE.Vector3(Math.cos(a) * ex * 1.06, (rnd() - 0.3) * ey, Math.sin(a) * ez * 1.06))
+    pts.push(new GFX.Vector3(Math.cos(a) * ex * 1.06, (rnd() - 0.3) * ey, Math.sin(a) * ez * 1.06))
   }
   // flat faces, the chamfer bands between them smoothed (creased normals): big planes with soft rounded edges
   const g = toCreasedNormals(new ConvexGeometry(pts), Math.PI / 4.5)

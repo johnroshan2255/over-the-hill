@@ -1,6 +1,5 @@
-import * as THREE from 'three'
-import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import * as GFX from './gfx'
+const { DRACOLoader, GLTFLoader } = GFX
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { Horizon } from './Horizon'
 import type { Tier } from './quality'
@@ -17,37 +16,37 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
  * their colliders (structures.json: boxes; the arch's deck is ground) for the physics (main.ts: with the landmarks').
  */
 export class Formations {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   horizon: Horizon | null = null
   /** Cells drawn last update (the HUD / the cost tests). */
   drawn = 0
-  private readonly cells: { mesh: THREE.Mesh; box: THREE.Box3 }[] = []
+  private readonly cells: { mesh: GFX.Mesh; box: GFX.Box3 }[] = []
   private readonly reach: number
-  private readonly frustum = new THREE.Frustum()
-  private readonly pv = new THREE.Matrix4()
-  private readonly last = new THREE.Vector3(1e9, 0, 0)
-  private readonly lastDir = new THREE.Vector3()
-  private readonly dir = new THREE.Vector3()
+  private readonly frustum = new GFX.Frustum()
+  private readonly pv = new GFX.Matrix4()
+  private readonly last = new GFX.Vector3(1e9, 0, 0)
+  private readonly lastDir = new GFX.Vector3()
+  private readonly dir = new GFX.Vector3()
   /** The structures' colliders (Physics.addLandmarks' boxes). */
-  colliders: { c: THREE.Vector3; h: THREE.Vector3; q: THREE.Quaternion; ground: boolean }[] = []
+  colliders: { c: GFX.Vector3; h: GFX.Vector3; q: GFX.Quaternion; ground: boolean }[] = []
 
-  private constructor(scene: THREE.Object3D, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4) {
+  private constructor(scene: GFX.Object3D, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     this.reach = { low: 420, medium: 560, high: 720, ultra: 900 }[tier.name] ?? 720
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid } },
       defines: tier.spec ? { OTH_SPEC: '' } : {},
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
     scene.traverse((o) => {
-      const m = o as THREE.Mesh
+      const m = o as GFX.Mesh
       if (!m.isMesh) return
       m.updateWorldMatrix(true, false)
       const g = m.geometry
       g.applyMatrix4(m.matrixWorld) // (world space: the cells are drawn where they are, no transforms)
       g.computeBoundingBox(); g.computeBoundingSphere()
-      const mesh = new THREE.Mesh(g, mat)
+      const mesh = new GFX.Mesh(g, mat)
       mesh.matrixAutoUpdate = false
       mesh.visible = false
       this.group.add(mesh)
@@ -56,7 +55,7 @@ export class Formations {
   }
 
   /** Load a world's formations (null if it has none). */
-  static async load(url: string, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4): Promise<Formations | null> {
+  static async load(url: string, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4): Promise<Formations | null> {
     const draco = (dracoLoader ??= new DRACOLoader().setDecoderPath('/draco/'))
     try {
       const [gltf, st] = await Promise.all([
@@ -65,7 +64,7 @@ export class Formations {
       ])
       const f = new Formations(gltf.scene, atmos, shadow, tier, farGrid)
       type C = { c: number[]; h: number[]; q: number[]; ground: boolean }
-      f.colliders = ((st?.colliders ?? []) as C[]).map((k) => ({ c: new THREE.Vector3().fromArray(k.c), h: new THREE.Vector3().fromArray(k.h), q: new THREE.Quaternion().fromArray(k.q), ground: k.ground }))
+      f.colliders = ((st?.colliders ?? []) as C[]).map((k) => ({ c: new GFX.Vector3().fromArray(k.c), h: new GFX.Vector3().fromArray(k.h), q: new GFX.Quaternion().fromArray(k.q), ground: k.ground }))
       return f
     } catch {
       return null
@@ -73,12 +72,12 @@ export class Formations {
   }
 
   /** The cells in reach, in view and not behind the hills (rebuilt when the camera moves 4 m or turns). */
-  update(camera: THREE.PerspectiveCamera): void {
+  update(camera: GFX.PerspectiveCamera): void {
     camera.getWorldDirection(this.dir)
     if (camera.position.distanceToSquared(this.last) < 16 && this.dir.dot(this.lastDir) > 0.9985) return
     this.last.copy(camera.position); this.lastDir.copy(this.dir)
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.pv, THREE.WebGLCoordinateSystem, camera.reversedDepth)
+    this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const p = camera.position, R2 = this.reach * this.reach
     let n = 0
     for (const c of this.cells) {
@@ -91,7 +90,7 @@ export class Formations {
     this.drawn = n
   }
 }
-let dracoLoader: DRACOLoader | null = null
+let dracoLoader: InstanceType<typeof DRACOLoader> | null = null
 
 const VERT = /* glsl */ `
 out vec3 vWorld;

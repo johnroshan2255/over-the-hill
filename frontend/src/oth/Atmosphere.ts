@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 
 /**
  * SUN, SKY AND AIR — one set of uniforms shared by every material of the world (same objects, so one write per frame
@@ -8,7 +8,7 @@ import * as THREE from 'three'
  * The look: warm cinematic light — a golden sun low over the ridges, a pale cream-blue sky, peach haze toward the sun
  * and a cooler lavender one away from it, distant ranges dissolving into it layer by layer.
  */
-const C = (r: number, g: number, b: number) => new THREE.Color(r, g, b)
+const C = (r: number, g: number, b: number) => new GFX.Color(r, g, b)
 
 /** Keyframes by sun height (sin of the elevation): colours are linear, intensities scene-referred. Below the horizon
  *  the sky goes through dusk (−0.08 … −0.18) to NIGHT (deep blue, the moon lights the land). */
@@ -25,12 +25,12 @@ const KEYS = [
 ]
 const MOON = C(0.55, 0.68, 1.0)
 /** A colour scaled up (its tint kept) to at least luminance min. */
-function floorLum(c: THREE.Color, min: number): void {
+function floorLum(c: GFX.Color, min: number): void {
   const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
   if (l < min) c.multiplyScalar(min / Math.max(l, 1e-4))
 }
 /** A colour pulled toward its own grey (its luminance kept): k of its tint left. */
-function keepTint(c: THREE.Color, k: number): THREE.Color {
+function keepTint(c: GFX.Color, k: number): GFX.Color {
   const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
   return c.setRGB(l + (c.r - l) * k, l + (c.g - l) * k, l + (c.b - l) * k)
 }
@@ -43,50 +43,50 @@ function keepTint(c: THREE.Color, k: number): THREE.Color {
  */
 export class Atmosphere {
   readonly uniforms = {
-    uCamPos: { value: new THREE.Vector3() },
+    uCamPos: { value: new GFX.Vector3() },
     /** The light's direction: the sun by day, the moon by night. */
-    uSunDir: { value: new THREE.Vector3(0, 1, 0) },
-    uSunColor: { value: new THREE.Color() },
-    uSkyZenith: { value: new THREE.Color() },
-    uSkyHorizon: { value: new THREE.Color() },
-    uSunGlow: { value: new THREE.Color() },
+    uSunDir: { value: new GFX.Vector3(0, 1, 0) },
+    uSunColor: { value: new GFX.Color() },
+    uSkyZenith: { value: new GFX.Color() },
+    uSkyHorizon: { value: new GFX.Color() },
+    uSunGlow: { value: new GFX.Color() },
     /** The sun's own colour (vivid: its disc in the sky, its glint on the water) — uSunColor is its LIGHT on the land. */
-    uSunDisc: { value: new THREE.Color() },
-    uAmbSky: { value: new THREE.Color() },
-    uAmbGround: { value: new THREE.Color() },
+    uSunDisc: { value: new GFX.Color() },
+    uAmbSky: { value: new GFX.Color() },
+    uAmbGround: { value: new GFX.Color() },
     /** The HAZE: clear air to x m, then AERIAL PERSPECTIVE over a length of y m (the tier's fogNear / haze, shorter
      *  in the rain — main.ts, update) — and its colour (the sky's horizon leaning to its zenith: a blue-grey). */
-    uFogRange: { value: new THREE.Vector2(130, 2600) },
-    uFogColor: { value: new THREE.Color() },
+    uFogRange: { value: new GFX.Vector2(130, 2600) },
+    uFogColor: { value: new GFX.Color() },
     uTime: { value: 0 },
-    uNoise: { value: null as THREE.Texture | null },
+    uNoise: { value: null as GFX.Texture | null },
     /** 0 day … 1 full night (stars, the moon's disc, headlights). */
     uNight: { value: 0 },
     /** Headlights (Vehicle.lights): the left lamp (xyz) and on (w), the right lamp, the car's forward and up axes;
      *  the tail lamps' middle (xyz) and the brake light (w, 0 … 1). */
-    uHeadL: { value: new THREE.Vector4() },
-    uHeadR: { value: new THREE.Vector3() },
-    uHeadDir: { value: new THREE.Vector3(0, 0, -1) },
-    uHeadUp: { value: new THREE.Vector3(0, 1, 0) },
-    uTail: { value: new THREE.Vector4() },
+    uHeadL: { value: new GFX.Vector4() },
+    uHeadR: { value: new GFX.Vector3() },
+    uHeadDir: { value: new GFX.Vector3(0, 0, -1) },
+    uHeadUp: { value: new GFX.Vector3(0, 1, 0) },
+    uTail: { value: new GFX.Vector4() },
     /** A CAMPFIRE near the camera (Props.ts): its centre (xyz) and how bright it is now (w, flickering; 0 = none). */
     /** LAMPS ON 0 … 1: lanterns, lit windows, embers, fireflies — off by day, on from dusk (the sun under ~8°) to dawn. */
     uLamps: { value: 0 },
-    uFire: { value: new THREE.Vector4() },
+    uFire: { value: new GFX.Vector4() },
     /** WEATHER (`weather`, below): cloud cover 0 … 1, rain 0 … 1, how wet the land is 0 … 1, the wind (m/s, xz). */
     uCloud: { value: 0.25 },
     uRain: { value: 0 },
     uWet: { value: 0 },
-    uWind: { value: new THREE.Vector2(2.2, 0.9) },
+    uWind: { value: new GFX.Vector2(2.2, 0.9) },
     /** 1 without the post pass (Glow.ts): the sky paints the bloom's halo round the sun, the haze glows toward it. */
     uGlow: { value: 0 },
     /** THE CROSSING's MIST (Crossing.ts): 0 clear … 1 inside the cloud (~10 m to see) — a fog round the camera on top
      *  of the haze, the sky gone to it; its colour the horizon's brightness as a grey-white (dark at night). */
     uMist: { value: 0 },
-    uMistColor: { value: new THREE.Color() },
+    uMistColor: { value: new GFX.Color() },
     /** The desert's SANDSTORM (`weather`): 0 … 1, and the dust's colour (the sand lit by what light gets through). */
     uDust: { value: 0 },
-    uDustColor: { value: new THREE.Color() },
+    uDustColor: { value: new GFX.Color() },
   }
   /** WEATHER (2026-10-27, OTH has it): spells of CLEAR, CLOUDY and RAIN a few real minutes each, easing into one another
    *  (the clouds over a minute, the rain over ~25 s once the sky is heavy); the land gets wet in the rain over ~40 s and
@@ -104,7 +104,7 @@ export class Atmosphere {
   /** Real minutes for one daytime (06–18); the night runs 3× faster. 0 = the clock stands still. */
   dayMinutes = 24
 
-  constructor(noise: THREE.Texture) {
+  constructor(noise: GFX.Texture) {
     this.uniforms.uNoise.value = noise
   }
 
@@ -173,25 +173,25 @@ export class Atmosphere {
   private dk = -1
   private lastT = 0
 
-  update(cam: THREE.Vector3, t: number): void {
+  update(cam: GFX.Vector3, t: number): void {
     const u = this.uniforms
     u.uCamPos.value.copy(cam)
     u.uTime.value = t
     const dt = Math.min(Math.max(t - this.lastT, 0), 0.1)
     this.lastT = t
-    this.dk = this.dk < 0 ? (this.desert ? 1 : 0) : this.dk + THREE.MathUtils.clamp((this.desert ? 1 : 0) - this.dk, -dt / 4, dt / 4)
+    this.dk = this.dk < 0 ? (this.desert ? 1 : 0) : this.dk + GFX.MathUtils.clamp((this.desert ? 1 : 0) - this.dk, -dt / 4, dt / 4)
     const dk = this.dk
     // the sun's path: east at 6, south (+z) at noon, west at 18, under the ground at night; 62° at its highest
     const az = ((this.hour - 6) / 12) * Math.PI
-    const el = Math.sin(az) * THREE.MathUtils.degToRad(62)
-    const sun = new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).normalize()
+    const el = Math.sin(az) * GFX.MathUtils.degToRad(62)
+    const sun = new GFX.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).normalize()
     const s = sun.y
     let i = 0
     while (i < KEYS.length - 2 && s > KEYS[i + 1].s) i++
     const a = KEYS[i], b = KEYS[i + 1]
-    const f = THREE.MathUtils.clamp((s - a.s) / (b.s - a.s), 0, 1)
+    const f = GFX.MathUtils.clamp((s - a.s) / (b.s - a.s), 0, 1)
     // (under a heavy sky the sun dims and the sky goes a soft grey, its brightness kept)
-    const overcast = THREE.MathUtils.smoothstep(u.uCloud.value, 0.45, 1.0)
+    const overcast = GFX.MathUtils.smoothstep(u.uCloud.value, 0.45, 1.0)
     // (in a sandstorm the sun is a pale disc through the dust)
     const dust = u.uDust.value
     const sunI = (a.sunI + (b.sunI - a.sunI) * f) * (1 - 0.72 * overcast) * (1 - 0.68 * dust)
@@ -199,18 +199,18 @@ export class Atmosphere {
     u.uSkyHorizon.value.copy(a.hor).lerp(b.hor, f)
     u.uSunGlow.value.copy(a.glow).lerp(b.glow, f).multiplyScalar(1 - 0.8 * overcast)
     if (dk > 0) {
-      const day = THREE.MathUtils.smoothstep(s, 0.12, 0.35) * dk, low = THREE.MathUtils.smoothstep(s, -0.04, 0.06) * (1 - day) * dk
+      const day = GFX.MathUtils.smoothstep(s, 0.12, 0.35) * dk, low = GFX.MathUtils.smoothstep(s, -0.04, 0.06) * (1 - day) * dk
       const zl = 0.2126 * u.uSkyZenith.value.r + 0.7152 * u.uSkyZenith.value.g + 0.0722 * u.uSkyZenith.value.b
       const hl = 0.2126 * u.uSkyHorizon.value.r + 0.7152 * u.uSkyHorizon.value.g + 0.0722 * u.uSkyHorizon.value.b
       // (2026-11-02, frame stats vs theirs: our sky a warm grey 216 209 209, theirs a pale cyan-white 229 244 251 —
       //  the zenith further to cyan, the horizon a cool white, not cream)
       u.uSkyZenith.value.lerp(u.uSkyHorizon.value, 0.45 * day).lerp(D_CYAN.clone().multiplyScalar(zl * 1.08), 0.6 * day)
       u.uSkyHorizon.value.lerp(D_CREAM.clone().multiplyScalar(hl * 1.14), 0.78 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.1), 0.45 * low)
-      u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 1.3), 0.55 * dk * (1 - THREE.MathUtils.smoothstep(s, -0.25, 0.0)))
+      u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 1.3), 0.55 * dk * (1 - GFX.MathUtils.smoothstep(s, -0.25, 0.0)))
     }
     for (const c of [u.uSkyZenith.value, u.uSkyHorizon.value]) {
       const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
-      c.lerp(new THREE.Color(l * 0.95, l, l * 1.04), 0.75 * overcast)
+      c.lerp(new GFX.Color(l * 0.95, l, l * 1.04), 0.75 * overcast)
     }
     // THE DUST: the sand's own warm orange, as bright as the horizon is (darker overhead, dim at night) — the sky goes
     // to it; the haze, the light and the bounce follow below
@@ -224,9 +224,9 @@ export class Atmosphere {
     // (the desert's air clearer still: its aerial views were pale and washed out — frame 221 196 170 vs their 213 175 158)
     u.uFogRange.value.y = this.hazeLen * (1 + 1.3 * dk) * (1 - 0.45 * u.uRain.value)
     const amb = a.amb + (b.amb - a.amb) * f
-    const night = THREE.MathUtils.smoothstep(-s, 0.06, 0.2)
+    const night = GFX.MathUtils.smoothstep(-s, 0.06, 0.2)
     u.uNight.value = night
-    u.uLamps.value = Math.max(night, 1 - THREE.MathUtils.smoothstep(s, 0.03, 0.14))
+    u.uLamps.value = Math.max(night, 1 - GFX.MathUtils.smoothstep(s, 0.03, 0.14))
     if (s > -0.05) {
       u.uSunDir.value.copy(sun)
       u.uSunDisc.value.copy(a.sun).lerp(b.sun, f).multiplyScalar(sunI)
@@ -251,25 +251,25 @@ export class Atmosphere {
     // a floor on the sky's fill through dusk (the land darker than by day, its colours still its own) — but deep in
     // the night it gives way (2026-10-27, the user: "night needs more darkness, like in real life"): only the moon's
     // cold light is left, the land a dark silhouette against the sky, what the headlights paint is what you see
-    floorLum(u.uAmbSky.value, THREE.MathUtils.lerp(0.22, 0.022, night))
-    floorLum(u.uAmbGround.value, THREE.MathUtils.lerp(0.09, 0.006, night))
+    floorLum(u.uAmbSky.value, GFX.MathUtils.lerp(0.22, 0.022, night))
+    floorLum(u.uAmbGround.value, GFX.MathUtils.lerp(0.09, 0.006, night))
     // the HAZE's colour: the horizon leaning to the zenith, much of its tint kept — far ridges go blue-grey in layers
     keepTint(u.uFogColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.42), 0.75)
     // (the desert's haze: the sand's own warm colour in it)
-    if (dk > 0) { const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b; u.uFogColor.value.lerp(D_SANDHAZE.clone().multiplyScalar(fl), 0.12 * dk).lerp(u.uSkyHorizon.value, 0.45 * dk * THREE.MathUtils.smoothstep(s, 0.12, 0.35)) } // (by day the far land melts into a pale cyan-white, as theirs does)
+    if (dk > 0) { const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b; u.uFogColor.value.lerp(D_SANDHAZE.clone().multiplyScalar(fl), 0.12 * dk).lerp(u.uSkyHorizon.value, 0.45 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)) } // (by day the far land melts into a pale cyan-white, as theirs does)
     // the MIST's colour: the horizon's brightness as a cool grey-white (dark at night, rosy-grey at dusk)
     keepTint(u.uMistColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.2), 0.18).multiplyScalar(0.92)
   }
 }
 
 /** The desert's grade (Atmosphere.desert): colours of unit luminance-ish, scaled to the keyframe's brightness. */
-const D_CYAN = new THREE.Color(0.8, 1.0, 1.12)
-const D_CREAM = new THREE.Color(0.94, 1.0, 1.04) // (a cool white now: their horizon is pale cyan, never cream)
-const D_PINK = new THREE.Color(1.5, 0.62, 0.78)
-const D_PURPLE = new THREE.Color(0.75, 0.42, 1.1)
-const D_SANDHAZE = new THREE.Color(1.12, 0.96, 0.82)
+const D_CYAN = new GFX.Color(0.8, 1.0, 1.12)
+const D_CREAM = new GFX.Color(0.94, 1.0, 1.04) // (a cool white now: their horizon is pale cyan, never cream)
+const D_PINK = new GFX.Color(1.5, 0.62, 0.78)
+const D_PURPLE = new GFX.Color(0.75, 0.42, 1.1)
+const D_SANDHAZE = new GFX.Color(1.12, 0.96, 0.82)
 /** The sandstorm's dust (unit-ish luminance): Over the Hill's orange-brown haze. */
-const DUST = new THREE.Color(1.42, 0.86, 0.5)
+const DUST = new GFX.Color(1.42, 0.86, 0.5)
 
 /** First line of every world fragment shader (GLSL3: three's tone-map / colour-space chunks write gl_FragColor). */
 export const FRAG_OUT = /* glsl */ `

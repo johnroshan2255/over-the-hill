@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Camp } from '../save'
 import { type Chart, drawGate, drawPin, drawPlace, drawRoute, drawTracks } from './Chart'
 import type { Landmarks } from './Landmarks'
@@ -22,8 +22,8 @@ export interface RadarOptions {
   meta: MapMeta
   chart: Chart
   guide: Guide
-  camera: THREE.Camera
-  carPos: () => THREE.Vector3
+  camera: GFX.Camera
+  carPos: () => GFX.Vector3
   carHeading: () => number
   myCamp: () => Camp | null
 }
@@ -56,7 +56,7 @@ export class Radar {
   private plateKey = ''
   private routeKey: unknown = null
   private visible = true
-  private readonly dir = new THREE.Vector3()
+  private readonly dir = new GFX.Vector3()
   private readonly off = new AbortController()
 
   constructor(private readonly o: RadarOptions) {
@@ -108,7 +108,7 @@ export class Radar {
     this.o.camera.getWorldDirection(this.dir)
     const head = Math.atan2(this.dir.x, -this.dir.z) // (clockwise from north)
     // the zoom: ~1.7 m a pixel standing, ~3.4 at 90 km/h
-    const want = 1.7 + 1.7 * THREE.MathUtils.smoothstep(Math.abs(speedKmh), 15, 90)
+    const want = 1.7 + 1.7 * GFX.MathUtils.smoothstep(Math.abs(speedKmh), 15, 90)
     this.mpp += (want - this.mpp) * Math.min(1, dt * 0.8)
     const gd = this.o.guide, r = gd.route
     const dx = (p.x - this.x0) / this.mpp0, dz = (p.z - this.z0) / this.mpp0

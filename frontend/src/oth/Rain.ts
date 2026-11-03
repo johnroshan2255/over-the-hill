@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import type { Tier } from './quality'
 
@@ -11,22 +11,22 @@ import type { Tier } from './quality'
  * (the dust's colour, lit by what light gets through), thicker low down, while `uDust` blows.
  */
 export class Rain {
-  readonly mesh: THREE.Mesh
+  readonly mesh: GFX.Mesh
 
   constructor(private readonly atmos: Atmosphere, tier: Tier, private readonly kind: 'rain' | 'sand' = 'rain') {
     const n = tier.rain
-    const g = new THREE.InstancedBufferGeometry()
+    const g = new GFX.InstancedBufferGeometry()
     // one streak: a quad along y (0 bottom … 1 top), x across (−1 … 1)
-    g.setAttribute('position', new THREE.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 1, 1, 0, -1, 1, 0], 3))
+    g.setAttribute('position', new GFX.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 1, 1, 0, -1, 1, 0], 3))
     g.setIndex([0, 1, 2, 0, 2, 3])
     const seed = new Float32Array(n * 4)
     let h = 0x9e3779b9
     const rnd = () => ((h = Math.imul(h ^ (h >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296
     for (let i = 0; i < n; i++) { seed[i * 4] = rnd(); seed[i * 4 + 1] = rnd(); seed[i * 4 + 2] = rnd(); seed[i * 4 + 3] = rnd() }
-    g.setAttribute('seed', new THREE.InstancedBufferAttribute(seed, 4))
+    g.setAttribute('seed', new GFX.InstancedBufferAttribute(seed, 4))
     g.instanceCount = n
     const u = atmos.uniforms
-    const mat = new THREE.ShaderMaterial({
+    const mat = new GFX.ShaderMaterial({
       uniforms: { uCamPos: u.uCamPos, uTime: u.uTime, uRain: kind === 'sand' ? u.uDust : u.uRain, uWind: u.uWind, uAmbSky: u.uAmbSky, uSunColor: u.uSunColor, uHeadL: u.uHeadL, uHeadR: u.uHeadR, uHeadDir: u.uHeadDir, uDustColor: u.uDustColor },
       defines: kind === 'sand' ? { SAND: '' } : {},
       vertexShader: /* glsl */ `
@@ -104,15 +104,15 @@ export class Rain {
         }`,
       transparent: true,
       depthWrite: false,
-      side: THREE.DoubleSide, // (the billboard's winding faces away from the camera: culled, the rain was invisible)
-      blending: THREE.CustomBlending,
-      blendSrc: THREE.OneFactor,
-      blendDst: THREE.OneMinusSrcAlphaFactor,
+      side: GFX.DoubleSide, // (the billboard's winding faces away from the camera: culled, the rain was invisible)
+      blending: GFX.CustomBlending,
+      blendSrc: GFX.OneFactor,
+      blendDst: GFX.OneMinusSrcAlphaFactor,
       // (the sky mark for the god rays — alpha — is left as it was: rain doesn't hide the sky)
-      blendSrcAlpha: THREE.ZeroFactor,
-      blendDstAlpha: THREE.OneFactor,
+      blendSrcAlpha: GFX.ZeroFactor,
+      blendDstAlpha: GFX.OneFactor,
     })
-    this.mesh = new THREE.Mesh(g, mat)
+    this.mesh = new GFX.Mesh(g, mat)
     this.mesh.frustumCulled = false
     this.mesh.renderOrder = 50
     this.mesh.visible = false

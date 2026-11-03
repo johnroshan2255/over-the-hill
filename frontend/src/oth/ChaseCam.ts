@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { MapData } from './MapData'
 import type { Vehicle } from './Vehicle'
 
@@ -21,9 +21,9 @@ export class ChaseCam {
   private readonly touches = new Map<number, { x: number; y: number }>()
   private pinch = 0
   enabled = true
-  private readonly look = new THREE.Vector3()
+  private readonly look = new GFX.Vector3()
 
-  constructor(readonly camera: THREE.PerspectiveCamera, private readonly map: MapData, private readonly car: Vehicle, dom: HTMLElement) {
+  constructor(readonly camera: GFX.PerspectiveCamera, private readonly map: MapData, private readonly car: Vehicle, dom: HTMLElement) {
     dom.addEventListener('pointerdown', (e) => {
       if ((e.target as HTMLElement).closest?.('.oth-touch')) return
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
@@ -49,7 +49,7 @@ export class ChaseCam {
       }
       if (!this.drag) return
       this.orbit -= (e.clientX - this.lx) * 0.006
-      this.pitch = THREE.MathUtils.clamp(this.pitch + (e.clientY - this.ly) * 0.004, -0.1, 1.2)
+      this.pitch = GFX.MathUtils.clamp(this.pitch + (e.clientY - this.ly) * 0.004, -0.1, 1.2)
       this.lx = e.clientX; this.ly = e.clientY
       this.idle = 0
     })
@@ -62,7 +62,7 @@ export class ChaseCam {
 
   /** Zoom: the distance × k (< 1 closer), 3.5–40 m; the camera eases there. */
   zoom(k: number): void {
-    this.distTo = THREE.MathUtils.clamp(this.distTo * k, 3.5, 40)
+    this.distTo = GFX.MathUtils.clamp(this.distTo * k, 3.5, 40)
   }
 
   private spread(): number {

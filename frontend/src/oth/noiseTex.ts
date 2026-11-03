@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 
 /**
  * The PAINT texture: one tileable 256² RGBA8 noise generated at boot (no download), sampled in world space at a few
@@ -50,7 +50,7 @@ function worley(u: number, v: number, cells: number, s: number): number {
   return Math.min(1, d)
 }
 
-export function createPaintTexture(): THREE.DataTexture {
+export function createPaintTexture(): GFX.DataTexture {
   const data = new Uint8Array(N * N * 4)
   const to8 = (v: number) => Math.max(0, Math.min(255, Math.round((v * 0.5 + 0.5) * 255)))
   for (let y = 0; y < N; y++) {
@@ -62,10 +62,10 @@ export function createPaintTexture(): THREE.DataTexture {
       data[k + 3] = Math.round(worley(u, v, 16, 4) * 255)
     }
   }
-  const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType)
-  t.wrapS = t.wrapT = THREE.RepeatWrapping
-  t.minFilter = THREE.LinearMipmapLinearFilter
-  t.magFilter = THREE.LinearFilter
+  const t = new GFX.DataTexture(data, N, N, GFX.RGBAFormat, GFX.UnsignedByteType)
+  t.wrapS = t.wrapT = GFX.RepeatWrapping
+  t.minFilter = GFX.LinearMipmapLinearFilter
+  t.magFilter = GFX.LinearFilter
   t.generateMipmaps = true
   t.anisotropy = 4
   t.needsUpdate = true

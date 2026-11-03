@@ -1,5 +1,5 @@
-import * as THREE from 'three'
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import * as GFX from './gfx'
+const { mergeGeometries } = GFX
 import { loadVehicle, type TruckModel } from '../assets/loadModels'
 import { VEHICLES, vehicleDef } from '../gameplay/vehicle/catalogue'
 import { resolveSpec } from '../gameplay/vehicle/drivetrain/spec'
@@ -23,19 +23,19 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
  * 3 the car. Touch: ◀ ▶ steer, GAS / BRAKE, ⟲. Mouse / finger drag on the view orbits the chase camera.
  */
 export class Vehicle {
-  readonly root = new THREE.Group()
+  readonly root = new GFX.Group()
   sim!: TruckSim
   model!: TruckModel
   id = ''
-  private readonly wheels: THREE.Object3D[] = []
-  private wheelMesh: THREE.InstancedMesh | null = null
-  private readonly prevP = new THREE.Vector3()
-  private readonly curP = new THREE.Vector3()
-  private readonly prevQ = new THREE.Quaternion()
-  private readonly curQ = new THREE.Quaternion()
-  readonly pos = new THREE.Vector3()
-  private readonly uniforms: Record<string, THREE.IUniform>
-  private readonly shadow: THREE.Mesh
+  private readonly wheels: GFX.Object3D[] = []
+  private wheelMesh: GFX.InstancedMesh | null = null
+  private readonly prevP = new GFX.Vector3()
+  private readonly curP = new GFX.Vector3()
+  private readonly prevQ = new GFX.Quaternion()
+  private readonly curQ = new GFX.Quaternion()
+  readonly pos = new GFX.Vector3()
+  private readonly uniforms: Record<string, GFX.IUniform>
+  private readonly shadow: GFX.Mesh
   private readonly keys = new Set<string>()
   private pedal = 0
   private steerK = 0
@@ -49,17 +49,17 @@ export class Vehicle {
   driving: { manual: boolean; aids: 'off' | 'standard' | 'full'; offroadAssist: boolean } = { manual: false, aids: 'full', offroadAssist: true }
   /** Where the first car stands (a saved journey — save.ts); null: the valley's start. */
   spawnAt: { x: number; z: number; heading: number } | null = null
-  private readonly shadowSize = new THREE.Vector3(1, 1, 1)
+  private readonly shadowSize = new GFX.Vector3(1, 1, 1)
   private readonly shadowBase: Float32Array
 
-  constructor(private readonly map: MapData, private readonly physics: OthPhysics, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4) {
-    this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new THREE.Color(1, 1, 1) }, uSunHere: { value: 1 },
+  constructor(private readonly map: MapData, private readonly physics: OthPhysics, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
+    this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 },
       uCoat: this.coatU, uCoatColor: { value: this.coatColor }, uCarBase: this.baseU }
     void tier
     // the contact shadow: a grid that follows the ground under the car, darkest under the body, soft at the edge
-    const sg = new THREE.PlaneGeometry(1, 1, 14, 14).rotateX(-Math.PI / 2)
-    this.shadow = new THREE.Mesh(sg, new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    const sg = new GFX.PlaneGeometry(1, 1, 14, 14).rotateX(-Math.PI / 2)
+    this.shadow = new GFX.Mesh(sg, new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms: { uMist: atmos.uniforms.uMist },
       vertexShader: /* glsl */ `out vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0); }`,
       // (fading in the crossing's mist with the car)
@@ -191,36 +191,36 @@ export class Vehicle {
     const u = this.uniforms
     u.uMap.value = truck.map
     u.uPaintMask.value = truck.paintMap
-    ;(u.uPaint.value as THREE.Color).set(paint)
+    ;(u.uPaint.value as GFX.Color).set(paint)
     // (MIST_K: the crossing's cloud takes less of the car than of the land — Atmosphere.ts)
     const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45' }
     if (truck.map) defines.USE_MAP_OTH = ''
     if (truck.paintMap) defines.USE_PAINTMAP = ''
-    const vc = (g: THREE.BufferGeometry) => !!g.attributes.color
+    const vc = (g: GFX.BufferGeometry) => !!g.attributes.color
     // THREE DRAWS for the whole car (2026-11-02: it was 11 — body, cabin, two door skins, four wheels, three glass
     // pieces): the body with the CABIN (dash, seats, console — seen through the windows) and the FRONT DOORS (cut out
     // of the body in the model, set at their hinges: they never open here) as one mesh, the windows as one, the four
     // wheels as one instanced mesh
-    const atHinge = (geo: THREE.BufferGeometry, hinge: [number, number, number]) => geo.clone().translate(...hinge)
+    const atHinge = (geo: GFX.BufferGeometry, hinge: [number, number, number]) => geo.clone().translate(...hinge)
     const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...truck.doors.map((d) => atHinge(d.body, d.hinge))])
     const glassGeo = mergeParts([truck.glass, ...truck.doors.flatMap((d) => (d.glass ? [atHinge(d.glass, d.hinge)] : []))])
-    const body = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
-    const glass = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: THREE.DoubleSide })
-    const b = new THREE.Mesh(bodyGeo, body)
-    const g = new THREE.Mesh(glassGeo, glass)
+    const body = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
+    const glass = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide })
+    const b = new GFX.Mesh(bodyGeo, body)
+    const g = new GFX.Mesh(glassGeo, glass)
     b.frustumCulled = g.frustumCulled = false
     g.renderOrder = 3 // (transparent: after the cabin behind it)
     this.root.add(b, g)
-    const wheelMat = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) })
-    this.wheelMesh = new THREE.InstancedMesh(truck.wheel, wheelMat, 4)
+    const wheelMat = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) })
+    this.wheelMesh = new GFX.InstancedMesh(truck.wheel, wheelMat, 4)
     this.wheelMesh.frustumCulled = false
-    this.wheelMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    this.wheelMesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
     this.root.add(this.wheelMesh)
-    for (let k = 0; k < 4; k++) this.wheels.push(new THREE.Object3D()) // (each wheel's pose: update() → the instances)
+    for (let k = 0; k < 4; k++) this.wheels.push(new GFX.Object3D()) // (each wheel's pose: update() → the instances)
     this.shadowSize.set(truck.half.x * 2 + 1.0, 1, truck.half.z * 2 + 1.2)
   }
 
-  get shadowMesh(): THREE.Mesh { return this.shadow }
+  get shadowMesh(): GFX.Mesh { return this.shadow }
 
   /** On its wheels on the ground: two or more tyres touching, the roof up (a safe spot to save the journey at). */
   grounded(): boolean {
@@ -229,13 +229,13 @@ export class Vehicle {
     for (const w of this.sim.wheels) if (w.contact) n++
     return n >= 2 && this.up.set(0, 1, 0).applyQuaternion(this.root.quaternion).y > 0.6
   }
-  private readonly up = new THREE.Vector3()
+  private readonly up = new GFX.Vector3()
 
-  private readonly viewSphere = new THREE.Sphere(new THREE.Vector3(), 15)
+  private readonly viewSphere = new GFX.Sphere(new GFX.Vector3(), 15)
   /** Out of the view or behind the hills, the car isn't drawn (2026-11-02: every part skipped three's cull — the body
    *  pieces, glass, wheels, lamps, beams and the shadow cost ~0.2 ms a frame with the car off-screen): one test a frame
    *  for all of them, a sphere of 15 m (the beams reach 12 m ahead). Its light on the world (`lights`) stays. */
-  cull(view: THREE.Frustum, horizon: Horizon): void {
+  cull(view: GFX.Frustum, horizon: Horizon): void {
     const p = this.root.position
     this.viewSphere.center.copy(p)
     this.root.visible = view.intersectsSphere(this.viewSphere) && !horizon.hidden(p.x - 15, p.z - 15, p.x + 15, p.z + 15, p.y + 4)
@@ -288,13 +288,13 @@ export class Vehicle {
     }
   }
 
-  private readPose(p: THREE.Vector3, q: THREE.Quaternion): void {
+  private readPose(p: GFX.Vector3, q: GFX.Quaternion): void {
     const t = this.sim.body.translation(), r = this.sim.body.rotation()
     p.set(t.x, t.y, t.z)
     q.set(r.x, r.y, r.z, r.w)
   }
 
-  private readonly e = new THREE.Euler()
+  private readonly e = new GFX.Euler()
   /** Render frame: the interpolated pose, the wheels, the contact shadow. */
   update(alpha: number): void {
     if (!this.sim || this.loading) return
@@ -315,7 +315,7 @@ export class Vehicle {
     })
     this.wheelMesh!.instanceMatrix.needsUpdate = true
     // the contact shadow: its grid laid on the ground under the body (world-space vertices, turned with the car)
-    const sp = this.shadow.geometry.attributes.position as THREE.BufferAttribute
+    const sp = this.shadow.geometry.attributes.position as GFX.BufferAttribute
     const a = sp.array as Float32Array, base = this.shadowBase
     const h = this.sim.heading, cs = Math.cos(h), sn = Math.sin(h)
     for (let i = 0; i < sp.count; i++) {
@@ -335,9 +335,9 @@ export class Vehicle {
    *  lightly on the valley's dirt tracks; washed off by a ford or the oasis's water (a few seconds) and slowly by
    *  rain. Its colour follows what it was picked up from. One sample of the ground a frame. */
   private readonly coatU = { value: 0 }
-  private readonly coatColor = new THREE.Color(0.8, 0.6, 0.42)
+  private readonly coatColor = new GFX.Color(0.8, 0.6, 0.42)
   private readonly baseU = { value: 0 }
-  private readonly coatTo = new THREE.Color()
+  private readonly coatTo = new GFX.Color()
   get coat(): number { return this.coatU.value }
   set coat(v: number) { this.coatU.value = Math.min(1, Math.max(0, v)) }
   weather(atmos: Atmosphere, dt: number): void {
@@ -359,15 +359,15 @@ export class Vehicle {
     }
     this.coat += gain - (dt / 80) * u.uRain.value
   }
-  private lampMesh: THREE.InstancedMesh | null = null
-  private tailMesh: THREE.InstancedMesh | null = null
-  private beams: THREE.Mesh | null = null
-  private readonly lampMat = glowMaterial(new THREE.Color(1, 0.9, 0.72))
-  private readonly tailMat = glowMaterial(new THREE.Color(1, 0.07, 0.03))
+  private lampMesh: GFX.InstancedMesh | null = null
+  private tailMesh: GFX.InstancedMesh | null = null
+  private beams: GFX.Mesh | null = null
+  private readonly lampMat = glowMaterial(new GFX.Color(1, 0.9, 0.72))
+  private readonly tailMat = glowMaterial(new GFX.Color(1, 0.07, 0.03))
   private readonly beamMat = beamMaterial()
   private brakeK = 0
-  private readonly lampL = new THREE.Vector3()
-  private readonly lampR = new THREE.Vector3()
+  private readonly lampL = new GFX.Vector3()
+  private readonly lampR = new GFX.Vector3()
   /** The car's lights (2026-10-27, the user: "the headlight comes from the centre of the front, not the headlamps; the
    *  back light should light when we brake; use a light like paint"): the shared uniforms put a painted BEAM from each
    *  lamp on every surface (Atmosphere `headlight()`) and the brake lights' red pool behind; the lenses GLOW (soft
@@ -388,27 +388,27 @@ export class Vehicle {
     u.uHeadUp.value.set(0, 1, 0).applyQuaternion(q)
     const c = this.sim.controls, braking = (c.brake && this.sim.speed > 0.4) || c.handbrake
     this.brakeK = braking ? Math.min(1, this.brakeK + dt / 0.06) : Math.max(0, this.brakeK - dt / 0.12)
-    const tc = new THREE.Vector3(0, t[1], t[2] + 0.1).applyQuaternion(q).add(this.root.position)
+    const tc = new GFX.Vector3(0, t[1], t[2] + 0.1).applyQuaternion(q).add(this.root.position)
     u.uTail.value.set(tc.x, tc.y, tc.z, this.brakeK)
     if (!this.lampMesh) {
-      const g = new THREE.PlaneGeometry(2, 2)
-      this.lampMesh = new THREE.InstancedMesh(g, this.lampMat, 2)
-      this.tailMesh = new THREE.InstancedMesh(g, this.tailMat, 2)
+      const g = new GFX.PlaneGeometry(2, 2)
+      this.lampMesh = new GFX.InstancedMesh(g, this.lampMat, 2)
+      this.tailMesh = new GFX.InstancedMesh(g, this.tailMat, 2)
       this.lampMesh.frustumCulled = this.tailMesh.frustumCulled = false
       this.lampMesh.renderOrder = this.tailMesh.renderOrder = 2
-      this.beams = new THREE.Mesh(beamGeometry(Math.abs(h[0]), h[1], h[2] - 0.05), this.beamMat)
+      this.beams = new GFX.Mesh(beamGeometry(Math.abs(h[0]), h[1], h[2] - 0.05), this.beamMat)
       this.beams.frustumCulled = false
       this.beams.renderOrder = 3
       this.root.add(this.lampMesh, this.tailMesh, this.beams)
-      const m = new THREE.Matrix4(), back = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI)
+      const m = new GFX.Matrix4(), back = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), Math.PI)
       for (let k = 0; k < 2; k++) {
         const sx = k ? 1 : -1
         // (each glow 3× its lens: the lens a bright core, round it a soft halo)
         const hr = (head ? Math.max(0.06, Math.min(head.w, head.h)) : 0.1) * 3
-        m.compose(new THREE.Vector3(Math.abs(h[0]) * sx, h[1], h[2] - 0.03), back, new THREE.Vector3(hr, hr, 1))
+        m.compose(new GFX.Vector3(Math.abs(h[0]) * sx, h[1], h[2] - 0.03), back, new GFX.Vector3(hr, hr, 1))
         this.lampMesh.setMatrixAt(k, m)
         const tr = (tail ? Math.max(0.05, Math.min(tail.w, tail.h)) : 0.08) * 3
-        m.compose(new THREE.Vector3(Math.abs(t[0]) * sx, t[1], t[2] + 0.03), new THREE.Quaternion(), new THREE.Vector3(tr, tr, 1))
+        m.compose(new GFX.Vector3(Math.abs(t[0]) * sx, t[1], t[2] + 0.03), new GFX.Quaternion(), new GFX.Vector3(tr, tr, 1))
         this.tailMesh!.setMatrixAt(k, m)
       }
     }
@@ -428,20 +428,20 @@ export class Vehicle {
 /** Parts merged into one geometry: each given the attributes the others have, as floats (a missing colour → white,
  *  paint mask / uv → 0: what the shader read for it before — no USE_COLOR / an attribute's default), all indexed or
  *  none. */
-function mergeParts(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+function mergeParts(parts: GFX.BufferGeometry[]): GFX.BufferGeometry {
   const names = [...new Set(parts.flatMap((g) => Object.keys(g.attributes)))]
   const indexed = parts.every((g) => g.index)
   const ready = parts.map((g0) => {
     const g0b = indexed ? g0 : g0.index ? g0.toNonIndexed() : g0
-    const g = new THREE.BufferGeometry()
+    const g = new GFX.BufferGeometry()
     const n = g0b.attributes.position.count
     for (const name of names) {
-      const a = g0b.attributes[name] as THREE.BufferAttribute | undefined
-      const size = a?.itemSize ?? (parts.find((p) => p.attributes[name])!.attributes[name] as THREE.BufferAttribute).itemSize
+      const a = g0b.attributes[name] as GFX.BufferAttribute | undefined
+      const size = a?.itemSize ?? (parts.find((p) => p.attributes[name])!.attributes[name] as GFX.BufferAttribute).itemSize
       const out = new Float32Array(n * size)
       if (a) for (let i = 0; i < n; i++) for (let c = 0; c < size; c++) out[i * size + c] = a.getComponent(i, c)
       else out.fill(name === 'color' ? 1 : 0)
-      g.setAttribute(name, new THREE.BufferAttribute(out, size))
+      g.setAttribute(name, new GFX.BufferAttribute(out, size))
     }
     if (indexed) g.setIndex(Array.from(g0b.index!.array))
     return g
@@ -550,8 +550,8 @@ void main() {
 
 /** A lamp's GLOW: a camera-side quad, a bright core (the lens) and a soft painted halo round it, added above white
  *  (the bloom spreads it). uK: brightness (0 = off). */
-function glowMaterial(color: THREE.Color): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+function glowMaterial(color: GFX.Color): GFX.ShaderMaterial {
+  return new GFX.ShaderMaterial({
     uniforms: { uColor: { value: color }, uK: { value: 0 } },
     vertexShader: /* glsl */ `
       varying vec2 vUv;
@@ -565,7 +565,7 @@ function glowMaterial(color: THREE.Color): THREE.ShaderMaterial {
         float core = 1.0 - smoothstep(0.26, 0.34, d), halo = pow(max(1.0 - d, 0.0), 2.2) * 0.32;
         gl_FragColor = vec4(uColor * uK * (core + halo), 1.0);
       }`,
-    blending: THREE.AdditiveBlending,
+    blending: GFX.AdditiveBlending,
     depthWrite: false,
     transparent: true,
     toneMapped: false,
@@ -574,7 +574,7 @@ function glowMaterial(color: THREE.Color): THREE.ShaderMaterial {
 
 /** The headlights' BEAMS in the air: an open cone from each lamp (wide, low, 12 m), car space. Its `t` attribute: 0 at
  *  the lamp … 1 at the far rim. */
-function beamGeometry(x: number, y: number, z: number): THREE.BufferGeometry {
+function beamGeometry(x: number, y: number, z: number): GFX.BufferGeometry {
   const pos: number[] = [], tt: number[] = [], idx: number[] = []
   const S = 14, R = 12, Lb = 12
   for (const sx of [-1, 1]) {
@@ -592,9 +592,9 @@ function beamGeometry(x: number, y: number, z: number): THREE.BufferGeometry {
       idx.push(a0, b0, a1, a1, b0, b1)
     }
   }
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-  g.setAttribute('t', new THREE.Float32BufferAttribute(tt, 1))
+  const g = new GFX.BufferGeometry()
+  g.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
+  g.setAttribute('t', new GFX.Float32BufferAttribute(tt, 1))
   g.setIndex(idx)
   g.computeVertexNormals()
   return g
@@ -602,8 +602,8 @@ function beamGeometry(x: number, y: number, z: number): THREE.BufferGeometry {
 
 /** The beams' look: warm light painted in the air — strongest by the lamp, gone by 12 m, soft at the cone's silhouette
  *  (faces seen edge-on fade), only at night (uK = the night). */
-function beamMaterial(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
+function beamMaterial(): GFX.ShaderMaterial {
+  return new GFX.ShaderMaterial({
     uniforms: { uK: { value: 0 } },
     vertexShader: /* glsl */ `
       attribute float t;
@@ -624,9 +624,9 @@ function beamMaterial(): THREE.ShaderMaterial {
         float a = pow(max(1.0 - vT, 0.0), 2.0) * smoothstep(0.0, 0.08, vT) * smoothstep(0.1, 0.7, vFace);
         gl_FragColor = vec4(vec3(1.0, 0.86, 0.62) * a * 0.035 * uK, 1.0);
       }`,
-    blending: THREE.AdditiveBlending,
+    blending: GFX.AdditiveBlending,
     depthWrite: false,
     transparent: true,
-    side: THREE.DoubleSide,
+    side: GFX.DoubleSide,
   })
 }

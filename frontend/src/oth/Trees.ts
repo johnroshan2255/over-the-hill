@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
@@ -39,26 +39,26 @@ const family = (sp: number) => (sp >= 3 ? 1 : 0)
 const IMP_SPECIES = [0, 1, 3, 4, 5]
 
 export class Trees {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   /** Every tree (TREE_STRIDE floats each). */
   readonly data: Float32Array
   readonly count: number
   private readonly tiles = new Map<number, number[]>()
   private readonly tileMaxH = new Map<number, number>()
-  private readonly lods: { geo: THREE.InstancedBufferGeometry; a0: THREE.InstancedBufferAttribute; a1: THREE.InstancedBufferAttribute; max: number; n: number }[] = []
-  private readonly frustum = new THREE.Frustum()
-  private readonly pv = new THREE.Matrix4()
-  private readonly box = new THREE.Box3()
-  private readonly lastPos = new THREE.Vector3(1e9, 0, 0)
-  private readonly lastDir = new THREE.Vector3()
+  private readonly lods: { geo: GFX.InstancedBufferGeometry; a0: GFX.InstancedBufferAttribute; a1: GFX.InstancedBufferAttribute; max: number; n: number }[] = []
+  private readonly frustum = new GFX.Frustum()
+  private readonly pv = new GFX.Matrix4()
+  private readonly box = new GFX.Box3()
+  private readonly lastPos = new GFX.Vector3(1e9, 0, 0)
+  private readonly lastDir = new GFX.Vector3()
   private readonly ranges: number[]
   drawn = [0, 0, 0, 0, 0]
-  private readonly impMat: THREE.ShaderMaterial
-  private readonly noiseU: THREE.IUniform
-  private readonly leafU: THREE.IUniform
-  private readonly frondU: THREE.IUniform
+  private readonly impMat: GFX.ShaderMaterial
+  private readonly noiseU: GFX.IUniform
+  private readonly leafU: GFX.IUniform
+  private readonly frondU: GFX.IUniform
   /** The leaf texture (the bushes are built of the same leaf cards). */
-  get leafTexture(): THREE.Texture { return this.leafU.value }
+  get leafTexture(): GFX.Texture { return this.leafU.value }
 
   /** shade: hand the trees' shade to the terrain shadow now (not when built behind another world — World.adopt). */
   /** placed: the trees already placed (placeTrees, a row a step — World.build); else placed here. */
@@ -82,22 +82,22 @@ export class Trees {
     if (shade) shadow.setTrees(sh, CROWN)
     this.leafU = { value: createLeafTexture() }
     this.frondU = { value: createFrondTexture() }
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new THREE.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU },
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
+      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU },
       vertexColors: true,
       defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines },
       vertexShader: VERT,
       fragmentShader: FRAG,
-      side: THREE.DoubleSide,
+      side: GFX.DoubleSide,
       // MSAA tiers: the leaf cards' gaps resolve to soft coverage (no hard, shimmering cut-out)
       alphaToCoverage: tier.msaa,
     })
-    this.impMat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    this.impMat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms: {
-        ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new THREE.Vector4(map.far.n, map.far.step, map.far.origin, 0) },
-        uImpAlb: { value: null }, uImpNor: { value: null }, uImpSize: { value: new THREE.Vector2(IMP.cols * IMP.fw, IMP.rows * IMP.fh) },
+        ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) },
+        uImpAlb: { value: null }, uImpNor: { value: null }, uImpSize: { value: new GFX.Vector2(IMP.cols * IMP.fw, IMP.rows * IMP.fh) },
       },
       defines: { ...map.biomeDefines, ...(tier.spec ? { OTH_SPEC: '' } : {}), IMP_NA: IMP.cols.toFixed(1), IMP_ROWS: IMP.rows.toFixed(1), IMP_FW: IMP.FW.toFixed(3), IMP_FH: IMP.FH.toFixed(3), IMP_CY: IMP.CY.toFixed(3), IMP_E1: ((IMP.elev[0] + IMP.elev[1]) / 2).toFixed(3), IMP_E2: ((IMP.elev[1] + IMP.elev[2]) / 2).toFixed(3) },
       vertexShader: IMP_VERT,
@@ -114,14 +114,14 @@ export class Trees {
       const max = Math.min(l === 4 ? 60000 : 30000, Math.ceil(Math.PI * (r1 * r1 - r0 * r0) * dens * 0.6) + 64)
       // (the desert: its palms in the broadleaf family's place — their LODs, their impostors)
       const src = l === 4 ? impostorQuad() : l < 2 ? spruceGeometry(l) : map.desert ? palmGeometry(l - 2) : broadleafGeometry(l - 2)
-      const geo = new THREE.InstancedBufferGeometry()
+      const geo = new GFX.InstancedBufferGeometry()
       for (const n of l < 4 ? ['position', 'normal', 'color', 'leaf'] : ['position']) geo.setAttribute(n, src.getAttribute(n))
       geo.setIndex(src.getIndex()) // (indexed: the near tree is 947 shared vertices)
-      const a0 = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4), a1 = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4)
-      a0.setUsage(THREE.DynamicDrawUsage); a1.setUsage(THREE.DynamicDrawUsage)
+      const a0 = new GFX.InstancedBufferAttribute(new Float32Array(max * 4), 4), a1 = new GFX.InstancedBufferAttribute(new Float32Array(max * 4), 4)
+      a0.setUsage(GFX.DynamicDrawUsage); a1.setUsage(GFX.DynamicDrawUsage)
       geo.setAttribute('aT0', a0); geo.setAttribute('aT1', a1)
       geo.instanceCount = 0
-      const mesh = new THREE.Mesh(geo, l < 4 ? mat : this.impMat)
+      const mesh = new GFX.Mesh(geo, l < 4 ? mat : this.impMat)
       mesh.frustumCulled = false
       mesh.matrixAutoUpdate = false
       if (l === 4) mesh.visible = false // (until the atlas is baked)
@@ -190,13 +190,13 @@ export class Trees {
   /** Tiles skipped as hidden at the last rebuild (the HUD). */
   occluded = 0
 
-  update(camera: THREE.PerspectiveCamera): void {
-    const dir = camera.getWorldDirection(new THREE.Vector3())
+  update(camera: GFX.PerspectiveCamera): void {
+    const dir = camera.getWorldDirection(new GFX.Vector3())
     if (camera.position.distanceToSquared(this.lastPos) < 16 && dir.dot(this.lastDir) > 0.9985) return
     this.lastPos.copy(camera.position)
     this.lastDir.copy(dir)
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.pv, THREE.WebGLCoordinateSystem, camera.reversedDepth)
+    this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = this.ranges
     const reach = R[3]
     for (const l of this.lods) l.n = 0
@@ -251,19 +251,19 @@ export class Trees {
    * frame each, into two images at once (multiple render targets): albedo × AO (sqrt-encoded: dark greens keep their
    * steps in 8 bits) and the tree-space normal. Orthographic frames IMP.FW × IMP.FH tree heights, centred IMP.CY up.
    */
-  bakeImpostors(renderer: THREE.WebGLRenderer): void {
+  bakeImpostors(renderer: GFX.WebGLRenderer): void {
     const W = IMP.cols * IMP.fw, Hh = IMP.rows * IMP.fh
-    const rt = new THREE.WebGLRenderTarget(W, Hh, { count: 2, type: THREE.UnsignedByteType, depthBuffer: true, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter })
-    for (const t of rt.textures) { t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.colorSpace = THREE.NoColorSpace }
-    const bake = new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, uniforms: { uSpecies: { value: 0 }, uNoise: this.noiseU, uLeafTex: this.leafU, uFrondTex: this.frondU }, vertexColors: true, defines: { ...this.map.biomeDefines }, vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, side: THREE.DoubleSide })
-    const scene = new THREE.Scene(), geos = [spruceGeometry(0), this.map.desert ? palmGeometry(0) : broadleafGeometry(0)], mesh = new THREE.Mesh(geos[0], bake)
+    const rt = new GFX.WebGLRenderTarget(W, Hh, { count: 2, type: GFX.UnsignedByteType, depthBuffer: true, generateMipmaps: true, minFilter: GFX.LinearMipmapLinearFilter, magFilter: GFX.LinearFilter })
+    for (const t of rt.textures) { t.generateMipmaps = true; t.minFilter = GFX.LinearMipmapLinearFilter; t.magFilter = GFX.LinearFilter; t.colorSpace = GFX.NoColorSpace }
+    const bake = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: { uSpecies: { value: 0 }, uNoise: this.noiseU, uLeafTex: this.leafU, uFrondTex: this.frondU }, vertexColors: true, defines: { ...this.map.biomeDefines }, vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, side: GFX.DoubleSide })
+    const scene = new GFX.Scene(), geos = [spruceGeometry(0), this.map.desert ? palmGeometry(0) : broadleafGeometry(0)], mesh = new GFX.Mesh(geos[0], bake)
     scene.add(mesh)
-    const cam = new THREE.OrthographicCamera(-IMP.FW / 2, IMP.FW / 2, IMP.FH / 2, -IMP.FH / 2, 0.01, 10)
-    const prevRT = renderer.getRenderTarget(), prevClear = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha()
+    const cam = new GFX.OrthographicCamera(-IMP.FW / 2, IMP.FW / 2, IMP.FH / 2, -IMP.FH / 2, 0.01, 10)
+    const prevRT = renderer.getRenderTarget(), prevClear = renderer.getClearColor(new GFX.Color()), prevAlpha = renderer.getClearAlpha()
     const prevAuto = renderer.autoClear, prevTM = renderer.toneMapping
     renderer.autoClear = true
-    renderer.toneMapping = THREE.NoToneMapping
-    const center = new THREE.Vector3(0, IMP.CY, 0)
+    renderer.toneMapping = GFX.NoToneMapping
+    const center = new GFX.Vector3(0, IMP.CY, 0)
     // (the background: transparent BLACK — the atlas is premultiplied by coverage (a drawn texel's alpha is 1), so its
     //  mips average only the tree and IMP_FRAG divides by the coverage: an edge is the tree's own colour, never the
     //  background's. 2026-11-02: a mid colour per species was meant here, but three premultiplies a clear colour by its
@@ -301,7 +301,7 @@ export class Trees {
     this.atlas = rt
   }
   /** The impostor atlas (two textures: albedo, normal) — kept for the harness / a debug view. */
-  atlas: THREE.WebGLRenderTarget | null = null
+  atlas: GFX.WebGLRenderTarget | null = null
   /** Every tree's x, z, height, species — the terrain shadow's worker stamps their shade (World.adopt). */
   readonly shade: Float32Array
   /** Their shade to the terrain shadow again (it was another world's). */
@@ -315,9 +315,9 @@ export class Trees {
 const IMP = { cols: 12, elev: [0.05, 0.45, 0.95], rows: 15, fw: 80, fh: 160, FW: 0.56, FH: 1.08, CY: 0.52 }
 
 /** A unit quad (x −0.5…0.5, y 0…1): the impostor's billboard. */
-function impostorQuad(): THREE.BufferGeometry {
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0], 3))
+function impostorQuad(): GFX.BufferGeometry {
+  const g = new GFX.BufferGeometry()
+  g.setAttribute('position', new GFX.Float32BufferAttribute([-0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0], 3))
   g.setIndex([0, 1, 2, 0, 2, 3])
   return g
 }

@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Camp } from '../save'
 import { bakedChart, type Chart, drawGate, drawPin, drawPlace, drawRoute, drawTracks, foundIn, ICON, label, ROUTE } from './Chart'
 import type { Landmarks } from './Landmarks'
@@ -29,8 +29,8 @@ export interface MapViewOptions {
   meta: MapMeta
   chart: Chart
   guide: Guide
-  camera: THREE.Camera
-  carPos: () => THREE.Vector3
+  camera: GFX.Camera
+  carPos: () => GFX.Vector3
   carHeading: () => number
   /** Your own camp in this world. */
   myCamp: () => Camp | null
@@ -61,7 +61,7 @@ export class MapView {
   private readonly near: HTMLDivElement
   private compassT = 0
   private drawT = 0
-  private readonly dir = new THREE.Vector3()
+  private readonly dir = new GFX.Vector3()
   private readonly off = new AbortController()
   private readonly btn: HTMLButtonElement
 

@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import type { World, WorldId } from './World'
 
@@ -59,7 +59,7 @@ export class Crossing {
   }
 
   /** car: where the car is (null until it's on the map). */
-  update(dt: number, car: THREE.Vector3 | null, cam: THREE.Vector3): void {
+  update(dt: number, car: GFX.Vector3 | null, cam: GFX.Vector3): void {
     const w = this.o.world(), G = w.map.meta.gate
     const u = this.o.atmos.uniforms
     if (!G) {
@@ -83,7 +83,7 @@ export class Crossing {
     }
     if (dCar > DROP_AT && this.spare) this.forget()
     // the MIST: thickening with the climb near the gate, thickest at it
-    const S = THREE.MathUtils.smoothstep
+    const S = GFX.MathUtils.smoothstep
     const m = G.mist ?? { y0: G.y - 150, y1: G.y - 10, r: 500 }
     const dCam = Math.hypot(cam.x - G.x, cam.z - G.z)
     const target = (1 - S(dCam, m.r, m.r + 300)) * S(cam.y, m.y0, m.y1) * (0.6 + 0.4 * (1 - S(dCam, 40, 300)))

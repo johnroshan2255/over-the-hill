@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { MapData } from './MapData'
 
 /**
@@ -17,7 +17,7 @@ export class FlyCam {
   private ly = 0
   private touches = 0
 
-  constructor(readonly camera: THREE.PerspectiveCamera, private readonly map: MapData, dom: HTMLElement) {
+  constructor(readonly camera: GFX.PerspectiveCamera, private readonly map: MapData, dom: HTMLElement) {
     window.addEventListener('keydown', (e) => this.keys.add(e.code))
     window.addEventListener('keyup', (e) => this.keys.delete(e.code))
     window.addEventListener('blur', () => this.keys.clear())
@@ -29,12 +29,12 @@ export class FlyCam {
       this.look(e.clientX - this.lx, e.clientY - this.ly)
       this.lx = e.clientX; this.ly = e.clientY
     })
-    dom.addEventListener('wheel', (e) => { this.speed = THREE.MathUtils.clamp(this.speed * (e.deltaY > 0 ? 0.85 : 1.18), 2, 600) }, { passive: true })
+    dom.addEventListener('wheel', (e) => { this.speed = GFX.MathUtils.clamp(this.speed * (e.deltaY > 0 ? 0.85 : 1.18), 2, 600) }, { passive: true })
   }
 
   private look(dx: number, dy: number): void {
     this.yaw -= dx * 0.0035
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * 0.0035, -1.5, 1.5)
+    this.pitch = GFX.MathUtils.clamp(this.pitch - dy * 0.0035, -1.5, 1.5)
   }
 
   place(x: number, z: number, agl: number, yaw: number, pitch: number): void {

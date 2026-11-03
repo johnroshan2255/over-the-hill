@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import { PAINT_GLSL } from './paint'
@@ -20,7 +20,7 @@ import { SHADOW_GLSL } from './TerrainShadow'
  * blades widen by the inverse square root of that share — the field thins with distance at the SAME coverage (no
  * ring edge), and LOW (fewer tufts) keeps the look: fewer, wider tufts, never a thinner field.
  */
-interface Ring { rin: number; rout: number; tile: number; density: number; blades: number; mesh: THREE.Mesh; geo: THREE.InstancedBufferGeometry; tiles: THREE.InstancedBufferAttribute; max: number }
+interface Ring { rin: number; rout: number; tile: number; density: number; blades: number; mesh: GFX.Mesh; geo: GFX.InstancedBufferGeometry; tiles: GFX.InstancedBufferAttribute; max: number }
 
 /** HIGH's near tuft density: the reference the lower tiers widen their blades against. */
 const REF_DENSITY = 22
@@ -30,19 +30,19 @@ const REF_FAN = 11
 const AMOUNT = 0.7
 
 export class Grass {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   private readonly rings: Ring[] = []
-  private readonly frustum = new THREE.Frustum()
-  private readonly box = new THREE.Box3()
-  private readonly pv = new THREE.Matrix4()
+  private readonly frustum = new GFX.Frustum()
+  private readonly box = new GFX.Box3()
+  private readonly pv = new GFX.Matrix4()
   /** Blades drawn last frame (after the tile cull, before the per-tuft density cull). */
   blades = 0
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: THREE.Texture) {
+  constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture) {
     const R = tier.grassRadius, D0 = tier.grassDensity * AMOUNT
     const mg = map.meta.mask
     const t = terrain.uniforms
-    const uniforms: Record<string, THREE.IUniform> = {
+    const uniforms: Record<string, GFX.IUniform> = {
       ...atmos.uniforms,
       uHIn: t.uHIn, uHFar: t.uHFar, uInGrid: t.uInGrid, uFarGrid: t.uFarGrid, uInScale: t.uInScale, uFarScale: t.uFarScale,
       uBoxHalf: t.uBoxHalf, uNIn: t.uNIn,
@@ -53,7 +53,7 @@ export class Grass {
       uRocks: { value: rockFootprint },
       uTrail: { value: map.trailTex },
       uTrailHW: { value: map.meta.trails.hw },
-      uMaskGrid: { value: new THREE.Vector4(mg.n, mg.step, mg.origin, 0) },
+      uMaskGrid: { value: new GFX.Vector4(mg.n, mg.step, mg.origin, 0) },
       uD0: { value: D0 },
       uRadius: { value: R },
       // fewer tufts on the lower tiers → each blade wider by the square root: the coverage stays HIGH's
@@ -70,19 +70,19 @@ export class Grass {
       const density = densityAt(D0, bounds[r])
       const geo = tuftTile(tiles[r], density, blades[r], segs[r], 0x9e37 + r * 101)
       const max = Math.ceil(((2 * bounds[r + 1]) / tiles[r] + 2) ** 2)
-      const attr = new THREE.InstancedBufferAttribute(new Float32Array(max * 2), 2)
-      attr.setUsage(THREE.DynamicDrawUsage)
+      const attr = new GFX.InstancedBufferAttribute(new Float32Array(max * 2), 2)
+      attr.setUsage(GFX.DynamicDrawUsage)
       geo.setAttribute('aTile', attr)
       geo.instanceCount = 0
-      const mat = new THREE.ShaderMaterial({
-        glslVersion: THREE.GLSL3,
+      const mat = new GFX.ShaderMaterial({
+        glslVersion: GFX.GLSL3,
         uniforms: { ...uniforms, uBuild: { value: density }, uRin: { value: bounds[r] }, uRout: { value: bounds[r + 1] }, uFan: { value: blades[r] } },
         defines: { ...map.biomeDefines }, // (no specular: on blades of roughness 0.85 it never showed)
         vertexShader: VERT,
         fragmentShader: FRAG,
-        side: THREE.DoubleSide,
+        side: GFX.DoubleSide,
       })
-      const mesh = new THREE.Mesh(geo, mat)
+      const mesh = new GFX.Mesh(geo, mat)
       mesh.frustumCulled = false
       mesh.matrixAutoUpdate = false
       mesh.renderOrder = -30 + r // nearest ring FIRST (it hides the most; 1 − r had drawn the far ring first), all before the terrain
@@ -91,9 +91,9 @@ export class Grass {
     }
   }
 
-  update(camera: THREE.PerspectiveCamera): void {
+  update(camera: GFX.PerspectiveCamera): void {
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.pv, THREE.WebGLCoordinateSystem, camera.reversedDepth)
+    this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z
     this.blades = 0
     for (const ring of this.rings) {
@@ -136,7 +136,7 @@ function densityAt(d0: number, d: number): number {
  * segments (2: a quad + the tip, 5 vertices; 1: one triangle). Per vertex: aTuft (local x, local z, rank, seed),
  * aBlade (fan angle, lean, height ×, width ×) and aV (t along the blade 0..1, side −1 / 0 / +1).
  */
-function tuftTile(T: number, density: number, fan: number, segs: number, seed: number): THREE.InstancedBufferGeometry {
+function tuftTile(T: number, density: number, fan: number, segs: number, seed: number): GFX.InstancedBufferGeometry {
   const K = Math.max(1, Math.round(density * T * T))
   const g = Math.ceil(Math.sqrt(K))
   const vpb = segs * 2 + 1
@@ -170,12 +170,12 @@ function tuftTile(T: number, density: number, fan: number, segs: number, seed: n
       }
     }
   }
-  const geo = new THREE.InstancedBufferGeometry()
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)) // (unused: the shader builds the blade)
-  geo.setAttribute('aTuft', new THREE.BufferAttribute(tuft, 4))
-  geo.setAttribute('aBlade', new THREE.BufferAttribute(blade, 4))
-  geo.setAttribute('aV', new THREE.BufferAttribute(v, 2))
-  geo.setIndex(nv > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1))
+  const geo = new GFX.InstancedBufferGeometry()
+  geo.setAttribute('position', new GFX.BufferAttribute(pos, 3)) // (unused: the shader builds the blade)
+  geo.setAttribute('aTuft', new GFX.BufferAttribute(tuft, 4))
+  geo.setAttribute('aBlade', new GFX.BufferAttribute(blade, 4))
+  geo.setAttribute('aV', new GFX.BufferAttribute(v, 2))
+  geo.setIndex(nv > 65535 ? new GFX.Uint32BufferAttribute(idx, 1) : new GFX.Uint16BufferAttribute(idx, 1))
   return geo
 }
 

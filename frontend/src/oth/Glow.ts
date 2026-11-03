@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 
@@ -25,18 +25,18 @@ let vignette: HTMLDivElement | null = null
 let vignettes = 0
 
 export class Glow {
-  readonly group = new THREE.Group()
-  private readonly glare: THREE.Mesh
-  private readonly glareMat: THREE.ShaderMaterial
-  private readonly shafts: THREE.Mesh
-  private readonly shaftAttr: THREE.InstancedBufferAttribute
-  private readonly shaftMat: THREE.ShaderMaterial
-  private readonly vignette: THREE.Mesh
-  private readonly lastPlace = new THREE.Vector3(1e9, 0, 0)
+  readonly group = new GFX.Group()
+  private readonly glare: GFX.Mesh
+  private readonly glareMat: GFX.ShaderMaterial
+  private readonly shafts: GFX.Mesh
+  private readonly shaftAttr: GFX.InstancedBufferAttribute
+  private readonly shaftMat: GFX.ShaderMaterial
+  private readonly vignette: GFX.Mesh
+  private readonly lastPlace = new GFX.Vector3(1e9, 0, 0)
   private vis = 1
   private near = 1
-  private readonly v = new THREE.Vector3()
-  private readonly dir = new THREE.Vector3()
+  private readonly v = new GFX.Vector3()
+  private readonly dir = new GFX.Vector3()
 
   /** The vignette's page overlay (dispose). */
   private overlay: HTMLDivElement | null = null
@@ -47,8 +47,8 @@ export class Glow {
   constructor(private readonly map: MapData, private readonly atmos: Atmosphere) {
     const u = atmos.uniforms
     // THE SUN GLARE
-    this.glareMat = new THREE.ShaderMaterial({
-      uniforms: { uColor: { value: new THREE.Color() }, uK: { value: 0 }, uSkirt: { value: 0 }, uTime: u.uTime, uRays: { value: 0 } },
+    this.glareMat = new GFX.ShaderMaterial({
+      uniforms: { uColor: { value: new GFX.Color() }, uK: { value: 0 }, uSkirt: { value: 0 }, uTime: u.uTime, uRays: { value: 0 } },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
         void main() { vUv = uv * 2.0 - 1.0; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
@@ -77,21 +77,21 @@ export class Glow {
       transparent: true,
       depthTest: false,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: GFX.AdditiveBlending,
       toneMapped: false,
     })
-    this.glare = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.glareMat)
+    this.glare = new GFX.Mesh(new GFX.PlaneGeometry(2, 2), this.glareMat)
     this.glare.frustumCulled = false
     this.glare.renderOrder = 900
     // THE LIGHT SHAFTS: a unit card (x across −1 … 1, y along 0 … 1), instanced: centre xyz + seed
-    const g = new THREE.InstancedBufferGeometry()
-    g.setAttribute('position', new THREE.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 1, 1, 0, -1, 1, 0], 3))
+    const g = new GFX.InstancedBufferGeometry()
+    g.setAttribute('position', new GFX.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, 1, 1, 0, -1, 1, 0], 3))
     g.setIndex([0, 1, 2, 0, 2, 3])
-    this.shaftAttr = new THREE.InstancedBufferAttribute(new Float32Array(SHAFTS * 4), 4).setUsage(THREE.DynamicDrawUsage)
+    this.shaftAttr = new GFX.InstancedBufferAttribute(new Float32Array(SHAFTS * 4), 4).setUsage(GFX.DynamicDrawUsage)
     g.setAttribute('aC', this.shaftAttr)
     g.instanceCount = SHAFTS
-    this.shaftMat = new THREE.ShaderMaterial({
-      uniforms: { uSunDir: u.uSunDir, uCamPos: u.uCamPos, uColor: { value: new THREE.Color() }, uK: { value: 0 }, uTime: u.uTime },
+    this.shaftMat = new GFX.ShaderMaterial({
+      uniforms: { uSunDir: u.uSunDir, uCamPos: u.uCamPos, uColor: { value: new GFX.Color() }, uK: { value: 0 }, uTime: u.uTime },
       vertexShader: /* glsl */ `
         attribute vec4 aC;
         uniform vec3 uSunDir;
@@ -125,23 +125,23 @@ export class Glow {
         }`,
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
+      blending: GFX.AdditiveBlending,
+      side: GFX.DoubleSide,
       toneMapped: false,
     })
-    this.shafts = new THREE.Mesh(g, this.shaftMat)
+    this.shafts = new GFX.Mesh(g, this.shaftMat)
     this.shafts.frustumCulled = false
     this.shafts.renderOrder = 800
     // THE VIGNETTE: a full-screen triangle, the corners multiplied darker
-    const vg = new THREE.BufferGeometry()
-    vg.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3))
-    this.vignette = new THREE.Mesh(vg, new THREE.ShaderMaterial({
+    const vg = new GFX.BufferGeometry()
+    vg.setAttribute('position', new GFX.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3))
+    this.vignette = new GFX.Mesh(vg, new GFX.ShaderMaterial({
       vertexShader: /* glsl */ `varying vec2 vP; void main() { vP = position.xy; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
       fragmentShader: /* glsl */ `varying vec2 vP; void main() { float k = 1.0 - 0.16 * smoothstep(0.55, 1.45, length(vP * vec2(0.85, 1.0))); gl_FragColor = vec4(vec3(k), 1.0); }`,
       transparent: true,
       depthTest: false,
       depthWrite: false,
-      blending: THREE.MultiplyBlending,
+      blending: GFX.MultiplyBlending,
       premultipliedAlpha: true,
       toneMapped: false,
     }))
@@ -159,48 +159,48 @@ export class Glow {
     }
   }
 
-  update(camera: THREE.PerspectiveCamera, dt: number): void {
+  update(camera: GFX.PerspectiveCamera, dt: number): void {
     const u = this.atmos.uniforms, sun = u.uSunDir.value, night = u.uNight.value, cloud = u.uCloud.value
-    const day = (1 - night) * THREE.MathUtils.smoothstep(sun.y, -0.03, 0.03)
+    const day = (1 - night) * GFX.MathUtils.smoothstep(sun.y, -0.03, 0.03)
     // (the crossing's mist hides the sun as a heavy sky does)
-    const clear = (1 - THREE.MathUtils.smoothstep(cloud, 0.45, 0.9)) * (1 - THREE.MathUtils.smoothstep(u.uMist.value, 0.05, 0.55)) * (1 - THREE.MathUtils.smoothstep(u.uDust.value, 0.1, 0.6))
+    const clear = (1 - GFX.MathUtils.smoothstep(cloud, 0.45, 0.9)) * (1 - GFX.MathUtils.smoothstep(u.uMist.value, 0.05, 0.55)) * (1 - GFX.MathUtils.smoothstep(u.uDust.value, 0.1, 0.6))
     // the sun above the terrain's horizon from here? (32 steps along its bearing, 8 m … 3 km)
     const c = camera.position, hl = Math.hypot(sun.x, sun.z) || 1, ux = sun.x / hl, uz = sun.z / hl, el = sun.y / hl
     let hor = -1
     for (let i = 0, d = 8; i < 32; i++, d *= 1.18) hor = Math.max(hor, (this.map.height(c.x + ux * d, c.z + uz * d) - c.y) / d)
-    const target = THREE.MathUtils.smoothstep(el - hor, -0.01, 0.025)
+    const target = GFX.MathUtils.smoothstep(el - hor, -0.01, 0.025)
     this.vis += (target - this.vis) * Math.min(1, dt * 6)
     // (the skirt: still there while the sun is a few degrees behind the ridge — its glowing sky)
-    const near = THREE.MathUtils.smoothstep(el - hor, -0.15, 0.0)
+    const near = GFX.MathUtils.smoothstep(el - hor, -0.15, 0.0)
     this.near += (near - this.near) * Math.min(1, dt * 6)
     camera.getWorldDirection(this.dir)
-    const facing = THREE.MathUtils.smoothstep(this.dir.dot(sun), 0.1, 0.6)
+    const facing = GFX.MathUtils.smoothstep(this.dir.dot(sun), 0.1, 0.6)
     // GLARE: the sun's own colour (vivid, warm at golden hour), stronger low in the sky
-    const low = 1 - THREE.MathUtils.smoothstep(sun.y, 0.25, 0.7)
+    const low = 1 - GFX.MathUtils.smoothstep(sun.y, 0.25, 0.7)
     const k = day * clear * this.vis * (0.55 + 0.45 * low), skirt = day * clear * Math.max(this.vis, this.near * 0.7) * (0.55 + 0.45 * low)
     this.glare.visible = skirt > 0.01 && this.dir.dot(sun) > -0.2
     if (this.glare.visible) {
-      const D = Math.min(camera.far * 0.8, 2000), size = D * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * 0.9
+      const D = Math.min(camera.far * 0.8, 2000), size = D * Math.tan(GFX.MathUtils.degToRad(camera.fov / 2)) * 0.9
       this.glare.position.copy(c).addScaledVector(sun, D)
       this.glare.quaternion.copy(camera.quaternion)
       this.glare.scale.setScalar(size)
       this.glareMat.uniforms.uK.value = k
       this.glareMat.uniforms.uSkirt.value = skirt
       this.glareMat.uniforms.uRays.value = 0.5 + 0.5 * low
-      ;(this.glareMat.uniforms.uColor.value as THREE.Color).copy(u.uSunDisc.value).multiplyScalar(0.26)
+      ;(this.glareMat.uniforms.uColor.value as GFX.Color).copy(u.uSunDisc.value).multiplyScalar(0.26)
     }
     // SHAFTS: a low sun ahead, clear sky, day
-    const sk = day * clear * facing * (1 - THREE.MathUtils.smoothstep(sun.y, 0.18, 0.45)) * (0.4 + 0.6 * this.vis)
+    const sk = day * clear * facing * (1 - GFX.MathUtils.smoothstep(sun.y, 0.18, 0.45)) * (0.4 + 0.6 * this.vis)
     this.shafts.visible = sk > 0.01
     if (this.shafts.visible) {
       this.shaftMat.uniforms.uK.value = sk
-      ;(this.shaftMat.uniforms.uColor.value as THREE.Color).copy(u.uSunDisc.value).multiplyScalar(0.05)
+      ;(this.shaftMat.uniforms.uColor.value as GFX.Color).copy(u.uSunDisc.value).multiplyScalar(0.05)
       if (this.lastPlace.distanceToSquared(c) > 144) { this.lastPlace.copy(c); this.place(c, sun) }
     }
   }
 
   /** Re-place the beams: among the trees in front of the camera toward the sun (12–70 m), where the woods are. */
-  private place(c: THREE.Vector3, sun: THREE.Vector3): void {
+  private place(c: GFX.Vector3, sun: GFX.Vector3): void {
     const a = this.shaftAttr.array as Float32Array, mk: [number, number, number, number] = [0, 0, 0, 0]
     const base = Math.atan2(sun.x, sun.z)
     let n = 0

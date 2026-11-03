@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import { Builder, woodMaterial } from './Bridges'
 import type { Horizon } from './Horizon'
@@ -33,7 +33,7 @@ import type { TerrainShadow } from './TerrainShadow'
  *   PICK-UPS and SIGNPOSTS: a spatial hash of 64 m cells, looked up 10× a second.
  */
 type RGB = [number, number, number]
-const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z)
+const V = (x: number, y: number, z: number) => new GFX.Vector3(x, y, z)
 const X = V(1, 0, 0), Y = V(0, 1, 0), Z = V(0, 0, 1)
 const box = (b: Builder, cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, c: RGB) => b.box(V(cx, cy, cz), X, Y, Z, hx, hy, hz, c)
 const STONE: RGB = [0.24, 0.245, 0.26]
@@ -49,7 +49,7 @@ const RUIN_WALLS: [number, number, number, number, number][] = [
 ]
 /** A lean-to tin roof: from (y0 at z0) down to (y1 at z1), w half wide. */
 function leanTo(b: Builder, w: number, z0: number, y0: number, z1: number, y1: number): void {
-  const dir = V(0, y1 - y0, z1 - z0), len = dir.length(), wv = dir.clone().normalize(), up = new THREE.Vector3().crossVectors(X, wv).normalize()
+  const dir = V(0, y1 - y0, z1 - z0), len = dir.length(), wv = dir.clone().normalize(), up = new GFX.Vector3().crossVectors(X, wv).normalize()
   b.box(V(0, (y0 + y1) / 2, (z0 + z1) / 2), X, up, wv, w, 0.035, len / 2, TIN)
 }
 
@@ -63,7 +63,7 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
     build(b) {
       b.log(V(0, -0.3, 0), V(0, 2.6, 0), 0.07, b.wood(0.8))
       ;[[0.5, 2.25], [-1.0, 1.9], [2.4, 1.55]].forEach(([a, y], i) => {
-        const u = V(Math.cos(a), 0, Math.sin(a)), w = new THREE.Vector3().crossVectors(u, Y)
+        const u = V(Math.cos(a), 0, Math.sin(a)), w = new GFX.Vector3().crossVectors(u, Y)
         const c: RGB = i === 0 ? [0.55, 0.36, 0.18] : b.wood(1.25)
         b.box(u.clone().multiplyScalar(0.5).setY(y), u, Y, w, 0.5, 0.1, 0.025, c)
         const tip = u.clone().multiplyScalar(1.12).setY(y), side = w.clone().multiplyScalar(0.03)
@@ -105,7 +105,7 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
     reach: 520, size: 1.4, col: [0.6, 0.6, 0.6, 0.6],
     build(b) {
       ;[[0.6, 0.18, 0.5, 0.18, 0], [0.45, 0.15, 0.38, 0.5, 0.4], [0.33, 0.13, 0.28, 0.78, 1.1], [0.2, 0.11, 0.18, 1.02, 0.5], [0.12, 0.07, 0.1, 1.2, 2.0]].forEach(([hx, hy, hz, y, a], i) => {
-        const u = V(Math.cos(a), 0, Math.sin(a)), w = new THREE.Vector3().crossVectors(u, Y)
+        const u = V(Math.cos(a), 0, Math.sin(a)), w = new GFX.Vector3().crossVectors(u, Y)
         b.box(V(0.03 * (i % 2), y, 0), u, Y, w, hx, hy, hz, [STONE[0] * (0.8 + 0.1 * i), STONE[1] * (0.8 + 0.1 * i), STONE[2] * (0.82 + 0.1 * i)])
       })
     },
@@ -129,7 +129,7 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
     reach: 200, size: 0.4, col: null,
     build(b, desert) {
       const G: RGB = sandOr(desert, [0.27, 0.27, 0.285])
-      const u = V(Math.cos(0.4), 0.14, Math.sin(0.4)).normalize(), w = new THREE.Vector3().crossVectors(u, Y).normalize(), v = new THREE.Vector3().crossVectors(w, u).normalize()
+      const u = V(Math.cos(0.4), 0.14, Math.sin(0.4)).normalize(), w = new GFX.Vector3().crossVectors(u, Y).normalize(), v = new GFX.Vector3().crossVectors(w, u).normalize()
       b.box(V(0, 0.12, 0), u, v, w, 0.3, 0.17, 0.22, G)
       b.box(V(0.1, 0.27, -0.04), w, Y, u, 0.14, 0.09, 0.12, [G[0] * 1.12, G[1] * 1.12, G[2] * 1.14])
     },
@@ -179,7 +179,7 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
     build(b, desert) {
       const S: RGB = sandOr(desert, [0.3, 0.29, 0.28])
       for (let k = 0; k < 12; k++) {
-        const a = (k / 12) * Math.PI * 2, u = V(Math.cos(a), 0, Math.sin(a)), w = new THREE.Vector3().crossVectors(u, Y)
+        const a = (k / 12) * Math.PI * 2, u = V(Math.cos(a), 0, Math.sin(a)), w = new GFX.Vector3().crossVectors(u, Y)
         for (const [y, h, s] of [[0.22, 0.22, 1], [0.66, 0.22, 0.96]] as const) {
           const k2 = 0.88 + 0.2 * b.rnd()
           b.box(u.clone().multiplyScalar(1.05 * s).setY(y), u, Y, w, 0.2, h, 0.3, [S[0] * k2, S[1] * k2, S[2] * k2])
@@ -235,12 +235,12 @@ const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, log
 export interface PropCollider { x: number; y: number; z: number; rot: number; hx: number; hy: number; hz: number }
 
 export class Props {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   /** The hills' occlusion (main.ts). */
   horizon: Horizon | null = null
   /** Boxes for the physics (Physics.ts addPropColliders streams the ones near the car). */
   readonly colliders: PropCollider[] = []
-  private readonly meshes = new Map<PropKind, THREE.InstancedMesh>()
+  private readonly meshes = new Map<PropKind, GFX.InstancedMesh>()
   private readonly matrices: Float32Array
   private readonly cells = new Map<number, { idx: number[]; y0: number; y1: number }>()
   private readonly pick = new Map<number, number[]>()
@@ -248,29 +248,29 @@ export class Props {
   private readonly reachK: number
   private dirty = true
   /** How many of each kind the last rebuild uploaded. */
-  private readonly drawn = new Map<THREE.InstancedMesh, number>()
-  private readonly lastPos = new THREE.Vector3(Number.NaN, 0, 0)
-  private readonly lastDir = new THREE.Vector3()
-  private readonly dir = new THREE.Vector3()
-  private readonly frustum = new THREE.Frustum()
-  private readonly pv = new THREE.Matrix4()
-  private readonly cellBox = new THREE.Box3()
+  private readonly drawn = new Map<GFX.InstancedMesh, number>()
+  private readonly lastPos = new GFX.Vector3(Number.NaN, 0, 0)
+  private readonly lastDir = new GFX.Vector3()
+  private readonly dir = new GFX.Vector3()
+  private readonly frustum = new GFX.Frustum()
+  private readonly pv = new GFX.Matrix4()
+  private readonly cellBox = new GFX.Box3()
   // fires: the camps' (world) and the player's own (the last slot)
   /** Every campfire (the campsites', then the player's camp: off at y −1e5 while it's not pitched). */
-  readonly fires: THREE.Vector3[] = []
+  readonly fires: GFX.Vector3[] = []
   /** The fires' parts: flames, sparks, smoke (one draw each; the player's fire = each one's last `per` entries). */
-  private readonly fireParts: { mesh: THREE.Mesh; attr: THREE.InstancedBufferAttribute; per: number }[] = []
-  private readonly camp: THREE.Mesh
-  private readonly fp: THREE.DataTexture
+  private readonly fireParts: { mesh: GFX.Mesh; attr: GFX.InstancedBufferAttribute; per: number }[] = []
+  private readonly camp: GFX.Mesh
+  private readonly fp: GFX.DataTexture
   private readonly fpBase: Uint8Array
-  private readonly flies: THREE.Mesh
-  private readonly halos: THREE.Mesh
-  private readonly flyAttr: THREE.InstancedBufferAttribute
-  private readonly haloAttr: THREE.InstancedBufferAttribute
+  private readonly flies: GFX.Mesh
+  private readonly halos: GFX.Mesh
+  private readonly flyAttr: GFX.InstancedBufferAttribute
+  private readonly haloAttr: GFX.InstancedBufferAttribute
   private pickT = 0
 
-  constructor(readonly props: Prop[], landmarks: Landmark[], wild: [number, number, number][], atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: THREE.Vector4, collected: number[],
-    footprint: THREE.DataTexture, private readonly grid: { n: number; step: number; origin: number }, desert = false) {
+  constructor(readonly props: Prop[], landmarks: Landmark[], wild: [number, number, number][], atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, collected: number[],
+    footprint: GFX.DataTexture, private readonly grid: { n: number; step: number; origin: number }, desert = false) {
     const camps = landmarks.filter((l) => l.kind === 'camp'), cabins = landmarks.filter((l) => l.kind === 'cabin')
     for (const id of collected) this.collected.add(id)
     this.reachK = tier.rockReach / 900
@@ -281,16 +281,16 @@ export class Props {
       if (!n) continue
       const b = new Builder(0x5eed + kind.length * 131)
       KINDS[kind].build(b, desert)
-      const mesh = new THREE.InstancedMesh(b.geometry(), mat, n)
+      const mesh = new GFX.InstancedMesh(b.geometry(), mat, n)
       mesh.count = 0
       mesh.frustumCulled = false // (culled per cell in update)
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+      mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
       this.meshes.set(kind, mesh)
       this.group.add(mesh)
     }
     // every prop's matrix, once; its cell; its collider; the crates' pick-up hash
     this.matrices = new Float32Array(props.length * 16)
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion()
+    const m = new GFX.Matrix4(), q = new GFX.Quaternion()
     props.forEach((p, i) => {
       const sc = (KINDS[p.kind].scale ?? 1) * (p.s ?? 1)
       m.compose(V(p.x, p.y - 0.06, p.z), q.setFromAxisAngle(Y, p.rot), V(sc, sc, sc)).toArray(this.matrices, i * 16)
@@ -317,10 +317,10 @@ export class Props {
       this.fires.push(V(c.x + FIRE_LOCAL.x * cs + FIRE_LOCAL.z * sn, c.y + FIRE_LOCAL.y, c.z - FIRE_LOCAL.x * sn + FIRE_LOCAL.z * cs))
     }
     this.fires.push(V(0, -1e5, 0))
-    for (const [per, mat] of [[3, fireMaterial(atmos, FLAME_GLSL, FLAME_FRAG, true)], [14, glowMaterial(atmos, SPARK_GLSL)], [7, fireMaterial(atmos, SMOKE_GLSL, SMOKE_FRAG, false)]] as [number, THREE.ShaderMaterial][]) {
+    for (const [per, mat] of [[3, fireMaterial(atmos, FLAME_GLSL, FLAME_FRAG, true)], [14, glowMaterial(atmos, SPARK_GLSL)], [7, fireMaterial(atmos, SMOKE_GLSL, SMOKE_FRAG, false)]] as [number, GFX.ShaderMaterial][]) {
       const a = new Float32Array(this.fires.length * per * 4)
       this.fires.forEach((f, i) => { for (let k = 0; k < per; k++) a.set([f.x, f.y, f.z, i * 7.13 + k * 0.371], (i * per + k) * 4) })
-      const attr = new THREE.InstancedBufferAttribute(a, 4)
+      const attr = new GFX.InstancedBufferAttribute(a, 4)
       const mesh = quads(attr, 'aFire', mat)
       mesh.renderOrder = per === 7 ? 10 : 8
       this.fireParts.push({ mesh, attr, per })
@@ -329,7 +329,7 @@ export class Props {
     // the player's camp: the camps' kit, one mesh, hidden until pitched
     const kb = new Builder(0xca4b)
     campKit(kb)
-    this.camp = new THREE.Mesh(kb.geometry(), mat)
+    this.camp = new GFX.Mesh(kb.geometry(), mat)
     this.camp.visible = false
     this.group.add(this.camp)
     // the CLEARINGS: short grass round the camps and the props (the rocks' footprint; the base kept for the player's camp)
@@ -362,8 +362,8 @@ export class Props {
     wild.forEach(([x, y, z], i) => swarm(x, y, z, 200 + i)) // (the wild ones: by the trees, the water, the meadows)
     halos.push(0, -1e5, 0, 1.0, 0, -1e5, 0, -1.7) // (the player's camp: its lantern, its fire)
     swarm(0, -1e5, 0, 99)
-    this.haloAttr = new THREE.InstancedBufferAttribute(new Float32Array(halos), 4)
-    this.flyAttr = new THREE.InstancedBufferAttribute(new Float32Array(flies), 4)
+    this.haloAttr = new GFX.InstancedBufferAttribute(new Float32Array(halos), 4)
+    this.flyAttr = new GFX.InstancedBufferAttribute(new Float32Array(flies), 4)
     this.halos = quads(this.haloAttr, 'aLamp', glowMaterial(atmos, HALO_GLSL))
     this.flies = quads(this.flyAttr, 'aFly', glowMaterial(atmos, FLY_GLSL))
     this.group.add(this.halos, this.flies)
@@ -374,13 +374,13 @@ export class Props {
   get crateCount(): number { return this.props.filter((p) => p.kind === 'crate').length }
 
   /** Re-pick what's drawn when the camera has moved 6 m or turned (or something changed). */
-  update(camera: THREE.PerspectiveCamera): void {
+  update(camera: GFX.PerspectiveCamera): void {
     camera.getWorldDirection(this.dir)
     if (!this.dirty && camera.position.distanceToSquared(this.lastPos) < 36 && this.dir.dot(this.lastDir) > 0.9985) return
     this.dirty = false
     this.lastPos.copy(camera.position); this.lastDir.copy(this.dir)
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.pv, THREE.WebGLCoordinateSystem, camera.reversedDepth)
+    this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = 800 * this.reachK
     // (a thing s m tall at d m is s / d × this px: under 2 px it isn't drawn)
     const minRatio = 2 / ((innerHeight * Math.min(devicePixelRatio, 2)) / (2 * Math.tan((camera.fov * Math.PI) / 360)))
@@ -491,7 +491,7 @@ export class Props {
 
   /** The nearest fire within 60 m of the camera lights its surroundings (Atmosphere uFire), flickering — from dusk
    *  only (`lamps`: Atmosphere uLamps; by day the flames burn, nothing is lit). */
-  fireLight(cam: THREE.Vector3, t: number, lamps: number, out: THREE.Vector4): void {
+  fireLight(cam: GFX.Vector3, t: number, lamps: number, out: GFX.Vector4): void {
     const night = lamps
     let best = -1, bd = 60 * 60
     for (let i = 0; i < this.fires.length; i++) {
@@ -517,14 +517,14 @@ const LANTERN = { x: -0.6, y: 1.72, z: 1.42 } as const
 const FIRE_HALO_Y = 0.7
 
 /** Camera-facing quads, one per instance of `attr` (its xyz the centre, w its own number) — one draw. */
-function quads(attr: THREE.InstancedBufferAttribute, name: string, mat: THREE.ShaderMaterial): THREE.Mesh {
-  const base = new THREE.PlaneGeometry(1, 1)
-  const g = new THREE.InstancedBufferGeometry()
+function quads(attr: GFX.InstancedBufferAttribute, name: string, mat: GFX.ShaderMaterial): GFX.Mesh {
+  const base = new GFX.PlaneGeometry(1, 1)
+  const g = new GFX.InstancedBufferGeometry()
   g.index = base.index
   g.setAttribute('position', base.attributes.position)
   g.setAttribute(name, attr)
   g.instanceCount = attr.count
-  const m = new THREE.Mesh(g, mat)
+  const m = new GFX.Mesh(g, mat)
   m.frustumCulled = false
   m.renderOrder = 9
   m.visible = false
@@ -532,13 +532,13 @@ function quads(attr: THREE.InstancedBufferAttribute, name: string, mat: THREE.Sh
 }
 
 /** An additive glow material; `body` = the vertex shader's main (the centre, the size, the strength vA). */
-function glowMaterial(atmos: Atmosphere, body: string): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
+function glowMaterial(atmos: Atmosphere, body: string): GFX.ShaderMaterial {
+  return new GFX.ShaderMaterial({
+    glslVersion: GFX.GLSL3,
     uniforms: { ...atmos.uniforms },
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: GFX.AdditiveBlending,
     vertexShader: /* glsl */ `
 ${ATMOS_GLSL}
 out vec2 vQ;
@@ -616,13 +616,13 @@ void main() {
 
 
 /** A fire part's material: its own vertex and fragment bodies (additive flames, or the smoke blended over). */
-function fireMaterial(atmos: Atmosphere, vert: string, frag: string, additive: boolean): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3,
+function fireMaterial(atmos: Atmosphere, vert: string, frag: string, additive: boolean): GFX.ShaderMaterial {
+  return new GFX.ShaderMaterial({
+    glslVersion: GFX.GLSL3,
     uniforms: { ...atmos.uniforms },
     transparent: true,
     depthWrite: false,
-    blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
+    blending: additive ? GFX.AdditiveBlending : GFX.NormalBlending,
     vertexShader: /* glsl */ `
 ${ATMOS_GLSL}
 in vec4 aFire;

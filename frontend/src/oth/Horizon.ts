@@ -1,4 +1,4 @@
-import type * as THREE from 'three'
+import type * as GFX from './gfx'
 import type { MapData } from './MapData'
 
 /**
@@ -40,7 +40,7 @@ export class Horizon {
   }
 
   /** Call once a frame (cheap unless the camera moved far enough to rebuild). */
-  update(cam: THREE.Vector3): void {
+  update(cam: GFX.Vector3): void {
     if (!this.enabled) return
     const dx = cam.x - this.cx, dz = cam.z - this.cz
     if (dx * dx + dz * dz < 16 && cam.y < this.cy - 0.1 && cam.y > this.cy - 6) return
@@ -62,7 +62,7 @@ export class Horizon {
   }
 
   /** Is the box b (its top the highest point) hidden behind the ground? */
-  hiddenBox(b: THREE.Box3): boolean { return this.hidden(b.min.x, b.min.z, b.max.x, b.max.z, b.max.y) }
+  hiddenBox(b: GFX.Box3): boolean { return this.hidden(b.min.x, b.min.z, b.max.x, b.max.z, b.max.y) }
 
   /** Is the box [x0, x1] × [z0, z1] up to height `top` hidden behind the ground? */
   hidden(x0: number, z0: number, x1: number, z1: number, top: number): boolean {

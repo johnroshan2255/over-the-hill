@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import { ENGINE_WORKLET, VOICES } from './engineSynth'
 import type { MapData } from './MapData'
@@ -93,7 +93,7 @@ export class OthAudio {
   muted = false
   private beds: Record<'forest' | 'wind' | 'night' | 'stream' | 'fall' | 'fire' | 'pond', Bed> | null = null
   /** Every campfire (Props.fires — the player's camp's among them, at y −1e5 while it isn't pitched). */
-  fires: readonly THREE.Vector3[] = []
+  fires: readonly GFX.Vector3[] = []
   private amb!: GainNode
   private readonly clips = new Map<string, AudioBuffer | null>()
   private readonly voices: Voice[] = []
@@ -119,7 +119,7 @@ export class OthAudio {
   private near = { stream: 1e9, streamPan: 0, fall: 1e9, fallPan: 0, forest: 0, fire: 1e9, firePan: 0, pond: 1e9, pondPan: 0, pondIdx: -1, ridge: 0 }
   private readonly mk: [number, number, number, number] = [0, 0, 0, 0]
   private flowPts: number[] = []
-  private readonly right = new THREE.Vector3()
+  private readonly right = new GFX.Vector3()
   /** RAIN (no recording: synthesized): looped noise through a soft band-pass, its level the weather's rain. */
   private rainGain: GainNode | null = null
 
@@ -243,7 +243,7 @@ export class OthAudio {
   }
 
   /** Each frame (dt in s): the engine, the tyres and the beds follow the car, the light, the camera. */
-  update(dt: number, camera: THREE.Camera): void {
+  update(dt: number, camera: GFX.Camera): void {
     const ctx = this.ctx
     if (!ctx || !this.beds) return
     const t = ctx.currentTime, sim = this.car.sim, D = sim?.real ?? null
@@ -327,7 +327,7 @@ export class OthAudio {
   /** CALLS round the camera, each kind on its own uneven clock: blackbirds in the trees by day, an owl from the woods
    *  at night (a third of the time another answers from elsewhere a few seconds later), frogs along the nearest
    *  pond's shore from dusk (frogs don't mind the rain; the birds and owls keep quiet in it). */
-  private calls(dt: number, cam: THREE.Vector3): void {
+  private calls(dt: number, cam: GFX.Vector3): void {
     const u = this.atmos.uniforms, night = u.uNight.value, lamps = u.uLamps.value, rain = u.uRain.value, N = this.nextCall
     const f = this.near.forest
     if ((N.bird -= dt) <= 0) {
@@ -360,7 +360,7 @@ export class OthAudio {
   }
 
   /** A spot r0–r1 m from the camera, the most wooded of four tries. */
-  private spot(cam: THREE.Vector3, r0: number, r1: number): [number, number] {
+  private spot(cam: GFX.Vector3, r0: number, r1: number): [number, number] {
     let bx = cam.x, bz = cam.z, bf = -1
     for (let i = 0; i < 4; i++) {
       const a = Math.random() * Math.PI * 2, r = r0 + Math.random() * (r1 - r0)
@@ -372,7 +372,7 @@ export class OthAudio {
 
   /** Play one of `kind`'s clips at (x, y, z): `base` loud at `ref` m, quieter (ref / (ref + d)) and duller the further.
    *  False when it couldn't yet (its clip still on its way, or too many playing): try again soon. */
-  private call(kind: CallKind, x: number, y: number, z: number, base: number, ref: number, rate: number, cam: THREE.Vector3): boolean {
+  private call(kind: CallKind, x: number, y: number, z: number, base: number, ref: number, rate: number, cam: GFX.Vector3): boolean {
     const ctx = this.ctx!, files = CALLS[kind]
     for (const f of files) this.clip(f) // (all of its kind on their way)
     const buf = this.clip(files[Math.floor(Math.random() * files.length)])
@@ -406,7 +406,7 @@ export class OthAudio {
   }
 
   /** −1 (left) … 1 (right): where (x, z) is from the camera (its right: listen). */
-  private side(x: number, z: number, p: THREE.Vector3): number {
+  private side(x: number, z: number, p: GFX.Vector3): number {
     const dx = x - p.x, dz = z - p.z, l = Math.hypot(dx, dz) || 1
     return (dx * this.right.x + dz * this.right.z) / l
   }
@@ -440,7 +440,7 @@ export class OthAudio {
   }
 
   /** The nearest flowing water and waterfall (distance, side), the forest round the camera. */
-  private listen(camera: THREE.Camera): void {
+  private listen(camera: GFX.Camera): void {
     const p = camera.position, P = this.flowPts
     this.right.setFromMatrixColumn(camera.matrixWorld, 0)
     let best = 1e9, bx = 0, bz = 0

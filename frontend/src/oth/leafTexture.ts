@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 
 /**
  * THE LEAF TEXTURE (generated at boot, no download): a 512² RGBA atlas of 4 LEAF CLUSTERS, 256² each — ~80 tiny
@@ -13,14 +13,14 @@ import * as THREE from 'three'
  */
 export const LEAF_TILES = 2 // per side
 
-export function createLeafTexture(): THREE.DataTexture {
+export function createLeafTexture(): GFX.DataTexture {
   return (leafTex ??= shared(makeLeafTexture()))
 }
-let leafTex: THREE.DataTexture | null = null
+let leafTex: GFX.DataTexture | null = null
 /** Made once for every world (~70 ms of painting — World.dispose leaves `shared` textures be). */
-function shared(t: THREE.DataTexture): THREE.DataTexture { t.userData.shared = true; return t }
+function shared(t: GFX.DataTexture): GFX.DataTexture { t.userData.shared = true; return t }
 
-function makeLeafTexture(): THREE.DataTexture {
+function makeLeafTexture(): GFX.DataTexture {
   const N = 512, T = N / LEAF_TILES
   const data = new Uint8Array(N * N * 4)
   for (let i = 0; i < N * N; i++) { data[i * 4] = 150; data[i * 4 + 1] = 200; data[i * 4 + 2] = 0; data[i * 4 + 3] = 0 }
@@ -66,13 +66,13 @@ function makeLeafTexture(): THREE.DataTexture {
       }
     }
   }
-  const tex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType)
-  tex.minFilter = THREE.LinearMipmapLinearFilter
-  tex.magFilter = THREE.LinearFilter
+  const tex = new GFX.DataTexture(data, N, N, GFX.RGBAFormat, GFX.UnsignedByteType)
+  tex.minFilter = GFX.LinearMipmapLinearFilter
+  tex.magFilter = GFX.LinearFilter
   tex.generateMipmaps = true
-  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping
+  tex.wrapS = tex.wrapT = GFX.ClampToEdgeWrapping
   tex.anisotropy = 4
-  tex.colorSpace = THREE.NoColorSpace
+  tex.colorSpace = GFX.NoColorSpace
   tex.needsUpdate = true
   return tex
 }
@@ -104,12 +104,12 @@ vec4 leafCard(vec2 cardUv, float lz) {
  *   a soft ramp round the edge, cut at 0.5)
  * The transparent texels keep a mid tone (no dark fringe when the mipmaps average them in).
  */
-export function createFrondTexture(): THREE.DataTexture {
+export function createFrondTexture(): GFX.DataTexture {
   return (frondTex ??= shared(makeFrondTexture()))
 }
-let frondTex: THREE.DataTexture | null = null
+let frondTex: GFX.DataTexture | null = null
 
-function makeFrondTexture(): THREE.DataTexture {
+function makeFrondTexture(): GFX.DataTexture {
   const W = 1024, H = 512, TW = W / 2, TH = H / 2, SS = 3, SW = TW * SS, SH = TH * SS
   const data = new Uint8Array(W * H * 4)
   for (let i = 0; i < W * H; i++) { data[i * 4] = 180; data[i * 4 + 1] = 200; data[i * 4 + 2] = 0; data[i * 4 + 3] = 0 }
@@ -201,13 +201,13 @@ function makeFrondTexture(): THREE.DataTexture {
       data[k + 3] = Math.round(a * 255)
     }
   }
-  const tex = new THREE.DataTexture(data, W, H, THREE.RGBAFormat, THREE.UnsignedByteType)
-  tex.minFilter = THREE.LinearMipmapLinearFilter
-  tex.magFilter = THREE.LinearFilter
+  const tex = new GFX.DataTexture(data, W, H, GFX.RGBAFormat, GFX.UnsignedByteType)
+  tex.minFilter = GFX.LinearMipmapLinearFilter
+  tex.magFilter = GFX.LinearFilter
   tex.generateMipmaps = true
-  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping
+  tex.wrapS = tex.wrapT = GFX.ClampToEdgeWrapping
   tex.anisotropy = 4
-  tex.colorSpace = THREE.NoColorSpace
+  tex.colorSpace = GFX.NoColorSpace
   tex.needsUpdate = true
   return tex
 }

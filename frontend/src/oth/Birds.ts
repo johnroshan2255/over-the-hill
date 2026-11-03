@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import { HEIGHT_GLSL, type Terrain } from './Terrain'
 
@@ -13,7 +13,7 @@ import { HEIGHT_GLSL, type Terrain } from './Terrain'
  * before a ridge). From sunrise to dusk; fewer in the rain (they shelter).
  */
 export class Birds {
-  readonly mesh: THREE.Mesh
+  readonly mesh: GFX.Mesh
 
   constructor(private readonly atmos: Atmosphere, terrain: Terrain) {
     let s = 0x5eed
@@ -41,23 +41,23 @@ export class Birds {
       member.push(0, 0, 0, 1.8 + rnd() * 0.4)
     }
     const base = birdShape()
-    const g = new THREE.InstancedBufferGeometry()
+    const g = new GFX.InstancedBufferGeometry()
     g.index = base.index
     g.setAttribute('position', base.attributes.position)
     g.setAttribute('aPart', base.attributes.aPart)
-    g.setAttribute('aPath', new THREE.InstancedBufferAttribute(new Float32Array(path), 4))
-    g.setAttribute('aFly', new THREE.InstancedBufferAttribute(new Float32Array(fly), 4))
-    g.setAttribute('aMember', new THREE.InstancedBufferAttribute(new Float32Array(member), 4))
+    g.setAttribute('aPath', new GFX.InstancedBufferAttribute(new Float32Array(path), 4))
+    g.setAttribute('aFly', new GFX.InstancedBufferAttribute(new Float32Array(fly), 4))
+    g.setAttribute('aMember', new GFX.InstancedBufferAttribute(new Float32Array(member), 4))
     g.instanceCount = path.length / 4
     const t = terrain.uniforms
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms, uHIn: t.uHIn, uHFar: t.uHFar, uInGrid: t.uInGrid, uFarGrid: t.uFarGrid, uInScale: t.uInScale, uFarScale: t.uFarScale, uBoxHalf: t.uBoxHalf },
-      side: THREE.DoubleSide,
+      side: GFX.DoubleSide,
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
-    this.mesh = new THREE.Mesh(g, mat)
+    this.mesh = new GFX.Mesh(g, mat)
     this.mesh.frustumCulled = false // (one draw for the sky's birds; the shader drops the far and the roosting)
     this.mesh.visible = false
   }
@@ -68,7 +68,7 @@ export class Birds {
   }
 
   get count(): number {
-    return (this.mesh.geometry as THREE.InstancedBufferGeometry).instanceCount
+    return (this.mesh.geometry as GFX.InstancedBufferGeometry).instanceCount
   }
 }
 
@@ -77,15 +77,15 @@ const TILE = 1600
 
 /** A bird a wingspan of 2 across (x: right, z: forward): its head and tail on the body (part 0), each wing's elbow
  *  (part 1, 0.45 out) and tip (part 2) — the shader bends the wings there. 13 vertices, 8 triangles. */
-function birdShape(): THREE.BufferGeometry {
+function birdShape(): GFX.BufferGeometry {
   const v = [
     [0, 0, 0.3, 0], [0, 0, 0.1, 0], [0, 0, -0.14, 0], [-0.09, 0, -0.34, 0], [0.09, 0, -0.34, 0], [-0.04, 0, 0.08, 0], [0.04, 0, 0.08, 0],
     [-0.45, 0, 0.08, 1], [-0.45, 0, -0.15, 1], [-1, 0, -0.17, 2],
     [0.45, 0, 0.08, 1], [0.45, 0, -0.15, 1], [1, 0, -0.17, 2],
   ]
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(v.flatMap((p) => p.slice(0, 3)), 3))
-  g.setAttribute('aPart', new THREE.Float32BufferAttribute(v.map((p) => p[3]), 1))
+  const g = new GFX.BufferGeometry()
+  g.setAttribute('position', new GFX.Float32BufferAttribute(v.flatMap((p) => p.slice(0, 3)), 3))
+  g.setAttribute('aPart', new GFX.Float32BufferAttribute(v.map((p) => p[3]), 1))
   g.setIndex([0, 5, 6, 2, 3, 4, 1, 7, 8, 1, 8, 2, 7, 9, 8, 1, 10, 11, 1, 11, 2, 10, 12, 11])
   return g
 }

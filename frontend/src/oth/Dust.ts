@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { vehicleDef } from '../gameplay/vehicle/catalogue'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { Horizon } from './Horizon'
@@ -19,44 +19,44 @@ import type { Vehicle } from './Vehicle'
 const K = 14 // floats per particle: x y z  vx vy vz  age life  size0 size1  r g b  alpha0
 
 export class Dust {
-  readonly mesh: THREE.Mesh
+  readonly mesh: GFX.Mesh
   private readonly n: number
   private readonly st: Float32Array
-  private readonly aP: THREE.InstancedBufferAttribute // x y z size
-  private readonly aC: THREE.InstancedBufferAttribute // r g b alpha
+  private readonly aP: GFX.InstancedBufferAttribute // x y z size
+  private readonly aC: GFX.InstancedBufferAttribute // r g b alpha
   private next = 0
   private readonly acc = [0, 0, 0, 0, 0] // emission carried over per wheel + the exhaust
   private readonly mk: [number, number, number, number] = [0, 0, 0, 0]
-  private readonly v = new THREE.Vector3()
-  private readonly d = new THREE.Vector3()
+  private readonly v = new GFX.Vector3()
+  private readonly d = new GFX.Vector3()
   private carId = ''
-  private tips: { at: THREE.Vector3; dir: THREE.Vector3 }[] = []
+  private tips: { at: GFX.Vector3; dir: GFX.Vector3 }[] = []
   private seed = 0x2545f491
   private live = 0
   /** Round the live puffs (each its size out): the view's and the hills' test (`cull`). */
-  private readonly box = new THREE.Box3()
+  private readonly box = new GFX.Box3()
 
   constructor(private readonly map: MapData, atmos: Atmosphere, tier: Tier) {
     this.n = tier.name === 'low' ? 160 : tier.name === 'medium' ? 220 : tier.name === 'high' ? 290 : 360
     this.st = new Float32Array(this.n * K)
-    const quad = new THREE.PlaneGeometry(1, 1)
-    const g = new THREE.InstancedBufferGeometry()
+    const quad = new GFX.PlaneGeometry(1, 1)
+    const g = new GFX.InstancedBufferGeometry()
     g.index = quad.index
     g.setAttribute('position', quad.attributes.position)
-    this.aP = new THREE.InstancedBufferAttribute(new Float32Array(this.n * 4), 4).setUsage(THREE.DynamicDrawUsage)
-    this.aC = new THREE.InstancedBufferAttribute(new Float32Array(this.n * 4), 4).setUsage(THREE.DynamicDrawUsage)
+    this.aP = new GFX.InstancedBufferAttribute(new Float32Array(this.n * 4), 4).setUsage(GFX.DynamicDrawUsage)
+    this.aC = new GFX.InstancedBufferAttribute(new Float32Array(this.n * 4), 4).setUsage(GFX.DynamicDrawUsage)
     g.setAttribute('aP', this.aP)
     g.setAttribute('aC', this.aC)
     g.instanceCount = this.n
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
       depthWrite: false,
     })
-    this.mesh = new THREE.Mesh(g, mat)
+    this.mesh = new GFX.Mesh(g, mat)
     this.mesh.frustumCulled = false
     this.mesh.renderOrder = 6 // (after the water)
   }
@@ -122,7 +122,7 @@ export class Dust {
 
   /** Draw (and upload) the puffs only when some are alive, in view and not behind the hills (2026-11-02: the whole
    *  pool was drawn and uploaded every frame — the idling car's exhaust off-screen, or nothing at all). */
-  cull(view: THREE.Frustum, horizon: Horizon): void {
+  cull(view: GFX.Frustum, horizon: Horizon): void {
     this.mesh.visible = this.live > 0 && view.intersectsBox(this.box) && !horizon.hiddenBox(this.box)
     if (this.mesh.visible) { this.aP.needsUpdate = true; this.aC.needsUpdate = true }
   }
@@ -136,7 +136,7 @@ export class Dust {
       this.carId = car.id
       const def = vehicleDef(car.id)
       const tips = def.exhaust?.length ? def.exhaust : [{ at: [-0.42, 0.3, model.half.z * 0.96] as [number, number, number], dir: [0, 0, 1] as [number, number, number] }]
-      this.tips = tips.map((e) => ({ at: new THREE.Vector3(...e.at), dir: new THREE.Vector3(...e.dir).normalize() }))
+      this.tips = tips.map((e) => ({ at: new GFX.Vector3(...e.at), dir: new GFX.Vector3(...e.dir).normalize() }))
     }
     const lv = sim.body.linvel()
     const speed = Math.hypot(lv.x, lv.z)

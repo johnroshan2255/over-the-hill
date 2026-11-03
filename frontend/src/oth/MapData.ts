@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { PreparedMap } from './mapPrep'
 
 /** The map loader's worker (one for every load) and its request count. */
@@ -72,28 +72,28 @@ class HeightGrid {
   readonly n: number
   readonly step: number
   readonly origin: number
-  readonly tex: THREE.DataTexture
-  readonly normalTex: THREE.DataTexture
+  readonly tex: GFX.DataTexture
+  readonly normalTex: GFX.DataTexture
 
   constructor(readonly g: Grid, raw: Uint16Array, h: Float32Array, nb: Uint8Array) {
     this.n = g.n
     this.step = g.step
     this.origin = g.origin
     this.h = h
-    this.tex = new THREE.DataTexture(raw, g.n, g.n, THREE.RedIntegerFormat, THREE.UnsignedShortType)
+    this.tex = new GFX.DataTexture(raw, g.n, g.n, GFX.RedIntegerFormat, GFX.UnsignedShortType)
     this.tex.internalFormat = 'R16UI'
-    this.tex.minFilter = this.tex.magFilter = THREE.NearestFilter
+    this.tex.minFilter = this.tex.magFilter = GFX.NearestFilter
     this.tex.generateMipmaps = false
     this.tex.unpackAlignment = 1
     this.tex.needsUpdate = true
     // normals (mapPrep.ts): x / z components in 0..255 (y rebuilt in the shader)
     const n = g.n
-    this.normalTex = new THREE.DataTexture(nb, n, n, THREE.RGFormat, THREE.UnsignedByteType)
-    this.normalTex.minFilter = THREE.LinearMipmapLinearFilter
-    this.normalTex.magFilter = THREE.LinearFilter
+    this.normalTex = new GFX.DataTexture(nb, n, n, GFX.RGFormat, GFX.UnsignedByteType)
+    this.normalTex.minFilter = GFX.LinearMipmapLinearFilter
+    this.normalTex.magFilter = GFX.LinearFilter
     this.normalTex.generateMipmaps = true
     this.normalTex.unpackAlignment = 1
-    this.normalTex.wrapS = this.normalTex.wrapT = THREE.ClampToEdgeWrapping
+    this.normalTex.wrapS = this.normalTex.wrapT = GFX.ClampToEdgeWrapping
     this.normalTex.needsUpdate = true
   }
 
@@ -114,14 +114,14 @@ export class MapData {
   readonly inner: HeightGrid
   readonly far: HeightGrid
   readonly mask: Uint8Array
-  readonly maskTex: THREE.DataTexture
+  readonly maskTex: GFX.DataTexture
   /** Distance to the nearest track's centre line (R8 on the box's 2 m grid, 0..8 m) — the ground paints the dirt, the
    *  grass keeps off it. */
-  readonly trailTex: THREE.DataTexture
+  readonly trailTex: GFX.DataTexture
   /** MUD over the box (the mask's 4 m grid, RG: R mud 0 … 1 — the ground paints it, the grass keeps off, the tyres
    *  sink — G wildflowers: the grass blossoms). */
   readonly mud: Uint8Array
-  readonly mudTex: THREE.DataTexture
+  readonly mudTex: GFX.DataTexture
   /** The desert's world (meta.biome): the materials' OTH_DESERT. */
   get desert(): boolean { return this.meta.biome === 'desert' }
   /** Its shader define (none for the valley). */
@@ -145,22 +145,22 @@ export class MapData {
     this.farHalf = -meta.far.origin
     this.mask = mask
     const mn = meta.mask.n
-    this.maskTex = new THREE.DataTexture(mask, mn, mn, THREE.RGBAFormat, THREE.UnsignedByteType)
-    this.maskTex.minFilter = THREE.LinearMipmapLinearFilter
-    this.maskTex.magFilter = THREE.LinearFilter
+    this.maskTex = new GFX.DataTexture(mask, mn, mn, GFX.RGBAFormat, GFX.UnsignedByteType)
+    this.maskTex.minFilter = GFX.LinearMipmapLinearFilter
+    this.maskTex.magFilter = GFX.LinearFilter
     this.maskTex.generateMipmaps = true
     this.maskTex.needsUpdate = true
     const tn = meta.inner.n
-    this.trailTex = new THREE.DataTexture(trail, tn, tn, THREE.RedFormat, THREE.UnsignedByteType)
-    this.trailTex.minFilter = THREE.LinearMipmapLinearFilter
-    this.trailTex.magFilter = THREE.LinearFilter
+    this.trailTex = new GFX.DataTexture(trail, tn, tn, GFX.RedFormat, GFX.UnsignedByteType)
+    this.trailTex.minFilter = GFX.LinearMipmapLinearFilter
+    this.trailTex.magFilter = GFX.LinearFilter
     this.trailTex.generateMipmaps = true
     this.trailTex.unpackAlignment = 1
     this.trailTex.needsUpdate = true
     this.mud = mud.length === mn * mn * 2 ? mud : new Uint8Array(mn * mn * 2)
-    this.mudTex = new THREE.DataTexture(this.mud, mn, mn, THREE.RGFormat, THREE.UnsignedByteType)
-    this.mudTex.minFilter = THREE.LinearMipmapLinearFilter
-    this.mudTex.magFilter = THREE.LinearFilter
+    this.mudTex = new GFX.DataTexture(this.mud, mn, mn, GFX.RGFormat, GFX.UnsignedByteType)
+    this.mudTex.minFilter = GFX.LinearMipmapLinearFilter
+    this.mudTex.magFilter = GFX.LinearFilter
     this.mudTex.generateMipmaps = true
     this.mudTex.unpackAlignment = 1
     this.mudTex.needsUpdate = true

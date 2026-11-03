@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { MapData } from './MapData'
 import type { Rocks } from './Rocks'
 import { TREE_STRIDE, type Trees } from './Trees'
@@ -16,27 +16,27 @@ const REACH = 35
 const SEG = 16
 
 export class Winch {
-  readonly mesh: THREE.Mesh
-  private anchor: THREE.Vector3 | null = null
+  readonly mesh: GFX.Mesh
+  private anchor: GFX.Vector3 | null = null
   private what = ''
   private len = 0
-  private readonly hook = new THREE.Vector3()
+  private readonly hook = new GFX.Vector3()
   private readonly pos: Float32Array
-  private readonly geo: THREE.BufferGeometry
-  private readonly v = new THREE.Vector3()
-  private readonly w = new THREE.Vector3()
-  private readonly tc = new THREE.Vector3()
+  private readonly geo: GFX.BufferGeometry
+  private readonly v = new GFX.Vector3()
+  private readonly w = new GFX.Vector3()
+  private readonly tc = new GFX.Vector3()
   /** Messages (main.ts: the toast). */
   onMessage: ((m: string) => void) | null = null
 
   constructor(private readonly map: MapData, private readonly car: Vehicle, private trees: Trees, private rocks: Rocks) {
     this.pos = new Float32Array((SEG + 1) * 2 * 3)
-    this.geo = new THREE.BufferGeometry()
-    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage))
+    this.geo = new GFX.BufferGeometry()
+    this.geo.setAttribute('position', new GFX.BufferAttribute(this.pos, 3).setUsage(GFX.DynamicDrawUsage))
     const idx: number[] = []
     for (let i = 0; i < SEG; i++) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2) }
     this.geo.setIndex(idx)
-    this.mesh = new THREE.Mesh(this.geo, new THREE.MeshBasicMaterial({ color: new THREE.Color(0.12, 0.1, 0.085), side: THREE.DoubleSide }))
+    this.mesh = new GFX.Mesh(this.geo, new GFX.MeshBasicMaterial({ color: new GFX.Color(0.12, 0.1, 0.085), side: GFX.DoubleSide }))
     this.mesh.frustumCulled = false
     this.mesh.visible = false
     window.addEventListener('keydown', (e) => { if (e.code === 'KeyE' && !e.repeat) this.toggle() })
@@ -57,11 +57,11 @@ export class Winch {
     if (!sim) return
     this.hookPoint()
     const f = this.forward()
-    let best: THREE.Vector3 | null = null, bd = 1e9, what = ''
+    let best: GFX.Vector3 | null = null, bd = 1e9, what = ''
     const consider = (x: number, y: number, z: number, kind: string) => {
       const dx = x - this.hook.x, dz = z - this.hook.z, d = Math.hypot(dx, dz)
       if (d > REACH || d < 2.5 || (dx * f.x + dz * f.z) / d < 0.34) return
-      if (d < bd) { bd = d; best = new THREE.Vector3(x, y, z); what = kind }
+      if (d < bd) { bd = d; best = new GFX.Vector3(x, y, z); what = kind }
     }
     const t = this.trees.data
     for (let i = 0; i < this.trees.count; i++) {
@@ -97,7 +97,7 @@ export class Winch {
   }
 
   /** Per frame: the cable from the bumper to the anchor, sagging while slack. */
-  update(camera: THREE.Camera): void {
+  update(camera: GFX.Camera): void {
     const a = this.anchor
     if (!a) return
     this.hookPoint()
@@ -117,8 +117,8 @@ export class Winch {
     this.geo.computeBoundingSphere()
   }
 
-  private forward(): THREE.Vector3 {
-    return new THREE.Vector3(0, 0, -1).applyQuaternion(this.car.root.quaternion)
+  private forward(): GFX.Vector3 {
+    return new GFX.Vector3(0, 0, -1).applyQuaternion(this.car.root.quaternion)
   }
 
   /** The cable's end on the car: the front bumper's middle, a little up. */

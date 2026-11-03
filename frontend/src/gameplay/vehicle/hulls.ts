@@ -1,5 +1,5 @@
-import { Vector3 } from 'three'
-import { ConvexHull } from 'three/examples/jsm/math/ConvexHull.js'
+import { Vector3 } from '../../oth/gfx/math'
+import { ConvexHull } from '../../oth/gfx/utils'
 
 /**
  * BACKSTOP HULLS. A car's collider is its exact render mesh as a trimesh (VehicleSim, Groups.VehicleMesh: rocks,

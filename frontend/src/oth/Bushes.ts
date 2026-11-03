@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
@@ -22,22 +22,22 @@ const TILE = 64
 const STRIDE = 7 // x, y, z, size, rotation, kind, seed
 
 export class Bushes {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   readonly data: Float32Array
   readonly count: number
   private readonly tiles = new Map<number, number[]>()
-  private readonly lods: { geo: THREE.InstancedBufferGeometry; a0: THREE.InstancedBufferAttribute; a1: THREE.InstancedBufferAttribute; max: number; n: number }[] = []
-  private readonly frustum = new THREE.Frustum()
-  private readonly pv = new THREE.Matrix4()
-  private readonly box = new THREE.Box3()
-  private readonly lastPos = new THREE.Vector3(1e9, 0, 0)
-  private readonly lastDir = new THREE.Vector3()
+  private readonly lods: { geo: GFX.InstancedBufferGeometry; a0: GFX.InstancedBufferAttribute; a1: GFX.InstancedBufferAttribute; max: number; n: number }[] = []
+  private readonly frustum = new GFX.Frustum()
+  private readonly pv = new GFX.Matrix4()
+  private readonly box = new GFX.Box3()
+  private readonly lastPos = new GFX.Vector3(1e9, 0, 0)
+  private readonly lastDir = new GFX.Vector3()
   private readonly near: number
   private readonly reach: number
   drawn = [0, 0]
 
   /** placed: the bushes already placed (placeBushes, a row a step — World.build); else placed here. */
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, rocks: Rocks, leafTex: THREE.Texture, placed?: Float32Array) {
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, rocks: Rocks, leafTex: GFX.Texture, placed?: Float32Array) {
     this.near = tier.bushNear
     this.reach = tier.bushReach
     if (!placed) { const out: number[] = []; for (const _ of placeBushes(map, rocks, out)); placed = new Float32Array(out) }
@@ -49,28 +49,28 @@ export class Bushes {
       if (!l) this.tiles.set(k, (l = []))
       l.push(i)
     }
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new THREE.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: { value: leafTex } },
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
+      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: { value: leafTex } },
       defines: { ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines }, // (no specular: leaves of roughness 0.9 never showed one)
       vertexColors: true,
       vertexShader: VERT,
       fragmentShader: FRAG,
-      side: THREE.DoubleSide,
+      side: GFX.DoubleSide,
       alphaToCoverage: tier.msaa,
     })
     for (let l = 0; l < 2; l++) {
       const r0 = l ? this.near : 0, r1 = l ? this.reach : this.near
       const max = Math.min(30000, Math.ceil(Math.PI * (r1 * r1 - r0 * r0) / 40 * 0.6) + 64)
       const src = bushGeometry(l)
-      const geo = new THREE.InstancedBufferGeometry()
+      const geo = new GFX.InstancedBufferGeometry()
       for (const n of ['position', 'normal', 'color', 'leaf']) geo.setAttribute(n, src.getAttribute(n))
       geo.setIndex(src.getIndex())
-      const a0 = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4), a1 = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4)
-      a0.setUsage(THREE.DynamicDrawUsage); a1.setUsage(THREE.DynamicDrawUsage)
+      const a0 = new GFX.InstancedBufferAttribute(new Float32Array(max * 4), 4), a1 = new GFX.InstancedBufferAttribute(new Float32Array(max * 4), 4)
+      a0.setUsage(GFX.DynamicDrawUsage); a1.setUsage(GFX.DynamicDrawUsage)
       geo.setAttribute('aB0', a0); geo.setAttribute('aB1', a1)
       geo.instanceCount = 0
-      const mesh = new THREE.Mesh(geo, mat)
+      const mesh = new GFX.Mesh(geo, mat)
       mesh.frustumCulled = false
       mesh.matrixAutoUpdate = false
       this.group.add(mesh)
@@ -84,12 +84,12 @@ export class Bushes {
   horizon: Horizon | null = null
   private readonly tileTop = new Map<number, number>()
 
-  update(camera: THREE.PerspectiveCamera): void {
-    const dir = camera.getWorldDirection(new THREE.Vector3())
+  update(camera: GFX.PerspectiveCamera): void {
+    const dir = camera.getWorldDirection(new GFX.Vector3())
     if (camera.position.distanceToSquared(this.lastPos) < 9 && dir.dot(this.lastDir) > 0.999) return
     this.lastPos.copy(camera.position); this.lastDir.copy(dir)
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.pv, THREE.WebGLCoordinateSystem, camera.reversedDepth)
+    this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = this.reach, d = this.data
     for (const l of this.lods) l.n = 0
     const i0 = Math.floor((cx - R) / TILE), i1 = Math.floor((cx + R) / TILE), j0 = Math.floor((cz - R) / TILE), j1 = Math.floor((cz + R) / TILE)
@@ -128,7 +128,7 @@ export class Bushes {
 
 /** A bush (unit size ≈ 1 m across, the base at y 0): low clumps of leaf cards round a dark woody core.
  *  Attributes: position, normal (the bush's soft volume), color (r AO, g 1, b height), leaf (card u v, 1 + tile + tint). */
-function bushGeometry(lod: number): THREE.BufferGeometry {
+function bushGeometry(lod: number): GFX.BufferGeometry {
   let s = 0x2468ace + lod * 97
   const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
   const clumps = lod === 0
@@ -136,22 +136,22 @@ function bushGeometry(lod: number): THREE.BufferGeometry {
     : [[0, 0.38, 0, 0.36], [0.22, 0.3, -0.1, 0.3], [-0.2, 0.32, 0.12, 0.3]]
   const per = lod === 0 ? 6 : 3
   const pos: number[] = [], nor: number[] = [], col: number[] = [], leaf: number[] = [], idx: number[] = []
-  const centre = new THREE.Vector3(0, 0.3, 0)
-  const uu = new THREE.Vector3(), vv = new THREE.Vector3(), tmp = new THREE.Vector3()
+  const centre = new GFX.Vector3(0, 0.3, 0)
+  const uu = new GFX.Vector3(), vv = new GFX.Vector3(), tmp = new GFX.Vector3()
   for (const [bx, by, bz, br] of clumps) {
-    const cc = new THREE.Vector3(bx, by, bz)
+    const cc = new GFX.Vector3(bx, by, bz)
     for (let k = 0; k < per; k++) {
       const zz = 1 - (2 * (k + 0.5)) / per, rr = Math.sqrt(1 - zz * zz), ph = k * 2.39996 + rnd()
-      const d = new THREE.Vector3(Math.cos(ph) * rr, zz * 0.8 + 0.2, Math.sin(ph) * rr).normalize()
+      const d = new GFX.Vector3(Math.cos(ph) * rr, zz * 0.8 + 0.2, Math.sin(ph) * rr).normalize()
       const c = cc.clone().addScaledVector(d, br * (0.35 + 0.25 * rnd()))
-      const n = d.clone().add(new THREE.Vector3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).multiplyScalar(0.8)).normalize()
+      const n = d.clone().add(new GFX.Vector3(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5).multiplyScalar(0.8)).normalize()
       if (Math.abs(n.y) > 0.62) { n.y = Math.sign(n.y) * 0.62; const l = Math.hypot(n.x, n.z) || 1; n.x *= 0.785 / l; n.z *= 0.785 / l }
-      uu.crossVectors(n, new THREE.Vector3(0, 1, 0)).normalize()
+      uu.crossVectors(n, new GFX.Vector3(0, 1, 0)).normalize()
       vv.crossVectors(n, uu)
       const sp = rnd() * Math.PI * 2, cu = Math.cos(sp), su = Math.sin(sp)
       const a1 = uu.clone().multiplyScalar(cu).addScaledVector(vv, su), a2 = uu.clone().multiplyScalar(-su).addScaledVector(vv, cu)
       const h = br * (lod === 0 ? 1.0 : 1.15) * (0.85 + 0.3 * rnd())
-      const o = new THREE.Vector3().subVectors(c, centre).normalize()
+      const o = new GFX.Vector3().subVectors(c, centre).normalize()
       const sn = o.clone().multiplyScalar(0.75).addScaledVector(n, 0.25).normalize()
       const ao = Math.min(1.1, (0.55 + 0.45 * Math.max(0, d.dot(o))) * (0.7 + 0.5 * Math.min(1, c.y / 0.6)))
       const lz = 1 + Math.floor(rnd() * 4) + rnd() * 0.9
@@ -163,11 +163,11 @@ function bushGeometry(lod: number): THREE.BufferGeometry {
       idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
     }
   }
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3))
-  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
-  g.setAttribute('leaf', new THREE.Float32BufferAttribute(leaf, 3))
+  const g = new GFX.BufferGeometry()
+  g.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
+  g.setAttribute('normal', new GFX.Float32BufferAttribute(nor, 3))
+  g.setAttribute('color', new GFX.Float32BufferAttribute(col, 3))
+  g.setAttribute('leaf', new GFX.Float32BufferAttribute(leaf, 3))
   g.setIndex(idx)
   return g
 }

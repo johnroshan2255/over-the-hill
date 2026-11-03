@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
@@ -17,9 +17,9 @@ import { SHADOW_GLSL } from './TerrainShadow'
  * more), a slow churn, whiter in the shallows, along the banks and round the boulders (their footprint, blurred).
  */
 export class Water {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
 
-  constructor(map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: THREE.Texture) {
+  constructor(map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture) {
     const t = terrain.uniforms
     const uniforms = {
       ...atmos.uniforms,
@@ -27,15 +27,15 @@ export class Water {
       uShBox: t.uShBox, uShWorld: t.uShWorld, uShBoxGrid: t.uShBoxGrid, uShOn: t.uShOn, uTreeSh: t.uTreeSh, uTreeShGrid: t.uTreeShGrid, uTreeShOn: t.uTreeShOn,
       uRocks: { value: rockFootprint },
     }
-    const material = (rapids: boolean) => new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    const material = (rapids: boolean) => new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms,
       defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}), ...map.biomeDefines },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
       depthWrite: false,
-      side: THREE.DoubleSide,
+      side: GFX.DoubleSide,
     })
     const still = material(false), flowing = material(true)
     // the lake: a disc round its ellipse (the shore clips it); the PONDS and small lakes: a disc each, at its level —
@@ -43,7 +43,7 @@ export class Water {
     // the banks cost little: the water is drawn after the terrain, its depth test drops them before they're shaded
     const pos: number[] = [], idx: number[] = []
     const disc = (cx: number, cz: number, rx: number, rz: number, rot: number, level: number, seg: number) => {
-      const g = new THREE.CircleGeometry(1, seg)
+      const g = new GFX.CircleGeometry(1, seg)
       g.rotateX(-Math.PI / 2)
       g.scale(rx, 1, rz)
       g.rotateY(-rot)
@@ -56,14 +56,14 @@ export class Water {
     const L = map.meta.water.lake
     disc(L.cx, L.cz, L.rx * 1.75, L.rz * 1.75, L.rot, L.level, 96)
     for (const P of map.meta.water.ponds ?? []) disc(P.cx, P.cz, P.rx, P.rz, P.rot, P.level, 48)
-    const g = new THREE.BufferGeometry()
+    const g = new GFX.BufferGeometry()
     const n = pos.length / 3
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-    g.setAttribute('aFlow', new THREE.BufferAttribute(new Float32Array(n * 2), 2))
-    g.setAttribute('aUV', new THREE.BufferAttribute(new Float32Array(n * 2), 2))
+    g.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
+    g.setAttribute('aFlow', new GFX.BufferAttribute(new Float32Array(n * 2), 2))
+    g.setAttribute('aUV', new GFX.BufferAttribute(new Float32Array(n * 2), 2))
     g.setIndex(idx)
     g.computeBoundingSphere()
-    const m = new THREE.Mesh(g, still)
+    const m = new GFX.Mesh(g, still)
     m.renderOrder = 5
     this.group.add(m)
     // the river and the streams: ribbons (the banks clip them), downstream toward index 0 — one draw for all of them
@@ -76,20 +76,20 @@ export class Water {
 /** Flowing-water ribbons, one mesh: each along x / z (surface y, half width hw × widen each side), downstream toward
  *  index 0 — aFlow = the downstream direction × speed (faster where the surface drops more), aUV = (metres downstream
  *  from its source, metres across). */
-function ribbons(lines: { x: number[]; z: number[]; y: number[]; hw: number[]; widen: number }[], mat: THREE.Material): THREE.Mesh {
+function ribbons(lines: { x: number[]; z: number[]; y: number[]; hw: number[]; widen: number }[], mat: GFX.Material): GFX.Mesh {
   const total = lines.reduce((a, L) => a + L.x.length, 0)
   const pos = new Float32Array(total * 2 * 3), flow = new Float32Array(total * 2 * 2), uv = new Float32Array(total * 2 * 2), idx: number[] = []
   let o = 0
   for (const { x, z, y, hw, widen } of lines) {
     o += ribbon(x, z, y, hw, widen, pos, flow, uv, idx, o)
   }
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-  g.setAttribute('aFlow', new THREE.BufferAttribute(flow, 2))
-  g.setAttribute('aUV', new THREE.BufferAttribute(uv, 2))
+  const g = new GFX.BufferGeometry()
+  g.setAttribute('position', new GFX.BufferAttribute(pos, 3))
+  g.setAttribute('aFlow', new GFX.BufferAttribute(flow, 2))
+  g.setAttribute('aUV', new GFX.BufferAttribute(uv, 2))
   g.setIndex(idx)
   g.computeBoundingSphere()
-  const m = new THREE.Mesh(g, mat)
+  const m = new GFX.Mesh(g, mat)
   m.renderOrder = 5
   return m
 }

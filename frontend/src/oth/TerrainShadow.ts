@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import type { MapData } from './MapData'
 
 /**
@@ -9,31 +9,31 @@ import type { MapData } from './MapData'
  * no shadow-map pass, the same on every tier.
  */
 export class TerrainShadow {
-  readonly box: THREE.DataTexture
-  readonly world: THREE.DataTexture
+  readonly box: GFX.DataTexture
+  readonly world: GFX.DataTexture
   /** The FORESTS' shade (R8 on the box's 2 m grid, 255 = lit) — stamped by the worker from the trees (setTrees). */
-  readonly treeTex: THREE.DataTexture
+  readonly treeTex: GFX.DataTexture
   readonly uniforms = {
-    uShBox: { value: null as THREE.Texture | null },
-    uShWorld: { value: null as THREE.Texture | null },
-    uShBoxGrid: { value: new THREE.Vector4() },
+    uShBox: { value: null as GFX.Texture | null },
+    uShWorld: { value: null as GFX.Texture | null },
+    uShBoxGrid: { value: new GFX.Vector4() },
     uShOn: { value: 0 },
-    uTreeSh: { value: null as THREE.Texture | null },
-    uTreeShGrid: { value: new THREE.Vector4() },
+    uTreeSh: { value: null as GFX.Texture | null },
+    uTreeShGrid: { value: new GFX.Vector4() },
     uTreeShOn: { value: 0 },
   }
   private readonly worker: Worker
   private readonly boxN: number
   private busy = false
-  private baked = new THREE.Vector3(0, -1, 0)
+  private baked = new GFX.Vector3(0, -1, 0)
   private id = 0
 
   constructor(map: MapData) {
     this.boxN = (map.inner.n - 1) / 2 + 1 // 4 m
     const tex = (n: number) => {
-      const t = new THREE.DataTexture(new Uint8Array(n * n).fill(255), n, n, THREE.RedFormat, THREE.UnsignedByteType)
-      t.minFilter = THREE.LinearFilter
-      t.magFilter = THREE.LinearFilter
+      const t = new GFX.DataTexture(new Uint8Array(n * n).fill(255), n, n, GFX.RedFormat, GFX.UnsignedByteType)
+      t.minFilter = GFX.LinearFilter
+      t.magFilter = GFX.LinearFilter
       t.unpackAlignment = 1
       t.needsUpdate = true
       return t
@@ -44,8 +44,8 @@ export class TerrainShadow {
     this.uniforms.uShWorld.value = this.world
     this.uniforms.uShBoxGrid.value.set(this.boxN, map.inner.step * 2, map.inner.origin, 0)
     const tn = map.inner.n
-    this.treeTex = new THREE.DataTexture(new Uint8Array(tn * tn).fill(255), tn, tn, THREE.RedFormat, THREE.UnsignedByteType)
-    this.treeTex.minFilter = this.treeTex.magFilter = THREE.LinearFilter
+    this.treeTex = new GFX.DataTexture(new Uint8Array(tn * tn).fill(255), tn, tn, GFX.RedFormat, GFX.UnsignedByteType)
+    this.treeTex.minFilter = this.treeTex.magFilter = GFX.LinearFilter
     this.treeTex.unpackAlignment = 1
     this.treeTex.needsUpdate = true
     this.uniforms.uTreeSh.value = this.treeTex
@@ -116,10 +116,10 @@ export class TerrainShadow {
     this.worker.postMessage({ type: 'trees', trees, crown, grid: { n: this.treeTex.image.width, step: this.treeGrid.y, origin: this.treeGrid.z } })
     this.baked.set(0, -1, 0)
   }
-  private get treeGrid(): THREE.Vector4 { return this.uniforms.uTreeShGrid.value }
+  private get treeGrid(): GFX.Vector4 { return this.uniforms.uTreeShGrid.value }
 
   /** Call each frame with the sun's direction: re-bakes when it has moved. */
-  update(sun: THREE.Vector3): void {
+  update(sun: GFX.Vector3): void {
     if (this.busy || sun.angleTo(this.baked) < 0.026) return
     this.busy = true
     this.baked.copy(sun)

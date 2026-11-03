@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import { PAINT_GLSL } from './paint'
@@ -25,9 +25,9 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
  * ATMOS_GLSL `shade` and hazed by `applyAtmos`.
  */
 export class Terrain {
-  readonly mesh: THREE.Mesh
-  private readonly geo: THREE.InstancedBufferGeometry
-  private readonly nodes: THREE.InstancedBufferAttribute
+  readonly mesh: GFX.Mesh
+  private readonly geo: GFX.InstancedBufferGeometry
+  private readonly nodes: GFX.InstancedBufferAttribute
   private readonly maxNodes = 2048
   private readonly leaf: number
   private readonly levels: number
@@ -36,9 +36,9 @@ export class Terrain {
   /** min / max height per node, per level (level 0 = leaf cells), row-major. */
   private readonly minH: Float32Array[] = []
   private readonly maxH: Float32Array[] = []
-  private readonly frustum = new THREE.Frustum()
-  private readonly box = new THREE.Box3()
-  private readonly pv = new THREE.Matrix4()
+  private readonly frustum = new GFX.Frustum()
+  private readonly box = new GFX.Box3()
+  private readonly pv = new GFX.Matrix4()
   private count = 0
   private cx = 0
   private cz = 0
@@ -50,7 +50,7 @@ export class Terrain {
   horizon: { hidden(x0: number, z0: number, x1: number, z1: number, top: number): boolean } | null = null
   /** Patches skipped behind the hills this frame (the HUD). */
   occluded = 0
-  readonly uniforms: Record<string, THREE.IUniform>
+  readonly uniforms: Record<string, GFX.IUniform>
 
   constructor(private readonly map: MapData, atmos: Atmosphere, tier: Tier, shadow: TerrainShadow) {
     const G = tier.terrainGrid
@@ -73,16 +73,16 @@ export class Terrain {
       if ((i + j) & 1) { idx[n++] = a; idx[n++] = c; idx[n++] = b; idx[n++] = b; idx[n++] = c; idx[n++] = d }
       else { idx[n++] = a; idx[n++] = c; idx[n++] = d; idx[n++] = a; idx[n++] = d; idx[n++] = b }
     }
-    this.geo = new THREE.InstancedBufferGeometry()
-    this.geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-    this.geo.setIndex(new THREE.BufferAttribute(idx, 1))
-    this.nodes = new THREE.InstancedBufferAttribute(new Float32Array(this.maxNodes * 4), 4)
-    this.nodes.setUsage(THREE.DynamicDrawUsage)
+    this.geo = new GFX.InstancedBufferGeometry()
+    this.geo.setAttribute('position', new GFX.BufferAttribute(pos, 3))
+    this.geo.setIndex(new GFX.BufferAttribute(idx, 1))
+    this.nodes = new GFX.InstancedBufferAttribute(new Float32Array(this.maxNodes * 4), 4)
+    this.nodes.setUsage(GFX.DynamicDrawUsage)
     this.geo.setAttribute('aNode', this.nodes)
     this.geo.instanceCount = 0
 
-    const g = (h: MapData['inner']) => new THREE.Vector4(h.n, h.step, h.origin, 0)
-    const sc = (h: MapData['inner']) => new THREE.Vector2(h.g.min, h.g.range / 65535)
+    const g = (h: MapData['inner']) => new GFX.Vector4(h.n, h.step, h.origin, 0)
+    const sc = (h: MapData['inner']) => new GFX.Vector2(h.g.min, h.g.range / 65535)
     const mg = map.meta.mask
     this.uniforms = {
       ...atmos.uniforms,
@@ -97,7 +97,7 @@ export class Terrain {
       uFarGrid: { value: g(map.far) },
       uInScale: { value: sc(map.inner) },
       uFarScale: { value: sc(map.far) },
-      uMaskGrid: { value: new THREE.Vector4(mg.n, mg.step, mg.origin, 0) },
+      uMaskGrid: { value: new GFX.Vector4(mg.n, mg.step, mg.origin, 0) },
       uBoxHalf: { value: map.half },
       uGridN: { value: G },
       uNear: { value: this.near },
@@ -109,14 +109,14 @@ export class Terrain {
       uGrassR: { value: tier.grassRadius },
       uBushR: { value: tier.bushReach },
     }
-    const mat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
+    const mat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
       uniforms: this.uniforms,
       defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines },
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
-    this.mesh = new THREE.Mesh(this.geo, mat)
+    this.mesh = new GFX.Mesh(this.geo, mat)
     this.mesh.frustumCulled = false // the selection culls per node
     this.mesh.matrixAutoUpdate = false
     // LAST of the opaque things (2026-10-27, 400 fps at 1080p): the grass, rocks, trees, bushes and the car draw first
@@ -134,9 +134,9 @@ export class Terrain {
   }
 
   /** Pick this frame's patches. */
-  update(camera: THREE.PerspectiveCamera): void {
+  update(camera: GFX.PerspectiveCamera): void {
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
-    this.frustum.setFromProjectionMatrix(this.pv, THREE.WebGLCoordinateSystem, camera.reversedDepth)
+    this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     this.cx = camera.position.x
     this.cz = camera.position.z
     const agl = Math.max(0, camera.position.y - this.map.height(this.cx, this.cz))

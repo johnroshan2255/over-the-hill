@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 
 /**
  * SPRUCE geometry (unit height, the trunk at the origin, up = +Y) — the Over-the-Hill conifer, redesigned after the
@@ -38,7 +38,7 @@ const smooth01 = (x: number) => { const t = Math.min(1, Math.max(0, x)); return 
 /** The crown radius at height share y (the cone, a little convex). */
 const crownR = (y: number) => CROWN * Math.pow(Math.max(0, (1 - y) / (1 - CROWN_BASE)), 0.9)
 
-export function spruceGeometry(lod: number, seed = 7): THREE.BufferGeometry {
+export function spruceGeometry(lod: number, seed = 7): GFX.BufferGeometry {
   const L = LODS[Math.min(lod, LODS.length - 1)], rnd = rng(seed + lod * 101)
   const pos: number[] = [], nor: number[] = [], col: number[] = [], leaf: number[] = [], idx: number[] = []
   const v = (x: number, y: number, z: number, nx: number, ny: number, nz: number, ao: number, fol: number, ls = 0, lc = 0, lz = 0): number => {
@@ -46,8 +46,8 @@ export function spruceGeometry(lod: number, seed = 7): THREE.BufferGeometry {
     pos.push(x, y, z); nor.push(nx / l, ny / l, nz / l); col.push(ao, fol, Math.max(0, Math.min(1, y))); leaf.push(ls, lc, lz)
     return pos.length / 3 - 1
   }
-  const P = (i: number) => new THREE.Vector3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])
-  const _a = new THREE.Vector3(), _b = new THREE.Vector3()
+  const P = (i: number) => new GFX.Vector3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])
+  const _a = new GFX.Vector3(), _b = new GFX.Vector3()
   /** A triangle, its winding chosen so the front face points up. */
   const tri = (a: number, b: number, c: number) => {
     const pa = P(a)
@@ -138,11 +138,11 @@ export function spruceGeometry(lod: number, seed = 7): THREE.BufferGeometry {
     }
     for (let k = 0; k < C; k++) tri(apex, ring[k], ring[(k + 1) % C])
   }
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3))
-  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
-  g.setAttribute('leaf', new THREE.Float32BufferAttribute(leaf, 3))
+  const g = new GFX.BufferGeometry()
+  g.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
+  g.setAttribute('normal', new GFX.Float32BufferAttribute(nor, 3))
+  g.setAttribute('color', new GFX.Float32BufferAttribute(col, 3))
+  g.setAttribute('leaf', new GFX.Float32BufferAttribute(leaf, 3))
   g.setIndex(idx)
   return g
 }
@@ -159,18 +159,18 @@ export function spruceGeometry(lod: number, seed = 7): THREE.BufferGeometry {
  * starts at HALF the height; per tree the vertex shader raises its base a little more (up to 0.62) and widens or
  * narrows it (×0.85–1.15) — every tree its own outline.
  */
-export function broadleafGeometry(lod: number, seed = 11): THREE.BufferGeometry {
+export function broadleafGeometry(lod: number, seed = 11): GFX.BufferGeometry {
   const rnd = rng(seed + lod * 53)
   const pos: number[] = [], nor: number[] = [], col: number[] = [], leaf: number[] = [], idx: number[] = []
-  const vert = (p: THREE.Vector3, n: THREE.Vector3, ao: number, fol: number, lu = 0, lv = 0, lz = 0) => {
+  const vert = (p: GFX.Vector3, n: GFX.Vector3, ao: number, fol: number, lu = 0, lv = 0, lz = 0) => {
     pos.push(p.x, p.y, p.z); nor.push(n.x, n.y, n.z); col.push(ao, fol, Math.max(0, Math.min(1, p.y))); leaf.push(lu, lv, lz)
     return pos.length / 3 - 1
   }
   /** A tapered limb a → b (radii ra, rb), `sides` sided. */
-  const limb = (a: THREE.Vector3, b: THREE.Vector3, ra: number, rb: number, sides: number) => {
-    const axis = new THREE.Vector3().subVectors(b, a).normalize()
-    const u = new THREE.Vector3().crossVectors(axis, Math.abs(axis.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize()
-    const w = new THREE.Vector3().crossVectors(axis, u)
+  const limb = (a: GFX.Vector3, b: GFX.Vector3, ra: number, rb: number, sides: number) => {
+    const axis = new GFX.Vector3().subVectors(b, a).normalize()
+    const u = new GFX.Vector3().crossVectors(axis, Math.abs(axis.y) < 0.9 ? new GFX.Vector3(0, 1, 0) : new GFX.Vector3(1, 0, 0)).normalize()
+    const w = new GFX.Vector3().crossVectors(axis, u)
     const base = pos.length / 3
     for (let k = 0; k < sides; k++) {
       const t = (k / sides) * Math.PI * 2, d = u.clone().multiplyScalar(Math.cos(t)).addScaledVector(w, Math.sin(t))
@@ -185,21 +185,21 @@ export function broadleafGeometry(lod: number, seed = 11): THREE.BufferGeometry 
   // TRUNK + FORK + side limbs (they show through the gaps between the leaves)
   const sides = lod === 0 ? 5 : 3
   const forkY = 0.3 + 0.06 * rnd() // (low: the crown fills the top 70 % of the tree, the bare trunk 30 % — the user)
-  const top = new THREE.Vector3(0, forkY, 0)
-  limb(new THREE.Vector3(0, -0.02, 0), top, 0.02, 0.013, sides)
+  const top = new GFX.Vector3(0, forkY, 0)
+  limb(new GFX.Vector3(0, -0.02, 0), top, 0.02, 0.013, sides)
   const nb = 2 + (rnd() < 0.5 ? 1 : 0)
   for (let b = 0; b < nb; b++) {
     const a = (b / nb) * Math.PI * 2 + rnd() * 0.8, lean = 0.07 + 0.05 * rnd()
-    limb(top, new THREE.Vector3(Math.cos(a) * lean, 0.9 + 0.06 * rnd(), Math.sin(a) * lean), 0.011, 0.004, Math.max(3, sides - 1))
+    limb(top, new GFX.Vector3(Math.cos(a) * lean, 0.9 + 0.06 * rnd(), Math.sin(a) * lean), 0.011, 0.004, Math.max(3, sides - 1))
   }
   if (lod === 0) for (let b = 0; b < 5; b++) {
     const a = rnd() * Math.PI * 2, y = 0.33 + 0.11 * b + 0.04 * rnd(), l = 0.1 + 0.05 * rnd()
-    limb(new THREE.Vector3(0, y, 0), new THREE.Vector3(Math.cos(a) * l, y + 0.07, Math.sin(a) * l), 0.007, 0.003, 3)
+    limb(new GFX.Vector3(0, y, 0), new GFX.Vector3(Math.cos(a) * l, y + 0.07, Math.sin(a) * l), 0.007, 0.003, 3)
   }
   // the CROWN: leaf clumps in a tall oval — one on top, rings below it — from 30 % of the tree's height up (the user:
   // "70 % of the tree is leaves, only 30 % the trunk")
-  const centre = new THREE.Vector3(0, 0.64, 0)
-  const clumps: { c: THREE.Vector3; r: number; t: number }[] = []
+  const centre = new GFX.Vector3(0, 0.64, 0)
+  const clumps: { c: GFX.Vector3; r: number; t: number }[] = []
   const rings = lod === 0 ? 4 : 2, perRing = lod === 0 ? 4 : 3, nC = rings * perRing + 1
   for (let cI = 0; cI < nC; cI++) {
     // (4 rings of 4 + one on top on LOD 0, 2 of 3 + 1 on LOD 1 — the crown broad and full, an oval)
@@ -208,14 +208,14 @@ export function broadleafGeometry(lod: number, seed = 11): THREE.BufferGeometry 
     const ring = cI === nC - 1 ? 0.02 : 0.15 * Math.sin(Math.PI * (0.18 + 0.72 * Math.min(1, t)))
     const a = cI * 1.618 * Math.PI + rnd() * 0.6
     const r = (lod === 0 ? 0.088 : 0.12) * (0.85 + 0.3 * rnd())
-    clumps.push({ c: new THREE.Vector3(Math.cos(a) * ring, y, Math.sin(a) * ring), r, t: Math.min(1, t) })
+    clumps.push({ c: new GFX.Vector3(Math.cos(a) * ring, y, Math.sin(a) * ring), r, t: Math.min(1, t) })
   }
-  const tmp = new THREE.Vector3(), nrm = new THREE.Vector3(), uu = new THREE.Vector3(), vv = new THREE.Vector3(), out = new THREE.Vector3()
+  const tmp = new GFX.Vector3(), nrm = new GFX.Vector3(), uu = new GFX.Vector3(), vv = new GFX.Vector3(), out = new GFX.Vector3()
   /** One card: centre c, facing n (rotated by `spin` in its plane), half size h. */
-  const card = (c: THREE.Vector3, n: THREE.Vector3, spin: number, h: number, ao: number) => {
+  const card = (c: GFX.Vector3, n: GFX.Vector3, spin: number, h: number, ao: number) => {
     // (never flat: a horizontal card is seen edge-on from the ground — a dark streak against the sky)
     if (Math.abs(n.y) > 0.62) { n.y = Math.sign(n.y) * 0.62; const l = Math.hypot(n.x, n.z) || 1; const k = Math.sqrt(1 - 0.62 * 0.62) / l; n.x *= k; n.z *= k; if (l < 1e-3) n.x = Math.sqrt(1 - 0.62 * 0.62) }
-    uu.crossVectors(n, Math.abs(n.y) < 0.95 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0)).normalize()
+    uu.crossVectors(n, Math.abs(n.y) < 0.95 ? new GFX.Vector3(0, 1, 0) : new GFX.Vector3(1, 0, 0)).normalize()
     vv.crossVectors(n, uu)
     const cu = Math.cos(spin), su = Math.sin(spin)
     const a1 = uu.clone().multiplyScalar(cu).addScaledVector(vv, su), a2 = uu.clone().multiplyScalar(-su).addScaledVector(vv, cu)
@@ -234,11 +234,11 @@ export function broadleafGeometry(lod: number, seed = 11): THREE.BufferGeometry 
     for (let k = 0; k < perClump; k++) {
       // spread over the clump's sphere (golden spiral), biased outward from the crown; lower ones droop
       const zz = 1 - (2 * (k + 0.5)) / perClump, rr = Math.sqrt(1 - zz * zz), ph = k * 2.39996 + rnd()
-      const d = new THREE.Vector3(Math.cos(ph) * rr, zz, Math.sin(ph) * rr)
+      const d = new GFX.Vector3(Math.cos(ph) * rr, zz, Math.sin(ph) * rr)
       out.set(cl.c.x, 0.15, cl.c.z).normalize()
       if (d.dot(out) < -0.2) d.addScaledVector(out, 0.9).normalize()
       const c = cl.c.clone().addScaledVector(d, cl.r * (0.45 + 0.25 * rnd()))
-      nrm.copy(d).add(new THREE.Vector3(rnd() - 0.5, rnd() - 0.5 + (d.y < -0.3 ? -0.3 : 0.2), rnd() - 0.5).multiplyScalar(0.8)).normalize()
+      nrm.copy(d).add(new GFX.Vector3(rnd() - 0.5, rnd() - 0.5 + (d.y < -0.3 ? -0.3 : 0.2), rnd() - 0.5).multiplyScalar(0.8)).normalize()
       out.subVectors(c, centre).normalize()
       const ao = Math.min(1.1, (0.6 + 0.4 * Math.max(0, d.dot(out))) * (0.78 + 0.32 * cl.t) * (0.9 + 0.2 * rnd()))
       card(c, nrm, rnd() * Math.PI * 2, cl.r * (lod === 0 ? 0.95 : 1.1) * (0.85 + 0.3 * rnd()), ao)
@@ -246,14 +246,14 @@ export function broadleafGeometry(lod: number, seed = 11): THREE.BufferGeometry 
   }
   // the core: a few bigger, darker cards crossing the crown's middle (no hollow shell)
   if (lod === 0) for (let k = 0; k < 5; k++) {
-    const c = new THREE.Vector3((rnd() - 0.5) * 0.06, 0.45 + 0.4 * (k / 4), (rnd() - 0.5) * 0.06)
-    card(c, new THREE.Vector3(rnd() - 0.5, rnd() * 0.6, rnd() - 0.5).normalize(), rnd() * 6.28, 0.085, 0.45) // (inside the crown)
+    const c = new GFX.Vector3((rnd() - 0.5) * 0.06, 0.45 + 0.4 * (k / 4), (rnd() - 0.5) * 0.06)
+    card(c, new GFX.Vector3(rnd() - 0.5, rnd() * 0.6, rnd() - 0.5).normalize(), rnd() * 6.28, 0.085, 0.45) // (inside the crown)
   }
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3))
-  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
-  g.setAttribute('leaf', new THREE.Float32BufferAttribute(leaf, 3))
+  const g = new GFX.BufferGeometry()
+  g.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
+  g.setAttribute('normal', new GFX.Float32BufferAttribute(nor, 3))
+  g.setAttribute('color', new GFX.Float32BufferAttribute(col, 3))
+  g.setAttribute('leaf', new GFX.Float32BufferAttribute(leaf, 3))
   g.setIndex(idx)
   return g
 }
@@ -266,23 +266,23 @@ export function broadleafGeometry(lod: number, seed = 11): THREE.BufferGeometry 
  * tint × 0.9)) on a frond. Trees.ts draws it in the broadleaf family's place in the desert (its impostor baked the same).
  * LOD 0: 13 fronds × 5 segments; LOD 1: 7 × 3.
  */
-export function palmGeometry(lod: number, seed = 23): THREE.BufferGeometry {
+export function palmGeometry(lod: number, seed = 23): GFX.BufferGeometry {
   const rnd = rng(seed + lod * 71)
   const pos: number[] = [], nor: number[] = [], col: number[] = [], leaf: number[] = [], idx: number[] = []
-  const vert = (p: THREE.Vector3, n: THREE.Vector3, ao: number, fol: number, lu = 0, lv = 0, lz = 0) => {
+  const vert = (p: GFX.Vector3, n: GFX.Vector3, ao: number, fol: number, lu = 0, lv = 0, lz = 0) => {
     pos.push(p.x, p.y, p.z); nor.push(n.x, n.y, n.z); col.push(ao, fol, Math.max(0, Math.min(1, p.y))); leaf.push(lu, lv, lz)
     return pos.length / 3 - 1
   }
   // the TRUNK: a gentle lean and curve, tapering a little, ringed
   const segs = lod === 0 ? 7 : 4, sides = lod === 0 ? 6 : 4, crownY = 0.86
-  const lean = new THREE.Vector3(0.09, 0, 0.03)
-  const at = (t: number) => new THREE.Vector3(lean.x * t * t, t * crownY, lean.z * t * t)
+  const lean = new GFX.Vector3(0.09, 0, 0.03)
+  const at = (t: number) => new GFX.Vector3(lean.x * t * t, t * crownY, lean.z * t * t)
   const ringBase: number[] = []
   for (let s = 0; s <= segs; s++) {
     const t = s / segs, c = at(t), r = 0.026 - 0.008 * t
     ringBase.push(pos.length / 3)
     for (let k = 0; k < sides; k++) {
-      const a = (k / sides) * Math.PI * 2, d = new THREE.Vector3(Math.cos(a), 0, Math.sin(a))
+      const a = (k / sides) * Math.PI * 2, d = new GFX.Vector3(Math.cos(a), 0, Math.sin(a))
       vert(c.clone().addScaledVector(d, r * (s % 2 ? 0.92 : 1)), d, s % 2 ? 0.72 : 0.9, 0)
     }
   }
@@ -297,18 +297,18 @@ export function palmGeometry(lod: number, seed = 23): THREE.BufferGeometry {
     const az = (f / nF) * Math.PI * 2 + rnd() * 0.4
     const up = 0.55 - 0.9 * (f % 3) / 3 - 0.2 * rnd()  // (some reach up, most arch out and droop)
     const len = 0.36 + 0.08 * rnd(), w = 0.07
-    const dir = new THREE.Vector3(Math.cos(az), 0, Math.sin(az))
-    const side = new THREE.Vector3(-dir.z, 0, dir.x)
+    const dir = new GFX.Vector3(Math.cos(az), 0, Math.sin(az))
+    const side = new GFX.Vector3(-dir.z, 0, dir.x)
     const lz = -(1 + Math.floor(rnd() * 4) + rnd() * 0.9)
     const base = pos.length / 3
     for (let s = 0; s <= nS; s++) {
       const t = s / nS
       // along the arc: out, up at first, then down (gravity), the frond's tip hanging
-      const c = top.clone().addScaledVector(dir, len * t).add(new THREE.Vector3(0, len * (up * t - 0.75 * t * t), 0))
+      const c = top.clone().addScaledVector(dir, len * t).add(new GFX.Vector3(0, len * (up * t - 0.75 * t * t), 0))
       const fold = 0.25 * w * (1 - t * 0.5) // (folded along its stem like a roof)
-      const nUp = new THREE.Vector3(0, 1, 0).addScaledVector(dir, 0.3).normalize()
+      const nUp = new GFX.Vector3(0, 1, 0).addScaledVector(dir, 0.3).normalize()
       for (const k of [-1, 0, 1]) {
-        const p = c.clone().addScaledVector(side, k * w * (1 - 0.55 * t)).add(new THREE.Vector3(0, k === 0 ? fold : 0, 0))
+        const p = c.clone().addScaledVector(side, k * w * (1 - 0.55 * t)).add(new GFX.Vector3(0, k === 0 ? fold : 0, 0))
         vert(p, nUp, 0.6 + 0.4 * t, 1, t, k, lz)
       }
     }
@@ -317,11 +317,11 @@ export function palmGeometry(lod: number, seed = 23): THREE.BufferGeometry {
       idx.push(a, b, d, a, d, c)
     }
   }
-  const g = new THREE.BufferGeometry()
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3))
-  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
-  g.setAttribute('leaf', new THREE.Float32BufferAttribute(leaf, 3))
+  const g = new GFX.BufferGeometry()
+  g.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
+  g.setAttribute('normal', new GFX.Float32BufferAttribute(nor, 3))
+  g.setAttribute('color', new GFX.Float32BufferAttribute(col, 3))
+  g.setAttribute('leaf', new GFX.Float32BufferAttribute(leaf, 3))
   g.setIndex(idx)
   return g
 }

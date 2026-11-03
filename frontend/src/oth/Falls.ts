@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import { type CullPart, cullHidden } from './Bridges'
 import type { Horizon } from './Horizon'
@@ -14,7 +14,7 @@ import type { MapData } from './MapData'
 const ROWS = 12
 
 export class Falls {
-  readonly group = new THREE.Group()
+  readonly group = new GFX.Group()
   /** The hills' occlusion (main.ts). */
   horizon: Horizon | null = null
   private parts: CullPart[] = []
@@ -22,12 +22,12 @@ export class Falls {
   constructor(map: MapData, atmos: Atmosphere) {
     const F = map.meta.water.falls ?? []
     if (!F.length) return
-    const sheetMat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3, uniforms: { ...atmos.uniforms }, vertexShader: SHEET_VERT, fragmentShader: SHEET_FRAG,
-      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    const sheetMat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3, uniforms: { ...atmos.uniforms }, vertexShader: SHEET_VERT, fragmentShader: SHEET_FRAG,
+      transparent: true, depthWrite: false, side: GFX.DoubleSide,
     })
-    const footMat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3, uniforms: { ...atmos.uniforms }, vertexShader: FOOT_VERT, fragmentShader: FOOT_FRAG,
+    const footMat = new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3, uniforms: { ...atmos.uniforms }, vertexShader: FOOT_VERT, fragmentShader: FOOT_FRAG,
       transparent: true, depthWrite: false,
     })
     // (the falls of a 500 m cell — a stream's cascades — share a sheet and a foot mesh, drawn only when in view and not
@@ -40,7 +40,7 @@ export class Falls {
       // the feet: a foam disc (4 corners, aKind 0) and two mist billboards (4 corners each, aKind 1) — aCorner = the
       // corner (−1…1), aSize = radius / half size (m)
       const fpos: number[] = [], corner: number[] = [], size: number[] = [], kind: number[] = [], fidx: number[] = []
-      const box = new THREE.Box3()
+      const box = new GFX.Box3()
       for (const f of cell) {
         let dx = f.bx - f.x, dz = f.bz - f.z
         const l = Math.hypot(dx, dz) || 1
@@ -53,7 +53,7 @@ export class Falls {
           const t = r / ROWS, w = f.hw * (1 + 0.18 * t), o = reach(t)
           for (const side of [-1, 1]) {
             pos.push(f.x + dx * o + sx * w * side, f.y + 0.05 - (H + 0.1) * t, f.z + dz * o + sz * w * side)
-            box.expandByPoint(new THREE.Vector3(pos[pos.length - 3], pos[pos.length - 2], pos[pos.length - 1]))
+            box.expandByPoint(new GFX.Vector3(pos[pos.length - 3], pos[pos.length - 2], pos[pos.length - 1]))
             uv.push(side, t)
             drop.push(H)
           }
@@ -71,27 +71,27 @@ export class Falls {
         quad(f.by + ms * 0.45, ms, 1)
         quad(f.by + ms * 0.8, ms * 0.8, 1.5)
         // (the box: the sheet, and the mist rising round its foot)
-        box.expandByPoint(new THREE.Vector3(cx - ms, f.by + ms * 1.6, cz - ms)).expandByPoint(new THREE.Vector3(cx + ms, f.by, cz + ms))
+        box.expandByPoint(new GFX.Vector3(cx - ms, f.by + ms * 1.6, cz - ms)).expandByPoint(new GFX.Vector3(cx + ms, f.by, cz + ms))
       }
-      const sheet = new THREE.BufferGeometry()
-      sheet.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-      sheet.setAttribute('aUV', new THREE.Float32BufferAttribute(uv, 2))
-      sheet.setAttribute('aDrop', new THREE.Float32BufferAttribute(drop, 1))
+      const sheet = new GFX.BufferGeometry()
+      sheet.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
+      sheet.setAttribute('aUV', new GFX.Float32BufferAttribute(uv, 2))
+      sheet.setAttribute('aDrop', new GFX.Float32BufferAttribute(drop, 1))
       sheet.setIndex(idx)
       sheet.computeBoundingSphere()
-      const sheetMesh = new THREE.Mesh(sheet, sheetMat)
+      const sheetMesh = new GFX.Mesh(sheet, sheetMat)
       sheetMesh.renderOrder = 6
-      const feet = new THREE.BufferGeometry()
-      feet.setAttribute('position', new THREE.Float32BufferAttribute(fpos, 3))
-      feet.setAttribute('aCorner', new THREE.Float32BufferAttribute(corner, 2))
-      feet.setAttribute('aSize', new THREE.Float32BufferAttribute(size, 1))
-      feet.setAttribute('aKind', new THREE.Float32BufferAttribute(kind, 1))
+      const feet = new GFX.BufferGeometry()
+      feet.setAttribute('position', new GFX.Float32BufferAttribute(fpos, 3))
+      feet.setAttribute('aCorner', new GFX.Float32BufferAttribute(corner, 2))
+      feet.setAttribute('aSize', new GFX.Float32BufferAttribute(size, 1))
+      feet.setAttribute('aKind', new GFX.Float32BufferAttribute(kind, 1))
       feet.setIndex(fidx)
       feet.computeBoundingSphere()
       feet.boundingSphere!.radius += 30 // (the billboards grow round their centres)
-      const footMesh = new THREE.Mesh(feet, footMat)
+      const footMesh = new GFX.Mesh(feet, footMat)
       footMesh.renderOrder = 7
-      const one = new THREE.Group()
+      const one = new GFX.Group()
       one.add(sheetMesh, footMesh)
       this.group.add(one)
       this.parts.push({ obj: one, box })
