@@ -350,12 +350,19 @@ Done:
    too — slice it like the trees if that frame shows); GPU (abgpu, 1080p uncapped): ULTRA +0.12–0.14 ms (oasis),
    +0.05 (plain); LOW within noise (the rubble 40 % as thick on LOW).
 
-Next:
-2. **Outcrops in the terrain** (`desert.py`): tors, low stacked-slab outcrops and small buttes (10–40 m) scattered
-   over the plain and the erg's margins, away from the roads (keep `trail.bin` unchanged), the water and the places —
-   they take the beds and the skins (`desert_rocks.py`) like the mesas.
-3. Slice the rock placement (a generator, like `placeTrees`) if the crossing's build frame grows past ~35 ms.
+2. **Outcrops in the terrain** (`desert.py`, after the roads — `trail.bin`, `structures.json` unchanged): 400 tors
+   and stacked-slab outcrops (10–42 m across, 1–3 flat-topped tiers, an irregular outline, sat on the low side of
+   their ground) in ROCK GARDENS — clusters within ~130 m of a centre, a few alone — off the roads (1.5 R + 25 m), out
+   of the canyon, clear of the places, the mesas, the spires, the gate's climb and each other; terraced into beds and
+   in WALL, so `desert_rocks.py` skins them (674 → 1,187 bands, 271k → 344k vertices); never "erg sand". GPU
+   (abgpu, the commit before vs this, 3 interleaved loads a side): +0.14–0.15 ms on every view and tier (ULTRA +7–9 %,
+   LOW +9–10 %) — the noise here is ±0.1–0.15 ms; a shorter LOW skin reach (420 → 340 m) didn't measurably help.
+   **Check LOW on a ₹15k phone** before shipping.
 
+Next:
+3. A phone check of LOW (the outcrops' +10 % there).
+4. Slice the rock placement (a generator, like `placeTrees`) if the crossing's build frame grows past ~35 ms.
+5. More forms near the roads' sides (the outcrops keep 25 m+ off them: a drive between rock gardens still opens wide).
 ---
 
 ## 11. Starting it with Claude Code at home

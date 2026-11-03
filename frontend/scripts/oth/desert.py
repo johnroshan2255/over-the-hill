@@ -443,6 +443,70 @@ for br in BRIDGES:
     H = np.where((dx < br['w'] / 2 + 6) & (t > 0.01) & (t < 0.99), np.minimum(H, allowed), H)
 log(f'  {len(TRAILS)} roads, bridges {BRIDGES}')
 
+# ---------------------------------------------------------------------------------------------------------- outcrops
+# OUTCROPS (2026-11-04, the desert fuller — DESERT_MATCH.md §12): tors and low stacked-slab outcrops, 9–33 m across
+# the footprint, 1–3 flat-topped tiers, scattered over the plain, the plateaus and the erg's margins — what fills the
+# open ground between the mesas. AFTER the roads (no road moves: trail.bin unchanged), well off them, out of the
+# canyon, clear of the places, the mesas, the spires, the gate's climb and each other; terraced into beds like the
+# walls (WALL, so desert_rocks.py skins them), and never "erg sand" (ERG_OPEN) — the mesas' lesson
+log('outcrops')
+orng = np.random.default_rng(SEED + 70)
+OUTCROPS = []
+OUTK = np.zeros_like(H)
+gz0, gx0 = np.gradient(H, CELL)
+SL0 = np.hypot(gx0, gz0)
+keep_clear = [(LAGOON['cx'], LAGOON['cz'], 260), (FALL['x'], FALL['z'], 220), (ARCH['x'], ARCH['z'], 140), (GORGE_BRIDGE_X, 220, 160),
+              (KSAR['x'], KSAR['z'], 180), (GATE['x'], GATE['z'], 450), (-1100, -1300, 160),
+              ((AQUEDUCT['x0'] + AQUEDUCT['x1']) / 2, (AQUEDUCT['z0'] + AQUEDUCT['z1']) / 2, 300)]
+def at2(A, x, z): return float(bilinear(A, HALF, np.array([x]), np.array([z]))[0])
+tries = 0
+# (ROCK GARDENS: most come in clusters — a centre, then outcrops within ~130 m of it — so the plain reads as groups of
+#  rock with open ground between, not an even sprinkle; a few stand alone)
+centre = None
+while len(OUTCROPS) < 400 and tries < 20000:
+    tries += 1
+    if centre is None or orng.random() < 0.18:
+        centre = (orng.uniform(-1880, 1880), orng.uniform(-1880, 1880))
+    alone = orng.random() < 0.15
+    if alone: ox, oz = orng.uniform(-1880, 1880), orng.uniform(-1880, 1880)
+    else:
+        a_, d_ = orng.random() * 2 * math.pi, 130 * orng.random() ** 0.7
+        ox, oz = centre[0] + math.cos(a_) * d_, centre[1] + math.sin(a_) * d_
+        if abs(ox) > 1880 or abs(oz) > 1880: continue
+    R = 10 + 32 * orng.random() ** 1.8
+    top = R * (0.4 + 0.5 * orng.random())
+    if at2(Dt, ox, oz) < R * 1.5 + 25: continue                                   # (well off the roads)
+    s_ = at2(Sr, ox, oz)
+    if at2(Dr, ox, oz) < float(floor_hw(s_) + wall_w(s_)) + 40: continue          # (out of the canyon)
+    if at2(SL0, ox, oz) > 0.22: continue                                          # (on open ground, not a wall)
+    if any(math.hypot(ox - x, oz - z) < r + R for x, z, r in keep_clear): continue
+    if any(math.hypot(ox - mx, oz - mz) < Rm * 1.6 + R + 30 for mx, mz, Rm, _ in MESAS): continue
+    if any(math.hypot(ox - sx, oz - sz) < rs * 1.8 + R + 15 for sx, sz, rs, _ in SPIRES): continue
+    if any(math.hypot(ox - x, oz - z) < R + r2 + 14 for x, z, r2, _ in OUTCROPS): continue
+    OUTCROPS.append((ox, oz, R, top))
+for i, (ox, oz, R, top) in enumerate(OUTCROPS):
+    w = int((R * 1.7 + 8) / CELL)
+    ci, cj = int(round((ox + HALF) / CELL)), int(round((oz + HALF) / CELL))
+    win = (slice(max(cj - w, 0), min(cj + w + 1, N_IN)), slice(max(ci - w, 0), min(ci + w + 1, N_IN)))
+    dx, dz = X[win] - ox, Z[win] - oz
+    d = np.hypot(dx, dz) / blob_r(np.arctan2(dz, dx), R, i * 1.7)              # (1 at the rim, the outline never round)
+    base = float(np.percentile(H[win][d < 1.15], 25))                              # (sat on the low side: never floating)
+    tiers = 1 + int(orng.random() * 2.6)
+    prof = np.zeros_like(d)
+    for t in range(tiers):                                                          # (each tier a slab narrower than the one under it)
+        rt = 1 - 0.27 * t
+        prof = np.maximum(prof, top * (t + 1) / tiers * (1 - smoothstep(rt - 0.13, rt, d)))
+    prof *= 0.97 + 0.03 * fbm(X[win] / 23, Z[win] / 23, SEED + 71 + i, 2)
+    H[win] = np.maximum(H[win], base + prof)
+    OUTK[win] = np.maximum(OUTK[win], 1 - smoothstep(1.25, 1.6, d))
+# their beds: the steep parts of the outcrops terraced like every wall, and in WALL for their skins
+gz0, gx0 = np.gradient(H, CELL)
+wall_o = smoothstep(0.45, 0.9, blur(np.hypot(gx0, gz0), 2)) * OUTK
+H = H + (terrace(H, 0.4, PHASE) - H) * wall_o
+WALL = np.maximum(WALL, wall_o)
+ERG_OPEN = ERG_OPEN * (1 - smoothstep(0.05, 0.4, OUTK))
+log(f'  {len(OUTCROPS)} outcrops ({tries} tries)')
+
 # ---------------------------------------------------------------------------------------------------------- masks
 log('masks (4 m)')
 H4 = H[::2, ::2]; X4, Z4 = X[::2, ::2], Z[::2, ::2]
