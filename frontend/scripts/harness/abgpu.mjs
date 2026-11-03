@@ -1,4 +1,4 @@
-// abgpu.mjs view "queryA" "queryB" [rounds] — a GPU A/B that holds up on a busy machine (docs/MIGRATION.md): one page,
+// abgpu.mjs view "queryA" "queryB" [rounds] (env PORT_A / PORT_B: two builds on two dev servers; PORT: one) — a GPU A/B that holds up on a busy machine (docs/MIGRATION.md): one page,
 // A and B loaded alternately `rounds` times (default 4), each load's GPU-drained frame (median of 3 × 200 frames,
 // after the view settles); the MEDIANS per side and their difference. Add `scale=200` to both for 4K (small shader
 // changes show above the noise). Views as fps.mjs. ULTRA unless the query names a tier.
@@ -11,9 +11,9 @@ const CHROME = process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Ap
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--disable-gpu-vsync', '--disable-frame-rate-limit', `--use-angle=${process.platform === 'win32' ? 'd3d11' : 'metal'}`, '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--window-size=1920,1080', '--mute-audio'], defaultViewport: { width: 1920, height: 1080, deviceScaleFactor: 1 } })
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message))
-const one = async (q) => {
+const one = async (q, port) => {
   const tier = /(^|&)tier=/.test(q) ? '' : 'tier=ultra&'
-  await p.goto(`http://localhost:5200/?${tier}hour=12&dpr=fixed&time=0&weather=clear&world=${V[0]}&sound=0&save=0&${q}`, { waitUntil: 'load' })
+  await p.goto(`http://localhost:${port}/?${tier}hour=12&dpr=fixed&time=0&weather=clear&world=${V[0]}&sound=0&save=0&${q}`, { waitUntil: 'load' })
   await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car?.sim, { timeout: 180000, polling: 250 })
   await p.evaluate((v) => { const o = window.__oth; if (v[1]) o.drive(true); else o.view(v[2], v[3], v[4], v[5], v[6]) }, V)
   await new Promise((r) => setTimeout(r, 3000))
@@ -31,7 +31,8 @@ const one = async (q) => {
   })
 }
 const A = [], B = []
-for (let i = 0; i < rounds; i++) { A.push(await one(qa)); B.push(await one(qb)) }
+const portA = process.env.PORT_A || process.env.PORT || 5200, portB = process.env.PORT_B || process.env.PORT || 5200
+for (let i = 0; i < rounds; i++) { A.push(await one(qa, portA)); B.push(await one(qb, portB)) }
 const med = (x) => { const s = [...x].sort((a, b) => a - b); return s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2 }
 const ma = med(A), mb = med(B)
 console.log(`${view}  A ${qa}\n        ${A.map((v) => v.toFixed(3)).join(' ')}  → median ${ma.toFixed(3)} ms (${(1000 / ma).toFixed(0)} fps)`)

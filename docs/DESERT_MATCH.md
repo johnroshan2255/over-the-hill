@@ -206,28 +206,28 @@ colours and build it: §7.
 
 ## 7. The content inventory (what the score can't see)
 
-Fill in the status every session. "Weak" = there, but it doesn't read as theirs in a side-by-side.
+Fill in the status every session. "Weak" = there, but it doesn't read as a real desert's in a side-by-side.
+Status as of 2026-11-03 (round 13):
 
-| OTH desert has | ours | status |
+| a sandstone desert has | ours | status |
 |---|---|---|
-| oasis river on the canyon floor, banks of damp sand | `desert.py` water + `Water.ts` | check |
-| palm groves along the water | `Trees.ts` palms (desert species) | check |
-| green scrub, round bushes on the sand | `Bushes.ts`, `Grass.ts` (oasis growth, mask A) | check |
-| stacked slab walls: flat tops, rounded edges, bed on bed | terraced heights (`desert.py`) + skins (`desert_rocks.py`) | check |
-| tall pointed spires on the plateaus | `desert_rocks.py` spires | check |
-| natural arch the track drives over | `desert_rocks.py` arch (deck = road) | check |
-| deep gorge of huge blocks, rapids, plank rope bridge | gorge blocks (`desert_rocks.py`), `Bridges.ts` | check |
-| Roman aqueduct by an oasis lagoon | `desert_rocks.py` aqueduct | check |
-| ksar / ruins | `desert_rocks.py` ksar | check |
-| dunes (an erg) | `desert.py` dunes + ripples | check |
-| hot pink sunset, purple starry night | `Atmosphere.ts` (desert light by hour) | check |
-| props: camps, wells, tents | `Places.ts`, `Props.ts` | check |
+| a river / gueltas on the canyon floor, damp banks | `desert.py` water + `Water.ts` | **there** — olive guelta water (round 4); the river now flows downstream (it ran uphill) and goes on beyond the box (§8) |
+| palm groves along the water | `Trees.ts` palms (desert species) | **there, weak** — dense groves; the fronds a bright yellow-green where real date palms are grey-green |
+| scrub, round bushes, reeds | `Bushes.ts`, `Grass.ts` (oasis growth, mask A) | **weak** — the damp banks are an even grass carpet (scrub 29: σ 0.04 vs 0.19); few bushes. Clumps away from the water tried (round 11): right, but the grove crop sits on the bank |
+| stacked slab walls, bed on bed | terraced heights (`desert.py`) + skins (`desert_rocks.py`) | **there** — tan-brown beds (round 3); a face lit head-on reads flat (slabs_close 32); the skins no longer stand out of gentle floors (§8) |
+| towers / spires | `desert.py` cones + `desert_rocks.py` | **weak** — smooth, regular cones; real Tassili towers are blocky, fluted, flat-topped |
+| a natural arch | `desert_rocks.py` arch (deck = road) | **there** — seen up its slot (arch_slot) |
+| a deep gorge, rapids, a plank bridge | gorge blocks (`desert_rocks.py`), `Bridges.ts` | **there** — the gorge goes on east past the box now |
+| ruins: an aqueduct, a ksar | `desert_rocks.py` | aqueduct **there** (oasis_down); ksar not checked |
+| dunes (an erg) | `desert.py` dunes + ripples | **weak** — low dunes, few readable crests; the erg's mesas are sandstone now (round 7) |
+| the light by the hour | `Atmosphere.ts` | day **there** (rounds 1, 13); dusk / night not checked this session |
+| camps, wells, tents | `Places.ts`, `Props.ts` | there (a tent in the grove) |
 
 For each "missing" or "weak" row:
-1. Find it in their screenshots and videos.
+1. Find it in the reference photos (or more from Commons — §3).
 2. Model it (Blender python for structures, as `desert_rocks.py` does; TypeScript instancing for things placed in
    numbers).
-3. Place it where their layout has it.
+3. Place it where it belongs in OUR desert's layout.
 4. Then add a pair for it (§4) and score it like the rest.
 5. Add an `docs/ASSETS.md` row for anything not made here.
 
@@ -254,6 +254,17 @@ Fix these **before** scoring; a broken edge ruins every view that sees it.
   `desert.py` writes height.bin / far.bin / mask.bin / trail.bin / meta.json (+ `.cache/desert.npz` for
   `desert_rocks.py`). Re-run `desert_rocks.py` after every `desert.py` change.
 - **After a regeneration,** re-render *all* views and re-score *all* pairs: a new terrain is a new round.
+- **Done 2026-11-03** (commit 6da8501): the box's features stopped at its edge — the far world (16 m) had only the
+  big landforms, so the gorge ended in a 92 m wall (E edge) and the erg in a 38 m one (W edge). `carve_canyon` now
+  runs on both grids (the river's course goes on east, `RIVER_OUT`), the far erg carries the box's on, and a 256 m
+  band outside the box eases the far heights into the box's edge: steps N 0.2, S 0.3, W 1.1, E 3.7 m (a wall's foot).
+  Measure them with a script that reads height.bin / far.bin and compares the box's edge with the far grid 16 / 48 m
+  outside (the session's `seams.mjs`: per edge, the max step and the runs over 6 m). Left: where the grids meet, the
+  oasis's paint (the mask, inside the box only) ends in a straight line across the gorge's floor, and the far grid's
+  16 m facets on the gorge's walls just outside — both past the physics walls.
+- **Formations:** a contour that turned across a narrow slot's (or a cut's) gentle floor made a band standing out of
+  it as a 10 m dark plate (the arch's slot, the Needle Forest): bands now only where the ground falls steeply ACROSS
+  the line. `desert_rocks.py`'s outputs are byte-identical while `desert.npz` is (check with md5 before copying).
 
 ---
 
@@ -284,12 +295,38 @@ Fix these **before** scoring; a broken edge ruins every view that sees it.
 | 11 | 2026-11-03 | REVERTED — the oasis grass in clumps with sand between: right away from the water, but the grove crop is on the damp bank (kept full) — scrub unmoved, overall −0.1 | 53.0 | 60.1 | 64.6 | 68.2 | 49.9 | 57.0 | 31.1 | 62.6 | 33.7 | 61.7 | 28.8 | 45.7 | 61.4 | **52.1** |
 | 12 | 2026-11-03 | NOT KEPT — the desert's day fill (sky + sand bounce) a third less: overall +1.2, but spires −1.7 (its hazy photo is brighter) | 55.5 | 60.7 | 65.4 | 68.7 | 51.7 | 62.9 | 32.9 | 60.9 | 33.6 | 61.3 | 29.2 | 47.8 | 63.9 | **53.4** |
 | 13 | 2026-11-03 | the desert's day fill a fifth less (Atmosphere.ts: the sky's fill and the sand's bounce, their floors too — deeper shade, more contrast; spires −1.1) | 54.7 | 60.5 | 65.1 | 68.6 | 51.1 | 60.6 | 32.3 | 61.5 | 33.6 | 61.6 | 29.1 | 47.0 | 63.4 | **53.0** |
+| 14 | 2026-11-03 | REVERTED — mottling on the sandstone (value noise across the faces, ±10 / ±8 %): no measurable change (a face lit head-on stays flat) | 54.4 | 60.5 | 65.1 | 68.6 | 50.7 | 60.7 | 32.4 | 61.5 | 33.6 | 61.6 | 29.0 | 47.1 | 63.4 | **53.0** |
+
+**Cost of rounds 1–13** (`abgpu.mjs`, round 0's build vs round 13's on two dev servers — `PORT_A` / `PORT_B`; 1080p
+uncapped, WebGPU, RTX 40-series laptop, 3 interleaved loads a side): oasis ULTRA −0.155 ms (−6.5 %), LOW −0.015;
+plain ULTRA −0.001, LOW −0.014 — nothing (a little less: fewer formation bands on gentle floors).
+
+**Where it stands (2026-11-03, round 13): overall 35.9 → 53.0.** Matched (≥ 70): none yet; ≥ 60: sky, sand_open,
+sand_track, rock_shade, spires, palms, arch. The weakest: scrub 29, slabs_close 32, oasis_water 34, far_haze 47.
+
+Lessons (read before the next round):
+- **The colour score bins hue in 30° steps** (0–30° orange-red, 30–60° yellow-orange …). A palette nudge across a bin
+  edge swings a pair by 10–40 points; the photos don't agree on one hue (the arch's sandstone 27°, the slabs' 38°) —
+  round 10 (golden sandstone) won slabs_close and lost the arch by 14.6. Check each pair's hue before moving a palette.
+- **Placement noise:** stones / palms / bushes once came from one random stream for the map, so any mask change
+  reshuffled them all and a crop's score moved with whatever happened to land in it. Seeded per cell now (round 6) —
+  keep new scatterers that way.
+- **A crop that holds the wrong thing** (the palms crop half sky, the rock_sun crop's stray palm) measures the
+  accident: re-crop with a fresh round 0 (re-score every kept render).
+- **Texture is the gap everywhere** (photographs carry 3–10× our fine detail). One direction of marks (round 8's
+  ripples) costs more in strokes than it wins; isotropic speckle helps a little (round 9); flat paint noise on a face
+  lit head-on doesn't show (round 14). What's left is form: deeper slab overhangs and undercuts, blocky fluted towers
+  for the cones, scrub and reeds on the banks, real dune crests.
+
+Next, in order: the spires as blocky towers (desert.py cones → stacked, fluted, flat-topped — `desert_rocks.py`);
+scrub and reeds on the damp banks (`Bushes.ts` / `Grass.ts`, a grey-green, and a pair crop off the bank too);
+the slabs' undercuts deeper (`desert_rocks.py` profile PB); dusk and night checked against photos.
 
 ---
 
 ## 11. Starting it with Claude Code at home
 
-> Read `docs/DESERT_MATCH.md`. Build the desert reference set (§3) and the 12 pairs (§4), render round 0 (§5) and
+> Read `docs/DESERT_MATCH.md`. Rebuild the reference set if it is missing (§3; real deserts) and the 13 pairs (§4), render round 0 (§5) and
 > score it (§6). Then fill in the content inventory (§7) and run the terrain-integrity views (§8). Show me the
 > side-by-sides and the scores, then work the loop: one change per round, log every round in §10, commit each kept
 > round with its scores. Target: overall ≥ 65, then ≥ 70, no pair below 55.

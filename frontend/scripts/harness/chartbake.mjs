@@ -8,7 +8,7 @@ const CHROME = process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Ap
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--window-size=800,600', '--mute-audio'], defaultViewport: { width: 800, height: 600, deviceScaleFactor: 1 } })
 const p = await b.newPage()
 for (const w of worlds) {
-  await p.goto(`http://localhost:5200/?world=${w}&tier=low&drive=0&sound=0&save=0&time=0`, { waitUntil: 'load' })
+  await p.goto(`http://localhost:${process.env.PORT || 5200}/?world=${w}&tier=low&drive=0&sound=0&save=0&time=0`, { waitUntil: 'load' })
   await p.waitForFunction(() => window.__oth && window.__oth.ready, { timeout: 120000, polling: 200 })
   const url = await p.evaluate(() => window.__oth.chartWebp())
   const file = `public/oth/${w}/chart.webp`
