@@ -3,7 +3,7 @@ import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
-import type { Rocks } from './Rocks'
+import { cellSeed, type Rocks } from './Rocks'
 import { LEAF_GLSL } from './leafTexture'
 import { PLANT_VALUE_GLSL } from './paint'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
@@ -261,6 +261,9 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
   const hw = map.meta.trails.hw, fp = rocks.footprint.image.data as Uint8Array, g = map.inner
   for (let gz = -half; gz < half; gz += G, yield) {
     for (let gx = -half; gx < half; gx += G) {
+      // (the desert: each cell its own seed — a mask change elsewhere moves no bush here; DESERT_MATCH round 6. The
+      //  valley keeps its one stream)
+      if (map.desert) s = cellSeed(gx, gz, 9)
       const x = gx + rnd() * G, z = gz + rnd() * G
       map.maskAt(x, z, mk)
       if (mk[2] > 0.8 || mk[0] > 0.4) continue

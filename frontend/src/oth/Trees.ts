@@ -3,7 +3,7 @@ import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
-import type { Rocks } from './Rocks'
+import { cellSeed, type Rocks } from './Rocks'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 import { createFrondTexture, createLeafTexture, FROND_GLSL, LEAF_GLSL } from './leafTexture'
 import { PLANT_VALUE_GLSL } from './paint'
@@ -668,6 +668,8 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
     const L = map.meta.water.lake, lc = Math.cos(L.rot), ls = Math.sin(L.rot)
     const inLagoon = (x: number, z: number) => ((((x - L.cx) * lc + (z - L.cz) * ls) / (L.rx * 1.12 + 3)) ** 2 + ((-(x - L.cx) * ls + (z - L.cz) * lc) / (L.rz * 1.12 + 3)) ** 2) < 1
     for (let z = -h2; z < h2; z += G2, yield) for (let x = -h2; x < h2; x += G2) {
+      // (each cell its own seed: a mask change elsewhere moves no palm here — DESERT_MATCH round 6)
+      s2 = cellSeed(Math.round(x * 2), Math.round(z * 2), 7)
       const px = x + (r2() - 0.5) * G2 * 1.2, pz = z + (r2() - 0.5) * G2 * 1.2
       map.maskAt(px, pz, mk)
       if (mk[3] < 0.08 || mk[2] > 0.86 || mk[0] > 0.3 || map.trailDist(px, pz) < map.meta.trails.hw + 2.5 || map.waterLevel(px, pz) !== null || inLagoon(px, pz)) continue

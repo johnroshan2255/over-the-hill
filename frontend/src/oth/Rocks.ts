@@ -19,6 +19,13 @@ const VARIANTS = 6
 const ROUND = 2
 const CELL = 128
 
+/** A seed of its own for a cell / an item at (a, b) (salt: which loop) — placement one change elsewhere can't move. */
+export function cellSeed(a: number, b: number, salt: number): number {
+  let h = (Math.imul(a | 0, 73856093) ^ Math.imul(b | 0, 19349663) ^ Math.imul(salt, 83492791) ^ 0x2545f491) >>> 0
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0
+  return (h ^ (h >>> 16)) >>> 0
+}
+
 export interface Inst { x: number; y: number; z: number; s: number; sy: number; rot: number; tilt: number; v: number }
 
 export class Rocks {
@@ -123,6 +130,10 @@ export class Rocks {
     const map = this.map, half = map.half - 40
     let s = 0x2545f491
     const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+    // (the DESERT draws each cell's / item's stones from its own seed: one stream for the whole map meant a mask change
+    //  in one corner moved every stone after it — DESERT_MATCH round 6. The valley keeps its one stream: its layout
+    //  stays as it is)
+    const at = (a: number, b: number, salt: number) => { if (map.desert) s = cellSeed(a, b, salt) }
     const mk: [number, number, number, number] = [0, 0, 0, 0]
     const slope = (x: number, z: number) => {
       const dx = map.height(x + 3, z) - map.height(x - 3, z), dz = map.height(x, z + 3) - map.height(x, z - 3)
@@ -139,6 +150,7 @@ export class Rocks {
     // OUTCROPS: a jittered 40 m grid; likelier on steep ground and the rock mask, never in water
     for (let gz = -half; gz < half; gz += 40) {
       for (let gx = -half; gx < half; gx += 40) {
+        at(gx, gz, 1)
         const x = gx + rnd() * 40, z = gz + rnd() * 40
         const sl = slope(x, z)
         map.maskAt(x, z, mk)
@@ -158,11 +170,13 @@ export class Rocks {
     // round the SPAWN and along the TRACKS: a few boulders close by (the player's first view is never empty)
     const sp = map.meta.spawn
     for (let k = 0; k < 26; k++) {
+      at(k, 0, 2)
       const a = rnd() * Math.PI * 2, d = 22 + rnd() * 160
       const x = sp.x + Math.cos(a) * d, z = sp.z + Math.sin(a) * d
       if (dry(x, z)) add(x, z, 1.4 + rnd() * 3.2, 0.3)
     }
     for (const L of map.meta.trails.lines) for (let i = 0; i < L.length; i += 3) {
+      at(Math.round(L[i][0]), Math.round(L[i][1]), 3)
       if (rnd() > 0.12) continue
       const [x0, z0] = L[i], side = rnd() < 0.5 ? -1 : 1, j = Math.min(L.length - 1, i + 1)
       const dx = L[j][0] - x0, dz = L[j][1] - z0, l = Math.hypot(dx, dz) || 1, off = map.meta.trails.hw + 3 + rnd() * 9
@@ -172,6 +186,7 @@ export class Rocks {
     // LONE BOULDERS in the open
     for (let gz = -half; gz < half; gz += 70) {
       for (let gx = -half; gx < half; gx += 70) {
+        at(gx, gz, 4)
         if (rnd() > 0.22) continue
         const x = gx + rnd() * 70, z = gz + rnd() * 70
         if (!dry(x, z)) continue
@@ -187,6 +202,7 @@ export class Rocks {
     // the RIVER: stones in the shallows and on the banks
     const r = map.meta.water.river
     for (let i = 0; i < r.x.length; i += 2) {
+      at(Math.round(r.x[i]), Math.round(r.z[i]), 5)
       if (rnd() > 0.35) continue
       const a = rnd() * Math.PI * 2, d = r.hw[i] * (0.6 + rnd() * 1.4)
       add(r.x[i] + Math.cos(a) * d, r.z[i] + Math.sin(a) * d, 0.6 + rnd() * 1.8, 0.35)
