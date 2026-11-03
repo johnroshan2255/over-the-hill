@@ -156,6 +156,10 @@ const vec3 FOAM = vec3(0.83, 0.89, 0.94);
 //  hatching. Calm water is clear TEAL, Over the Hill's river colour; the rapids stay on the fast streams)
 const vec3 TEAL = vec3(0.1, 0.4, 0.44);
 const vec3 TEAL_DEEP = vec3(0.025, 0.19, 0.25);
+// the desert's gueltas (≈ sRGB 97 91 44 looking down into one) and the sandstone their canyons mirror (paint.ts STONE)
+const vec3 G_SHALLOW = vec3(0.2, 0.19, 0.07);
+const vec3 G_DEEP = vec3(0.07, 0.065, 0.015);
+const vec3 G_WALL = vec3(0.23, 0.133, 0.076);
 
 void main() {
   vec2 xz = vWorld.xz;
@@ -182,7 +186,12 @@ void main() {
   foam = max(foam, (1.0 - smoothstep(0.03, 0.22, depth)) * (0.6 + 0.4 * s2));
   // (the streaks blur into an even light blue far away: no shimmer)
   foam = mix(foam, mix(0.3, 0.08, calm), smoothstep(60.0, 260.0, dcam));
-  vec3 body = mix(mix(RUN, RUN_DEEP, k * 0.6), mix(TEAL, TEAL_DEEP, k * 0.75), calm) * (0.9 + 0.2 * s1);
+#ifdef OTH_DESERT
+  vec3 still = mix(G_SHALLOW, G_DEEP, k * 0.75); // (the desert's river: the gueltas' olive where it's calm)
+#else
+  vec3 still = mix(TEAL, TEAL_DEEP, k * 0.75);
+#endif
+  vec3 body = mix(mix(RUN, RUN_DEEP, k * 0.6), still, calm) * (0.9 + 0.2 * s1);
   // a little sky on the blue, none on the foam
   vec3 N = normalize(vec3((s1 - 0.5) * 0.25, 1.0, (s2 - 0.5) * 0.25));
   float F = 0.02 + (0.3 + 0.12 * calm) * pow(1.0 - max(dot(N, V), 0.0), 4.0);
@@ -201,12 +210,22 @@ void main() {
   vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
   // body colour: see-through shallows → deep teal
   float k = 1.0 - exp(-depth * 0.55);
+#ifdef OTH_DESERT
+  // (DESERT_MATCH round 4 — a GUELTA, as photographed in the Tassili's canyons: olive-green over its sand, dark where
+  //  deep — never turquoise)
+  vec3 body = mix(G_SHALLOW, G_DEEP, k) * (ambient(vec3(0.0, 1.0, 0.0)) + uSunColor * 0.35 * sun);
+#else
   vec3 body = mix(SHALLOW, DEEP, k) * (ambient(vec3(0.0, 1.0, 0.0)) + uSunColor * 0.35 * sun);
+#endif
   // the sky by Fresnel
   // (art-directed: the reflection never quite whites out the water, and takes its colour)
   float F = 0.02 + 0.42 * pow(1.0 - max(dot(N, V), 0.0), 4.0);
   vec3 R = reflect(-V, N);
   vec3 refl = skyColor(normalize(vec3(R.x, max(R.y, 0.02), R.z))) * vec3(0.72, 0.9, 0.95);
+#ifdef OTH_DESERT
+  // (in a canyon the low half of the reflection is its walls — warm sandstone in the light — not the sky)
+  refl = mix(G_WALL * (ambient(vec3(0.0, 1.0, 0.0)) * 0.7 + uSunColor * 0.45), refl, smoothstep(0.04, 0.28, R.y));
+#endif
   vec3 c = mix(body, refl, F);
   // sun glints
   vec3 H = normalize(uSunDir + V);
