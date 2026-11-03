@@ -280,6 +280,10 @@ Fix these **before** scoring; a broken edge ruins every view that sees it.
 | 7 | 2026-11-03 | the erg's mesas sandstone (desert.py: the erg's 'sand, never rock or beds' only off the mesas — they were smooth sand-coloured blocks; regenerated, desert_rocks.py 624 → 674 bands) | 53.3 | 60.3 | 63.6 | 68.1 | 50.3 | 57.0 | 31.2 | 62.6 | 33.6 | 61.7 | 28.8 | 45.7 | 61.4 | **52.1** |
 | 8 | 2026-11-03 | REVERTED — the sand's wind ripples deeper and kept further: texture 13 → 16 but strokes 92 → 81 (one direction of lines; the photos' marks go every way) | 53.2 | 60.3 | 62.3 | 68.0 | 50.3 | 57.0 | 31.2 | 62.6 | 33.6 | 61.8 | 28.7 | 45.7 | 61.4 | **52.0** |
 | 9 | 2026-11-03 | speckle in the sand (paint.ts: two octaves of hash value noise, 0.22 / 0.6 m, ±7 / ±5 %, only while they span a few pixels — no direction, no texture fetch) | 53.5 | 60.4 | 64.6 | 68.2 | 50.6 | 57.0 | 31.1 | 62.6 | 33.6 | 61.7 | 28.8 | 45.7 | 61.4 | **52.2** |
+| 10 | 2026-11-03 | REVERTED — the sandstone's hue toward golden (G ×1.15): slabs_close +3.6, but arch −14.6 (its photo 27° and ours crossed the scorer's 30° hue bin), spires −6.6 | 53.5 | 60.4 | 64.6 | 68.2 | 50.2 | 54.1 | 34.7 | 56.0 | 33.6 | 61.9 | 28.8 | 43.1 | 46.8 | **50.5** |
+| 11 | 2026-11-03 | REVERTED — the oasis grass in clumps with sand between: right away from the water, but the grove crop is on the damp bank (kept full) — scrub unmoved, overall −0.1 | 53.0 | 60.1 | 64.6 | 68.2 | 49.9 | 57.0 | 31.1 | 62.6 | 33.7 | 61.7 | 28.8 | 45.7 | 61.4 | **52.1** |
+| 12 | 2026-11-03 | NOT KEPT — the desert's day fill (sky + sand bounce) a third less: overall +1.2, but spires −1.7 (its hazy photo is brighter) | 55.5 | 60.7 | 65.4 | 68.7 | 51.7 | 62.9 | 32.9 | 60.9 | 33.6 | 61.3 | 29.2 | 47.8 | 63.9 | **53.4** |
+| 13 | 2026-11-03 | the desert's day fill a fifth less (Atmosphere.ts: the sky's fill and the sand's bounce, their floors too — deeper shade, more contrast; spires −1.1) | 54.7 | 60.5 | 65.1 | 68.6 | 51.1 | 60.6 | 32.3 | 61.5 | 33.6 | 61.6 | 29.1 | 47.0 | 63.4 | **53.0** |
 
 ---
 

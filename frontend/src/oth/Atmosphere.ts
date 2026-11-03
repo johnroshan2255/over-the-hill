@@ -254,6 +254,11 @@ export class Atmosphere {
     // cold light is left, the land a dark silhouette against the sky, what the headlights paint is what you see
     floorLum(u.uAmbSky.value, GFX.MathUtils.lerp(0.22, 0.022, night))
     floorLum(u.uAmbGround.value, GFX.MathUtils.lerp(0.09, 0.006, night))
+    // (DESERT_MATCH round 12 — the desert by day: a hard sun, deep shade; photographed, its scenes have half again our
+    //  contrast — the sky's fill and the sand's bounce (and their floors) a third less)
+    const fill = 1 - 0.2 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)
+    u.uAmbSky.value.multiplyScalar(fill)
+    u.uAmbGround.value.multiplyScalar(fill)
     // the HAZE's colour: the horizon leaning to the zenith, much of its tint kept — far ridges go blue-grey in layers
     keepTint(u.uFogColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.42), 0.75)
     // (the desert's haze: the sand's own warm colour in it)
