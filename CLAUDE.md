@@ -6,6 +6,7 @@
 | `backend/` | the server (Rust): multiplayer rooms + save API — the client uses localStorage until it switches over |
 | `docs/ARCHITECTURE.md` | read first: the world, the renderer, the front end, the saves |
 | `docs/NEXT.md` | **the hand-off: the desert + the crossing — what's done, what's next, in order** |
+| `docs/DESERT_MATCH.md` | **matching Over the Hill's desert: the 0–100 score method (`scripts/oth/compare.py`), the loop, the content + terrain checks** |
 | `docs/ASSETS.md` | every model / image / sound not made here: source, author, licence — add a row with each new one |
 
 - Run each side's commands from its own folder (`cd frontend && npm test`).

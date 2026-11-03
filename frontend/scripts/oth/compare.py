@@ -1,6 +1,7 @@
 # OVER THE HILL — compare our renders with reference shots, region by region, and score them (0–100).
 #
 #   blender -b --factory-startup --python scripts/oth/compare.py -- SPEC=<pairs.json> OUT=<dir>
+#   python3 scripts/oth/compare.py -- SPEC=<pairs.json> OUT=<dir>          (no Blender: numpy + Pillow — same scores)
 #
 # pairs.json: [{ "name", "ref": <image>, "refRect": [x0, y0, x1, y1] (0..1), "ours": <image>, "oursRect": [...] }]
 # For every pair both regions are resized to the same size and measured:
@@ -11,7 +12,11 @@
 # 100 only for identical images. Writes <OUT>/<name>.jpg (reference | ours, side by side) and <OUT>/scores.json.
 import sys, os, json, math
 import numpy as np
-import bpy
+try:
+    import bpy  # (inside Blender)
+except ImportError:
+    bpy = None  # (plain python3: Pillow reads and writes the images — the same 8-bit values Blender's pixels hold)
+    from PIL import Image
 
 ARGS = dict(a.split('=', 1) for a in (sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []) if '=' in a)
 SPEC = json.load(open(ARGS['SPEC']))
@@ -21,9 +26,14 @@ W, H = 480, 270
 
 
 def load(path, rect):
-    img = bpy.data.images.load(os.path.abspath(path), check_existing=False)
-    w, h = img.size
-    px = np.array(img.pixels[:], np.float32).reshape(h, w, 4)[::-1, :, :3]  # top row first
+    if bpy is None:
+        px = np.asarray(Image.open(path).convert('RGB'), np.float32) / 255.0  # top row first
+        h, w = px.shape[:2]
+    else:
+        img = bpy.data.images.load(os.path.abspath(path), check_existing=False)
+        w, h = img.size
+        px = np.array(img.pixels[:], np.float32).reshape(h, w, 4)[::-1, :, :3]  # top row first
+        bpy.data.images.remove(img)
     x0, y0, x1, y1 = rect
     c = px[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)]
     # resize (area average via repeated 2× + nearest to the target)
@@ -41,7 +51,6 @@ def load(path, rect):
         out = box(ys, xs)
     else:
         out = c[ys.astype(int)][:, xs.astype(int)]
-    bpy.data.images.remove(img)
     return np.clip(out, 0, 1)
 
 
@@ -97,9 +106,12 @@ for p in SPEC:
           f"   ours rgb {B['rgb']} L {B['mean']:.2f}±{B['std']:.2f} bands {['%.3f' % x for x in B['bands']]}")
     sheet = np.ones((H, W * 2 + 6, 3), np.float32)
     sheet[:, :W] = a; sheet[:, W + 6:] = b
-    img = bpy.data.images.new(p['name'], sheet.shape[1], sheet.shape[0], alpha=False)
-    img.pixels.foreach_set(np.concatenate([sheet[::-1], np.ones(sheet.shape[:2] + (1,), np.float32)], -1).ravel())
-    img.filepath_raw = os.path.join(OUT, p['name'] + '.jpg'); img.file_format = 'JPEG'; img.save()
+    if bpy is None:
+        Image.fromarray((np.clip(sheet, 0, 1) * 255 + 0.5).astype(np.uint8)).save(os.path.join(OUT, p['name'] + '.jpg'), quality=92)
+    else:
+        img = bpy.data.images.new(p['name'], sheet.shape[1], sheet.shape[0], alpha=False)
+        img.pixels.foreach_set(np.concatenate([sheet[::-1], np.ones(sheet.shape[:2] + (1,), np.float32)], -1).ravel())
+        img.filepath_raw = os.path.join(OUT, p['name'] + '.jpg'); img.file_format = 'JPEG'; img.save()
 total = sum(r['score'] for r in results) / max(len(results), 1)
 print(f'OVERALL {total:.1f}')
 json.dump(dict(overall=round(total, 1), pairs=results), open(os.path.join(OUT, 'scores.json'), 'w'), indent=1)
