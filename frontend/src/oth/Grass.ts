@@ -365,6 +365,10 @@ class GrassField {
       fragmentShader: FIELD_FRAG,
       depthTest: false,
       depthWrite: false,
+      // (NOT CULLED, 2026-11-03: the triangle writes clip space itself, so on WebGPU — where a bottom-origin target is
+      //  drawn with the projection flipped and the front face swapped to match — it faced away and was culled: the
+      //  field stayed empty and no grass grew, on WebGPU only)
+      side: GFX.DoubleSide,
     })
     // one triangle over the whole target; the texels whose ground didn't change discard
     const geo = new GFX.BufferGeometry()
@@ -460,8 +464,10 @@ void main() {
   approach = min(approach, 1.0 - smoothstep(0.02, 0.45, textureLod(uRocks, inUv, 1.5).r));
   approach = max(approach * (1.0 - smoothstep(0.1, 0.3, mud)), smoothstep(0.08, 0.25, mud) * 1.15); // (REEDS: the marsh's edge tall)
 #ifdef OTH_DESERT
-  // (the oasis's grass is green, not the sand under it: a fresh green by the water, olive and dry farther off)
-  vec3 col0 = mix(vec3(0.075, 0.13, 0.03), vec3(0.2, 0.19, 0.06), smoothstep(0.4, 0.9, 1.0 - m.b / 0.85)) * PLANT_VALUE * 1.3;
+  // (the oasis's grass is green, not the sand under it: an olive green by the water, khaki and straw-dry farther off —
+  //  DESERT_MATCH round 5: an oasis floor photographed (Iherir) is olive-khaki, grey-green scrub and dry reeds, hue
+  //  ≈ 45°; ours was a lawn's yellow-green, 85°)
+  vec3 col0 = mix(vec3(0.075, 0.1, 0.035), vec3(0.19, 0.165, 0.08), smoothstep(0.3, 0.85, 1.0 - m.b / 0.85)) * PLANT_VALUE * 1.3;
 #else
   vec3 col0 = g.col;
 #endif
