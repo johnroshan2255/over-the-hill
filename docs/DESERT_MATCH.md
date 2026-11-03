@@ -296,12 +296,14 @@ Fix these **before** scoring; a broken edge ruins every view that sees it.
 | 12 | 2026-11-03 | NOT KEPT — the desert's day fill (sky + sand bounce) a third less: overall +1.2, but spires −1.7 (its hazy photo is brighter) | 55.5 | 60.7 | 65.4 | 68.7 | 51.7 | 62.9 | 32.9 | 60.9 | 33.6 | 61.3 | 29.2 | 47.8 | 63.9 | **53.4** |
 | 13 | 2026-11-03 | the desert's day fill a fifth less (Atmosphere.ts: the sky's fill and the sand's bounce, their floors too — deeper shade, more contrast; spires −1.1) | 54.7 | 60.5 | 65.1 | 68.6 | 51.1 | 60.6 | 32.3 | 61.5 | 33.6 | 61.6 | 29.1 | 47.0 | 63.4 | **53.0** |
 | 14 | 2026-11-03 | REVERTED — mottling on the sandstone (value noise across the faces, ±10 / ±8 %): no measurable change (a face lit head-on stays flat) | 54.4 | 60.5 | 65.1 | 68.6 | 50.7 | 60.7 | 32.4 | 61.5 | 33.6 | 61.6 | 29.0 | 47.1 | 63.4 | **53.0** |
+| 15 | 2026-11-03 | REVERTED — the spires as columns (near-vertical sides, a domed top, an irregular outline, a rubble lip): they read far more like the Tassili's towers, but spires −2.1 (its photo is a butte on a huge scree cone) | 54.4 | 60.5 | 65.2 | 68.6 | 50.7 | 60.6 | 32.3 | 59.4 | 33.6 | 61.6 | 29.1 | 47.0 | 63.5 | **52.8** |
+| 16 | 2026-11-03 | REVERTED — round 15 + a rubble apron to 45 % of the height: spires −0.8, and the aprons rerouted the roads (trail.bin) — overall −0.4 | 52.6 | 59.7 | 65.5 | 68.6 | 49.4 | 60.6 | 32.3 | 60.7 | 33.7 | 61.6 | 29.1 | 47.1 | 63.5 | **52.6** |
 
 **Cost of rounds 1–13** (`abgpu.mjs`, round 0's build vs round 13's on two dev servers — `PORT_A` / `PORT_B`; 1080p
 uncapped, WebGPU, RTX 40-series laptop, 3 interleaved loads a side): oasis ULTRA −0.155 ms (−6.5 %), LOW −0.015;
 plain ULTRA −0.001, LOW −0.014 — nothing (a little less: fewer formation bands on gentle floors).
 
-**Where it stands (2026-11-03, round 13): overall 35.9 → 53.0.** Matched (≥ 70): none yet; ≥ 60: sky, sand_open,
+**Where it stands (2026-11-03, after round 16 — round 13 is the last kept): overall 35.9 → 53.0.** Matched (≥ 70): none yet; ≥ 60: sky, sand_open,
 sand_track, rock_shade, spires, palms, arch. The weakest: scrub 29, slabs_close 32, oasis_water 34, far_haze 47.
 
 Lessons (read before the next round):
@@ -318,9 +320,17 @@ Lessons (read before the next round):
   lit head-on doesn't show (round 14). What's left is form: deeper slab overhangs and undercuts, blocky fluted towers
   for the cones, scrub and reeds on the banks, real dune crests.
 
-Next, in order: the spires as blocky towers (desert.py cones → stacked, fluted, flat-topped — `desert_rocks.py`);
-scrub and reeds on the damp banks (`Bushes.ts` / `Grass.ts`, a grey-green, and a pair crop off the bank too);
-the slabs' undercuts deeper (`desert_rocks.py` profile PB); dusk and night checked against photos.
+Next, in order:
+1. **The spires pair's photo first.** c30 is a single butte on a huge scree cone — it rewards our smooth cones, and
+   round 15's columns (which read far more like the Tassili's towers) scored −2.1 against it. Pick a photo of a FIELD
+   of towers (Commons: "Tassili n'Ajjer" rock forest, Tadrart; the shortlist's c29 is one, hazy), re-crop with a fresh
+   round 0, then redo round 15 in `desert.py`'s SPIRES loop: `d = hypot / (r · (1 + 0.16 sin 3a + 0.08 sin 5a))`,
+   profile `d < 0.5: 1 − 0.08 (d/0.5)²` (the top), `0.5–0.62: 0.92 − 0.67 · smoothstep` (the wall), else
+   `0.25 · (1 − smoothstep(0.62, 1.3, d))` (a rubble lip), the window ±1.3 r. Keep the skirt inside the A* block
+   (r + 10 m) — round 16's wider apron rerouted the roads.
+2. Scrub and reeds on the damp banks (`Bushes.ts` / `Grass.ts`, grey-green), and a scrub crop off the bank too.
+3. The slabs' undercuts deeper (`desert_rocks.py` profile PB) — a face lit head-on needs its own shadows.
+4. Dusk and night checked against photos.
 
 ---
 
