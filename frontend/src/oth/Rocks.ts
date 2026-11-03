@@ -36,6 +36,7 @@ export class Rocks {
   private readonly q = new GFX.Quaternion()
   private readonly e = new GFX.Euler()
   private readonly reach: number
+  private rubbleK = 1
   private readonly near: number
   /** The rounded shapes' far LOD (rockNear on): one mesh per ROUND variant. */
   private readonly farMeshes: GFX.InstancedMesh[] = []
@@ -56,6 +57,8 @@ export class Rocks {
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
+    // (LOW — the phones: the desert's small rubble 40 % as thick; the big blocks, what fills a view, all kept)
+    this.rubbleK = tier.name === 'low' ? 0.4 : 1
     const all = (this.all = this.place())
     for (let v = 0; v < VARIANTS + ROUND; v++) {
       const geo = v < VARIANTS ? boulder(0x51ed + v * 977) : roundBoulder(0x7a3 + v * 131)
@@ -191,6 +194,58 @@ export class Rocks {
         const x = gx + rnd() * 70, z = gz + rnd() * 70
         if (!dry(x, z)) continue
         add(x, z, 1.2 + rnd() * 2.6, 0.3)
+      }
+    }
+    // BOULDER FIELDS (the desert, 2026-11-03 — the user: "how fuller it is, even if it's just a desert"): the open sand
+    // strewn with chunky blocks — clusters of mixed sizes, now and then a big one — thick where a slow noise says, a
+    // clearing between; and RUBBLE where gentle ground meets a wall (a cliff's foot). Never on a track (big ones keep
+    // well off), in the water or on the oasis floor. ?fields=0: without them (the cost A/B)
+    if (map.desert && new URLSearchParams(location.search).get('fields') !== '0') {
+      const sm = GFX.MathUtils.smoothstep
+      const vn = (x: number, z: number, cell: number, salt: number) => {
+        const fx = x / cell, fz = z / cell, ix = Math.floor(fx), iz = Math.floor(fz), u = sm(fx - ix, 0, 1), w = sm(fz - iz, 0, 1)
+        const h = (a: number, b: number) => cellSeed(a, b, salt) / 4294967296
+        return (h(ix, iz) * (1 - u) + h(ix + 1, iz) * u) * (1 - w) + (h(ix, iz + 1) * (1 - u) + h(ix + 1, iz + 1) * u) * w
+      }
+      const hw = map.meta.trails.hw
+      for (let gz = -half; gz < half; gz += 20) {
+        for (let gx = -half; gx < half; gx += 20) {
+          at(gx, gz, 6)
+          const x = gx + rnd() * 20, z = gz + rnd() * 20
+          if (!dry(x, z) || mk[0] > 0.5 || mk[3] > 0.25) continue // (dry() reads the mask into mk)
+          const f = sm(0.65 * vn(x, z, 520, 11) + 0.35 * vn(x, z, 160, 12), 0.42, 0.72)
+          const h0 = map.height(x, z)
+          const rise = Math.max(map.height(x + 24, z), map.height(x - 24, z), map.height(x, z + 24), map.height(x, z - 24)) - h0
+          const foot = sm(rise, 6, 18) * (1 - sm(slope(x, z), 0.25, 0.45))
+          if (rnd() > (0.04 + 0.5 * f + 0.8 * foot) * this.rubbleK) continue
+          const n = 1 + Math.floor(rnd() * (1 + 6 * Math.max(f, foot)))
+          for (let i = 0; i < n; i++) {
+            const a = rnd() * Math.PI * 2, d = 2 + rnd() * 12
+            const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d
+            if (!dry(px, pz)) continue
+            const big = rnd() < 0.08 && map.trackDist(px, pz) > hw + 9
+            add(px, pz, big ? 4 + rnd() * 5 : 0.7 + Math.pow(rnd(), 1.6) * 2.6, 0.3)
+          }
+        }
+      }
+      // BIG BLOCKS: house-sized chunks (6–16 m), alone or two or three leaning together, across the open ground — what
+      // fills a view out to the haze (a small stone is culled past a few hundred metres); thicker in the fields, a few
+      // even in the clearings; well off the tracks (by their own size too), the water and the oasis
+      for (let gz = -half; gz < half; gz += 60) {
+        for (let gx = -half; gx < half; gx += 60) {
+          at(gx, gz, 8)
+          const x = gx + rnd() * 60, z = gz + rnd() * 60
+          if (!dry(x, z) || mk[0] > 0.5 || mk[3] > 0.15 || mk[2] > 0.3) continue
+          const f = sm(0.65 * vn(x, z, 520, 11) + 0.35 * vn(x, z, 160, 12), 0.42, 0.72)
+          if (rnd() > 0.25 + 0.55 * f) continue
+          const n = 1 + Math.floor(rnd() * 3.6)
+          for (let i = 0; i < n; i++) {
+            const a = rnd() * Math.PI * 2, d = i === 0 ? 0 : 5 + rnd() * 8
+            const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d, size = (i === 0 ? 9 : 6) + rnd() * 7
+            if (!dry(px, pz) || map.trackDist(px, pz) < hw + 6 + size * 0.6 || slope(px, pz) > 0.35) continue
+            add(px, pz, size, -0.9) // (standing on the sand, a quarter of it sunk — the fields' stones lie half buried)
+          }
+        }
       }
     }
     // the SCENERY's WALLS (scripts/oth/scenery.mjs): big rounded stones lining the stream roads on their uphill side
@@ -363,7 +418,7 @@ in vec3 vWorld;
 in vec3 vN;
 in float vUp;
 #ifdef OTH_DESERT
-const vec3 STONE = vec3(0.42, 0.2, 0.125); // (red sandstone, paint.ts's STONE)
+const vec3 STONE = vec3(0.23, 0.133, 0.076); // (the sandstone: paint.ts's STONE — keep in step; was the old pink)
 #else
 const vec3 STONE = vec3(0.2, 0.205, 0.23);
 #endif

@@ -334,6 +334,30 @@ Next, in order:
 
 ---
 
+## 12. Fuller — our own art direction (2026-11-04)
+
+The user: the desert should feel FULL — "how fuller it is, even if it's just a desert with no trees": rock forms
+everywhere, near and far, not an empty plain with a few mesas. This is our own design (not tuned to another game's
+screenshots), checked by eye in driver-height views and the aerial, and measured for cost.
+
+Done:
+1. **Boulder fields and big blocks** (`Rocks.ts`, desert only, `?fields=0` turns them off for an A/B): the open
+   sand strewn with chunky low-poly stones in fields and clearings (a slow noise), RUBBLE where gentle ground meets a
+   cliff, and house-sized BLOCKS (6–16 m, alone or leaning in twos and threes) standing on the sand — what fills a
+   view out to the haze (a small stone is culled past a few hundred metres). Never on a track (big ones keep their
+   own size off it), in the water or on the oasis floor. The desert's boulders take the terrain's sandstone (they
+   were the old pink). 3,223 → 28,687 stones; placement 8 → 46 ms at a world's build (a crossing's background build
+   too — slice it like the trees if that frame shows); GPU (abgpu, 1080p uncapped): ULTRA +0.12–0.14 ms (oasis),
+   +0.05 (plain); LOW within noise (the rubble 40 % as thick on LOW).
+
+Next:
+2. **Outcrops in the terrain** (`desert.py`): tors, low stacked-slab outcrops and small buttes (10–40 m) scattered
+   over the plain and the erg's margins, away from the roads (keep `trail.bin` unchanged), the water and the places —
+   they take the beds and the skins (`desert_rocks.py`) like the mesas.
+3. Slice the rock placement (a generator, like `placeTrees`) if the crossing's build frame grows past ~35 ms.
+
+---
+
 ## 11. Starting it with Claude Code at home
 
 > Read `docs/DESERT_MATCH.md`. Rebuild the reference set if it is missing (§3; real deserts) and the 13 pairs (§4), render round 0 (§5) and
