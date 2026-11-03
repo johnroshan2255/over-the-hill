@@ -125,6 +125,12 @@ const vec3 OASIS_FLOOR = vec3(0.16, 0.15, 0.06);
 const vec3 TRACK_SAND  = vec3(0.5, 0.28, 0.16);
 // (a bed's tone: 0..1 per bed, the beds wobbling a little in height like the generator's)
 float bedTone(float h, Paint p) { float b = floor((h + (p.big.g - 0.5) * 5.0) / 9.0); return fract(sin(b * 12.9898 + 4.1) * 43758.5453); }
+// a value noise from hashes (no texture fetch), 0..1, smooth: the sand's speckle
+float sandHash(vec2 c) { return fract(sin(dot(c, vec2(127.1, 311.7))) * 43758.5453); }
+float sandNoise(vec2 q) {
+  vec2 i = floor(q), f = q - i, u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(sandHash(i), sandHash(i + vec2(1.0, 0.0)), u.x), mix(sandHash(i + vec2(0.0, 1.0)), sandHash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
 Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
   Ground g;
   g.snow = 0.0; g.scree = 0.0; g.screeNear = 0.0;
@@ -133,6 +139,11 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   // sand: the loose (dunes, drifts) paler and yellower, the compact redder; broad soft drifts of tone
   vec3 col = mix(SAND_DEEP, mix(SAND, SAND_PALE, p.mid.r), 0.35 + 0.65 * m.g);
   col *= (0.93 + 0.1 * p.fine.g + (p.big.r - 0.5) * 0.12 + (p.mid.b - 0.5) * 0.06) * grain;
+  // SPECKLE (DESERT_MATCH round 9 — photographed sand is pocked and grainy at every scale, with no one direction;
+  //  ours was smooth past a few metres): two octaves of value noise, 0.22 m and 0.6 m, each only while it spans a few
+  //  pixels (no shimmer)
+  float sp1 = 1.0 - smoothstep(0.04, 0.08, foot), sp2 = 1.0 - smoothstep(0.12, 0.22, foot);
+  if (sp2 > 0.0) col *= 1.0 + (sandNoise(xz * (1.0 / 0.22)) - 0.5) * 0.14 * sp1 + (sandNoise(xz * (1.0 / 0.6) + 17.3) - 0.5) * 0.1 * sp2;
   // damp sand toward the water, the oasis's olive floor under its palms and scrub
   float wet = min(m.b / 0.85, 1.0);
   col = mix(col, DAMP * (0.9 + 0.2 * p.fine.g), smoothstep(0.3, 0.85, wet) * 0.7);

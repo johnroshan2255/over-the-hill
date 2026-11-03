@@ -278,6 +278,8 @@ Fix these **before** scoring; a broken edge ruins every view that sees it.
 | 5 | 2026-11-03 | the oasis grass olive-khaki (Grass.ts OTH_DESERT field colour: hue 85° → ≈ 50°, a little darker) | 53.5 | 60.5 | 63.8 | 68.1 | 50.9 | 57.0 | 31.5 | 62.7 | 33.6 | 61.8 | 28.1 | 35.0 | 61.3 | **51.4** |
 | 6 | 2026-11-03 | stable scattering (Rocks / Trees / Bushes: in the desert each cell / item draws from its own seed — one stream for the map moved every stone and palm after any mask change) | 53.6 | 60.6 | 63.6 | 68.1 | 50.8 | 57.0 | 31.5 | 62.6 | 33.6 | 61.7 | 28.7 | 34.7 | 61.3 | **51.4** |
 | 7 | 2026-11-03 | the erg's mesas sandstone (desert.py: the erg's 'sand, never rock or beds' only off the mesas — they were smooth sand-coloured blocks; regenerated, desert_rocks.py 624 → 674 bands) | 53.3 | 60.3 | 63.6 | 68.1 | 50.3 | 57.0 | 31.2 | 62.6 | 33.6 | 61.7 | 28.8 | 45.7 | 61.4 | **52.1** |
+| 8 | 2026-11-03 | REVERTED — the sand's wind ripples deeper and kept further: texture 13 → 16 but strokes 92 → 81 (one direction of lines; the photos' marks go every way) | 53.2 | 60.3 | 62.3 | 68.0 | 50.3 | 57.0 | 31.2 | 62.6 | 33.6 | 61.8 | 28.7 | 45.7 | 61.4 | **52.0** |
+| 9 | 2026-11-03 | speckle in the sand (paint.ts: two octaves of hash value noise, 0.22 / 0.6 m, ±7 / ±5 %, only while they span a few pixels — no direction, no texture fetch) | 53.5 | 60.4 | 64.6 | 68.2 | 50.6 | 57.0 | 31.1 | 62.6 | 33.6 | 61.7 | 28.8 | 45.7 | 61.4 | **52.2** |
 
 ---
 
