@@ -467,6 +467,14 @@ quarter of the wall's height, fading over ~40 m; half as much down the routes). 
 (grades ≤ 24 %, no step over 0.5 m); the rope bridge measured from the lower rim (the higher one made a 348 m bridge).
 Cost (abgpu vs the commit before): plain +0.06 / +0.09 ms, oasis +0.10 / +0.02 (ULTRA / LOW) — the noise here.
 
+**Gradual rock, dim dusk** (the user: *"the reddish sudden rise of rocks … must be gradual, with colour blending; at
+evening and night the rocks' red is bright, even in shadow"*): the masses' edges rise over a long shoulder (tiers from
+m 0.04 → 0.5), the sand banks reach further and higher (a 56 m blur, × 0.7; up to 62 m); the rock mask soft (sand on
+slopes under ~25°, blurred 8–16 m) and the paint's rock edge a wide ragged blend, the rock's foot sandy. The light: the
+desert's sky fill and bounce × 0.55 from dusk on, the rock's extra fill (`rockFill`, a new `uRockFill`) half by day and a
+quarter from dusk, the night's purple fill a third — the coral rock goes a dark red-brown at dusk, near-black at night.
+Cost (abgpu vs the commit before, 3 a side): +0.03 / +0.03 ms plain, +0.15 / −0.03 oasis (ULTRA / LOW) — the noise.
+
 Next:
 1. **Stacked-block rock** — the biggest gap left: Blender meshes for the masses' walls (each bed a chunky slab with
    rounded edges, offset from the one below, flat-topped), in place of the heightfield's smooth walls.

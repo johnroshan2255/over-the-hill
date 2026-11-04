@@ -62,6 +62,8 @@ export class Atmosphere {
     uNoise: { value: null as GFX.Texture | null },
     /** 0 day … 1 full night (stars, the moon's disc, headlights). */
     uNight: { value: 0 },
+    /** The rock's extra sky fill (rockFill), × this: 1 in the valley; the desert's less — most at dusk and night. */
+    uRockFill: { value: 1 },
     /** Headlights (Vehicle.lights): the left lamp (xyz) and on (w), the right lamp, the car's forward and up axes;
      *  the tail lamps' middle (xyz) and the brake light (w, 0 … 1). */
     uHeadL: { value: new GFX.Vector4() },
@@ -271,11 +273,20 @@ export class Atmosphere {
     const fill = 1 + 0.15 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)
     u.uAmbSky.value.multiplyScalar(fill)
     u.uAmbGround.value.multiplyScalar(fill)
+    // (2026-11-04 — the user: "at evening and night the rocks' reddish colour is bright, even in the shadows": the
+    //  coral rock is twice the old albedo, so the desert's shade DIMS as the sun goes down — the fill and the bounce
+    //  ×0.55 at dusk, the rock's extra fill (rockFill) half by day and a quarter from dusk on; the night's purple fill
+    //  a third of what it was)
+    const dayK = GFX.MathUtils.smoothstep(s, 0.12, 0.35)
+    u.uRockFill.value = 1 - dk * (0.5 + 0.25 * (1 - dayK))
     if (dk > 0) {
       const al = 0.2126 * u.uAmbSky.value.r + 0.7152 * u.uAmbSky.value.g + 0.0722 * u.uAmbSky.value.b
-      u.uAmbSky.value.lerp(D_WARMFILL.clone().multiplyScalar(al), 0.55 * dk)
-      // (by night a purple fill: the rocks read as dark magenta against the sky, never a black hole)
-      u.uAmbSky.value.lerp(D_PURPLE.clone().multiplyScalar(0.05), 0.75 * night * dk)
+      u.uAmbSky.value.lerp(D_WARMFILL.clone().multiplyScalar(al), 0.55 * dk * dayK)
+      const dim = 1 - 0.45 * dk * (1 - dayK)
+      u.uAmbSky.value.multiplyScalar(dim)
+      u.uAmbGround.value.multiplyScalar(dim)
+      // (by night a faint purple fill: the rocks a dark magenta against the sky, never a black hole — nor a glow)
+      u.uAmbSky.value.lerp(D_PURPLE.clone().multiplyScalar(0.016), 0.6 * night * dk)
     }
     // the HAZE's colour: the horizon leaning to the zenith, much of its tint kept — far ridges go blue-grey in layers
     keepTint(u.uFogColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.42), 0.75)
@@ -319,6 +330,7 @@ uniform vec3 uFogColor;
 uniform float uTime;
 uniform sampler2D uNoise;
 uniform float uNight;
+uniform float uRockFill;
 uniform vec4 uHeadL;
 uniform vec3 uHeadR;
 uniform vec3 uHeadDir;
@@ -443,7 +455,7 @@ vec3 ambient(vec3 N) {
 // STYLIZED ROCK FILL (2026-10-27, Over the Hill's soft pale rock: its shade a light blue-grey, never near black — ours
 // lit 8 : 1 sun to shade went black): the sky's light again, strongest on the faces turned from the sun — the cool of
 // the shade. Rock only (the terrain's rock, the boulders); it follows the sky, so the nights stay dark.
-vec3 rockFill(vec3 albedo, vec3 N) { return albedo * uAmbSky * (0.45 + 0.8 * (1.0 - clamp(dot(N, uSunDir) * 1.5, 0.0, 1.0))); }
+vec3 rockFill(vec3 albedo, vec3 N) { return albedo * uAmbSky * (0.45 + 0.8 * (1.0 - clamp(dot(N, uSunDir) * 1.5, 0.0, 1.0))) * uRockFill; }
 
 // GGX distribution (art-directed spec: rough ground, a soft wide sheen).
 float ggx(float NoH, float r) {

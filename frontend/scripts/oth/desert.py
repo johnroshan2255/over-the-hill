@@ -293,7 +293,8 @@ def canyon_country(X, Z, H, up, up2, erg):
     m = blur(m * zone, 2)
     # two tiers: the mass's edge rises to its first, its heart (a wide blur: far from every edge) to the second
     inner = blur(m, 14)
-    tiers = 0.58 * smoothstep(0.12, 0.32, m) + 0.42 * smoothstep(0.62, 0.82, inner)
+    # (2026-11-04: their edges rise GRADUALLY — a long shoulder, not a step — the user: "a sudden rise")
+    tiers = 0.58 * smoothstep(0.04, 0.5, m) + 0.42 * smoothstep(0.55, 0.9, inner)
     lift = 28 + 52 * smoothstep(-0.4, 0.5, fbm(X / 1300, Z / 1300, SEED + 87, 2))   # (the high ground is already high)
     U = lift * tiers * (1 + 0.06 * fbm(X / 150, Z / 150, SEED + 88, 2))
     log(f'  rock masses: {np.mean(m > 0.5) * 100:.0f} % of the box, up to {U.max():.0f} m')
@@ -344,7 +345,7 @@ H = np.where(Ds < 40, np.minimum(H, slot_floor + (H - slot_floor) * smoothstep(9
 # it — raised toward its 40 m surroundings (a quarter of the wall's height at its foot, fading over ~40 m), as blown
 # sand and fallen rock bank against a real cliff; nothing changes on open ground. Not into the water, the lagoon or the
 # slot; half as much down the routes (a corridor between two walls would fill to a V)
-_ap = np.maximum(blur(H, 20) - H, 0) * 0.55
+_ap = np.maximum(blur(H, 28) - H, 0) * 0.7
 _ap = _ap * smoothstep(river_hw(Sr) + 6, river_hw(Sr) + 30, DrW) * smoothstep(1.1, 1.4, Lq) * smoothstep(20, 40, Ds)
 H = H + _ap * (0.5 + 0.5 * smoothstep(15, 45, DC_ROUTES))
 log(f'  sand banks: up to {_ap.max():.0f} m')
@@ -707,8 +708,11 @@ canyon_floor = (Dr4 < floor_hw(Sr4) + 10) & (sl < 0.3)
 # R ROCK: the walls' beds, the steep, the plateaus' slickrock, the spires, the mesas' sides
 patch = fbm(X4 / 90, Z4 / 90, SEED + 50, 3)
 patch = fbm(X4 / 260, Z4 / 260, SEED + 50, 3)
-rock = np.clip(smoothstep(0.38, 0.65, sl) + WALL[::2, ::2] + smoothstep(0.2, 0.4, patch) * UPN[::2, ::2] * 0.6
+rock = np.clip(smoothstep(0.42, 1.0, sl) + 0.85 * smoothstep(0.3, 0.9, WALL[::2, ::2]) + smoothstep(0.2, 0.4, patch) * UPN[::2, ::2] * 0.6
                + smoothstep(0.45, 0.75, MASSK[::2, ::2]), 0, 1)   # (the rock masses' tops are rock — 2026-11-04)
+# (soft: the sand banks — slopes under ~25° — sand, the rock's edge blurred over 8–16 m: no hard line where the colour
+#  changes — 2026-11-04)
+rock = blur(rock, 2)
 rock = rock * (1 - smoothstep(TRAIL_HW + 10, TRAIL_HW + 3, Dt4)) * (1 - near_water * 0.8) * (1 - smoothstep(0.05, 0.3, ERG4))
 # (the escarpment road's risers are rock right down to its shelves)
 DE4 = polyline_field(X4, Z4, np.vstack([ESC_LINE, PASSD]), 40)[0]

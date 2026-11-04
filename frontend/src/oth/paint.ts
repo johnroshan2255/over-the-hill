@@ -174,12 +174,16 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   g.forest = smoothstep(0.25, 0.75, m.a + (p.mid.b - 0.5) * 0.3);
   col = mix(col, OASIS_FLOOR * (0.85 + 0.3 * d6), g.forest * 0.45);
   // SANDSTONE: the beds' tones (uneven), sand on the flat tops; the faces' streaks are the terrain's (Terrain.ts)
-  float rv = m.r + (p.mid.b - 0.5) * 0.3 + (d6 - 0.5) * 0.1;
-  g.rock = smoothstep(0.42, 0.58, rv);
-  g.rockNear = smoothstep(0.27, 0.433, rv);
+  // (2026-11-04 — the user: "the reddish sudden rise of rocks … it must be gradual, the colour blending": the rock's
+  //  edge a WIDE soft blend with a ragged line (the broad blotches push it about), and the rock near its foot goes
+  //  sandy — dusted, half buried — before it's sand)
+  float rv = m.r + (p.mid.b - 0.5) * 0.3 + (d25 - 0.5) * 0.25 + (d6 - 0.5) * 0.12;
+  g.rock = smoothstep(0.28, 0.78, rv);
+  g.rockNear = smoothstep(0.18, 0.5, rv);
   float bt = bedTone(h, p);
   vec3 stone = mix(STONE, STONE_PALE, bt * 0.7) * (0.97 + 0.05 * d25);
   stone = mix(stone, SAND, (1.0 - smoothstep(0.03, 0.12, steep)) * 0.22); // (a dusting of sand on the tops)
+  stone = mix(stone, mix(SAND_DEEP, stone, 0.45), (1.0 - smoothstep(0.35, 0.85, rv)) * 0.8); // (the foot: sandy)
   col = mix(col, stone, g.rock);
   // the water's bed: wet gravel and sand
   g.bed = smoothstep(0.9, 0.97, m.b);
