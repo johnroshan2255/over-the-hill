@@ -63,7 +63,7 @@ export class Rocks {
         mesh.updateWorldMatrix(true, false)
         const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld)
         g.deleteAttribute('normal')
-        ;(out[+m[1]] ??= [])[+m[2]] = toCreasedNormals(g, Math.PI / 5)
+        ;(out[+m[1]] ??= [])[+m[2]] = toCreasedNormals(g, Math.PI / 2.2) // (smooth, not faceted)
       })
       return out.length >= VARIANTS && out.slice(0, VARIANTS).every((l) => l?.[0] && l[1]) ? out : null
     } catch {
@@ -450,7 +450,8 @@ function boulder(seed: number): GFX.BufferGeometry {
     pts.push(new GFX.Vector3(Math.cos(a) * ex * 1.06, (rnd() - 0.3) * ey, Math.sin(a) * ez * 1.06))
   }
   // flat faces, the chamfer bands between them smoothed (creased normals): big planes with soft rounded edges
-  const g = toCreasedNormals(new ConvexGeometry(pts), Math.PI / 4.5)
+  // (2026-11-04: smooth across all but the sharpest edges — the user wants smoothness, not facets)
+  const g = toCreasedNormals(new ConvexGeometry(pts), Math.PI / 2.2)
   g.deleteAttribute('uv')
   return g
 }
@@ -493,7 +494,7 @@ void main() {
 #ifdef OTH_ROCK_RELIEF
   paintK = 1.0 - reliefShow(max(length(dFdx(vWorld)), length(dFdy(vWorld))));
 #endif
-  vec3 albedo = STONE * mix(1.0, 0.94 + 0.12 * fhash(N), paintK) * mix(0.72, 1.0, smoothstep(0.0, 0.45, vUp)) * (1.0 + 0.06 * N.y);
+  vec3 albedo = STONE * mix(0.72, 1.0, smoothstep(0.0, 0.45, vUp)) * (1.0 + 0.06 * N.y); // (no per-face tone: smooth)
   // HIGH / ULTRA on PCs: the crumpled 3D relief over every face (the light only: the colour above is the face's own)
   float cav = 1.0;
 #ifdef OTH_ROCK_RELIEF

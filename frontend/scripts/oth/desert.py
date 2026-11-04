@@ -78,6 +78,7 @@ SLOT = np.array([(1260, -1500), (1210, -1150), (1180, -760), (1150, -420), (1120
 GORGE_BRIDGE_X = 1420.0
 AQUEDUCT = dict(x0=-560.0, z0=600.0, x1=-90.0, z1=560.0)   # across the valley floor behind the lagoon (south side)
 KSAR = dict(x=980.0, z=1020.0)       # the ruins in the basin below a blind summit (south-east)
+FIELD = dict(x=380.0, z=1020.0, r=360.0)   # the SLICKROCK FIELD: slab tables by the ksar road (canyon_country)
 
 X, Z = grid(N_IN, HALF)
 CELL = 2 * HALF / (N_IN - 1)
@@ -216,6 +217,31 @@ for (mx, mz, R, top) in [(-1250, 900, 120, 70), (-900, 1180, 70, 95), (420, 820,
     base = bilinear(H, HALF, np.array([mx]), np.array([mz]))[0]
     H = np.where(k > 0.001, np.maximum(H, base + top * k ** 0.7 * (0.96 + 0.04 * fbm(X / 60, Z / 60, SEED + int(mx), 2))), H)  # (its own footprint only)
 # SPIRES: the north-west plateau's rock forest (Tassili) — clusters of tall stacked needles, a few broad towers
+ROUTE_SKELETON = [
+    [(-147, 1440), (-60, 1100), (-150, 790)],
+    [(-1520, 130), (-1100, 120), (-760, 230), (-420, 30)],
+    [(-420, 30), (-150, 340), (30, 310), (560, 320), (840, 250)],
+    [(-760, -600), (-1000, -800), (-1350, -1200), (-900, -1500), (-500, -1250), (-760, -600)],
+    [(-500, -1250), (200, -1300), (800, -1000), (ARCH['x'] - 150, ARCH['z'])],
+    [(ARCH['x'] + 150, ARCH['z']), (1440, -560)],
+    [(GORGE_BRIDGE_X, 640), (1300, 900), (KSAR['x'], KSAR['z']), (600, 1150), (-60, 1100)],
+    [(-150, 790), (-600, 900), (-1100, 1050), (-1500, 900), (-1200, 700), (-700, 700), (-150, 790)],
+    # (the ledge ramps' lines — desert.py's carve_ramp — and the escarpment's lead: never cut through a mass)
+    [(-150, 790), (150, 760), (400, 660), (330, 520), (180, 470), (60, 400), (30, 310)],
+    [(-420, 30), (-760, -10), (-1050, -150), (-1120, -380), (-900, -540), (-760, -600)],
+    [(1440, -560), (1700, -360), (1560, -150), (1430, -20)],
+    [(-107, 1440), (-187, 1440)],
+]
+def _skel_dist(x, z):
+    """How far (x, z) is from the routes' own lines (their waypoints' segments)."""
+    best = 1e9
+    for P in ROUTE_SKELETON:
+        for (ax, az), (bx, bz) in zip(P[:-1], P[1:]):
+            dx, dz = bx - ax, bz - az; l2 = dx * dx + dz * dz or 1.0
+            t = min(1.0, max(0.0, ((x - ax) * dx + (z - az) * dz) / l2))
+            best = min(best, math.hypot(x - ax - t * dx, z - az - t * dz))
+    return best
+
 SPIRES = []
 SPK = np.zeros_like(H)   # (where a spire stands: the joints keep off them — a joint across a tower cut a recessed panel)
 for c in range(9):
@@ -224,6 +250,8 @@ for c in range(9):
         sx, sz = cx + rng.normal() * 90, cz + rng.normal() * 90
         if any(math.hypot(sx - a, sz - b) < 26 for a, b, _, _ in SPIRES): continue
         hgt = 28 + rng.random() * 58; r = hgt * (0.22 + rng.random() * 0.14)
+        # (never on a route's line: one stood on the plateau's road east, 60 m tall — 2026-11-04)
+        if _skel_dist(sx, sz) < r * 1.4 + 30: continue
         SPIRES.append((sx, sz, r, hgt))
 # (2026-11-04 — TOWERS, not cones: the smooth cones read as nothing real. A real rock forest's towers are blocky
 #  columns — a domed top, near-sheer fluted sides, an irregular outline — standing on a cone of their own rubble)
@@ -249,21 +277,6 @@ for si, (sx, sz, r, hgt) in enumerate(SPIRES):
 # corridor 30–60 m wide down each route, its walls wandering; winding SIDE CANYONS through the masses (a noise's zero
 # line — long, connected), a few open sandy BASINS. On the plateaus smaller masses (fins and buttes on the skyline), the
 # erg mostly open. The beds (strata, below) step every wall; desert_rocks.py skins them.
-ROUTE_SKELETON = [
-    [(-147, 1440), (-60, 1100), (-150, 790)],
-    [(-1520, 130), (-1100, 120), (-760, 230), (-420, 30)],
-    [(-420, 30), (-150, 340), (30, 310), (560, 320), (840, 250)],
-    [(-760, -600), (-1000, -800), (-1350, -1200), (-900, -1500), (-500, -1250), (-760, -600)],
-    [(-500, -1250), (200, -1300), (800, -1000), (ARCH['x'] - 150, ARCH['z'])],
-    [(ARCH['x'] + 150, ARCH['z']), (1440, -560)],
-    [(GORGE_BRIDGE_X, 640), (1300, 900), (KSAR['x'], KSAR['z']), (600, 1150), (-60, 1100)],
-    [(-150, 790), (-600, 900), (-1100, 1050), (-1500, 900), (-1200, 700), (-700, 700), (-150, 790)],
-    # (the ledge ramps' lines — desert.py's carve_ramp — and the escarpment's lead: never cut through a mass)
-    [(-150, 790), (150, 760), (400, 660), (330, 520), (180, 470), (60, 400), (30, 310)],
-    [(-420, 30), (-760, -10), (-1050, -150), (-1120, -380), (-900, -540), (-760, -600)],
-    [(1440, -560), (1700, -360), (1560, -150), (1430, -20)],
-    [(-107, 1440), (-187, 1440)],
-]
 def slab_stack(X, Z, T, scale, seed):
     """STACKED SLABS (2026-11-04 — the user's gameplay frames: the rock IS the ground, pink slickrock in rounded slabs
     stacked like pancakes, each layer a little offset from the one under it, a car crawling over their edges). T: the
@@ -280,7 +293,7 @@ def slab_stack(X, Z, T, scale, seed):
         xs, zs, lv, tt = X[idx], Z[idx], L[idx], tk[idx] if np.ndim(tk) else tk
         F = T[idx] + (4.0 + 0.1 * lv) * (0.55 * fbm(xs / 70, zs / 70, seed + 7 * k, 2) + 0.45 * fbm(xs / 26, zs / 26, seed + 7 * k + 3, 2))
         mid = lv + 0.5 * tt
-        S[idx] += tt * smoothstep(mid - 0.55, mid + 0.55, F) * smoothstep(0.3, 2.0, T[idx])   # (a crisp lip, rounded over ~2 m)
+        S[idx] += tt * smoothstep(mid - 0.85, mid + 0.85, F) * smoothstep(0.3, 2.0, T[idx])   # (a soft rounded lip — smoothness, 2026-11-04)
         L = L + tk
     return S
 
@@ -328,9 +341,19 @@ def canyon_country(X, Z, H, up, up2, erg):
     # (2026-11-04, the user's frames: compact STEEP stacks of thick slabs — towers and walls, each rim a bulge — and a
     #  SKIRT of low rock TABLES round their feet, 1–3 slabs on the sand: the rock a car drives on and crawls over)
     T_mass = (26 + 46 * smoothstep(-0.4, 0.5, fbm(X / 1300, Z / 1300, SEED + 87, 2))) * (0.55 * smoothstep(0.05, 0.3, m) + 0.45 * smoothstep(0.5, 0.85, inner))
-    T_skirt = (4 + 4 * smoothstep(-0.3, 0.4, fbm(X / 300, Z / 300, SEED + 131, 2))) * smoothstep(0.02, 0.14, blur(m, 22))
+    T_skirt = (4 + 4 * smoothstep(-0.3, 0.4, fbm(X / 300, Z / 300, SEED + 131, 2))) * smoothstep(0.02, 0.14, blur(m, 22)) \
+        * smoothstep(12, 26, Dc)   # (the skirt kept off the routes as the masses are: its wide blur leaked tables onto a road)
     T = np.maximum(T_mass, T_skirt)
-    U = slab_stack(X, Z, T, 1.6 + 0.8 * cliffy, SEED + 130)
+    # THE SLICKROCK FIELD (2026-11-04 — the user: "where are the rocky places like in the images? I only see sand and
+    # big hills"): a field of slab TABLES and low STACKS the road runs straight through — the plain's first rocky ground
+    # below the escarpment; rock to ~9 m from the road's line, winding sand channels between the tables, the slabs a
+    # little thinner (more of their edges crawlable)
+    fd = np.hypot(X - FIELD['x'], (Z - FIELD['z']) * 1.25) / FIELD['r']
+    fk = 1 - smoothstep(0.75, 1.05, fd + 0.15 * fbm(X / 160, Z / 160, SEED + 140, 2))
+    cells = fbm(X / 55, Z / 55, SEED + 141, 3) + 0.4 * fbm(X / 18, Z / 18, SEED + 142, 2)
+    th = 3 + 10 * smoothstep(-0.3, 0.6, fbm(X / 120, Z / 120, SEED + 143, 2)) + 8 * smoothstep(0.35, 0.6, cells)
+    T = np.maximum(T, th * smoothstep(-0.05, 0.12, cells) * fk * smoothstep(9, 18, Dc))
+    U = slab_stack(X, Z, T, (1.6 + 0.8 * cliffy) * (1 - 0.3 * fk), SEED + 130)
     slick = smoothstep(0.3, 1.2, U)
     log(f'  rock masses: {np.mean(m > 0.5) * 100:.0f} % of the box, slab stacks up to {U.max():.0f} m over {np.mean(slick > 0.5) * 100:.0f} %')
     return H + U, m, Dc, slick
@@ -412,7 +435,7 @@ H = H + (np.maximum(strata(H, phase), foot) - H) * wall_beds
 #  drew as teeth and curtains; the skins hid it, the clean look has none)
 for _ in range(2):
     _gz, _gx = np.gradient(H, CELL)
-    H = H + (blur(H, 1) - H) * smoothstep(1.2, 2.6, np.hypot(_gx, _gz)) * (1 - SLICK)   # (not the slabs' lips)
+    H = H + (blur(H, 1) - H) * smoothstep(1.2, 2.6, np.hypot(_gx, _gz)) * (1 - 0.6 * SLICK)   # (the slabs' lips a little too: soft)
 # (…and NO wall steeper than ~67° (2.4 : 1): a cell's top lowered to within 2.4 cells' worth of its lowest neighbour,
 #  repeated until it holds — a 120 m wall over ~50 m, never 30 m within a cell. Only ever lowered: the corridors' floors
 #  — the roads — never move)
@@ -526,6 +549,9 @@ X8, Z8 = X[::4, ::4], Z[::4, ::4]
 river8 = DrW[::4, ::4] < river_hw(Sr[::4, ::4]) * 1.3
 lagoon8 = Lq[::4, ::4] < 1.15
 block8 = lagoon8 | (MESAK[::4, ::4] > 0.15)
+# (nor over the slab stacks: sampled every 8 m, a stack's 2 m rims slipped between the samples — the A* climbed a 30 m
+#  stack table by table and the road went over it at 79 % — 2026-11-04)
+block8 |= (SLICK[::4, ::4] > 0.5) & (DC_ROUTES[::4, ::4] > 16)   # (a route's own band always open)
 for (sx, sz, rr, _) in SPIRES: block8 |= np.hypot(X8 - sx, Z8 - sz) < rr + 10
 Hl = H8.ravel(); blockf = block8.ravel(); fordf = river8.ravel()
 # (off the routes' own lines a little dearer: the A* keeps to the corridors, where no bed steps across — 2026-11-04)
@@ -817,6 +843,7 @@ LANDMARKS = [
     {'id': 6, 'kind': 'gorge', 'name': 'Rope Bridge', 'x': GORGE_BRIDGE_X, 'z': 300, 'r': 50},
     {'id': 7, 'kind': 'ksar', 'name': 'The Ksar', 'x': KSAR['x'], 'z': KSAR['z'], 'r': 70},
     {'id': 8, 'kind': 'dunes', 'name': 'Red Erg', 'x': -1100, 'z': 1000, 'r': 150},
+    {'id': 9, 'kind': 'slickrock', 'name': 'Slickrock Field', 'x': FIELD['x'], 'z': FIELD['z'], 'r': 300},
 ]
 for l in LANDMARKS: l.update(y=ground(l['x'], l['z']), rot=0.0)
 spawn = {'x': GATE['x'], 'z': GATE['z'] - 30, 'yaw': 0.0}

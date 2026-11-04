@@ -57,7 +57,7 @@ vec3 rockRelief(vec3 p, vec3 N, float k, vec3 dpx, vec3 dpy, out float cav) {
   float hx = reliefH(p + dpx, w, lod1, lod2, fine);
   float hy = reliefH(p + dpy, w, lod1, lod2, fine);
   // the height in metres (peak to crease ≈ 0.15 m): its differences along the pixel's two steps → the slope
-  vec2 dB = vec2(hx - h0, hy - h0) * (0.15 * fade);
+  vec2 dB = vec2(hx - h0, hy - h0) * (0.07 * fade); // (half as deep: smooth rock, not crumpled — 2026-11-04)
   vec3 R1 = cross(dpy, N), R2 = cross(N, dpx);
   float det = dot(dpx, R1);
   vec3 grad = sign(det) * (dB.x * R1 + dB.y * R2);

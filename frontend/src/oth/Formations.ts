@@ -124,7 +124,7 @@ void main() {
   vec3 Ns = normalize(vN);
   vec3 Nf = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   if (dot(Nf, Ns) < 0.0) Nf = -Nf;
-  vec3 N = normalize(mix(Ns, Nf, 0.85));
+  vec3 N = normalize(mix(Ns, Nf, 0.12)); // (smooth, not low-poly facets — 2026-11-04)
   if (!gl_FrontFacing) N = -N;
   vec3 V = normalize(uCamPos - vWorld);
   vec2 xz = vWorld.xz;
@@ -134,7 +134,7 @@ void main() {
   float q = vWorld.y + (big - 0.5) * 6.0;
   float tone = clamp(0.72 * bedNoise(q / 19.0) + 0.28 * bedNoise(q / 5.5 + 7.3), 0.0, 1.0);
   // (2026-11-04, the stylised look: salmon stone, soft bed tones, clean — no streaks; each facet a touch its own tone)
-  vec3 albedo = mix(STONE, STONE_PALE, tone * 0.7) * (0.97 + 0.05 * fine) * (0.96 + 0.08 * facetRand(Nf));
+  vec3 albedo = mix(STONE, STONE_PALE, tone * 0.7) * (0.97 + 0.05 * fine) ;
   // the tuck under each slab darker, sand dusting its lip
   albedo = mix(albedo, STONE_DEEP, smoothstep(-0.15, -0.6, N.y) * 0.3); // (2026-11-04: a softer tuck — the stylised shade is light)
   albedo = mix(albedo, SAND_PALE * 0.96, smoothstep(0.72, 0.92, N.y) * 0.6);

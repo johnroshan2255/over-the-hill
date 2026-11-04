@@ -331,7 +331,10 @@ void main() {
   float trail = box ? texture(uTrail, gridUv(uInGrid, xz)).r * 8.0 : 8.0;
   Ground g = groundPaint(xz, m, h, steep, p, foot, trail, uTrailHW, farG ? 0.0 : smoothstep(uBushR * 0.7, uBushR, dcam)); // (painted shrub dots only beyond the real bushes)
   vec3 col = g.col;
-  float facet = mix(0.12, 0.42, max(g.rock, g.snow * 0.8));
+  // (2026-11-04 — the user: "I can see lots of triangles instead of a smooth surface … even in the valley the rocky
+  //  places are sharp; I want smoothness": the low-poly facets are gone — the smooth normal everywhere, no per-triangle
+  //  tone; the light rolls over the land in soft gradients)
+  float facet = 0.0;
   // (2026-11-04 — the user: "in a big wall … a repeated line, then the next, then the next": on a steep face the 2 m
   //  grid's triangles are tall slivers, row on row — their flat normals and per-facet tones drew a line at every row.
   //  A steep wall takes the smooth normal; the relief and the paint are its detail)
@@ -427,7 +430,7 @@ void main() {
     col = mix(col, MUDC, mudA);
     rough = mix(rough, 0.3, mudA);
   }
-  float wrap = mix(0.62, 0.2, g.rock);
+  float wrap = mix(0.62, 0.45, g.rock); // (rock's light softer at its edge too)
   float ao = mix(1.0, 0.7, g.forest) * mix(1.0, 0.85, g.bed) * cav;
   vec3 V = normalize(uCamPos - vWorld);
   // (the 4 m shadow bake on a near-vertical face: a stripe at every texel row. A steep face reads its shade a few

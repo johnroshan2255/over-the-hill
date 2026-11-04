@@ -17,7 +17,7 @@ export interface Grid { n: number; step: number; origin: number; min: number; ra
 export interface Pond { cx: number; cz: number; rx: number; rz: number; rot: number; level: number }
 /** A LANDMARK (scripts/oth/scenery.mjs, Landmarks.ts): a place to find — its kind, name, pad centre / height, the way
  *  its front faces (rad: local +z turned by rot about +y) and its pad's radius (m). */
-export interface Landmark { id: number; kind: 'tower' | 'view' | 'cabin' | 'shack' | 'sawmill' | 'mine' | 'meteorite' | 'falls' | 'meadow' | 'camp' | 'oasis' | 'aqueduct' | 'arch' | 'spires' | 'gorge' | 'ksar' | 'dunes'; name: string; x: number; z: number; y: number; rot: number; r: number }
+export interface Landmark { id: number; kind: 'tower' | 'view' | 'cabin' | 'shack' | 'sawmill' | 'mine' | 'meteorite' | 'falls' | 'meadow' | 'camp' | 'oasis' | 'aqueduct' | 'arch' | 'spires' | 'gorge' | 'ksar' | 'dunes' | 'slickrock'; name: string; x: number; z: number; y: number; rot: number; r: number }
 /** A bridge: deck ends (x0, z0) → (x1, z1), the deck's top there y0 → y1, width w; a ROPE bridge (the desert's gorge)
  *  hangs `sag` m below that line at its middle (a parabola). */
 export interface Bridge { x0: number; z0: number; x1: number; z1: number; y: number; y0: number; y1: number; w: number; kind?: 'rope'; sag?: number }

@@ -492,6 +492,17 @@ mist ~4× thinner at its thickest (the road readable 30–40 m ahead); the bridg
 grain (they read near white). Cost (abgpu vs the commit before, 3 a side): −0.21 … +0.12 ms (desert plain / oasis,
 the valley's spawn; ULTRA / LOW) — the noise.
 
+**Smooth, and the Slickrock Field** (2026-11-04 — the user: "I can see lots of triangles instead of a smooth surface …
+even in the valley the rocky places are sharp; smoothness is important"; "where are the rocky places like in the
+images?"): BOTH worlds' terrain lost its low-poly facets (the smooth normal everywhere, no per-triangle tone), the rock's
+light wraps softer, the rock relief half as deep; the boulders' and the structures' normals smooth across all but
+their sharpest edges, no per-face tone; the slabs' lips rounded over ~3 m; no seam lines on the rock (a crackle). The
+SLICKROCK FIELD (`FIELD`, ~700 m by the ksar road below the escarpment; on the map): slab tables 3–21 m, winding sand
+channels, the road straight through it. Fixed: a 60 m spire stood on the plateau road east (spires now keep off the
+routes' lines); the A* climbed a slab stack table by table (stacks off-limits to it outside a route's own band; the
+tables' skirt kept off the routes) — every road within 0.5 m step, 18 % grade. Cost (abgpu vs the commit before):
+−0.29 … +0.09 ms.
+
 Next:
 1. **Stacked-block rock** — the biggest gap left (the heightfield's slabs read from the ground, but from the air they're
    thin contour-like rims: their bulging lips and undercuts need meshes): Blender meshes for the masses' walls (each bed a chunky slab with
