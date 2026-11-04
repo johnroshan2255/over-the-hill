@@ -30,6 +30,8 @@ export function cellSeed(a: number, b: number, salt: number): number {
 }
 
 export interface Inst { x: number; y: number; z: number; s: number; sy: number; rot: number; tilt: number; v: number; ax?: number; az?: number }
+/** The desert's stack library (Rocks.loadStacks): [kind][lod] meshes, real diameters, each kind's slabs' corners. */
+export interface StackSet { geos: GFX.BufferGeometry[][]; diam: number[]; hulls: Float32Array[][] }
 
 export class Rocks {
   readonly group = new GFX.Group()
@@ -56,6 +58,8 @@ export class Rocks {
   /** Every rock (the physics builds colliders for the ones near the car) and each shape's vertices (unit size). */
   readonly all: Inst[]
   readonly shapes: Float32Array[] = []
+  /** A STACK's slabs (by variant; unit size, like its shape): each its corners — the physics builds a hull per slab. */
+  readonly slabs: Float32Array[][] = []
   /** Where the rocks stand (R8 on the box's 2 m grid, 255 = covered): the grass keeps out of them. */
   readonly footprint: GFX.DataTexture
 
@@ -80,50 +84,55 @@ export class Rocks {
     }
   }
 
-  /** The desert's STACKED ROCK (2026-11-04 — desert_stacks.py → stacks.glb): [kind][lod], each normalised to unit
-   *  size across (its base at y −0.5, like the stones), its real diameter alongside. null if the file is missing. */
-  static async loadStacks(url: string): Promise<{ geos: GFX.BufferGeometry[][]; diam: number[] } | null> {
+  /** The desert's STACKED ROCK (desert_stacks.py → stacks.json + stacks.bin — 2026-11-04, round 2: angular slabs, not
+   *  pancakes): [kind][lod], each normalised to unit size across (its base at y −0.5, like the stones), with a per-slab
+   *  TONE attribute; its real diameter; and each SLAB's corners (unit size) — the physics' convex hull per slab. */
+  static async loadStacks(url: string): Promise<StackSet | null> {
     try {
-      const gltf = await new GFX.GLTFLoader().loadAsync(url)
-      const raw: GFX.BufferGeometry[][] = []
-      gltf.scene.traverse((o) => {
-        const m = /^stack_(\d+)_(\d+)/.exec(o.name), mesh = o as GFX.Mesh
-        if (!m || !mesh.isMesh) return
-        mesh.updateWorldMatrix(true, false)
-        ;(raw[+m[1]] ??= [])[+m[2]] = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld)
-      })
-      const geos: GFX.BufferGeometry[][] = [], diam: number[] = []
-      for (const l of raw) {
-        if (!l?.[0] || !l[1]) return null
-        const p = l[0].attributes.position.array as Float32Array
-        let r = 0, y0 = Infinity
-        for (let i = 0; i < p.length; i += 3) { r = Math.max(r, Math.hypot(p[i], p[i + 2])); y0 = Math.min(y0, p[i + 1]) }
-        const d = 2 * r, k = 1 / d
+      const [meta, bin] = await Promise.all([
+        fetch(url).then((r) => r.json()) as Promise<{ kinds: { radius: number; lods: number[][]; slabs: number[][] }[] }>,
+        fetch(url.replace(/\.json$/, '.bin')).then((r) => r.arrayBuffer()),
+      ])
+      const geos: GFX.BufferGeometry[][] = [], diam: number[] = [], hulls: Float32Array[][] = []
+      for (const k of meta.kinds) {
+        const d = 2 * k.radius, s = 1 / d
+        geos.push(k.lods.map(([po, nv, io, ni]) => {
+          const g = new GFX.BufferGeometry()
+          g.setAttribute('position', new GFX.BufferAttribute(new Float32Array(bin, po, nv * 3).slice(), 3))
+          g.setAttribute('tone', new GFX.BufferAttribute(new Float32Array(bin, po + nv * 12, nv).slice(), 1))
+          g.setIndex(new GFX.BufferAttribute(new Uint32Array(bin, io, ni).slice(), 1))
+          // (the creases in METRES — the hash welds within 1 cm: at unit size a chamfer would weld into its side.
+          //  30°: a slab's corners, its chamfer and its top read as planes; a big slab's many corners round off)
+          const c = toCreasedNormals(g, Math.PI / 6)
+          return c.applyMatrix4(new GFX.Matrix4().makeScale(s, s, s)).applyMatrix4(new GFX.Matrix4().makeTranslation(0, -0.5, 0))
+        }))
         diam.push(d)
-        geos.push(l.map((g) => {
-          g.deleteAttribute('normal')
-          g.applyMatrix4(new GFX.Matrix4().makeScale(k, k, k)).applyMatrix4(new GFX.Matrix4().makeTranslation(0, -y0 * k - 0.5, 0))
-          return toCreasedNormals(g, Math.PI / 2.2)
+        hulls.push(k.slabs.map((p) => {
+          const a = new Float32Array(p)
+          for (let i = 0; i < a.length; i += 3) { a[i] *= s; a[i + 1] = a[i + 1] * s - 0.5; a[i + 2] *= s }
+          return a
         }))
       }
-      return { geos, diam }
+      return { geos, diam, hulls }
     } catch {
       return null
     }
   }
 
   constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, stones: GFX.BufferGeometry[][] | null = null,
-    stacks: { geos: GFX.BufferGeometry[][]; diam: number[] } | null = null) {
+    stacks: StackSet | null = null) {
     this.stackDiam = stacks?.diam ?? []
     this.reach = tier.rockReach
     this.near = tier.rockNear
-    const mat = new GFX.ShaderMaterial({
+    const mk = (stack: boolean) => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid } },
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...(stack ? { OTH_STACK: '' } : {}) },
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
+    const mat = mk(false)
+    const stackMat = stacks ? mk(true) : mat
     // (LOW — the phones: the desert's small rubble 40 % as thick; the big blocks, what fills a view, all kept)
     this.rubbleK = tier.name === 'low' ? 0.4 : 1
     // (each sculpted stone's foot and height, unit size: [lowest y, highest − lowest] — place() stands them on it)
@@ -166,9 +175,10 @@ export class Rocks {
     // the STACKS' meshes: their near and far shapes, after the stones and the round ones
     for (const [k, l] of (stacks?.geos ?? []).entries()) {
       const v = STACK0 + k, n = all.filter((r) => r.v === v).length
-      this.shapes[v] = l[1].attributes.position.array as Float32Array // (the physics' hull: the far shape's points)
+      this.shapes[v] = l[1].attributes.position.array as Float32Array // (a hull round the whole: the GPS's obstacles)
+      this.slabs[v] = stacks!.hulls[k] // (the physics: a hull per slab — the car drives on the slabs themselves)
       for (const [lod, geo] of l.entries()) {
-        const mesh = new GFX.InstancedMesh(geo, mat, Math.max(1, n))
+        const mesh = new GFX.InstancedMesh(geo, stackMat, Math.max(1, n))
         mesh.count = 0; mesh.frustumCulled = false
         mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
         ;(lod === 0 ? this.stackNear : this.stackFar)[k] = mesh
@@ -201,6 +211,79 @@ export class Rocks {
   }
 
   private key(i: number, j: number): number { return (i + 512) * 1024 + (j + 512) }
+
+  /** Each stack's slabs in the world (lazily, for solidTop): per slab its outline (the convex hull of its corners, x z
+   *  pairs, counter-clockwise), its underside and its top (m). */
+  private readonly slabCache = new Map<Inst, { P: Float32Array; bot: number; top: number }[]>()
+  private slabsOf(r: Inst): { P: Float32Array; bot: number; top: number }[] {
+    let l = this.slabCache.get(r)
+    if (l) return l
+    l = []
+    const m = this.matrixOf(r, new GFX.Matrix4()), v = new GFX.Vector3()
+    for (const src of this.slabs[r.v] ?? []) {
+      const pts: [number, number][] = []
+      let bot = Infinity, top = -Infinity
+      for (let i = 0; i < src.length; i += 3) {
+        v.set(src[i], src[i + 1], src[i + 2]).applyMatrix4(m)
+        pts.push([v.x, v.z]); bot = Math.min(bot, v.y); top = Math.max(top, v.y)
+      }
+      pts.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+      const cr = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+      const lo: number[][] = [], hi: number[][] = []
+      for (const q of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q) }
+      for (let i = pts.length - 1; i >= 0; i--) { const q = pts[i]; while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], q) <= 0) hi.pop(); hi.push(q) }
+      const H = lo.slice(0, -1).concat(hi.slice(0, -1))
+      l.push({ P: new Float32Array(H.flat()), bot, top })
+    }
+    this.slabCache.set(r, l)
+    return l
+  }
+
+  /** The top of the SOLID at (x, z) from height y0 up (2026-11-04 — a reset or a spawn at the terrain's height put the car
+   *  inside a slab where a stack stands on a slope): every slab whose outline holds (x, z), whose underside is within
+   *  `room` m over y and whose top is over y, lifts y to its top — again till none does. From the slabs' own outlines
+   *  (the physics' hulls), not a physics query: Rapier's queries miss colliders made since its last step. */
+  solidTop(x: number, z: number, y0: number, room = 1.8): number {
+    let y = y0
+    const near: Inst[] = []
+    for (const r of this.stackList) if ((r.x - x) ** 2 + (r.z - z) ** 2 < (r.s * 0.75) ** 2) near.push(r)
+    for (let pass = 0; pass < 64; pass++) {
+      let lifted = false
+      for (const r of near) for (const sl of this.slabsOf(r)) {
+        if (sl.top <= y + 0.01 || sl.bot > y + room) continue
+        const P = sl.P, n = P.length / 2
+        let inside = true
+        for (let a = 0, b = n - 1; a < n; b = a++) {
+          if ((P[a * 2] - P[b * 2]) * (z - P[b * 2 + 1]) - (P[a * 2 + 1] - P[b * 2 + 1]) * (x - P[b * 2]) < 0) { inside = false; break }
+        }
+        if (inside) { y = sl.top; lifted = true }
+      }
+      if (!lifted) break
+    }
+    return y
+  }
+
+  /** The STACKS as shadow casters (TerrainShadow.setOccluders): per slab [corner count, its top (m), its corners' x, z]
+   *  in the world — the slabs' own corners under each stack's matrix. */
+  occluders(): Float32Array {
+    const out: number[] = [], m = new GFX.Matrix4(), v = new GFX.Vector3()
+    for (const r of this.stackList) {
+      const slabs = this.slabs[r.v]
+      if (!slabs) continue
+      this.matrixOf(r, m)
+      for (const src of slabs) {
+        const k = src.length / 3, at = out.length
+        out.push(k, -Infinity)
+        let top = -Infinity
+        for (let i = 0; i < src.length; i += 3) {
+          v.set(src[i], src[i + 1], src[i + 2]).applyMatrix4(m)
+          out.push(v.x, v.z); top = Math.max(top, v.y)
+        }
+        out[at + 1] = top
+      }
+    }
+    return new Float32Array(out)
+  }
 
   /** Every rock (the GPS: the big ones are in an off-road leg's way — Nav.ts Obstacles). */
   each(f: (k: Inst) => void): void {
@@ -286,14 +369,14 @@ export class Rocks {
     }
     for (const L of map.meta.trails.lines) for (let i = 0; i < L.length; i += 3) {
       at(Math.round(L[i][0]), Math.round(L[i][1]), 3)
-      // (the desert, 2026-11-04 — "fuller": a drive between the rock gardens still opened wide — twice as many by the
-      //  tracks, now and then a few together)
-      if (rnd() > (map.desert ? 0.26 : 0.12)) continue
+      // (the desert: a few by the tracks — 2026-11-04, round 2: the open sand CLEAN, as in the user's reference frames;
+      //  the stones lie in piles at the walls' feet and in the river's bed, not sprinkled over every metre)
+      if (rnd() > (map.desert ? 0.07 : 0.12)) continue
       const [x0, z0] = L[i], side = rnd() < 0.5 ? -1 : 1, j = Math.min(L.length - 1, i + 1)
       const dx = L[j][0] - x0, dz = L[j][1] - z0, l = Math.hypot(dx, dz) || 1, off = map.meta.trails.hw + 3 + rnd() * 9
       const x = x0 - (dz / l) * off * side, z = z0 + (dx / l) * off * side
       if (dry(x, z)) add(x, z, 0.9 + rnd() * 2.4, 0.3)
-      if (map.desert && rnd() < 0.35) for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+      if (map.desert && rnd() < 0.2) for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
         const px = x + (rnd() - 0.5) * 6, pz = z + (rnd() - 0.5) * 6
         if (dry(px, pz) && map.trackDist(px, pz) > map.meta.trails.hw + 2.5) add(px, pz, 0.4 + rnd() * 1.2, 0.3)
       }
@@ -302,7 +385,7 @@ export class Rocks {
     for (let gz = -half; gz < half; gz += 70) {
       for (let gx = -half; gx < half; gx += 70) {
         at(gx, gz, 4)
-        if (rnd() > 0.22) continue
+        if (rnd() > (map.desert ? 0.03 : 0.22)) continue
         const x = gx + rnd() * 70, z = gz + rnd() * 70
         if (!dry(x, z)) continue
         add(x, z, 1.2 + rnd() * 2.6, 0.3)
@@ -325,11 +408,13 @@ export class Rocks {
           at(gx, gz, 6)
           const x = gx + rnd() * 20, z = gz + rnd() * 20
           if (!dry(x, z) || mk[0] > 0.5 || mk[3] > 0.25) continue // (dry() reads the mask into mk)
-          const f = sm(0.65 * vn(x, z, 520, 11) + 0.35 * vn(x, z, 160, 12), 0.42, 0.72)
+          // (2026-11-04, round 2: no open-sand fields — the clean sand of the reference frames; RUBBLE only where the
+          //  ground meets a wall, in piles)
+          const f = 0
           const h0 = map.height(x, z)
           const rise = Math.max(map.height(x + 24, z), map.height(x - 24, z), map.height(x, z + 24), map.height(x, z - 24)) - h0
-          const foot = sm(rise, 6, 18) * (1 - sm(slope(x, z), 0.25, 0.45))
-          if (rnd() > (0.04 + 0.5 * f + 0.8 * foot) * this.rubbleK) continue
+          const foot = sm(rise, 8, 20) * (1 - sm(slope(x, z), 0.25, 0.45))
+          if (foot < 0.25 || rnd() > 0.55 * foot * this.rubbleK) continue
           const n = 1 + Math.floor(rnd() * (1 + 6 * Math.max(f, foot)))
           for (let i = 0; i < n; i++) {
             const a = rnd() * Math.PI * 2, d = 2 + rnd() * 12
@@ -349,7 +434,7 @@ export class Rocks {
           const x = gx + rnd() * 60, z = gz + rnd() * 60
           if (!dry(x, z) || mk[0] > 0.5 || mk[3] > 0.15 || mk[2] > 0.3) continue
           const f = sm(0.65 * vn(x, z, 520, 11) + 0.35 * vn(x, z, 160, 12), 0.42, 0.72)
-          if (rnd() > 0.25 + 0.55 * f) continue
+          if (rnd() > 0.03 + 0.06 * f) continue // (a few: the slab stacks fill the open ground now — 2026-11-04, round 2)
           const n = 1 + Math.floor(rnd() * 3.6)
           for (let i = 0; i < n; i++) {
             const a = rnd() * Math.PI * 2, d = i === 0 ? 0 : 5 + rnd() * 8
@@ -376,12 +461,27 @@ export class Rocks {
     }
     // the desert's STACKED ROCK (meta.stacks — desert.py): each at its own scale and turn, its base on the lowest
     // ground under it (a little sunk: never floating)
-    for (const [x, z, sc, rot, k] of map.meta.stacks ?? []) {
+    // (?skyline=0: without the stacks past the box — the cost A/B)
+    const noSky = new URLSearchParams(location.search).get('skyline') === '0'
+    for (const [x, z, sc, rot, k, foot, vs] of map.meta.stacks ?? []) {
       const D = (this.stackDiam[k] ?? 0) * sc
       if (!D) continue
-      let lo = map.height(x, z)
-      for (let a = 0; a < 8; a++) lo = Math.min(lo, map.height(x + Math.cos(a * 0.785) * D * 0.3, z + Math.sin(a * 0.785) * D * 0.3))
-      const inst: Inst = { x, y: lo - 0.4 + 0.5 * D, z, s: D, sy: D, rot, tilt: 0, v: STACK0 + k, ax: 1, az: 1 }
+      const skyI = Math.abs(x) > map.half || Math.abs(z) > map.half
+      // (LOW — the phones: half the skyline)
+      if (skyI && (noSky || (this.rubbleK < 1 && (Math.round(x) + Math.round(z)) % 2 !== 0))) continue
+      // (two rings of 12 — a table on a dune's crest hung over its slip face when only 8 points at 0.3 D were read)
+      // (its foot: desert.py's (meta's 6th value — fixed before it filled the gaps under the slabs, which would lift
+      //  this reckoning), else the lowest ground under it — two rings of 12: a table on a dune's crest hung over its
+      //  slip face when only 8 points at 0.3 D were read)
+      let base = foot
+      if (base === undefined || base === null) {
+        let lo = map.height(x, z)
+        for (const f of [0.18, 0.32, 0.44]) for (let a = 0; a < 12; a++) lo = Math.min(lo, map.height(x + Math.cos(a * 0.5236) * D * f, z + Math.sin(a * 0.5236) * D * f))
+        base = lo - 0.4
+      }
+      // (vs: a stack fitted to a place stretched up — the escarpment's risers, desert.py)
+      const sy = D * (vs ?? 1)
+      const inst: Inst = { x, y: base + 0.5 * sy, z, s: D, sy, rot, tilt: 0, v: STACK0 + k, ax: 1, az: 1 }
       out.push(inst); this.stackList.push(inst)
     }
     return out
@@ -466,10 +566,14 @@ export class Rocks {
     const sph = new GFX.Sphere()
     for (const r of this.stackList) {
       const dx = r.x - cx, dz = r.z - cz, d2 = dx * dx + dz * dz
-      if (d2 > STACK_REACH * STACK_REACH) continue
-      sph.center.set(r.x, r.y + r.sy * 0.2, r.z); sph.radius = r.s * 0.9
+      // (the SKYLINE's stacks — out past the box, desert.py — stand 2–4 km off: drawn to 5.2 km, always their far shape;
+      //  the box's to STACK_REACH)
+      const sky = Math.abs(r.x) > this.map.half || Math.abs(r.z) > this.map.half
+      const reach = sky ? 5200 : STACK_REACH
+      if (d2 > reach * reach) continue
+      sph.center.set(r.x, r.y + r.sy * 0.2, r.z); sph.radius = 0.9 * Math.max(r.s, r.sy) // (a stretched one — desert.py's fitted walls — taller than it is wide)
       if (!this.frustum.intersectsSphere(sph)) continue
-      const k = r.v - STACK0, mesh = r.sy * r.sy < 0.08 * 0.08 * d2 ? this.stackFar[k] : this.stackNear[k]
+      const k = r.v - STACK0, mesh = sky || r.sy * r.sy < 0.08 * 0.08 * d2 ? this.stackFar[k] : this.stackNear[k]
       if (!mesh) continue
       this.q.setFromEuler(this.e.set(0, r.rot, 0))
       this.m.compose(this.p.set(r.x, r.y, r.z), this.q, this.sc.set(r.s, r.sy, r.s))
@@ -541,11 +645,20 @@ ${ATMOS_GLSL}
 out vec3 vWorld;
 out vec3 vN;
 out float vUp;
+#ifdef OTH_STACK
+in float tone;
+out float vTone;
+out float vUpM;
+#endif
 void main() {
   vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0);
   vWorld = w.xyz;
   vN = normalize(mat3(modelMatrix * instanceMatrix) * normal);
   vUp = position.y + 0.5; // 0 at the base … 1 on top
+#ifdef OTH_STACK
+  vTone = tone;
+  vUpM = vUp * length(instanceMatrix[1].xyz); // (metres above the stack's foot)
+#endif
   gl_Position = projectionMatrix * viewMatrix * w;
 }
 `
@@ -559,8 +672,16 @@ ${SHADOW_GLSL}
 in vec3 vWorld;
 in vec3 vN;
 in float vUp;
+#ifdef OTH_STACK
+in float vTone;
+in float vUpM;
+#endif
 #ifdef OTH_DESERT
 const vec3 STONE = vec3(0.5, 0.165, 0.09); // (the sandstone: paint.ts's STONE — keep in step)
+// (the stacks' sandstone: paint.ts's SAND × ≈ (0.86, 0.68, 0.7) — the reference frames' rock / sand ratio, linear)
+const vec3 STACK_A = vec3(0.4, 0.168, 0.098);
+const vec3 STACK_B = vec3(0.47, 0.205, 0.118);
+const vec3 STACK_SAND = vec3(0.5, 0.28, 0.155);
 #else
 const vec3 STONE = vec3(0.2, 0.205, 0.23);
 #endif
@@ -574,15 +695,38 @@ void main() {
 #ifdef OTH_ROCK_RELIEF
   paintK = 1.0 - reliefShow(max(length(dFdx(vWorld)), length(dFdy(vWorld))));
 #endif
+#ifdef OTH_STACK
+  // THE SLAB STACKS (2026-11-04, round 2 — the user: "like pancakes stacked"): the sand's own family, a little deeper
+  // and redder (the user's reference frames: rock in sun ≈ sRGB 222 152 120 against sand 238 180 140 — the rock read by
+  // its light and shade, not by a darker paint), each slab its own tone, the flat tops dusted with sand, the first metre
+  // sandy where it's half buried. No darkening up a stack's height: a 40 m massif is one rock top to bottom
+  vec3 albedo = mix(STACK_A, STACK_B, vTone);
+  albedo = mix(albedo, STACK_SAND, smoothstep(0.8, 0.97, N.y) * 0.32);
+  albedo = mix(albedo, STACK_SAND, (1.0 - smoothstep(0.1, 0.7, vUpM)) * 0.4);
+  float ao = mix(0.78, 1.0, smoothstep(0.0, 1.2, vUpM));
+#else
   vec3 albedo = STONE * mix(0.72, 1.0, smoothstep(0.0, 0.45, vUp)) * mix(0.86, 1.1, smoothstep(0.2, 0.9, N.y)); // (no per-face tone: smooth; a slab's top lighter than its side)
+  float ao = mix(0.6, 1.0, smoothstep(0.0, 0.5, vUp));
+#endif
   // HIGH / ULTRA on PCs: the crumpled 3D relief over every face (the light only: the colour above is the face's own)
   float cav = 1.0;
 #ifdef OTH_ROCK_RELIEF
+#ifdef OTH_STACK
+  N = rockRelief(vWorld, N, 0.45, dFdx(vWorld), dFdy(vWorld), cav); // (the slabs' planes stay planes: a faint grain)
+#else
   N = rockRelief(vWorld, N, 1.0, dFdx(vWorld), dFdy(vWorld), cav);
 #endif
+#endif
+#ifdef OTH_STACK
+  // (the stacks are in the shadow bake — TerrainShadow.setOccluders: a face reads the shade a little out in front of it
+  //  — its own slab's top would shade its side — the top its own cell)
+  vec2 outN = vN.xz / max(length(vN.xz), 1e-3);
+  float sun = sunVisibility(vWorld.xz + outN * 2.5 * smoothstep(0.2, 0.6, 1.0 - abs(vN.y)));
+#else
   float sun = sunVisibility(vWorld.xz);
-  vec3 c = shade(albedo, N, V, 0.75, 0.04, mix(0.6, 1.0, smoothstep(0.0, 0.5, vUp)) * cav, sun, 0.05);
-  c += rockFill(albedo, N) * mix(0.6, 1.0, smoothstep(0.0, 0.5, vUp));
+#endif
+  vec3 c = shade(albedo, N, V, 0.75, 0.04, ao * cav, sun, 0.05);
+  c += rockFill(albedo, N) * ao;
   c += headlight(albedo, N, vWorld);
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
   #include <tonemapping_fragment>

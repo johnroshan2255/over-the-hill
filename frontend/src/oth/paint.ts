@@ -99,7 +99,7 @@ float trackMask(vec2 xz, float trail, float hw) { return 1.0 - smoothstep(hw - 0
 // foot = the pixel's footprint (m; 0 in the vertex shaders) — fades the small marks out before they'd shimmer.
 // rockNear / screeNear: the same fields read EARLIER — already 1 where the rock / scree starts, rising over the few
 // metres before it (the grass shortens toward them)
-struct Ground { vec3 col; float rock; float forest; float snow; float bed; float scree; float trail; float rockNear; float screeNear; float loose; float ripK; };
+struct Ground { vec3 col; float rock; float forest; float snow; float bed; float scree; float trail; float rockNear; float screeNear; float loose; float ripK; float lawn; };
 // trail = distance (m) to the nearest dirt track's centre line, hw its half width
 // far = 0 within the grass's reach … 1 beyond it: the shrub dots are a far-hillside breakup only (near, a bush is a
 // real bush, not a disc painted on the ground)
@@ -118,9 +118,11 @@ const vec3 SAND        = vec3(0.5, 0.28, 0.155);
 const vec3 SAND_DEEP   = vec3(0.45, 0.24, 0.13);
 const vec3 SAND_PALE   = vec3(0.55, 0.315, 0.18);
 // (coral: redder than the sand, so rock and sand read apart — 2026-11-04)
-const vec3 STONE       = vec3(0.5, 0.165, 0.09);
-const vec3 STONE_PALE  = vec3(0.58, 0.21, 0.115);
-const vec3 STONE_DEEP  = vec3(0.4, 0.125, 0.075);
+// (2026-11-04, round 2: the sand's own family, as the stacks' (Rocks.ts STACK_A / B) — the reference frames' rock reads
+//  by its light and shade, not a redder paint)
+const vec3 STONE       = vec3(0.44, 0.19, 0.11);
+const vec3 STONE_PALE  = vec3(0.5, 0.23, 0.135);
+const vec3 STONE_DEEP  = vec3(0.37, 0.155, 0.09);
 const vec3 DAMP        = vec3(0.3, 0.17, 0.1);
 const vec3 OASIS_FLOOR = vec3(0.1, 0.16, 0.045);
 const vec3 TRACK_SAND  = vec3(0.53, 0.3, 0.17);
@@ -170,7 +172,7 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   vec3 col = mix(grav, sandC, gs);
   // damp sand toward the water, the oasis's olive floor under its palms and scrub
   float wet = min(m.b / 0.85, 1.0);
-  col = mix(col, DAMP * (0.9 + 0.2 * d6), smoothstep(0.3, 0.85, wet) * 0.7);
+  col = mix(col, DAMP * (0.9 + 0.2 * d6), smoothstep(0.3, 0.85, wet) * 0.35); // (round 2: pale beaches — the reference frames' lagoon shore is sand)
   g.forest = smoothstep(0.25, 0.75, m.a + (p.mid.b - 0.5) * 0.3);
   // THE OASIS FLOOR GREEN (2026-11-04 — the user: "in the oasis we grow grass but the terrain colour is red; it must be
   //  green like in the valley, with a proper transition"): the valley's own green field (grassPaint) where the growth
@@ -179,6 +181,12 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   //  valley's take theirs
   float bank = smoothstep(0.45, 0.8, m.b / 0.85);
   float green = clamp(max(smoothstep(0.03, 0.5, m.a + (d25 - 0.5) * 0.14 * (1.0 - smoothstep(0.3, 0.6, m.a)) + (d6 - 0.5) * 0.08), bank * 0.95), 0.0, 1.0);
+  // (2026-11-04, round 2 — the user's reference frames: the oasis is SAND with green in PATCHES — clumps of grass and
+  //  bushes under the palms, sand beaches to the water — not a lawn: the green only where a slow blotchy noise says,
+  //  a little more of it right by the water)
+  float clump = smoothstep(0.5, 0.64, 0.55 * nA.b + 0.45 * p.mid.r + 0.12 * bank + (d6 - 0.5) * 0.1);
+  green *= clump;
+  g.lawn = green;
   vec3 lawn = grassPaint(mix(0.3, 0.05, bank), p);
   vec3 dryEdge = mix(vec3(0.3, 0.22, 0.1), vec3(0.2, 0.19, 0.08), smoothstep(0.2, 0.5, green));
   col = mix(col, mix(dryEdge, lawn, smoothstep(0.3, 0.8, green)), smoothstep(0.0, 0.45, green));
@@ -220,7 +228,7 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
 #else
 Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
   Ground g;
-  g.loose = 0.0; g.ripK = 0.5;
+  g.loose = 0.0; g.ripK = 0.5; g.lawn = 1.0;
   vec3 col = grassPaint(m.g, p);
   float near = 1.0 - smoothstep(0.35, 1.2, foot); // (small marks only while they're bigger than a pixel or two)
   // painterly mottling: soft light / dark patches a few metres across, a faint grain

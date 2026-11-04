@@ -161,6 +161,19 @@ abstract class VehicleBase {
       vc.setWheelSideFrictionStiffness(i, spec.sideStiffness)
     })
     this.wheels = spec.wheels.map(() => ({ lift: 0, spin: 0, steer: 0, contact: false }))
+    // TYRE GUARDS (2026-11-04 — the user: "the tyres get stuck inside" the desert's rock): a wheel is a ray, the body's
+    // hulls leave its arch open, so a slab's edge could come into the arch until the wheel's ray started INSIDE the
+    // rock (it reads the ground there as touching: full compression, the car pinned). A massless capsule along each
+    // axle, 0.8 of the tyre's radius round its hub at rest — clear of a flat top by a fifth of the radius — meets only
+    // the slab stacks (Groups.Slab): it pushes off a face, and rolls up an edge as a round tyre would.
+    const q = { x: 0, y: 0, z: Math.SQRT1_2, w: Math.SQRT1_2 } // (Rapier's capsule is along y: turned onto x, the axle)
+    for (const w of spec.wheels) {
+      physics.world.createCollider(
+        R.ColliderDesc.capsule(Math.max(0.04, w.radius * 0.28), w.radius * 0.8).setTranslation(w.hub[0], w.hub[1], w.hub[2]).setRotation(q)
+          .setDensity(0).setFriction(0.3).setRestitution(0).setCollisionGroups(group(Groups.Vehicle, Groups.Slab)),
+        this.body,
+      )
+    }
   }
 
   /** Mass, centre of mass and inertia of the spec's boxes scaled to `total` kg, on the body (the shape colliders

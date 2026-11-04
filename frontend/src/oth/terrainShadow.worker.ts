@@ -78,6 +78,38 @@ function bake(g: { n: number; step: number; origin: number }, dx: number, dz: nu
   return out
 }
 
+/** Raise the grid's heights to each slab's top inside its outline (the convex hull of its corners). data: per slab
+ *  [n, top, x0, z0, x1, z1 …]. */
+function stampOccluders(g: Grid, data: Float32Array): void {
+  const { n, step, origin, h } = g
+  for (let o = 0; o < data.length;) {
+    const k = data[o], top = data[o + 1], P: [number, number][] = []
+    for (let i = 0; i < k; i++) P.push([data[o + 2 + 2 * i], data[o + 3 + 2 * i]])
+    o += 2 + 2 * k
+    // its convex hull (monotone chain), counter-clockwise
+    P.sort((a, b) => a[0] - b[0] || a[1] - b[1])
+    const cr = (a: number[], b: number[], c: number[]) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    const lo: number[][] = [], hi: number[][] = []
+    for (const p of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p) }
+    for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p) }
+    const Hh = lo.slice(0, -1).concat(hi.slice(0, -1))
+    if (Hh.length < 3) continue
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity
+    for (const [x, z] of Hh) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z) }
+    const i0 = Math.max(0, Math.ceil((x0 - origin) / step)), i1 = Math.min(n - 1, Math.floor((x1 - origin) / step))
+    const j0 = Math.max(0, Math.ceil((z0 - origin) / step)), j1 = Math.min(n - 1, Math.floor((z1 - origin) / step))
+    for (let j = j0; j <= j1; j++) {
+      const z = origin + j * step
+      for (let i = i0; i <= i1; i++) {
+        const x = origin + i * step
+        let inside = true
+        for (let a = 0, b = Hh.length - 1; a < Hh.length; b = a++) if (cr(Hh[b], Hh[a], [x, z]) < 0) { inside = false; break }
+        if (inside && h[j * n + i] < top) h[j * n + i] = top
+      }
+    }
+  }
+}
+
 /** Every world's ground the main thread has sent (the next one arrives while this one plays: the crossing), by key. */
 const grounds = new Map<number, { inner: Grid; far: Grid }>()
 
@@ -89,6 +121,12 @@ self.onmessage = (e: MessageEvent) => {
   }
   if (m.type === 'use') {
     ;({ inner, far } = grounds.get(m.key)!)
+    return
+  }
+  if (m.type === 'occl') {
+    // (the desert's slab stacks: each slab's convex outline raised to its top in this world's 2 m heights)
+    const g = grounds.get(m.key)
+    if (g) stampOccluders(g.inner, m.data as Float32Array)
     return
   }
   if (m.type === 'drop') {

@@ -524,6 +524,68 @@ Next:
 4. A ₹15k phone on LOW.
 ---
 
+## 15. Slabs, not pancakes — the rock is the ground (2026-11-04, round 2)
+
+The user: *"the desert map looks like pancakes stacked … I want a place like `frontend/refer`"* (their 13 gameplay
+frames, git-ignored), then *"match all those in the reference — don't stop until it's finished"*. Matched in KIND (the
+rock's form, colour and light, how sand and rock meet, the oasis, the dunes, the skyline) — the map and every model are
+our own. What was different, and what changed:
+
+| the reference | ours before | now |
+|---|---|---|
+| chunky ANGULAR slabs: a polygon outline, steep sides, a chamfered top edge, a flat top | round pillows with a rolled lip | `desert_stacks.py` rewritten (plain numpy — `python3 scripts/oth/desert_stacks.py`; writes `stacks.bin` + `stacks.json`, no glTF): each slab a star-shaped polygon of 6–18 corners (a notch now and then), a little battered and undercut, chamfered; creased normals at 30° (planes, not facets) |
+| thickness varies; layers off-centre, overhangs | every slab the same, centred, a little smaller | thin plates and thick beds; offsets; overhangs; hoodoo caps; towers that wobble up; a WALL's beds broken into blocks at joints and set back into the slope |
+| rock and sand the same family; read by light and shade | coral rock, a dark brown band under every lip | the stacks' own material (`OTH_STACK`): sand × (0.86, 0.68, 0.7), each slab its own tone, sanded tops and foot; the terrain's STONE the same; no darkening up a stack |
+| the rock IS the ground: rocky hills, terraces you crawl up | small piles on a flat plain | new kinds: MASSIF (rocky hills 100–150 m), TERRACE (thin slabs stepping back one way, sloped 35–45° rims — `crawltest`: 7 of 10 runs reached the top), WALL; the ten MESAS are massifs, the 48 SPIRES are towers and hoodoos on their rubble cones (the heightfield keeps a low rise / the cone) |
+| cliffs of the same slabs | the heightfield's smooth walls, streaked, melted from the air | 639 WALL stacks along every steep face (turned to the contour, +z uphill, sized to the face, a second row up a tall one, a smaller one where a road's rim or the slot leaves less room, pushed back behind a ramp's cut); bare walls lit by their facing (no stair of 4 m shadow texels), the relief ¼ as deep on them |
+| shadows under every ledge, on the sand | stacks cast none | the stacks are STAMPED into the shadow worker's copy of the heights (`TerrainShadow.setOccluders`, `Rocks.occluders`): the same baked images, no shadow pass |
+| clean open sand; boulders in piles at the walls' feet | pebbles sprinkled everywhere | `Rocks.ts`: no open-sand fields, rubble only at walls' feet, a few by the tracks, few big blocks |
+| dunes with a sharp crest; rock shelves through the sand | round humps; stacks on the slip faces | `desert.py` `train()`: a windward slope still climbing at the brink, a slip face dropping off it; no walls or hills in the erg — ROCK SHELVES (big low tables, half buried) instead |
+| the oasis: sand, palms in loose clumps, green in patches, a pale milky lagoon in a bowl of rock | a lawn, rows of palms, a darker lagoon, smooth banks | `paint.ts` green only in blotchy patches (`g.lawn` — the grass follows it), pale beaches; palms gathered by a 52 m noise; `Water.ts` G_SHALLOW / G_DEEP lighter; slab walls allowed round the lagoon (only its water and the aqueduct's line kept clear) |
+| a skyline of pinnacles and mesas | smooth humps in the haze | 240 big stacks 2.2–4.2 km out (the far LOD, drawn to 5.2 km; half of them on LOW; `?skyline=0` for an A/B) |
+
+Physics: a convex collider PER SLAB (`Physics.ts`; a hull round a whole stack was an invisible cone over its benches),
+built within 160 m + the stack's half size. Every stack checked against every road by its low slabs' real outlines
+(`desert.py`: smaller ×0.85 up to three times, else dropped — 0 dropped, 11 made smaller); an outside check of
+meta.json against the road lines: none over a road. Roads: `trail.bin` changed (the dunes' new shape moved the erg's
+routes); `climbtest` drove the escarpment road, the pass and the gate into the valley clean.
+
+**Cost** (`abgpu`, the commit before vs this, 1080p uncapped, WebGPU, 3 interleaved loads a side; the noise ±0.1–0.15):
+plain ULTRA +0.01 ms, LOW +0.12; oasis ULTRA +0.01, LOW −0.01 — the angular slabs are ~⅓ the triangles of the pillows,
+spent again on more rock. The skyline alone (`?skyline=0` vs on, 4 a side): oasis ULTRA +0.2, plain LOW +0.1.
+WebGPU transpiles clean (wgslcheck, desert, ULTRA + LOW); `npm test` passes; the chart re-baked; `desert_rocks.py`
+re-run.
+
+Regenerate: `python3 scripts/oth/desert_stacks.py` (if the kinds change), then `desert.py` (it reads stacks.json), then
+`desert_rocks.py`, then `chartbake.mjs desert`.
+
+Next:
+1. **A ₹15k phone on LOW** in the canyon (639 walls + the hills: ~1,600 stacks, the far LOD past ~8 % of the view).
+2. The faces no slab can stand on: the escarpment's (its ledge road crosses it), the gorge's by the rope bridge, the
+   arch's slot — slabs of their own shape there, or the road's cut faces as slab risers in the heightfield.
+3. ~~A flat raised "block" in high views~~ — not a drawing glitch (that was a misreading: the aerial view's yaw π looks
+   SOUTH): the ESCARPMENT's bastion, the ledge road's shelves with smooth risers and flat ends. Faced in slabs — below.
+4. The aqueduct reads as a fence on the canyon's rim; the stacks' undercuts could take a darker crease (AO) like the
+   reference's crevices.
+
+**Colliders, the camera, the bastion** (2026-11-04, the same day — the user: *"collider issues in some places, the
+tyres get stuck inside and the fps drops"*; and the "block" seen from the air). `scripts/harness/rockdrive.mjs` (the
+car driven at full throttle into walls, massifs, terraces and tables; per site the physics step, the collider
+streaming, the frame, the time stuck, a wheel's ray starting inside rock) found, and now:
+
+| what | cause | fix | before → after |
+|---|---|---|---|
+| fps drops by the rock | the car's EXACT body (a trimesh shell) met every slab's hull: costly contacts, and a slab's edge slipped into the hollow shell was pushed on from inside | slabs are members of StaticMesh too (Physics.ts): the shell leaves them to the car's convex hulls, as the ground and the formations | physics step at a wall 42 ms mean / 124 worst → 0.3–0.6 / ≤ 3 ms; frames p99 ~20 ms |
+| a tyre in the rock | a wheel is a ray, the body's hulls leave its arch open: a slab's edge came in until the ray started inside | TYRE GUARDS (VehicleSim): a massless capsule round each hub, 0.8 of the tyre's radius, meeting only `Groups.Slab` | — |
+| the car pinned in a slot | a stack on a slope: the ground inside its footprint a little under a slab's underside | `desert.py`: under every slab the sand rises to it where the gap is 0–3.5 m (≥ 3.5 m a car fits: kept; never on a road); each stack's foot fixed in meta (6th value) before that | 264k cells (2 m) raised |
+| set inside the rock | a reset / a camp's spawn at the terrain's height | `Physics.surface` → `Rocks.solidTop`: the top of the slabs over the ground (a gap under another < 2.8 m: over it too), from the slabs' outlines — Rapier's queries miss colliders made since its last step | wheels in rock 7–20 s a run → 0 |
+| the camera in the rock | the chase camera had only the ground | a ray from the car's middle out to it (StaticMesh, solid false): it stops in front of the rock; rock close behind — it rises over the car | — |
+| the bastion's smooth risers, flat ends | the ledge road's face is the heightfield | WALL stacks fitted to each riser (front at the lower leg's inner edge, back short of the upper leg, top flush with it — a vertical stretch, meta's 7th value), above the top leg and under leg 0; a 'down' fallback in the walls' pass for a face with a road along its top | 69 slab walls; climbtest: the escarpment, the pass, the gate into the valley clean |
+
+`npm test` passes, WebGPU transpiles clean, the chart and `desert_rocks.py` re-run.
+
+---
+
 ## 11. Starting it with Claude Code at home
 
 > Read `docs/DESERT_MATCH.md`. Rebuild the reference set if it is missing (§3; real deserts) and the 13 pairs (§4), render round 0 (§5) and

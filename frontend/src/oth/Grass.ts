@@ -445,7 +445,7 @@ void main() {
   grow *= (1.0 - smoothstep(0.3, 0.6, onTrack)); // (off the track)
 #ifdef OTH_DESERT
   // THE DESERT: grass only in the oasis (its growth, the damp banks) — the open sand stays bare
-  float oasis = max(smoothstep(0.15, 0.5, m.a), smoothstep(0.45, 0.8, m.b / 0.85));
+  float oasis = max(smoothstep(0.15, 0.5, m.a), smoothstep(0.45, 0.8, m.b / 0.85)) * smoothstep(0.15, 0.5, g.lawn); // (in its green patches only)
   grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * oasis * (1.0 - smoothstep(0.3, 0.6, onTrack));
 #endif
   vec2 mudB = textureLod(uMud, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0).rg;

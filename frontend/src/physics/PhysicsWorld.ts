@@ -21,6 +21,9 @@ export const Groups = {
   StaticMesh: 0x0080,
   /** The road ribbon (a trimesh over the heightfield, also a member of Terrain). */
   TerrainMesh: 0x0100,
+  /** The desert's SLAB STACKS (a convex hull per slab, also members of Static and StaticMesh): the only thing a car's
+   *  TYRE GUARDS meet (VehicleSim) — a tyre pushes off a slab's face instead of its ray starting inside the rock. */
+  Slab: 0x0200,
 } as const
 export const group = (member: number, filter: number) => ((member & 0xffff) << 16) | (filter & 0xffff)
 /** What a static trimesh meets: everything but a car's body mesh (see Groups.VehicleMesh). */

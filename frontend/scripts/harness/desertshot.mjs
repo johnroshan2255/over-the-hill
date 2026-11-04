@@ -10,7 +10,7 @@ const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 300)) })
 const hour = Number(process.env.HOUR || 11)
-await p.goto(`http://localhost:${process.env.PORT || 5200}/?world=desert&tier=${tier}&hour=${hour}&drive=0&dpr=fixed&time=0&weather=clear&sound=0&save=0`, { waitUntil: 'load' })
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?world=desert${process.env.Q ? "&" + process.env.Q : ""}&tier=${tier}&hour=${hour}&drive=0&dpr=fixed&time=0&weather=clear&sound=0&save=0`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready, { timeout: 180000, polling: 200 }).catch((e) => errs.push('not ready: ' + e.message))
 // (no HUD in a scored render: only the canvas and the vignette — a CSS gradient over it, part of the picture)
 await p.addStyleTag({ content: 'body > :not(canvas):not([style*="radial-gradient"]) { display: none !important; }' })
@@ -21,7 +21,7 @@ const shots = JSON.parse(process.env.VIEWS || 'null')?.map(([n, ...v]) => [n, v]
   ['oasis_up_canyon', [-200, 330, 6, Math.PI / 2 + 0.25, 0.02]],     // from the lagoon looking west up the canyon
   ['oasis_down', [-900, 120, 30, -Math.PI / 2 + 0.1, -0.1]],          // from the head looking east over the oasis
   ['escarpment_face', [600, 1250, 2, Math.PI, 0.12]],                 // the escarpment's face from the plain (no mist)
-  ['spires', [-600, -1000, 4, Math.PI / 2 + 0.6, 0.05]],              // the needle forest
+  ['spires', [-633.5, -1154.6, 4, 2.354, 0.05]],                      // the needle forest (2026-11-04: the old spot is inside a stack now)
   ['arch_slot', [1166, -540, 1.7, -0.09, 0.22]],                      // up the slot to the arch
   ['dunes', [-1150, 1150, 25, 1.2, -0.12]],                           // over the erg
   ['gorge', [1420, 120, 40, Math.PI, -0.35]],                          // over the gorge

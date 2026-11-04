@@ -125,7 +125,7 @@ export class Vehicle {
     this.sim.surface = (x, z, out) => this.surfaceAt(x, z, out)
     this.buildMeshes(truck, this.paint ?? OTH_PAINT[def.id] ?? def.stock.paint)
     this.physics.follow(at.x, at.z)
-    this.sim.place(at.x, this.map.height(at.x, at.z) + 0.6, at.z, at.heading)
+    this.sim.place(at.x, this.physics.surface(at.x, at.z, this.map.height(at.x, at.z)) + 0.6, at.z, at.heading)
     this.readPose(this.curP, this.curQ)
     this.prevP.copy(this.curP); this.prevQ.copy(this.curQ)
     this.loading = false
@@ -146,7 +146,8 @@ export class Vehicle {
     if (!this.sim) return
     const t = this.sim.body.translation()
     this.physics.follow(t.x, t.z)
-    this.sim.place(t.x, this.map.height(t.x, t.z) + 0.8, t.z, this.sim.heading)
+    // (on what's under it — a slab's top it rolled on, else the ground; never inside the rock)
+    this.sim.place(t.x, this.physics.surface(t.x, t.z, Math.max(this.map.height(t.x, t.z), t.y - 1.5)) + 0.8, t.z, this.sim.heading)
   }
 
   /** How wet the land is (main.ts: the weather's uWet): the tyres lose grip (each surface's own `wet`), the tracks

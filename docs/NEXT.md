@@ -117,6 +117,13 @@ hot pink sunsets, a purple starry night. Measured (day shots): whole frame ≈ s
 sand ≈ 213 173 128; rock in sun ≈ 213 140 111, in shade ≈ 181 116 99; warm pixels 55–68 % of a frame. Compare
 whole-frame colour stats against theirs before tweaking objects (`scripts/oth/compare.py` scores pairs).
 
+## Done — round 4: SLABS, NOT PANCAKES (2026-11-04)
+
+The user: the stacks "look like pancakes"; match their reference frames (`frontend/refer/`). The desert's rock is
+angular stacked slabs now — rocky hills, terraces you crawl up, cliffs of slab walls on every steep face, the mesas
+and spires rebuilt as stacks, shadows from the stacks in the baked shadow images, clean sand, sharp dunes with rock
+shelves, a patchy oasis in a bowl of rock, a skyline of stacks. Details, cost and what's left: `docs/DESERT_MATCH.md` §15.
+
 ## Next, in order
 
 1. **Look**: the sky still short of their cyan-white (the light clouds grey it; try fewer clouds in the desert's clear
@@ -134,6 +141,8 @@ whole-frame colour stats against theirs before tweaking objects (`scripts/oth/co
 ## Harness
 
 `frontend/scripts/harness/` (headless Chrome via puppeteer-core — Windows and macOS paths; the dev server on :5200):
+`rockdrive.mjs [tier]` (the car driven into the desert's slab stacks: the physics step, the colliders, frames, time
+stuck, a wheel's ray in rock — `SITES='[[x0,z0,x1,z1]]'`, `SHOTS=<dir>`),
 `climbtest.mjs` (a STEERING BOT on the crossing's roads: `START=world:x,z DIR=out|in SECONDS=` — pure pursuit, slows
 for hairpins, reports falls / flips / stalls), `crosstest.mjs` (the car driven through the gate and back: the swap, the
 longest frames, GPU memory), `cliffshot.mjs <dir> [tier]` (still views: `WORLD=`, `VIEWS='[[name,x,z,h,yaw,pitch,hour]]'`,

@@ -16,6 +16,7 @@ import { MapData } from './MapData'
 import { MapView } from './MapView'
 import { Guide, Obstacles } from './Nav'
 import { OthPhysics } from './Physics'
+import { group, Groups } from '../physics/PhysicsWorld'
 import { createPaintTexture } from './noiseTex'
 import { Rain } from './Rain'
 import { pickTier } from './quality'
@@ -210,6 +211,20 @@ async function boot() {
   mapBtn.classList.toggle('on', radarOn)
   window.addEventListener('keydown', (e) => { if (e.code === 'KeyN' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) toggleRadar() })
   const chase = new ChaseCam(camera, map, car, renderer.domElement)
+  // (the chase camera stops in front of the rock: a ray from the car out to it, against the slab stacks, formations,
+  //  ramps and bridges — StaticMesh — never the car itself)
+  {
+    let ray: InstanceType<typeof physics.pw.R.Ray> | null = null
+    const camGroups = group(0xffff, Groups.StaticMesh)
+    chase.obstruct = (ox, oy, oz, dx, dy, dz, len) => {
+      ray ??= new physics.pw.R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 })
+      ray.origin.x = ox; ray.origin.y = oy; ray.origin.z = oz
+      ray.dir.x = dx; ray.dir.y = dy; ray.dir.z = dz
+      // (solid false: a ray starting in rock finds where it leaves it, not 0)
+      const hit = physics.pw.world.castRay(ray, len, false, undefined, camGroups, undefined, car.sim?.body)
+      return hit ? hit.timeOfImpact : null
+    }
+  }
   chase.snap()
   let driving = q.get('drive') !== '0'
 
@@ -543,6 +558,8 @@ async function boot() {
     sunDir: () => atmos.uniforms.uSunDir.value.toArray(),
     /** Resolves when the GPU has finished what's been submitted (fps.mjs: the honest frame time — WebGPU's rAF runs ahead). */
     gpuDone: () => renderer.gpuDone(),
+    /** The physics (the harness: collider counts, step times — scripts/harness/rockdrive.mjs). */
+    physics,
     gpuTime: () => renderer.gpuTime(),
     backend: renderer.backend,
     stats: () => ({ fps: 1000 / frameMs, cpuMs, draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: world.terrain.patches, blades: world.grass.blades, rocks: world.rocks.count, trees: world.trees.drawn.slice(), bushes: world.bushes.drawn.slice(), culled: { terrainPatches: world.terrain.occluded, treeTiles: world.trees.occluded, rocks: { ...world.rocks.culled }, horizonBuilds: world.horizon.builds }, pos: camera.position.toArray().map((v) => +v.toFixed(1)), ground: +map.height(camera.position.x, camera.position.z).toFixed(1) }),

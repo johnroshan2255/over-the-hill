@@ -345,7 +345,12 @@ void main() {
 #ifdef OTH_ROCK_RELIEF
   // (the desert too, 2026-11-04 — the user: "the way we put rock texture on the valley": the crumpled relief on its
   //  bare rock — warped, never a repeating tile)
+#ifdef OTH_DESERT
+  // (round 2: the desert's walls clean planes like its slabs — the relief crumpled them into melted wax)
+  N = rockRelief(vWorld, N, g.rock * (1.0 - g.trail) * (1.0 - 0.75 * smoothstep(0.25, 0.55, steep)), dFdx(vWorld), dFdy(vWorld), cav);
+#else
   N = rockRelief(vWorld, N, max(g.rock, g.scree * 0.6) * (1.0 - g.trail), dFdx(vWorld), dFdy(vWorld), cav); // (never on a track)
+#endif
 #endif
   col *= 1.0 + (facetRand(Nf) - 0.5) * 0.1 * facet;
 #ifdef OTH_DESERT
@@ -439,6 +444,11 @@ void main() {
   float wallK = smoothstep(0.3, 0.6, steep);
   vec2 outward = Ns.xz / max(length(Ns.xz), 1e-3);
   float sun = sunVisibility(xz + outward * 6.0 * wallK);
+#ifdef OTH_DESERT
+  // (2026-11-04, round 2: the desert's bare walls — a road's cut, a cliff no slab covers — went to a stair of dark
+  //  4 m texels where the bake's outward read flipped cell by cell: a steep face lit by its facing alone)
+  sun = mix(sun, 1.0, wallK * 0.85);
+#endif
   // under the grass the ground lies in the blades' shade (it shows between them); the shade lifts toward the
   // grass's edge, where the ground alone must look like the field from afar
   float under = grassy0(m, g.rock, g.forest) * (1.0 - smoothstep(0.02, 0.1, g.scree)) * (1.0 - g.trail) * (1.0 - smoothstep(uGrassR * 0.3, uGrassR * 0.95, length(vWorld - uCamPos)));

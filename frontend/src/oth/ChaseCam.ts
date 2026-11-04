@@ -22,6 +22,14 @@ export class ChaseCam {
   private pinch = 0
   enabled = true
   private readonly look = new GFX.Vector3()
+  /** The first solid thing (a slab stack, a formation) on the line from the look point out to the camera: its distance
+   *  (m), or null — main.ts gives it the physics. The camera stops in front of it (2026-11-04: in among the desert's
+   *  slab walls it went into the rock and showed its inside). */
+  obstruct: ((ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, len: number) => number | null) | null = null
+  /** The distance the rock last allowed (eased back out, never in: the camera snaps in front of a wall). */
+  private room = 1e4
+  /** 0 … 1: how far the camera has risen over the car (rock close behind it). */
+  private lift = 0
 
   constructor(readonly camera: GFX.PerspectiveCamera, private readonly map: MapData, private readonly car: Vehicle, dom: HTMLElement) {
     dom.addEventListener('pointerdown', (e) => {
@@ -90,9 +98,24 @@ export class ChaseCam {
     const dist = this.dist * (1 + Math.min(speed, 30) / 90)
     const p = this.car.pos
     this.look.set(p.x, p.y + 1.6, p.z)
-    const cx = p.x + Math.sin(a) * Math.cos(this.pitch) * dist
-    const cz = p.z + Math.cos(a) * Math.cos(this.pitch) * dist
-    let cy = p.y + 1.6 + Math.sin(this.pitch) * dist
+    // (rock close behind — the car backed against a wall: the camera rises over the car instead of coming in to it)
+    const pe = this.pitch + Math.max(0, 1.15 - this.pitch) * this.lift
+    const ux = Math.sin(a) * Math.cos(pe), uy = Math.sin(pe), uz = Math.cos(a) * Math.cos(pe)
+    let dd = dist
+    if (this.obstruct) {
+      // (from the car's own middle, not the look point 1.6 m up: pressed under an overhang, the look point is in the
+      //  rock and the camera stayed in it — a grey screen)
+      const oy = p.y + 0.9, hit0 = this.obstruct(p.x, oy, p.z, ux, uy, uz, dist + 0.6 + 0.7)
+      const hit = hit0 === null ? null : Math.max(0, hit0 - 0.7)
+      const free = hit === null ? 1e4 : Math.max(1.2, hit - 0.6) // (finite: Infinity − Infinity in the ease was NaN — a black screen)
+      this.room = free < this.room ? free : this.room + (free - this.room) * Math.min(1, dt * 2.5)
+      dd = Math.min(dist, this.room)
+      const blocked = free < Math.min(dist, 4.5) ? 1 : 0
+      this.lift += (blocked - this.lift) * Math.min(1, dt * (blocked ? 4 : 1.2))
+    }
+    const cx = p.x + ux * dd
+    const cz = p.z + uz * dd
+    let cy = p.y + 1.6 + uy * dd
     cy = Math.max(cy, this.map.height(cx, cz) + 1.2)
     this.camera.position.set(cx, cy, cz)
     this.camera.lookAt(this.look)

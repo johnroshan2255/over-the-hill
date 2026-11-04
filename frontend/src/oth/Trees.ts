@@ -675,7 +675,14 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       map.maskAt(px, pz, mk)
       if (mk[3] < 0.08 || mk[2] > 0.86 || mk[0] > 0.3 || map.trailDist(px, pz) < map.meta.trails.hw + 2.5 || map.waterLevel(px, pz) !== null || inLagoon(px, pz)) continue
       // (2026-11-04: half as thick — single palms and small clumps along the water, not rows of a plantation)
-      if (r2() > 0.07 + 0.38 * Math.min(1, (mk[3] - 0.08) / 0.5)) continue
+      // (round 2 — the user's reference frames: palms in loose CLUMPS of a few with open sand between — a slow noise
+      //  of its own, ~50 m cells, gathers them; a few strays)
+      const cx = px / 52, cz = pz / 52, ix = Math.floor(cx), iz = Math.floor(cz), u = cx - ix, w = cz - iz
+      const hh = (a: number, b: number) => cellSeed(a, b, 41) / 4294967296
+      const su = u * u * (3 - 2 * u), sw = w * w * (3 - 2 * w)
+      const vnz = (hh(ix, iz) * (1 - su) + hh(ix + 1, iz) * su) * (1 - sw) + (hh(ix, iz + 1) * (1 - su) + hh(ix + 1, iz + 1) * su) * sw
+      const clump = 0.08 + 2.2 * Math.max(0, Math.min(1, (vnz - 0.52) / 0.2))
+      if (r2() > (0.07 + 0.38 * Math.min(1, (mk[3] - 0.08) / 0.5)) * clump) continue
       if (rocks.biggestNear(px, pz, 3)) continue
       const y = map.height(px, pz), H = 9 + 8 * Math.pow(r2(), 0.8)
       out.push(px, y - 0.3, pz, H, r2() * Math.PI * 2, 5, r2(), r2())

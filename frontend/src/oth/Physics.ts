@@ -22,7 +22,8 @@ export class OthPhysics {
   readonly pw: PhysicsWorld
   private readonly R: typeof RAPIER
   private readonly tiles = new Map<number, RAPIER.RigidBody>()
-  private readonly rocks = new Map<number, RAPIER.Collider>()
+  /** The rocks near the car: one collider each — a STACK one per slab (its slabs' own hulls). */
+  private readonly rocks = new Map<number, RAPIER.Collider[]>()
   private readonly trunks = new Map<number, RAPIER.Collider>()
   /** The valley's props (Props.ts): boxes, built when the car comes within PROP_REACH. */
   private props: PropCollider[] = []
@@ -50,7 +51,7 @@ export class OthPhysics {
   setWorld(map: MapData, rocks: Rocks, trees: Trees | null): void {
     const W = this.pw.world
     for (const b of this.tiles.values()) W.removeRigidBody(b)
-    for (const c of [...this.rocks.values(), ...this.trunks.values(), ...this.propCols.values()]) W.removeCollider(c, false)
+    for (const c of [...[...this.rocks.values()].flat(), ...this.trunks.values(), ...this.propCols.values()]) W.removeCollider(c, false)
     for (const b of this.statics) W.removeRigidBody(b)
     this.tiles.clear(); this.rocks.clear(); this.trunks.clear(); this.propCols.clear()
     this.statics = []
@@ -156,19 +157,33 @@ export class OthPhysics {
       const keep = new Set<number>()
       for (let i = 0; i < all.length; i++) {
         const r = all[i]
-        if ((r.x - x) ** 2 + (r.z - z) ** 2 > ROCK_REACH * ROCK_REACH) continue
+        const reach = ROCK_REACH + r.s * 0.5 // (a big stack's edge is half its size from its middle)
+        if ((r.x - x) ** 2 + (r.z - z) ** 2 > reach * reach) continue
         keep.add(i)
         if (this.rocks.has(i)) continue
-        const src = this.rockSet.shapes[r.v], pts = new Float32Array(src.length)
+        // (a STACK: a hull per slab — the car drives on its tops and climbs its edges; a hull round the whole stack
+        //  was an invisible cone over every bench — 2026-11-04. A stone: the hull of its shape)
+        const stack = !!this.rockSet.slabs[r.v]
+        const parts = this.rockSet.slabs[r.v] ?? [this.rockSet.shapes[r.v]], cols: RAPIER.Collider[] = []
         this.rockSet.matrixOf(r, this.m)
-        for (let k = 0; k < src.length; k += 3) {
-          this.v.set(src[k], src[k + 1], src[k + 2]).applyMatrix4(this.m)
-          pts[k] = this.v.x; pts[k + 1] = this.v.y; pts[k + 2] = this.v.z
+        for (const src of parts) {
+          const pts = new Float32Array(src.length)
+          for (let k = 0; k < src.length; k += 3) {
+            this.v.set(src[k], src[k + 1], src[k + 2]).applyMatrix4(this.m)
+            pts[k] = this.v.x; pts[k + 1] = this.v.y; pts[k + 2] = this.v.z
+          }
+          const d = this.R.ColliderDesc.convexHull(pts)
+          // (a stack's slab is GROUND, like the terrain and the formations — a member of StaticMesh too: the car's
+          //  exact body shell (VehicleMesh) leaves it to the car's convex hulls. Shell ⇄ slab, a slab's edge slipped
+          //  into the hollow body and was pushed on from inside: the car clamped, a wheel's ray started in rock, the
+          //  step went to 40–120 ms on that contact — rockdrive.mjs, 2026-11-04. A stone stays Static: the shell
+          //  meets it)
+          const g = stack ? group(Groups.Static | Groups.StaticMesh | Groups.Slab, STATIC_MESH_FILTER) : group(Groups.Static, 0xffff)
+          if (d) cols.push(this.pw.world.createCollider(d.setCollisionGroups(g).setFriction(0.8), this.rockBody))
         }
-        const d = this.R.ColliderDesc.convexHull(pts)
-        if (d) this.rocks.set(i, this.pw.world.createCollider(d.setCollisionGroups(group(Groups.Static, 0xffff)).setFriction(0.8), this.rockBody))
+        this.rocks.set(i, cols)
       }
-      for (const [i, c] of this.rocks) if (!keep.has(i)) { this.pw.world.removeCollider(c, false); this.rocks.delete(i) }
+      for (const [i, cs] of this.rocks) if (!keep.has(i)) { for (const c of cs) this.pw.world.removeCollider(c, false); this.rocks.delete(i) }
       // the props near the car: a box each (turned with the prop)
       const pk = new Set<number>()
       for (let i = 0; i < this.props.length; i++) {
@@ -202,6 +217,15 @@ export class OthPhysics {
         for (const [i, c] of this.trunks) if (!near.has(i)) { this.pw.world.removeCollider(c, false); this.trunks.delete(i) }
       }
     }
+  }
+
+  /** The SURFACE to set a car on at (x, z), from about y0 (the ground there, or where the car was): the top of whatever
+   *  is solid — the terrain, or a slab stack's slabs over it (Rocks.solidTop: from their outlines, so it holds before
+   *  their colliders reach Rapier's queries). 2026-11-04: a reset or a camp's spawn at the terrain's height put the car
+   *  INSIDE a slab where a stack stands on the slope — pinned in the rock. */
+  surface(x: number, z: number, y0: number): number {
+    // (2.8 m: a gap under another slab lower than that fits no car — it was set into a 2 m one, wedged)
+    return this.rockSet.solidTop(x, z, Math.max(y0, this.map.height(x, z)), 2.8)
   }
 
   /** One tile: TILE × TILE cells of the 2 m grid, a heightfield centred on its body (Rapier: heights[ix · V + iz]). */

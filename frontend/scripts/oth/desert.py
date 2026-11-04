@@ -182,7 +182,11 @@ def landforms(X, Z, inner=True):
         cres = 0.22 * lam * np.abs(np.sin(v / (lam * 1.25) + 1.7 * fbm(u / 900, v / 900, s_, 2)))
         t = (u + warp - cres) / lam
         f = t - np.floor(t)
-        return np.where(f < 0.7, smoothstep(0, 0.7, f), 1 - smoothstep(0.7, 1.0, f))
+        # (2026-11-04, round 2 — the user's reference frames: dunes with a SHARP CREST — a long windward slope that
+        #  still climbs at the brink, then the slip face dropping straight off it, easing out at its toe; the old
+        #  smoothstep rounded every crest into a hump)
+        y = np.clip((f - 0.64) / 0.36, 0, 1)
+        return np.where(f < 0.64, (f / 0.64) ** 1.5, (1 - y) ** 1.3)
     u2 = X * math.cos(wind + 0.9) + Z * math.sin(wind + 0.9); v2 = -X * math.sin(wind + 0.9) + Z * math.cos(wind + 0.9)
     saw = np.maximum(train(u, v, 210.0, SEED + 14), 0.65 * train(u2, v2, 140.0, SEED + 15))
     amp = 24 + 26 * smoothstep(-0.4, 0.4, fbm(X / 700, Z / 700, SEED + 12, 2))
@@ -215,7 +219,9 @@ for (mx, mz, R, top) in [(-1250, 900, 120, 70), (-900, 1180, 70, 95), (420, 820,
     k = 1 - smoothstep(R - 6, R + 22, d)
     MESAK = np.maximum(MESAK, k)
     base = bilinear(H, HALF, np.array([mx]), np.array([mz]))[0]
-    H = np.where(k > 0.001, np.maximum(H, base + top * k ** 0.7 * (0.96 + 0.04 * fbm(X / 60, Z / 60, SEED + int(mx), 2))), H)  # (its own footprint only)
+    # (2026-11-04, round 2: the mesa itself is a MASSIF of slab meshes now — placed with the stacks, below; the
+    #  heightfield only a low rise under it, its smooth beds never showing through)
+    H = np.where(k > 0.001, np.maximum(H, base + 0.3 * top * k ** 0.7 * (0.96 + 0.04 * fbm(X / 60, Z / 60, SEED + int(mx), 2))), H)  # (its own footprint only)
 # SPIRES: the north-west plateau's rock forest (Tassili) — clusters of tall stacked needles, a few broad towers
 ROUTE_SKELETON = [
     [(-147, 1440), (-60, 1100), (-150, 790)],
@@ -268,6 +274,9 @@ for si, (sx, sz, r, hgt) in enumerate(SPIRES):
     side = (0.68 if pointed else 0.92) - ((0.43 if pointed else 0.67) * smoothstep(0.5, 0.68, d))   # (the wall)
     apron = 0.25 * (1 - smoothstep(0.68, 1.3, d)) ** 1.5                                 # (the rubble cone)
     prof = np.where(d < 0.5, top, np.where(d < 0.68, side, apron))
+    # (2026-11-04, round 2: the tower itself is a STACK of blocks now — the user's reference frames' spires are stacked
+    #  slabs, wobbling up — placed with the stacks, below; the heightfield keeps only its rubble cone)
+    prof = 0.25 * (1 - smoothstep(0.15, 1.3, d)) ** 1.5
     H[m] = np.maximum(H[m], base + hgt * prof)
     SPK[m] = np.maximum(SPK[m], 1 - smoothstep(1.1, 1.3, d))
 
@@ -788,7 +797,12 @@ _sk_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 
 SK = json.load(open(_sk_path))['kinds'] if os.path.exists(_sk_path) else []
 by_kind = {}
 for k_, s_ in enumerate(SK): by_kind.setdefault(s_['kind'], []).append(k_)
+def height_any(x, z):
+    inb = (np.abs(x) < HALF - 2) & (np.abs(z) < HALF - 2)
+    return np.where(inb, bilinear(H, HALF, x, z), bilinear(HF, FAR_HALF, x, z))
 STACKS = []
+FIXED = {}   # (x, z, kind) → (its foot, its vertical stretch): stacks fitted to a place (the escarpment's risers)
+def fixed_of(x, z, k): return FIXED.get((round(float(x), 2), round(float(z), 2), k))
 krng = np.random.default_rng(SEED + 150)
 REL_HIGH = relief(X, Z)[1]
 def stack_ok(x, z, r):
@@ -815,49 +829,243 @@ def place_stack(x, z, k, sc):
     STACKS.append((x, z, sc, float(krng.uniform(0, 2 * math.pi)), k))
     return True
 if SK:
-    # the SLICKROCK FIELD: tables mostly, a few mesas and fins
-    for _ in range(400):
-        if sum(1 for st in STACKS) >= 46: break
-        a_, d_ = krng.uniform(0, 2 * math.pi), FIELD['r'] * 0.95 * math.sqrt(krng.random())
-        place_stack(FIELD['x'] + math.cos(a_) * d_, FIELD['z'] + math.sin(a_) * d_ * 0.8,
-                    pick({'table': 0.62, 'mesa': 0.22, 'fin': 0.16}), float(krng.uniform(0.55, 1.05)))
-    # ROCKY HILLS: clusters on the high ground
-    # (big and dense — 2026-11-04: at their first sizes they read as small piles in front of the walls: a cluster now
-    #  merges into one rocky hill)
-    SCALE_BY = {'mesa': (1.2, 2.2), 'table': (0.8, 1.6), 'tower': (0.9, 1.6), 'fin': (1.0, 1.8), 'hoodoo': (0.8, 1.3)}
+    # (2026-11-04, round 2 — the user: "it looks like pancakes stacked … I want it like the reference": the rock IS the
+    #  ground there — rocky hills of big angular slabs, cliffs built of the same slabs. desert_stacks.py's kinds now:
+    #  table, terrace, mesa, tower, fin, hoodoo, MASSIF (a rocky hill 100–150 m across), WALL (a long cliff of slabs))
+    SCALE_BY = {'mesa': (1.0, 1.7), 'table': (0.8, 1.5), 'terrace': (0.8, 1.3), 'tower': (0.9, 1.5), 'fin': (1.0, 1.6),
+                'hoodoo': (0.8, 1.3), 'massif': (0.8, 1.3), 'wall': (0.8, 1.3)}
     def place_kind(x, z, weights):
         k = pick(weights); lo, hi = SCALE_BY[SK[k]['kind']]
         return place_stack(x, z, k, float(krng.uniform(lo, hi)))
-    # the CANYON's RIMS lined with stacks — mesas and towers along its edge
-    for i_ in range(0, len(RIVER) - 1, 9):
-        if krng.random() > 0.5: continue
-        x_, z_ = RIVER[i_]; tx_, tz_ = RIVER[min(i_ + 1, len(RIVER) - 1)] - RIVER[max(i_ - 1, 0)]; tl_ = math.hypot(tx_, tz_) or 1.0
-        s__ = float(_racc[i_]); off_ = float(floor_hw(s__) + wall_w(s__)) + krng.uniform(5, 45)
-        for side_ in (1, -1):
-            place_kind(x_ - tz_ / tl_ * off_ * side_, z_ + tx_ / tl_ * off_ * side_, {'mesa': 0.5, 'tower': 0.3, 'fin': 0.2})
+    # THE MESAS (desert.py's ten landmarks): each a MASSIF of slabs sized to the mesa — its height the mesa's — with
+    # two to four mesas and towers round its rim (its outline never one blob)
+    massifs_ = by_kind.get('massif', [])
+    for mi_, (mx, mz, R, top) in enumerate(MESAS):
+        if not massifs_: break
+        k = massifs_[mi_ % len(massifs_)]
+        sc = float(np.clip(top / SK[k]['height'], 0.8, 2.6))
+        STACKS.append((float(mx), float(mz), sc, float(krng.uniform(0, 2 * math.pi)), k))
+        for _ in range(int(krng.integers(2, 5))):
+            a_ = krng.uniform(0, 2 * math.pi); d_ = SK[k]['radius'] * sc * krng.uniform(0.55, 0.85)
+            k2 = pick({'mesa': 0.6, 'tower': 0.25, 'fin': 0.15}); lo_, hi_ = (1.2, 2.0) if SK[k2]['kind'] == 'mesa' else (1.0, 1.6)
+            x2_, z2_ = mx + math.cos(a_) * d_, mz + math.sin(a_) * d_
+            if at2(Dt, x2_, z2_) > SK[k2]['radius'] * hi_ + 9: STACKS.append((x2_, z2_, float(krng.uniform(lo_, hi_)), float(krng.uniform(0, 2 * math.pi)), k2))
+    # THE SPIRES (the rock forest): each a TOWER of blocks sized to it (now and then a hoodoo), on its rubble cone
+    towers_ = by_kind.get('tower', []); hoodoos_ = by_kind.get('hoodoo', [])
+    for si_, (sx, sz, r, hgt) in enumerate(SPIRES):
+        lst = hoodoos_ if (si_ % 5 == 4 and hoodoos_) else towers_
+        if not lst: break
+        k = lst[si_ % len(lst)]
+        sc = float(np.clip(hgt * 0.95 / SK[k]['height'], 0.7, 3.0))
+        STACKS.append((float(sx), float(sz), sc, float(krng.uniform(0, 2 * math.pi)), k))
+    # THE WALLS OF SLABS: the heightfield's steep faces — the canyon's walls, the plateaus' rims, the masses' edges —
+    # lined with WALL stacks along their contour (a wall's long axis along x: turned to the contour), standing from
+    # the face's foot: the cliffs are slab on slab, not a smooth slope with a texture on it. Sized to the face (its
+    # height over ~60 m), off the roads, the water and the places by their own half width; overlapping end to end.
+    walls_ = [k for k in by_kind.get('wall', [])]
+    if walls_:
+        gzw, gxw = np.gradient(blur(H, 2), CELL)
+        slw = np.hypot(gxw, gzw)
+        # (the walls keep off less than the outcrops do: the LAGOON lies in a bowl of slab walls — only its water and
+        #  shore are kept, below — and the aqueduct only along its own line; the arch, the bridge, the ksar, the falls
+        #  and the gate's climb as before, closer)
+        wall_clear = [(FALL['x'], FALL['z'], 90), (ARCH['x'], ARCH['z'], 55), (GORGE_BRIDGE_X, 220, 60),
+                      (KSAR['x'], KSAR['z'], 150), (GATE['x'], GATE['z'], 380), (-1100, -1300, 160)]
+        _aq0, _aq1 = np.array([AQUEDUCT['x0'], AQUEDUCT['z0']]), np.array([AQUEDUCT['x1'], AQUEDUCT['z1']])
+        def aq_dist(x, z):
+            d_ = _aq1 - _aq0; t_ = float(np.clip(np.dot(np.array([x, z]) - _aq0, d_) / np.dot(d_, d_), 0, 1))
+            return float(np.hypot(*(np.array([x, z]) - (_aq0 + t_ * d_))))
+        cand = []
+        for zz in np.arange(-1880, 1880, 22.0):
+            for xx in np.arange(-1880, 1880, 22.0):
+                x_, z_ = xx + krng.uniform(-8, 8), zz + krng.uniform(-8, 8)
+                # (not a dune's slip face: the erg's sand is sand)
+                if at2(slw, x_, z_) > 0.5 and at2(ERG_OPEN, x_, z_) < 0.15 and at2(MESAK, x_, z_) < 0.1: cand.append((x_, z_))
+        krng.shuffle(cand)
+        WALLS_ = []
+        for x_, z_ in cand:
+            gx_, gz_ = at2(gxw, x_, z_), at2(gzw, x_, z_); gl_ = math.hypot(gx_, gz_)
+            if gl_ < 0.45: continue
+            ux_, uz_ = gx_ / gl_, gz_ / gl_                       # (uphill)
+            tx_, tz_ = -uz_, ux_                                  # (along the contour)
+            k = walls_[int(krng.integers(len(walls_)))]
+            hw_ = float(at2(H, x_ + ux_ * 50, z_ + uz_ * 50) - at2(H, x_ - ux_ * 50, z_ - uz_ * 50))   # (the face's height)
+            if hw_ < 12: continue
+            # (sized to cover the face: the cliff's height over 100 m; its beds step back uphill — local +z. Where a
+            #  full-size one won't fit — a road on the rim above, a narrow slot, the gorge — a smaller one, then smaller:
+            #  a lower cliff of slabs is better than the bare face)
+            ok = False
+            for f_, mode_ in ((1.0, 'up'), (0.7, 'up'), (0.5, 'up'), (0.7, 'down'), (0.5, 'down')):
+                sc = float(np.clip(hw_ * f_ / SK[k]['height'], 0.45, 2.2))
+                L_ = SK[k]['radius'] * sc; W_ = 18 * sc            # (half its length; ~ its front's reach from its middle)
+                # (into the face: its front at the face's foot — or, by a road (a ramp's cut up the wall) or the arch's
+                #  slot, pushed back uphill until its front stands at its edge: the cut face covered, the way clear.
+                #  'down': a road along the face's TOP (a bench, a hairpin): the cliff stood out in front of the face
+                #  instead, its back clear of the road — 2026-11-04, the escarpment bastion's ends)
+                if mode_ == 'up':
+                    sh_ = min(max(0.35 * W_, W_ + TRAIL_HW + 3 - at2(Dt, x_, z_), W_ + 7 - at2(Ds, x_, z_)), 2.0 * W_)
+                else:
+                    sh_ = -0.7 * W_
+                cx_, cz_ = x_ + ux_ * sh_, z_ + uz_ * sh_
+                if abs(cx_) > 1890 or abs(cz_) > 1890: break
+                ok = True
+                for t_ in np.linspace(-1, 1, 7):
+                    px_, pz_ = cx_ + tx_ * L_ * 0.9 * t_, cz_ + tz_ * L_ * 0.9 * t_
+                    if at2(Dt, px_, pz_) < W_ + TRAIL_HW + 1.5 or at2(DrW, px_, pz_) < float(river_hw(at2(Sr, px_, pz_))) + W_ + 8:
+                        ok = False; break
+                    if at2(Ds, px_, pz_) < W_ + 6: ok = False; break
+                    if any(math.hypot(px_ - a, pz_ - b) < rr + W_ for a, b, rr in wall_clear): ok = False; break
+                    if aq_dist(px_, pz_) < W_ + 14: ok = False; break
+                    if any(math.hypot(px_ - sx, pz_ - sz) < rs * 1.2 + W_ for sx, sz, rs, _ in SPIRES): ok = False; break
+                if ok: break
+            if not ok: continue
+            # (end to end along a face, never two in one spot: 0.5 of their lengths apart ALONG it — but a second row
+            #  higher up a tall face is welcome: rows apart ACROSS it by their widths)
+            if any(abs((cx_ - a) * t2x + (cz_ - b) * t2z) < 0.5 * (L_ + l2) and abs(-(cx_ - a) * t2z + (cz_ - b) * t2x) < 0.7 * (W_ + w2)
+                   for a, b, l2, t2x, t2z, w2 in WALLS_): continue
+            lc_, ls_ = math.cos(LAGOON['rot']), math.sin(LAGOON['rot'])
+            lx_ = (cx_ - LAGOON['cx']) * lc_ + (cz_ - LAGOON['cz']) * ls_; lz_ = -(cx_ - LAGOON['cx']) * ls_ + (cz_ - LAGOON['cz']) * lc_
+            if math.hypot(lx_ / LAGOON['rx'], lz_ / LAGOON['rz']) < 1.15 + W_ / 70: continue
+            WALLS_.append((cx_, cz_, L_, tx_, tz_, W_))
+            STACKS.append((cx_, cz_, sc, float(math.atan2(ux_, uz_) + krng.uniform(-0.08, 0.08)), k))   # (local +z uphill)
+        log(f'  {len(WALLS_)} walls of slabs along the steep faces')
+    # THE ESCARPMENT'S BASTION faced in slabs (2026-11-04 — the user: the "block" seen from the air: the ledge road's
+    # bastion, its risers smooth heightfield slopes with flat ends). Between every two legs a row of WALL stacks that
+    # fits the riser exactly: its front at the lower leg's inner edge, its back short of the upper leg, its top flush
+    # with the upper leg (a vertical stretch, VS — the riser is ~35 m high over ~18 m); the same above the top leg (the
+    # wall to the plateau) and under leg 0 (its shoulder down to the plain, facing out). Turned with the legs (eu): local
+    # +z is up the face (ev). No road is crossed: the road filter below checks them as every stack.
+    if walls_:
+        def zext(k):
+            a = np.concatenate([np.array(sl, float).reshape(-1, 3) for sl in SK[k]['slabs']])
+            return float(a[:, 2].min()), float(a[:, 2].max()), float(np.abs(a[:, 0]).max())
+        ZE = {k: zext(k) for k in walls_}
+        rot_e = float(math.atan2(ESC.ev[0], ESC.ev[1]))      # (local +z along ev: up the face)
+        def esc_piece(u_c, v_lo, v_hi, y_lo, y_hi, k):
+            """A wall stack filling v_lo … v_hi (its front at v_lo) from y_lo to y_hi, centred at u_c along the legs."""
+            z0_, z1_, xh_ = ZE[k]
+            sc = (v_hi - v_lo) / (z1_ - z0_)
+            if sc < 0.2 or y_hi - y_lo < 3: return 0.0
+            vc_ = v_lo - z0_ * sc + float(ESC.wob(np.array(u_c)))
+            x_, z_ = ESC.world(u_c, vc_)
+            vs_ = (y_hi - y_lo) / (SK[k]['height'] * sc)
+            STACKS.append((float(x_), float(z_), float(sc), rot_e, k)); FIXED[(round(float(x_), 2), round(float(z_), 2), k)] = (float(y_lo), float(vs_))
+            return xh_ * sc
+        n_e = 0
+        gw_ = ESC.P - 2 * ESC.SH
+        for kk in range(-1, ESC.NL):
+            u_ = -6.0
+            while u_ < ESC.L + 6:
+                k = walls_[int(krng.integers(len(walls_)))]
+                z0_, z1_, xh_ = ZE[k]
+                if kk == -1:                                       # under leg 0: its shoulder, out to the plain
+                    v_lo, v_hi = -ESC.SH - 1.2 - 16.0, -ESC.SH - 1.2
+                    span_ = np.linspace(u_, u_ + 30, 4)
+                    y_lo = float(np.min(height_any(*ESC.world(span_, np.full(4, v_lo))))) - 0.6
+                    y_hi = float(np.min(ESC.bed(0, span_))) - 0.2
+                elif kk < ESC.NL - 1:                              # the riser from leg kk up to leg kk + 1
+                    v_lo, v_hi = ESC.VK[kk] + ESC.SH + 0.8, ESC.VK[kk + 1] - ESC.SH - 1.0
+                    span_ = np.linspace(u_, u_ + 30, 4)
+                    y_lo = float(np.min(ESC.bed(kk, span_))) - 0.6
+                    y_hi = float(np.min(ESC.bed(kk + 1, span_))) + 0.2
+                else:                                              # above the top leg: the wall to the plateau
+                    v_lo, v_hi = ESC.VK[-1] + ESC.SH + 0.8, ESC.VK[-1] + ESC.SH + ESC.wall + 4.0
+                    span_ = np.linspace(u_, u_ + 30, 4)
+                    y_lo = float(np.min(ESC.bed(ESC.NL - 1, span_))) - 0.6
+                    y_hi = float(np.max(esc_top(*ESC.world(span_, np.full(4, v_hi))))) + 0.4
+                half_ = esc_piece(u_ + 15, v_lo, v_hi, y_lo, y_hi, k)
+                if half_: n_e += 1
+                u_ += max(10.0, 1.6 * half_ if half_ else 30.0)
+        log(f'  {n_e} slab walls facing the escarpment bastion')
+    # the SLICKROCK FIELD: tables and terraces mostly, a few mesas and fins
+    n0_ = len(STACKS)
+    for _ in range(400):
+        if len(STACKS) - n0_ >= 46: break
+        a_, d_ = krng.uniform(0, 2 * math.pi), FIELD['r'] * 0.95 * math.sqrt(krng.random())
+        place_stack(FIELD['x'] + math.cos(a_) * d_, FIELD['z'] + math.sin(a_) * d_ * 0.8,
+                    pick({'table': 0.42, 'terrace': 0.24, 'mesa': 0.18, 'fin': 0.16}), float(krng.uniform(0.55, 1.05)))
+    # ROCKY HILLS: clusters on the high ground — massifs and terraces (rock you drive up), mesas, towers, fins
     tries_ = 0
-    while len(STACKS) < 620 and tries_ < 6000:
+    while len(STACKS) - n0_ < 560 and tries_ < 6000:
         tries_ += 1
         cx_, cz_ = krng.uniform(-1850, 1850), krng.uniform(-1850, 1850)
         if at2(REL_HIGH, cx_, cz_) < 0.5 and at2(MASSK, cx_, cz_) < 0.3: continue
-        n_ = int(krng.integers(8, 21))
+        if at2(ERG_OPEN, cx_, cz_) > 0.3: continue                # (the erg open: dunes, not rocky hills)
+        n_ = int(krng.integers(6, 16))
         for _ in range(n_ * 3):
-            a_, d_ = krng.uniform(0, 2 * math.pi), 160 * krng.random() ** 0.75
-            if place_kind(cx_ + math.cos(a_) * d_, cz_ + math.sin(a_) * d_, {'mesa': 0.36, 'table': 0.18, 'tower': 0.24, 'fin': 0.16, 'hoodoo': 0.06}):
+            a_, d_ = krng.uniform(0, 2 * math.pi), 170 * krng.random() ** 0.75
+            if place_kind(cx_ + math.cos(a_) * d_, cz_ + math.sin(a_) * d_,
+                          {'massif': 0.16, 'terrace': 0.2, 'mesa': 0.24, 'table': 0.12, 'tower': 0.14, 'fin': 0.09, 'hoodoo': 0.05}):
                 n_ -= 1
             if n_ <= 0: break
+    # ROCK SHELVES in the erg: big low tables at the sand's level, half buried in the dunes — the bedrock showing
+    # through (the user's reference frames: flat plates of rock in the dune field)
+    for _ in range(600):
+        if len(STACKS) - n0_ >= 600: break
+        x_, z_ = krng.uniform(-1850, 1850), krng.uniform(-1850, 1850)
+        if at2(ERG_OPEN, x_, z_) < 0.5: continue
+        place_stack(x_, z_, pick({'table': 1.0}), float(krng.uniform(1.0, 2.0)))
     # a few LONE TOWERS and hoodoos out on the sand
     for _ in range(300):
-        if len(STACKS) >= 660: break
-        place_stack(krng.uniform(-1850, 1850), krng.uniform(-1850, 1850), pick({'tower': 0.6, 'hoodoo': 0.4}), float(krng.uniform(0.7, 1.2)))
+        if len(STACKS) - n0_ >= 650: break
+        x_, z_ = krng.uniform(-1850, 1850), krng.uniform(-1850, 1850)
+        if at2(ERG_OPEN, x_, z_) > 0.3: continue
+        place_stack(x_, z_, pick({'tower': 0.6, 'hoodoo': 0.4}), float(krng.uniform(0.7, 1.2)))
+# EVERY STACK OFF THE ROADS by its slabs' real outlines (the placement's checks used a radius or a width — a mesa's
+# massif or a wall by a ramp still reached over a road by up to 25 m): the low slabs' corners, their edges' middles and
+# halfway in, each ≥ the road's half width + 1.5 m from its line; else the stack a little smaller (×0.85, three
+# times), else gone. (Rocks.ts turns a stack by rot about y: x' = x cos + z sin, z' = −x sin + z cos)
+def stack_clear(x, z, sc, rot, k, vs=1.0):
+    c_, s_ = math.cos(rot), math.sin(rot)
+    for sl in SK[k].get('slabs', []):
+        a = np.array(sl, float).reshape(-1, 3)
+        if a[:, 1].min() * sc * vs > 5.0: continue              # (a slab 5 m up clears a car)
+        n_ = len(a) // 2
+        lx, lz = a[:n_, 0], a[:n_, 2]                          # (its foot's corners)
+        mx_, mz_ = lx.mean(), lz.mean()
+        ex_ = np.concatenate([lx, (lx + np.roll(lx, -1)) / 2, (lx + mx_) / 2, [mx_]])
+        ez_ = np.concatenate([lz, (lz + np.roll(lz, -1)) / 2, (lz + mz_) / 2, [mz_]])
+        wx_ = x + (ex_ * c_ + ez_ * s_) * sc; wz_ = z + (-ex_ * s_ + ez_ * c_) * sc
+        if np.any(np.abs(wx_) > 2040) or np.any(np.abs(wz_) > 2040): return False
+        if float(np.min(bilinear(Dt, HALF, wx_, wz_))) < TRAIL_HW + 1.5: return False
+    return True
+kept_, shrunk_ = [], 0
+for (x_, z_, sc_, rt_, k_) in STACKS:
+    fx_ = fixed_of(x_, z_, k_)
+    for t_ in range(4):
+        vs_ = fx_[1] / 0.85 ** t_ if fx_ else 1.0            # (a fitted one keeps its height as it narrows)
+        if stack_clear(x_, z_, sc_, rt_, k_, vs_):
+            kept_.append((x_, z_, sc_, rt_, k_)); shrunk_ += t_ > 0
+            if fx_ and t_: FIXED[(round(float(x_), 2), round(float(z_), 2), k_)] = (fx_[0], vs_)
+            break
+        sc_ *= 0.85
+log(f'  {len(STACKS) - len(kept_)} stacks dropped, {shrunk_} made smaller: none over a road')
+STACKS = kept_
+# THE SKYLINE (2026-11-04, round 2 — the user's reference frames: past the play area a horizon of jagged pinnacles and
+# stacked mesas in the haze, not smooth humps): big stacks on the far world's masses, 2.15–4.2 km out — towers,
+# massifs, mesas and walls, two or three times their size (Rocks.ts draws the big ones further; no physics out there)
+n_box_ = len(STACKS)
+if SK:
+    def far_h(x, z): return float(bilinear(HF, FAR_HALF, np.array([x]), np.array([z]))[0])
+    for _ in range(4000):
+        if len(STACKS) - n_box_ >= 240: break
+        x_, z_ = krng.uniform(-4200, 4200), krng.uniform(-4200, 4200)
+        if max(abs(x_), abs(z_)) < 2200: continue
+        # (on high ground out there: the masses and the ring of mesas, not the far erg's dunes)
+        if far_h(x_, z_) < 200 + 0.02 * (max(abs(x_), abs(z_)) - 2200): continue
+        if any(math.hypot(x_ - a, z_ - b) < 140 for a, b, *_ in STACKS[n_box_:]): continue
+        k = pick({'tower': 0.34, 'massif': 0.24, 'mesa': 0.22, 'wall': 0.12, 'hoodoo': 0.08})
+        STACKS.append((x_, z_, float(krng.uniform(1.8, 3.2)), float(krng.uniform(0, 2 * math.pi)), k))
+    log(f'  {len(STACKS) - n_box_} on the skyline beyond the box')
 log(f'  {len(STACKS)} stacks')
 # SAND DRIFTS up to the low TABLES (the way on: a car can't climb a slab's sheer rim, but sand blown against one side
 # makes a ramp — ~30 %, up to most of the table's height — then a short step onto the rock): one or two per table
 ramps_ = 0
 for x_, z_, sc_, rt_, k_ in STACKS:
     kd = SK[k_]
-    if kd['kind'] != 'table' or kd['height'] * sc_ > 6.5: continue
+    if kd['kind'] not in ('table', 'terrace') or (kd['kind'] == 'table' and kd['height'] * sc_ > 6.5): continue
     r_ = kd['radius'] * sc_; ht_ = kd['height'] * sc_
+    if kd['kind'] == 'terrace': ht_ = min(ht_, 2.6 * sc_)   # (a terrace: sand up to its first bench, the rest crawled)
     L_ = ht_ * 0.85 / 0.3
     w_ = int((r_ + L_ + 6) / CELL)
     ci_, cj_ = int(round((x_ + HALF) / CELL)), int(round((z_ + HALF) / CELL))
@@ -874,6 +1082,67 @@ for x_, z_, sc_, rt_, k_ in STACKS:
         H[win_] = H[win_] + np.maximum(base_ + prof_ - H[win_], 0) * smoothstep(0.0, 0.5, prof_)
         ramps_ += 1
 log(f'  {ramps_} sand drifts up to the tables')
+
+def hull2(P):
+    """The convex hull of 2D points (monotone chain), counter-clockwise in (x, z)."""
+    pts = sorted(set((float(x), float(z)) for x, z in P))
+    if len(pts) < 3: return np.array(pts)
+    def cr(o, a, b): return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lo, hi = [], []
+    for q in pts:
+        while len(lo) >= 2 and cr(lo[-2], lo[-1], q) <= 0: lo.pop()
+        lo.append(q)
+    for q in reversed(pts):
+        while len(hi) >= 2 and cr(hi[-2], hi[-1], q) <= 0: hi.pop()
+        hi.append(q)
+    return np.array(lo[:-1] + hi[:-1])
+# EACH STACK'S FOOT (meta.json's 6th value — Rocks.ts stands it there): the lowest ground under it (its middle and three
+# rings of 12 at 0.18 / 0.32 / 0.44 of its size across), 0.4 m sunk — as Rocks.ts reckoned it, but fixed here, BEFORE
+# the gaps under the slabs are filled (below): the fill would lift it
+_ang = np.arange(12) * 0.5236
+STACK_BASE = []
+for (x_, z_, sc_, rt_, k_) in STACKS:
+    fx_ = fixed_of(x_, z_, k_)
+    if fx_: STACK_BASE.append(fx_[0]); continue
+    D_ = 2 * SK[k_]['radius'] * sc_
+    px_ = np.concatenate([[x_]] + [x_ + np.cos(_ang) * D_ * f for f in (0.18, 0.32, 0.44)])
+    pz_ = np.concatenate([[z_]] + [z_ + np.sin(_ang) * D_ * f for f in (0.18, 0.32, 0.44)])
+    STACK_BASE.append(float(np.min(height_any(px_, pz_))) - 0.4)
+# NO LOW GAPS UNDER THE SLABS (2026-11-04 — the user: "the tyres get stuck inside" — rockdrive.mjs found the car
+# WEDGED under a slab hanging ~1 m over the sand: a stack on a slope stands from the lowest ground under it, and where
+# the ground inside its footprint lies a little below a slab's underside, that's a slot a car drives into and pins
+# itself in). Under every slab of every stack in the box, where the ground lies 0–3.5 m below the slab's underside, the
+# sand rises to it; a gap a car fits through (≥ 3.5 m) stays; never on a road (a slab ≥ 5 m over one is clear of it)
+log('filling the gaps under the slabs')
+filled_ = 0
+for (x_, z_, sc_, rt_, k_), b_ in zip(STACKS, STACK_BASE):
+    if abs(x_) > HALF - 60 or abs(z_) > HALF - 60: continue
+    c_, s_ = math.cos(rt_), math.sin(rt_)
+    vs_ = (fixed_of(x_, z_, k_) or (0, 1.0))[1]
+    for sl in SK[k_].get('slabs', []):
+        a = np.array(sl, float).reshape(-1, 3)
+        bot_ = b_ + float(a[:, 1].min()) * sc_ * vs_
+        wx_ = x_ + (a[:, 0] * c_ + a[:, 2] * s_) * sc_; wz_ = z_ + (-a[:, 0] * s_ + a[:, 2] * c_) * sc_
+        i0, i1 = int((wx_.min() + HALF) / CELL), int(math.ceil((wx_.max() + HALF) / CELL))
+        j0, j1 = int((wz_.min() + HALF) / CELL), int(math.ceil((wz_.max() + HALF) / CELL))
+        i0, j0, i1, j1 = max(i0, 0), max(j0, 0), min(i1, N_IN - 1), min(j1, N_IN - 1)
+        if i1 <= i0 or j1 <= j0: continue
+        win = (slice(j0, j1 + 1), slice(i0, i1 + 1))
+        Hw = H[win]
+        gap = bot_ - Hw
+        if not ((gap > 0.05) & (gap < 3.5)).any(): continue
+        # inside the slab's outline: its corners' convex hull (the physics' own), point by point
+        hp_ = hull2(np.stack([wx_, wz_], 1)) if len(wx_) >= 3 else None
+        if hp_ is None or len(hp_) < 3: continue
+        Xw, Zw = X[win], Z[win]
+        inside = np.ones(Hw.shape, bool)
+        for q_ in range(len(hp_)):
+            ax_, az_ = hp_[q_ - 1]; bx_, bz_ = hp_[q_]
+            inside &= (bx_ - ax_) * (Zw - az_) - (bz_ - az_) * (Xw - ax_) >= -0.5   # (a half cell's slack: the edge's cells too)
+        m_ = inside & (gap > 0.05) & (gap < 3.5) & (Dt[win] > TRAIL_HW + 1.5)
+        if m_.any():
+            H[win] = np.where(m_, bot_ + 0.15, Hw); filled_ += int(m_.sum())
+log(f'  {filled_} cells raised to a slab\'s underside')
 
 log('masks (4 m)')
 H4 = H[::2, ::2]; X4, Z4 = X[::2, ::2], Z[::2, ::2]
@@ -986,7 +1255,7 @@ meta = {
     'spawn': spawn,
     'gate': GATE,
     'bridges': BRIDGES,
-    'stacks': [[round(float(x), 1), round(float(z), 1), round(float(sc), 3), round(float(rt), 3), int(k)] for x, z, sc, rt, k in STACKS],
+    'stacks': [[round(float(x), 1), round(float(z), 1), round(float(sc), 3), round(float(rt), 3), int(k), round(float(b), 2), round(float((fixed_of(x, z, k) or (0, 1.0))[1]), 3)] for (x, z, sc, rt, k), b in zip(STACKS, STACK_BASE)],
     'landmarks': LANDMARKS,
     # (every 8 m; the pass and the escarpment road every 4 m — their hairpins)
     'trails': {'hw': TRAIL_HW, 'lines': [[[round(float(a), 1), round(float(b), 1)] for a, b in T[::(2 if ti < 2 else 4)]] for ti, T in enumerate(TRAILS)], 'rough': []},
