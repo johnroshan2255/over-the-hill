@@ -115,6 +115,9 @@ const vec3 STONE_PALE = vec3(0.29, 0.18, 0.105);
 const vec3 STONE_DEEP = vec3(0.15, 0.082, 0.048);
 const vec3 SAND_PALE  = vec3(0.47, 0.235, 0.103);
 float facetRand(vec3 n) { return fract(sin(dot(floor(n * 400.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+// (paint.ts's bedTone: the beds' tones of uneven thickness — keep in step)
+float bedHash(float i) { return fract(sin(i * 12.9898 + 4.1) * 43758.5453); }
+float bedNoise(float x) { float i = floor(x), f = x - i; return mix(bedHash(i), bedHash(i + 1.0), f * f * (3.0 - 2.0 * f)); }
 void main() {
   // LOW-POLY like the valley's rock (the user): each facet lit flat (its own normal, from the screen derivatives — a
   // little of the smooth one kept), each a touch its own tone
@@ -128,9 +131,16 @@ void main() {
   float big = texture(uNoise, xz * (1.0 / 389.0) + vec2(0.37, 0.59)).g;
   vec4 mid = texture(uNoise, xz * (1.0 / 71.0));
   float fine = texture(uNoise, xz * (1.0 / 13.0) + vec2(0.71, 0.13)).g;
-  float b = floor((vWorld.y + (big - 0.5) * 5.0) / 9.0);
-  float tone = fract(sin(b * 12.9898 + 4.1) * 43758.5453);
-  vec3 albedo = mix(STONE, STONE_PALE, tone * 0.8 + (mid.r - 0.5) * 0.3) * (0.92 + 0.12 * fine) * (0.94 + 0.12 * facetRand(Nf));
+  float q = vWorld.y + (big - 0.5) * 6.0;
+  float tone = clamp(0.72 * bedNoise(q / 19.0) + 0.28 * bedNoise(q / 5.5 + 7.3), 0.0, 1.0);
+  vec3 albedo = mix(STONE * 0.82, STONE_PALE, tone) * (0.92 + 0.12 * fine) * (0.94 + 0.12 * facetRand(Nf));
+  // the varnish streaks down the faces (Terrain.ts — the same)
+  float wx = smoothstep(0.3, 0.7, abs(Ns.x) / (abs(Ns.x) + abs(Ns.z) + 1e-4));
+  float st = mix(texture(uNoise, vec2(xz.x / 31.0, vWorld.y / 260.0 + 0.3)).g, texture(uNoise, vec2(xz.y / 27.3 + 0.5, vWorld.y / 230.0)).g, wx);
+  float faceK = 1.0 - smoothstep(0.35, 0.7, abs(Ns.y));
+  float varnish = smoothstep(0.5, 0.86, st) * 0.85;
+  albedo *= mix(vec3(1.0), vec3(0.66, 0.63, 0.64), varnish * faceK);
+  albedo *= mix(vec3(1.0), vec3(1.1, 1.08, 1.05), smoothstep(0.62, 0.8, 1.0 - st) * 0.5 * (1.0 - varnish) * faceK);
   // the tuck under each slab darker, sand dusting its lip
   albedo = mix(albedo, STONE_DEEP, smoothstep(-0.15, -0.6, N.y) * 0.6);
   albedo = mix(albedo, SAND_PALE * 0.96, smoothstep(0.72, 0.92, N.y) * 0.6);

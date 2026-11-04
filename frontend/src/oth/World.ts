@@ -113,7 +113,9 @@ export class World {
       t.uniforms.uFarGrid.value = env.farGrid
       return t
     })
-    const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid))
+    // (the desert's sculpted stones — Blender, desert_stones.py — fetched first: tiny, 30 kB)
+    const stones = map.desert ? await Rocks.loadStones(`${WORLDS[id].path}/stones.glb`) : null
+    const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid, stones))
     const grass = await step('grass', () => new Grass(map, atmos, terrain, tier, rocks.footprint, env.renderer))
     const water = await step('water', () => new Water(map, atmos, terrain, tier, rocks.footprint))
     const falls = await step('falls', () => new Falls(map, atmos))

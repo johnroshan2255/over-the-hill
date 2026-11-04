@@ -277,6 +277,9 @@ uniform float uTrailHW;
 // where the grass stands (the grass shader's rule: not on rock, not in water, thinner in the forest)
 float grassy0(vec4 m, float rk, float fo) { return (1.0 - smoothstep(0.02, 0.1, rk)) * (1.0 - smoothstep(0.9, 0.97, m.b)) * (1.0 - 0.55 * fo); }
 vec2 gridUv(vec4 g, vec2 xz) { return ((xz - g.z) / g.y + 0.5) / g.x; }
+// a smooth 1D value noise (0..1): the cliffs' beds by height, of uneven thickness
+float strataH(float i) { return fract(sin(i * 12.9898 + 4.1) * 43758.5453); }
+float strataN(float x) { float i = floor(x), f = x - i; return mix(strataH(i), strataH(i + 1.0), f * f * (3.0 - 2.0 * f)); }
 vec3 unpackN(vec2 e) { vec2 n = e * 2.0 - 1.0; return vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y); }
 
 void main() {
@@ -329,6 +332,10 @@ void main() {
   Ground g = groundPaint(xz, m, h, steep, p, foot, trail, uTrailHW, farG ? 0.0 : smoothstep(uBushR * 0.7, uBushR, dcam)); // (painted shrub dots only beyond the real bushes)
   vec3 col = g.col;
   float facet = mix(0.12, 0.42, max(g.rock, g.snow * 0.8));
+  // (2026-11-04 — the user: "in a big wall … a repeated line, then the next, then the next": on a steep face the 2 m
+  //  grid's triangles are tall slivers, row on row — their flat normals and per-facet tones drew a line at every row.
+  //  A steep wall takes the smooth normal; the relief and the paint are its detail)
+  facet *= 1.0 - 0.8 * smoothstep(0.2, 0.45, steep);
   vec3 N = normalize(mix(Ns, Nf, facet));
   // HIGH / ULTRA on PCs: the rock's (and the scree's) crumpled 3D relief — the light only, the colour stays
   float cav = 1.0;
@@ -337,16 +344,46 @@ void main() {
 #endif
   col *= 1.0 + (facetRand(Nf) - 0.5) * 0.1 * facet;
 #ifdef OTH_DESERT
-  // WIND RIPPLES in the loose sand (Over the Hill's dunes): fine ridges across the wind (~0.35 m), their lines
-  // wandering, the light only — strongest on the loose, gone on rock, tracks, the damp and wherever a ripple would be
-  // smaller than a pixel or two
-  float loose = m.g * (1.0 - g.rock) * (1.0 - g.trail) * (1.0 - smoothstep(0.3, 0.7, m.b)) * (1.0 - smoothstep(0.05, 0.12, foot));
+  // WIND RIPPLES in the loose sand: fine ridges across the wind (~0.35 m), the light only — on the LOOSE sand only
+  // (2026-11-04: not the gravel, rock, tracks or the damp), in PATCHES (a slow no-repeat noise: some sand lies smooth),
+  // at two angles of the wind crossfading (one direction everywhere read as a repeated pattern), gone wherever a
+  // ripple would be smaller than a pixel or two
+  float loose = g.loose * (1.0 - smoothstep(0.3, 0.7, m.b)) * (1.0 - smoothstep(0.05, 0.12, foot));
   if (loose > 0.01) {
-    vec2 wd = normalize(vec2(0.83, 0.56));
-    float warp = (p.mid.g - 0.5) * 9.0 + (p.fine.b - 0.5) * 2.2;
-    float ph = dot(xz, wd) * 17.0 + warp;
+    float patchK = smoothstep(0.38, 0.62, g.ripK);
+    loose *= 0.25 + 0.75 * patchK;
+    vec2 wd1 = vec2(0.83, 0.56), wd2 = vec2(0.47, 0.88);
+    float warp = (p.mid.g - 0.5) * 9.0 + (p.fine.b - 0.5) * 2.2 + (p.grain.r - 0.5) * 1.2;
+    float wk = smoothstep(0.38, 0.62, p.big.r);
+#ifdef OTH_SPEC
+    float ph1 = dot(xz, wd1) * 17.0 + warp, ph2 = dot(xz, wd2) * 13.5 + warp * 0.8;
+    float rip = mix(cos(ph1) * 0.5 + 0.5 * cos(ph1 * 2.03 + 1.1) * 0.35, cos(ph2) * 0.5 + 0.5 * cos(ph2 * 2.03 + 0.4) * 0.35, wk);
+    vec2 wd = normalize(mix(wd1, wd2, wk));
+#else
+    // (LOW: one angle or the other, never both)
+    vec2 wd = wk > 0.5 ? wd2 : wd1;
+    float ph = dot(xz, wd) * (wk > 0.5 ? 13.5 : 17.0) + warp;
     float rip = cos(ph) * 0.5 + 0.5 * cos(ph * 2.03 + 1.1) * 0.35;
+#endif
     N = normalize(N + vec3(wd.x, 0.0, wd.y) * rip * 0.16 * loose);
+  }
+  // DESERT VARNISH on the cliffs (2026-11-04): dark streaks running down the sandstone faces from the ledges, a few
+  // bleached ones — what makes a real wall read as weathered rock, not a stack of bands. Projected on the face's own
+  // axis (x for a face looking ±z, z for one looking ±x), stretched down it; two scales so they never repeat
+  float faceK = g.rock * smoothstep(0.22, 0.45, steep) * (1.0 - g.trail);
+  if (faceK > 0.01 && foot < 6.0) {
+    // (the two projections' RESULTS blended — blending their coordinates swirled the streaks into wood grain round a
+    //  curved face; LOW reads only the face's main axis)
+    float wx = smoothstep(0.3, 0.7, abs(Ns.x) / (abs(Ns.x) + abs(Ns.z) + 1e-4));
+#ifdef OTH_SPEC
+    float st = mix(texture(uNoise, vec2(xz.x / 31.0, h / 260.0 + 0.3)).g, texture(uNoise, vec2(xz.y / 27.3 + 0.5, h / 230.0)).g, wx);
+#else
+    float st = texture(uNoise, vec2((wx > 0.5 ? xz.y : xz.x) / 31.0, h / 260.0 + 0.3)).g;
+#endif
+    float varnish = smoothstep(0.5, 0.86, st) * 0.85 * (1.0 - smoothstep(2.0, 6.0, foot));
+    float bleach = smoothstep(0.62, 0.8, 1.0 - st) * 0.5 * (1.0 - smoothstep(2.0, 6.0, foot));
+    col *= mix(vec3(1.0), vec3(0.66, 0.63, 0.64), varnish * faceK);
+    col *= mix(vec3(1.0), vec3(1.1, 1.08, 1.05), bleach * (1.0 - varnish) * faceK);
   }
 #endif
   // CLIFF FACES (2026-10-27, "cliffs … the colour is the key"): a steep rock face reads as LAYERED stone — horizontal
@@ -359,13 +396,26 @@ void main() {
   float cliffK = g.rock * smoothstep(0.22, 0.5, steep) * (1.0 - g.trail);
 #endif
   if (cliffK > 0.01) {
-    float hb = h / 3.4 + (p.mid.g - 0.5) * 1.8 + (p.fine.r - 0.5) * 0.45;
-    float bi = floor(hb), bf = hb - bi;
-    float bh = fract(sin(bi * 12.9898 + 4.1) * 43758.5453);
-    vec3 band = mix(vec3(1.1, 1.03, 0.9), vec3(0.9, 0.97, 1.07), bh) * (0.9 + 0.2 * fract(bh * 7.13));
-    float seam = (1.0 - smoothstep(0.0, 0.07 + foot * 0.05, bf)) * (1.0 - smoothstep(1.5, 4.0, foot));
-    float streak = smoothstep(0.55, 0.8, texture(uNoise, vec2(dot(xz, vec2(0.71, 0.7)) / 4.5, h / 55.0)).g);
-    col *= mix(vec3(1.0), band * (1.0 - 0.17 * seam) * (1.0 - 0.16 * streak), cliffK);
+    // (2026-11-04 — the user: "a repeated line … first 2 m, then the next line, then the next … use shaders, not
+    //  repeated textures; from a distance just colour": the strata were EVEN 3.4 m bands with a dark seam at each, the
+    //  streaks a texture repeating every 4.5 m. Now beds of UNEVEN thickness — two smooth 1D noises sharing no period —
+    //  soft tones, no seams; the streaks on the face's own axis at two scales with no common period; the small beds and
+    //  the streaks fade into the plain colour as they shrink toward a pixel)
+    float nearK = 1.0 - smoothstep(0.8, 3.5, foot);
+    float q = h + (p.mid.g - 0.5) * 6.0 + (p.big.r - 0.5) * 9.0;
+    float bh = strataN(q / 13.0);
+    if (nearK > 0.01) bh = mix(bh, 0.62 * bh + 0.38 * strataN(q / 4.1 + 5.3), nearK);
+    vec3 band = mix(vec3(1.08, 1.03, 0.92), vec3(0.92, 0.97, 1.06), bh);
+    float wx = smoothstep(0.3, 0.7, abs(Ns.x) / (abs(Ns.x) + abs(Ns.z) + 1e-4));
+    float streak = 0.0;
+    if (nearK > 0.01) {
+#ifdef OTH_SPEC
+      streak = smoothstep(0.5, 0.82, mix(texture(uNoise, vec2(xz.x / 29.0, h / 230.0 + 0.6)).g, texture(uNoise, vec2(xz.y / 25.1 + 0.2, h / 210.0)).g, wx)) * nearK;
+#else
+      streak = smoothstep(0.5, 0.82, texture(uNoise, vec2((wx > 0.5 ? xz.y : xz.x) / 29.0, h / 230.0 + 0.6)).g) * nearK; // (LOW: one read)
+#endif
+    }
+    col *= mix(vec3(1.0), band * (1.0 - 0.16 * streak), cliffK);
     col = mix(col, mix(GREEN, GREEN_DEEP, p.fine.g) * 1.1, cliffK * smoothstep(0.8, 0.95, Nf.y) * 0.75);
   }
 
@@ -395,10 +445,12 @@ void main() {
   float wrap = mix(0.62, 0.2, g.rock);
   float ao = mix(1.0, 0.7, g.forest) * mix(1.0, 0.85, g.bed) * cav;
   vec3 V = normalize(uCamPos - vWorld);
-  float sun = sunVisibility(xz);
-#ifdef OTH_DESERT
-  sun = mix(sun, 1.0, smoothstep(0.35, 0.7, steep)); // (the 4 m bake on a near-vertical face: stripes — its facing shades it)
-#endif
+  // (the 4 m shadow bake on a near-vertical face: a stripe at every texel row. A steep face reads its shade a few
+  //  metres out in front of it instead — the open ground there, in the wall's shadow or not; its facing does the rest.
+  //  Both worlds, 2026-11-04 — the desert lit its walls fully before; the valley's walls kept the stripes)
+  float wallK = smoothstep(0.3, 0.6, steep);
+  vec2 outward = Ns.xz / max(length(Ns.xz), 1e-3);
+  float sun = sunVisibility(xz + outward * 6.0 * wallK);
   // under the grass the ground lies in the blades' shade (it shows between them); the shade lifts toward the
   // grass's edge, where the ground alone must look like the field from afar
   float under = grassy0(m, g.rock, g.forest) * (1.0 - smoothstep(0.02, 0.1, g.scree)) * (1.0 - g.trail) * (1.0 - smoothstep(uGrassR * 0.3, uGrassR * 0.95, length(vWorld - uCamPos)));

@@ -1,17 +1,17 @@
-// ablate.mjs [tier] [view] [extra] — the GPU's frame, system by system: each part of the world hidden in turn (the rest
+// ablate.mjs [tier] [view] [extra] (env PORT: 5200) — the GPU's frame, system by system: each part of the world hidden in turn (the rest
 // drawn), the frame time with vs without it, interleaved ×4, uncapped 1080p. What each costs = what hiding it saves.
 // Needs `window.__oth.parts()` → { name: { visible } } (every build keeps it).
 import puppeteer from 'puppeteer-core'
 const tier = process.argv[2] || 'ultra'
 const view = process.argv[3] || 'spawn'
 const extra = process.argv[4] ? `&${process.argv[4]}` : ''
-const V = { spawn: ['valley', true], forest: ['valley', false, 260, 640, 2.2, 0.6, -0.05], lake: ['valley', false, -160, -1320, 3, -1.2, -0.04], oasis: ['desert', false, -330, 420, 3, -1.2, -0.02] }[view]
+const V = { spawn: ['valley', true], forest: ['valley', false, 260, 640, 2.2, 0.6, -0.05], lake: ['valley', false, -160, -1320, 3, -1.2, -0.04], oasis: ['desert', false, -330, 420, 3, -1.2, -0.02], plain: ['desert', false, -300, 1100, 2, 0.3, 0.02] }[view]
 const CHROME = process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
   args: ['--disable-gpu-vsync', '--disable-frame-rate-limit', '--use-angle=metal', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--enable-dawn-features=allow_unsafe_apis', '--disable-dawn-features=timestamp_quantization', '--window-size=1920,1080', '--mute-audio'],
   defaultViewport: { width: 1920, height: 1080, deviceScaleFactor: 1 } })
 const p = await b.newPage()
-await p.goto(`http://localhost:5200/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&world=${V[0]}&sound=0&save=0${extra}`, { waitUntil: 'load' })
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&world=${V[0]}&sound=0&save=0${extra}`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car?.sim, { timeout: 180000, polling: 250 })
 await p.evaluate((v) => { const o = window.__oth; if (v[1]) o.drive(true); else o.view(v[2], v[3], v[4], v[5], v[6]) }, V)
 await new Promise((r) => setTimeout(r, 3000))

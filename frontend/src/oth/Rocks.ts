@@ -40,6 +40,8 @@ export class Rocks {
   private readonly near: number
   /** The rounded shapes' far LOD (rockNear on): one mesh per ROUND variant. */
   private readonly farMeshes: GFX.InstancedMesh[] = []
+  /** The desert's sculpted stones' far LOD (≈ 60 triangles, not 256): one mesh per block variant (stones.glb). */
+  private readonly stoneFar: GFX.InstancedMesh[] = []
   count = 0
   /** Every rock (the physics builds colliders for the ones near the car) and each shape's vertices (unit size). */
   readonly all: Inst[]
@@ -47,7 +49,28 @@ export class Rocks {
   /** Where the rocks stand (R8 on the box's 2 m grid, 255 = covered): the grass keeps out of them. */
   readonly footprint: GFX.DataTexture
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
+  /** The desert's STONES (2026-11-04, the user: "sculpt … the rocks"): sculpted in Blender
+   *  (scripts/oth/desert_stones.py → stones.glb) — weathered sandstone, bedded and broken — in the chamfered blocks'
+   *  place; [variant][lod]. null if the file is missing (the blocks then). */
+  static async loadStones(url: string): Promise<GFX.BufferGeometry[][] | null> {
+    try {
+      const gltf = await new GFX.GLTFLoader().loadAsync(url)
+      const out: GFX.BufferGeometry[][] = []
+      gltf.scene.traverse((o) => {
+        const m = /^stone_(\d+)_(\d+)/.exec(o.name), mesh = o as GFX.Mesh
+        if (!m || !mesh.isMesh) return
+        mesh.updateWorldMatrix(true, false)
+        const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld)
+        g.deleteAttribute('normal')
+        ;(out[+m[1]] ??= [])[+m[2]] = toCreasedNormals(g, Math.PI / 5)
+      })
+      return out.length >= VARIANTS && out.slice(0, VARIANTS).every((l) => l?.[0] && l[1]) ? out : null
+    } catch {
+      return null
+    }
+  }
+
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, stones: GFX.BufferGeometry[][] | null = null) {
     this.reach = tier.rockReach
     this.near = tier.rockNear
     const mat = new GFX.ShaderMaterial({
@@ -61,8 +84,10 @@ export class Rocks {
     this.rubbleK = tier.name === 'low' ? 0.4 : 1
     const all = (this.all = this.place())
     for (let v = 0; v < VARIANTS + ROUND; v++) {
-      const geo = v < VARIANTS ? boulder(0x51ed + v * 977) : roundBoulder(0x7a3 + v * 131)
-      this.shapes.push(geo.attributes.position.array as Float32Array)
+      const sculpted = v < VARIANTS ? stones?.[v] : undefined
+      const geo = sculpted ? sculpted[0] : v < VARIANTS ? boulder(0x51ed + v * 977) : roundBoulder(0x7a3 + v * 131)
+      // (the physics' hull: the sculpted stone's far shape — its hull is the near one's, near enough, from 32 points)
+      this.shapes.push((sculpted ? sculpted[1] : geo).attributes.position.array as Float32Array)
       const n = all.filter((r) => r.v === v).length
       const mesh = new GFX.InstancedMesh(geo, mat, Math.max(1, n))
       mesh.count = 0
@@ -70,6 +95,14 @@ export class Rocks {
       mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
       this.meshes.push(mesh)
       this.group.add(mesh)
+      if (sculpted) {
+        const far = new GFX.InstancedMesh(sculpted[1], mat, Math.max(1, n))
+        far.count = 0
+        far.frustumCulled = false
+        far.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
+        this.stoneFar[v] = far
+        this.group.add(far)
+      }
       if (v >= VARIANTS) {
         const far = new GFX.InstancedMesh(roundBoulder(0x7a3 + v * 131, 1), mat, Math.max(1, n))
         far.count = 0
@@ -180,11 +213,17 @@ export class Rocks {
     }
     for (const L of map.meta.trails.lines) for (let i = 0; i < L.length; i += 3) {
       at(Math.round(L[i][0]), Math.round(L[i][1]), 3)
-      if (rnd() > 0.12) continue
+      // (the desert, 2026-11-04 — "fuller": a drive between the rock gardens still opened wide — twice as many by the
+      //  tracks, now and then a few together)
+      if (rnd() > (map.desert ? 0.26 : 0.12)) continue
       const [x0, z0] = L[i], side = rnd() < 0.5 ? -1 : 1, j = Math.min(L.length - 1, i + 1)
       const dx = L[j][0] - x0, dz = L[j][1] - z0, l = Math.hypot(dx, dz) || 1, off = map.meta.trails.hw + 3 + rnd() * 9
       const x = x0 - (dz / l) * off * side, z = z0 + (dx / l) * off * side
       if (dry(x, z)) add(x, z, 0.9 + rnd() * 2.4, 0.3)
+      if (map.desert && rnd() < 0.35) for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+        const px = x + (rnd() - 0.5) * 6, pz = z + (rnd() - 0.5) * 6
+        if (dry(px, pz) && map.trackDist(px, pz) > map.meta.trails.hw + 2.5) add(px, pz, 0.4 + rnd() * 1.2, 0.3)
+      }
     }
     // LONE BOULDERS in the open
     for (let gz = -half; gz < half; gz += 70) {
@@ -303,6 +342,9 @@ export class Rocks {
     const minRatio = 2 / pxPerRad
     for (const m of this.meshes) m.count = 0
     for (const m of this.farMeshes) m.count = 0
+    for (const m of this.stoneFar) if (m) m.count = 0
+    // (a sculpted stone under ~5 % of the view's height tall — sy / d < 0.06 at the 60° view: its 60-triangle shape)
+    const lodRatio = 0.06
     const near2 = this.near * this.near
     this.culled.frustum = this.culled.occluded = this.culled.small = 0
     const i0 = Math.floor((cx - R) / CELL), i1 = Math.floor((cx + R) / CELL), j0 = Math.floor((cz - R) / CELL), j1 = Math.floor((cz + R) / CELL)
@@ -328,14 +370,15 @@ export class Rocks {
         if (d2 > R * R) continue
         if (r.sy * r.sy < minRatio * minRatio * d2) { this.culled.small++; continue }
         // (a rounded boulder past rockNear: its coarse shape — the fog softens it there)
-        const mesh = r.v >= VARIANTS && d2 > near2 ? this.farMeshes[r.v - VARIANTS] : this.meshes[r.v]
+        const mesh = r.v >= VARIANTS ? (d2 > near2 ? this.farMeshes[r.v - VARIANTS] : this.meshes[r.v])
+          : this.stoneFar[r.v] && r.sy * r.sy < lodRatio * lodRatio * d2 ? this.stoneFar[r.v] : this.meshes[r.v]
         this.q.setFromEuler(this.e.set(r.tilt, r.rot, r.tilt * 0.6))
         this.m.compose(this.p.set(r.x, r.y, r.z), this.q, this.sc.set(r.s, r.sy, r.s * 0.9))
         mesh.setMatrixAt(mesh.count++, this.m)
       }
     }
     this.count = 0
-    for (const m of [...this.meshes, ...this.farMeshes]) { m.instanceMatrix.needsUpdate = true; this.count += m.count }
+    for (const m of [...this.meshes, ...this.farMeshes, ...this.stoneFar.filter(Boolean)]) { m.instanceMatrix.needsUpdate = true; this.count += m.count }
   }
 }
 

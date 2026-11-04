@@ -15,11 +15,12 @@ class LedgeRoad:
     what takes y0 up to y_top over the whole road."""
 
     def __init__(self, O, eu, ev, NL, L, y0, top, P=26.0, grade=None, y_top=None, SH=3.7, berm=(1.6, 0.7), wall=14.0,
-                 drop=3.2, bow=(7.0, 5.0), seed=31):
+                 drop=3.2, bow=(7.0, 5.0), seed=31, strata_fn=None):
         self.O, self.eu, self.ev = np.array(O, float), np.array(eu, float), np.array(ev, float)
         self.NL, self.L, self.P, self.R, self.SH = NL, float(L), float(P), P / 2, SH
         self.BW, self.BH = berm
         self.wall, self.drop, self.bow, self.seed, self.top_fn = wall, drop, bow, seed, top
+        self.strata_fn = strata_fn
         self.S0 = np.array([k * (self.L + math.pi * self.R) for k in range(NL)])   # the road's length at leg k's start
         self.y0 = y0
         self.grade = grade if grade is not None else (y_top - y0) / (self.S0[-1] + self.L)
@@ -47,12 +48,16 @@ class LedgeRoad:
         return np.where((t > 0) & (t < 1), np.sin(np.pi * np.clip(t, 0, 1)), 0.0)
 
     def strata(self, h, lo, hi, X, Z):
-        """Layer a face: benches every ~6 m (their heights wandering), only where it's tall."""
-        st = 6.0 + 1.2 * fbm(X / 140, Z / 140, self.seed + 3, 2)
-        ph = 2.0 * fbm(X / 210, Z / 210, self.seed + 4, 2)
-        t = (h + ph) / st
-        f = t - np.floor(t)
-        q = (np.floor(t) + smoothstep(0.42, 1.0, f)) * st - ph
+        """Layer a face: benches every ~6 m (their heights wandering), only where it's tall — or the world's own beds
+        (strata_fn(h, X, Z): the desert's, 2026-11-04 — even 6 m benches read as a trenched hill)."""
+        if self.strata_fn is not None:
+            q = self.strata_fn(h, X, Z)
+        else:
+            st = 6.0 + 1.2 * fbm(X / 140, Z / 140, self.seed + 3, 2)
+            ph = 2.0 * fbm(X / 210, Z / 210, self.seed + 4, 2)
+            t = (h + ph) / st
+            f = t - np.floor(t)
+            q = (np.floor(t) + smoothstep(0.42, 1.0, f)) * st - ph
         k = smoothstep(10, 26, hi - lo) * 0.7
         return np.clip(h + (q - h) * k, lo, hi)
 

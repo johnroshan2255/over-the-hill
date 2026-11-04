@@ -363,6 +363,59 @@ Next:
 3. A phone check of LOW (the outcrops' +10 % there).
 4. Slice the rock placement (a generator, like `placeTrees`) if the crossing's build frame grows past ~35 ms.
 5. More forms near the roads' sides (the outcrops keep 25 m+ off them: a drive between rock gardens still opens wide).
+   **Done (§13):** 520 outcrops, their edge ≥ ~13 m off a road.
+
+---
+
+## 13. Not a trenched hill, not a repeated texture (2026-11-04)
+
+The user: *"the hills look like a trenched hill … the ground texture is like a repeated texture … sculpt the hills and
+the rocks … roads … a desert but still fuller"*, and then: *"in a big wall there's a line, then the next line, then the
+next — in the valley and the desert, wherever we have big walls. Don't use repeated textures, use shaders; from a
+distance just colour."* (They asked to download Over the Hill's desert screenshots and match them exactly: declined —
+copying another game's look isn't on, §3's real-desert references stand. Everything below is our own art direction,
+checked by eye in driver-height views, the aerial and LOW.)
+
+What was wrong, and what changed:
+
+| problem | cause | now |
+|---|---|---|
+| every wall a stack of equal 9 m steps | `terrace()`: one bed thickness, one cliff fraction, everywhere | `desert.py` **strata**: a table of beds 7–37 m (a third SOFT — a plain slope — the rest HARD: a cliff over a short bench), offset at **joints** (a jittered Voronoi, 52 m, ±4.5 m: no ledge runs on unbroken). The ledge road's face uses them too (`ledgeroad.py strata_fn`) |
+| moats round the spires and outcrops | a bench cut into a wall's foot went below the ground round it | the beds never go below the lowest ground within 10 m (`local_min`) |
+| every outcrop on a square pad | `max(H, base)` over its whole square window | raised only within its outline |
+| spires: smooth cones | — | blocky columns (a domed top, sheer fluted sides, an irregular outline) on a rubble cone; no beds or skins on them (a tower's wall is a cell or two wide: they made lens-shaped plates) |
+| the skins on every bed | 1,187 bands | only a HARD bed's riser, sized to it (`desert_rocks.py`): 422 bands, 116k vertices (was 344k) |
+| painted 9 m bands, a dark line at each | `bedTone` | beds of uneven tone (two smooth 1D noises, no period), no lines; DESERT VARNISH streaks down the faces (the two projections' results blended — blending coordinates swirled them into wood grain) |
+| one sand, tiled | the paint octaves repeat every 0.85 / 3.7 / 13 m; one ripple direction everywhere | baked in the mask (G): GRAVEL plains, sand SHEETS, TAILS downwind of every rock, DRIFTS at the walls' feet; the paint's blotches from turned reads at scales sharing no period; PEBBLES from hashes (grit 3 cm, stones 7 cm, their average far); ripples only on loose sand, in patches, at two angles |
+| the road a flat pale strip | — | compacted sand taking a little of the ground it crosses, a ragged edge, two pairs of ruts, a paler crown, sand and pebbles thrown up at its edges |
+| the boulders: dice | chamfered boxes | **sculpted in Blender** (`desert_stones.py` → `stones.glb`, 30 kB): 6 sandstone stones (blocks, a boulder, slabs, a chunk) — fracture planes, bedding grooves, weathering — decimated to 256 / 60 triangles, the far one past ~5 % of the view's height; same variants, no stone moved |
+| empty | — | desert SCRUB (grey-olive saltbush, dead brush) in patches, at the walls' feet and in the lee of rocks; twice the stones by the tracks |
+| **(both worlds)** a line every row on a big wall | the 2 m grid's triangles: steep rock took 42 % of each one's flat normal and tone; the valley's cliff paint an even 3.4 m band with a seam; the 4 m shadow bake striping a near-vertical face; the rock relief's texture repeating every 7 m | steep walls take the smooth normal; the valley's beds uneven, no seams, the small ones and the streaks fading to plain colour with distance; a steep face reads its shade a few metres out in front of it; the relief shifted by a slow warp field (no two tiles match) |
+
+Roads unchanged (`trail.bin` byte-identical); the escarpment's road driven by the bot (climbtest) end to end, through the
+gate into the valley; WebGPU transpiles clean (wgslcheck, both worlds, ULTRA + LOW); the chart re-baked. Regenerate:
+`desert.py`, then `desert_rocks.py`, then (only if its shapes change) `desert_stones.py -- OUT=public/oth/desert/stones.glb`.
+
+**Cost** (abgpu, the commit before vs this, 1080p uncapped, WebGPU, 5 interleaved loads a side; the noise here ±0.13 ms):
+| view | ULTRA | LOW |
+|---|---|---|
+| desert plain | +0.23 ms (+12 %) | +0.03 ms (+2 %) |
+| oasis | +0.32 ms (+11 %) | +0.15 ms (+9 %) |
+| valley, the Great Cliff filling the view (the walls' fix) | +0.46 ms (+12 %) | +0.25 ms (+10 %) |
+
+Of the cliff's, ~0.3 ms is `Terrain.ts`'s wall shading, but no one part of it (the streaks, the shadow read, the facets,
+the relief's warp — each put back alone) moved it outside the noise; the machine then went too noisy to split it
+further. The fewer skins (344k → 116k vertices) and the sculpted stones (256 / 60 triangles a stone vs ≈ 50) don't
+show on their own.
+The first version (the no-repeat noise from hashes, ~16 `sin` a pixel) cost +0.6 ms everywhere (+40 % on LOW): the
+blotches are texture reads now, and LOW drops the small-blotch read, the grit, the second ripple angle and the second
+varnish read.
+
+Next:
+1. **A ₹15k phone on LOW** in the desert and at the valley's Great Cliff.
+2. LOW's walls still band hard 100–300 m off (LOW's terrain mesh is coarser there: the ledges smear into waves).
+3. The aqueduct, the ksar and the arch are still box slabs: sculpt them like the stones.
+4. Re-score the pairs (§4–6) with the new desert.
 ---
 
 ## 11. Starting it with Claude Code at home

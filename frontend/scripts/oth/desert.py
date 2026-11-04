@@ -82,12 +82,59 @@ KSAR = dict(x=980.0, z=1020.0)       # the ruins in the basin below a blind summ
 X, Z = grid(N_IN, HALF)
 CELL = 2 * HALF / (N_IN - 1)
 
-def terrace(h, cliff=0.38, phase=None):
-    """The sandstone's beds: a flat bench, then a steep riser to the next — h in m (phase: a slow wobble of the beds)."""
+# THE STRATA (2026-11-04 — the user: the walls looked "like a trenched hill", every slope cut into the same 9 m steps
+# by the old terrace()):
+# the sandstone in beds of their OWN thickness, 7–37 m — most HARD (a cliff over a short bench: the riser 25–55 % of
+# the bed), a third SOFT (no step: a plain slope of crumbled rock between two cliffs). The table is the same for every
+# wall, so a hard bed reads as one cliff band right round a mesa — but the beds are offset at the JOINTS (joint_offsets):
+# no ledge runs on unbroken.
+_srng = np.random.default_rng(SEED + 90)
+_LB, _LT, _LH, _LC = [-160.0], [], [], []
+while _LB[-1] < 900.0:
+    soft = _srng.random() < 0.3
+    t = _srng.uniform(3.0, 10.0) if soft else 7.0 + 30.0 * _srng.random() ** 1.3
+    _LT.append(t); _LH.append(0.0 if soft else _srng.uniform(0.8, 1.0)); _LC.append(_srng.uniform(0.25, 0.55))
+    _LB.append(_LB[-1] + t)
+LAYER_B, LAYER_T, LAYER_H, LAYER_C = np.array(_LB[:-1]), np.array(_LT), np.array(_LH), np.array(_LC)
+
+def strata(h, phase=None):
+    """h → the beds' height: within a bed (base b, thickness t), a hard bed's bench then its riser, a soft bed unchanged."""
     p = 0 if phase is None else phase
-    t = (h + p) / BED
-    f = t - np.floor(t)
-    return (np.floor(t) + smoothstep(1 - cliff, 1.0, f)) * BED - p
+    q = h + p
+    k = np.clip(np.searchsorted(LAYER_B, q, side='right') - 1, 0, len(LAYER_B) - 1)
+    b, t, hd, c = LAYER_B[k], LAYER_T[k], LAYER_H[k], LAYER_C[k]
+    f = np.clip((q - b) / t, 0.0, 1.0)
+    s = np.clip((f - (1 - c)) / c, 0.0, 1.0)
+    g = (1 - hd) * f + hd * s * s * (3 - 2 * s)
+    return b + t * g - p
+
+def joint_offsets(X, Z, cell, seed, amp):
+    """The JOINTS: the rock split into blocks ~cell across (a jittered-grid Voronoi), each slumped its own ±amp/2 m —
+    a bed's ledge steps up or down where it crosses a joint, the way a real wall is cut by vertical cracks."""
+    gx0, gz0 = np.floor(X / cell).astype(np.int64), np.floor(Z / cell).astype(np.int64)
+    best = np.full(X.shape, 1e18); val = np.zeros(X.shape)
+    for dj in (-1, 0, 1):
+        for di in (-1, 0, 1):
+            cx, cz = gx0 + di, gz0 + dj
+            fx = (cx + (hash2(cx, cz, seed) & 1023) / 1024.0) * cell
+            fz = (cz + (hash2(cx, cz, seed + 1) & 1023) / 1024.0) * cell
+            d = (X - fx) ** 2 + (Z - fz) ** 2
+            m = d < best
+            best = np.where(m, d, best)
+            val = np.where(m, (hash2(cx, cz, seed + 2) & 1023) / 1023.0 - 0.5, val)
+    return val * amp
+
+def local_min(A, r):
+    """The lowest value within r cells (a square window, separable) — the ground a wall's foot stands on."""
+    out = A.copy()
+    for ax in (0, 1):
+        src = out.copy()
+        p = np.pad(src, [((r, r) if k == ax else (0, 0)) for k in range(2)], mode='edge')
+        n = src.shape[ax]
+        for o in range(2 * r + 1):
+            sl = [slice(None), slice(None)]; sl[ax] = slice(o, o + n)
+            out = np.minimum(out, p[tuple(sl)])
+    return out
 
 def landforms(X, Z, inner=True):
     """The big shapes: the plain, the north plateau, the high south plateau, mesas, spires, dunes (no canyon yet)."""
@@ -150,6 +197,7 @@ for (mx, mz, R, top) in [(-1250, 900, 120, 70), (-900, 1180, 70, 95), (420, 820,
     H = np.where(k > 0.001, np.maximum(H, base + top * k ** 0.7 * (0.96 + 0.04 * fbm(X / 60, Z / 60, SEED + int(mx), 2))), H)  # (its own footprint only)
 # SPIRES: the north-west plateau's rock forest (Tassili) — clusters of tall stacked needles, a few broad towers
 SPIRES = []
+SPK = np.zeros_like(H)   # (where a spire stands: the joints keep off them — a joint across a tower cut a recessed panel)
 for c in range(9):
     cx = -1700 + rng.random() * 1500; cz = -1850 + rng.random() * 1050
     for k in range(int(4 + rng.random() * 7)):
@@ -157,14 +205,21 @@ for c in range(9):
         if any(math.hypot(sx - a, sz - b) < 26 for a, b, _, _ in SPIRES): continue
         hgt = 28 + rng.random() * 58; r = hgt * (0.22 + rng.random() * 0.14)
         SPIRES.append((sx, sz, r, hgt))
-for (sx, sz, r, hgt) in SPIRES:
+# (2026-11-04 — TOWERS, not cones: the smooth cones read as nothing real. A real rock forest's towers are blocky
+#  columns — a domed top, near-sheer fluted sides, an irregular outline — standing on a cone of their own rubble)
+for si, (sx, sz, r, hgt) in enumerate(SPIRES):
     dx, dz = X - sx, Z - sz
-    m = (np.abs(dx) < r + 4) & (np.abs(dz) < r + 4)
+    m = (np.abs(dx) < r * 1.3 + 2) & (np.abs(dz) < r * 1.3 + 2)
     if not m.any(): continue
-    d = np.hypot(dx[m], dz[m]) / r
+    a = np.arctan2(dz[m], dx[m])
+    d = np.hypot(dx[m], dz[m]) / (r * (1 + 0.16 * np.sin(3 * a + si) + 0.08 * np.sin(5 * a + 2 * si) + 0.05 * np.sin(9 * a + 3 * si)))
     base = bilinear(H, HALF, np.array([sx]), np.array([sz]))[0]
-    cone = base + hgt * np.clip(1 - d, 0, 1) ** 1.25
-    H[m] = np.maximum(H[m], cone)
+    top = 1 - 0.08 * np.clip(d / 0.5, 0, 1) ** 2                                      # (the domed top)
+    side = 0.92 - 0.67 * smoothstep(0.5, 0.68, d)                                        # (the wall)
+    apron = 0.25 * (1 - smoothstep(0.68, 1.3, d)) ** 1.5                                 # (the rubble cone)
+    prof = np.where(d < 0.5, top, np.where(d < 0.68, side, apron))
+    H[m] = np.maximum(H[m], base + hgt * prof)
+    SPK[m] = np.maximum(SPK[m], 1 - smoothstep(1.1, 1.3, d))
 
 # THE CANYON: carved along the river — the floor (its level just over the water), the walls rising to the plain or
 # the plateau over wall_w(s), then the beds terraced into them. One carving for the box (2 m) and the far world
@@ -213,8 +268,14 @@ slope = np.hypot(gx, gz)
 #  the erg are sandstone like the rest; DESERT_MATCH round 6: they had no beds and no rock, smooth sand-coloured blocks)
 ERG_OPEN = ERG * (1 - smoothstep(0.05, 0.4, MESAK))
 wall = smoothstep(0.45, 0.9, blur(slope, 2)) * (1 - smoothstep(0.05, 0.3, ERG_OPEN))
-phase = 2.5 * fbm(X / 500, Z / 500, SEED + 30, 2)
-H = H + (terrace(H, 0.4, phase) - H) * wall
+# (not on the spires: a tower's wall is a cell or two wide on the 2 m grid, and the beds made random shelves of it —
+#  lens-shaped recesses up the towers; their rings are the skins' — desert_rocks.py)
+wall_beds = wall * (1 - SPK)
+# (the beds' phase: a slow wobble + the joints' blocks, softened a cell so a joint is a crack, not a stair-step alias)
+phase = 2.5 * fbm(X / 500, Z / 500, SEED + 30, 2) + blur(joint_offsets(X, Z, 52.0, SEED + 31, 9.0), 1) * (1 - SPK)
+# (never below the ground the wall stands on: a bench cut into a wall's foot dug a MOAT round every spire and outcrop)
+foot = local_min(H, 5)
+H = H + (np.maximum(strata(H, phase), foot) - H) * wall_beds
 PHASE = phase
 WALL = wall
 
@@ -231,7 +292,7 @@ HF = HF + ring * mes * (120 + 140 * smoothstep(0, 0.5, fbm(XF / 2600, ZF / 2600,
 # deep enough for 16 m cells to hold the water (meta water.riverOut draws it)
 HF, _, _, _, _ = carve_canyon(XF, ZF, HF, RIVER_FAR, chan=(16.0, 30.0), chan_depth=4.0)
 gzf, gxf = np.gradient(HF, 16.0)
-HF = HF + (terrace(HF, 0.4) - HF) * smoothstep(0.3, 0.7, np.hypot(gxf, gzf))
+HF = HF + (np.maximum(strata(HF), local_min(HF, 1)) - HF) * smoothstep(0.3, 0.7, np.hypot(gxf, gzf))
 
 # ---------------------------------------------------------------------------------------------------------- roads
 # THE LEDGE ROADS first (the walls are sheer: nothing finds its own way up them): designed polylines cut into the
@@ -270,7 +331,8 @@ P_ESC, NL_ESC, L_ESC = 26.0, 4, 380.0
 O_ESC = (GATE['x'] + P_ESC / 2, 1440.0)       # leg 0's start: the top leg's bend lands on the pass's line
 def esc_top(x, z): return HIGH + 2 + 1.5 * fbm(x / 160, z / 160, SEED + 60, 2)
 ESC = LedgeRoad(O=O_ESC, eu=(1, 0), ev=(0, 1), NL=NL_ESC, L=L_ESC, y0=ground_at(*O_ESC), top=esc_top, P=P_ESC,
-                y_top=HIGH + 2, SH=TRAIL_HW + 0.7, seed=SEED + 61)
+                y_top=HIGH + 2, SH=TRAIL_HW + 0.7, seed=SEED + 61,
+                strata_fn=lambda h, X_, Z_: strata(h, 2.5 * fbm(X_ / 500, Z_ / 500, SEED + 30, 2) + joint_offsets(X_, Z_, 52.0, SEED + 31, 6.0)))
 ew = (X > O_ESC[0] - 100) & (X < O_ESC[0] + L_ESC + 100) & (Z > O_ESC[1] - 45) & (Z < O_ESC[1] + 200)
 ej, ei = np.nonzero(ew.any(1))[0], np.nonzero(ew.any(0))[0]
 sl_ = (slice(ej[0], ej[-1] + 1), slice(ei[0], ei[-1] + 1))
@@ -463,7 +525,7 @@ tries = 0
 # (ROCK GARDENS: most come in clusters — a centre, then outcrops within ~130 m of it — so the plain reads as groups of
 #  rock with open ground between, not an even sprinkle; a few stand alone)
 centre = None
-while len(OUTCROPS) < 400 and tries < 20000:
+while len(OUTCROPS) < 520 and tries < 30000:
     tries += 1
     if centre is None or orng.random() < 0.18:
         centre = (orng.uniform(-1880, 1880), orng.uniform(-1880, 1880))
@@ -475,7 +537,7 @@ while len(OUTCROPS) < 400 and tries < 20000:
         if abs(ox) > 1880 or abs(oz) > 1880: continue
     R = 10 + 32 * orng.random() ** 1.8
     top = R * (0.4 + 0.5 * orng.random())
-    if at2(Dt, ox, oz) < R * 1.5 + 25: continue                                   # (well off the roads)
+    if at2(Dt, ox, oz) < R * 1.35 + 16: continue                                  # (off the roads: their edge ≥ ~13 m from one)
     s_ = at2(Sr, ox, oz)
     if at2(Dr, ox, oz) < float(floor_hw(s_) + wall_w(s_)) + 40: continue          # (out of the canyon)
     if at2(SL0, ox, oz) > 0.22: continue                                          # (on open ground, not a wall)
@@ -497,12 +559,13 @@ for i, (ox, oz, R, top) in enumerate(OUTCROPS):
         rt = 1 - 0.27 * t
         prof = np.maximum(prof, top * (t + 1) / tiers * (1 - smoothstep(rt - 0.13, rt, d)))
     prof *= 0.97 + 0.03 * fbm(X[win] / 23, Z[win] / 23, SEED + 71 + i, 2)
-    H[win] = np.maximum(H[win], base + prof)
+    # (raised only within its own outline — max(H, base) over the whole window stood every outcrop on a square pad)
+    H[win] = H[win] + np.maximum(base + prof - H[win], 0) * (1 - smoothstep(1.0, 1.3, d))
     OUTK[win] = np.maximum(OUTK[win], 1 - smoothstep(1.25, 1.6, d))
 # their beds: the steep parts of the outcrops terraced like every wall, and in WALL for their skins
 gz0, gx0 = np.gradient(H, CELL)
 wall_o = smoothstep(0.45, 0.9, blur(np.hypot(gx0, gz0), 2)) * OUTK
-H = H + (terrace(H, 0.4, PHASE) - H) * wall_o
+H = H + (np.maximum(strata(H, PHASE), local_min(H, 5)) - H) * wall_o
 WALL = np.maximum(WALL, wall_o)
 ERG_OPEN = ERG_OPEN * (1 - smoothstep(0.05, 0.4, OUTK))
 log(f'  {len(OUTCROPS)} outcrops ({tries} tries)')
@@ -526,7 +589,23 @@ rock = rock * (1 - smoothstep(TRAIL_HW + 10, TRAIL_HW + 3, Dt4)) * (1 - near_wat
 DE4 = polyline_field(X4, Z4, np.vstack([ESC_LINE, PASSD]), 40)[0]
 rock = np.where(DE4 < 40, np.maximum(rock, smoothstep(0.5, 0.9, sl) * smoothstep(ESC.SH + 0.5, ESC.SH + 2.5, DE4)), rock)
 # G LOOSE SAND: the dunes, the plain, drifts against the walls' feet; compact on the roads and the slickrock
-sand = np.clip(0.55 + 0.45 * ERG4 + 0.25 * fbm(X4 / 300, Z4 / 300, SEED + 51, 2) - 0.6 * rock, 0, 1)
+# (2026-11-04 — the user: the ground "like a repeated texture". A real desert floor is never one sand: GRAVEL plains
+#  (low G: darker, pebbly, no ripples) with loose SAND in sheets across them, in TAILS trailing downwind (the wind is
+#  from the north-west, as the erg's) of every rock, mesa and outcrop, in DRIFTS against the walls' feet — all baked
+#  here at 4 m, so nothing in it repeats)
+wind_d = np.array([math.cos(0.6), math.sin(0.6)])
+obst = np.clip(np.maximum.reduce([WALL[::2, ::2], OUTK[::2, ::2], MESAK[::2, ::2]]), 0, 1)
+tails = np.zeros_like(obst)
+for k in range(1, 15):
+    sx_, sz_ = int(round(k * 2.0 * wind_d[0])), int(round(k * 2.0 * wind_d[1]))   # (8 m a step, in 4 m cells)
+    tails = np.maximum(tails, np.roll(np.roll(obst, sz_, 0), sx_, 1) * (1 - k / 15) ** 0.7)
+tails = blur(tails, 2) * (1 - obst)
+sheets = smoothstep(-0.05, 0.3, fbm(X4 / 240, Z4 / 240, SEED + 51, 3) + 0.35 * fbm(X4 / 60, Z4 / 60, SEED + 53, 2))
+drift = blur(smoothstep(0.35, 0.7, sl) * (1 - ERG4), 5) * smoothstep(0.35, 0.15, sl)
+upland = np.maximum(UPN[::2, ::2], UPS[::2, ::2])
+gravel = 0.12 + 0.18 * smoothstep(-0.3, 0.3, fbm(X4 / 90, Z4 / 90, SEED + 54, 2))
+sand = np.maximum.reduce([gravel, sheets * (0.9 - 0.35 * upland), tails * 0.95, np.clip(drift * 1.6, 0, 0.9), ERG4])
+sand = np.clip(sand - 0.6 * rock, 0, 1)
 # B WET: open water (1), the damp banks and the oasis's soil
 wetb = np.where(water4, 1.0, 0.8 * near_water * canyon_floor)
 # A GROWTH: the oasis — palms and scrub along the river and round the lagoon, thinning away from the water; a few
@@ -606,7 +685,8 @@ WALL = np.where(DEs < 60, smoothstep(0.45, 0.9, blur(np.hypot(gxE, gzE), 2)) * s
 np.savez_compressed(os.path.join(CACHE, 'desert.npz'), H=H.astype(np.float32), WALL=WALL.astype(np.float32), PHASE=PHASE.astype(np.float32), Dr=Dr.astype(np.float32),
                     arch=np.array([ARCH['x'], ARCH['z'], ARCH_Y], np.float32), aqueduct=np.array([AQUEDUCT['x0'], AQUEDUCT['z0'], AQUEDUCT['x1'], AQUEDUCT['z1']], np.float32),
                     ksar=np.array([KSAR['x'], KSAR['z']], np.float32), river=RIVER.astype(np.float32), lagoon=np.array([LAGOON['cx'], LAGOON['cz'], LAGOON['rx'], LAGOON['rz'], LAGOON['rot']], np.float32),
-                    Dt=Dt.astype(np.float32), spires=np.array(SPIRES, np.float32), mesas=np.array(MESAS, np.float32))
+                    Dt=Dt.astype(np.float32), spires=np.array(SPIRES, np.float32), mesas=np.array(MESAS, np.float32),
+                    layers=np.stack([LAYER_B, LAYER_T, LAYER_H, LAYER_C], 1).astype(np.float64))
 log(f'wrote {OUT}: box {in_min:.1f}..{in_min + in_range:.1f} m, world {far_min:.1f}..{far_min + far_range:.1f} m')
 log(f'  rock {rock.mean():.2f}  sand {sand.mean():.2f}  wet {wetb.mean():.3f}  growth {grow.mean():.3f}  spires {len(SPIRES)}  mesas {len(MESAS)}')
 

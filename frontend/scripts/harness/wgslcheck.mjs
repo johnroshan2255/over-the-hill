@@ -22,7 +22,7 @@ p.on('console', async (m) => {
     reports.push(`== ${label} (${stage})\n${ctx.join('\n')}`)
   }
 })
-await p.goto(`http://localhost:5200/?tier=${process.argv[2] || 'ultra'}&hour=12&dpr=fixed&time=0&weather=clear&sound=0&save=0&api=webgpu-only${process.argv[3] ? '&' + process.argv[3] : ''}`, { waitUntil: 'load' })
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=${process.argv[2] || 'ultra'}&hour=12&dpr=fixed&time=0&weather=clear&sound=0&save=0&api=webgpu-only${process.argv[3] ? '&' + process.argv[3] : ''}`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready, { timeout: 120000, polling: 250 }).catch(() => console.log('NOT READY'))
 await new Promise((r) => setTimeout(r, 3000))
 const seen = new Set()

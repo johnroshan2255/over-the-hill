@@ -205,8 +205,13 @@ void main() {
   vec3 autumn = mix(vec3(0.35, 0.08, 0.02), vec3(0.7, 0.2, 0.04), 0.55 + j * 0.4);
   vAlb = (aB1.y > 1.5 ? autumn : aB1.y > 0.5 ? juniper : green) * PLANT_VALUE; // (paint.ts: the plants' value)
 #ifdef OTH_DESERT
-  // (Over the Hill's desert bushes: a light yellow-green, sunlit ≈ sRGB 135 160 50)
-  vAlb = mix(vec3(0.15, 0.24, 0.035), vec3(0.3, 0.4, 0.07), 0.5 + j * 0.5) * PLANT_VALUE * 1.3;
+  // (the oasis's bushes: a light yellow-green, sunlit ≈ sRGB 135 160 50; 2026-11-04 the open desert's SCRUB — a
+  //  grey-olive saltbush (kind 1) and sun-bleached dead brush (kind 2): a bright green bush on the bare plain read as
+  //  pasted on)
+  vec3 oasisB = mix(vec3(0.15, 0.24, 0.035), vec3(0.3, 0.4, 0.07), 0.5 + j * 0.5) * PLANT_VALUE * 1.3;
+  vec3 scrubB = mix(vec3(0.11, 0.115, 0.06), vec3(0.22, 0.215, 0.115), 0.5 + j * 0.6);
+  vec3 deadB = mix(vec3(0.19, 0.115, 0.06), vec3(0.33, 0.21, 0.11), 0.5 + j * 0.6);
+  vAlb = aB1.y > 1.5 ? deadB : aB1.y > 0.5 ? scrubB : oasisB;
 #endif
   vSun = sunVisibility(aB0.xz);
   // THE LIGHT, PER VERTEX (2026-10-27, 400 fps at 1080p: the clumps are many cards deep): it is linear in the leaf's
@@ -251,6 +256,18 @@ void main() {
 }
 `
 
+/** The desert's scrub patches (0..1): a slow value noise, each cell its own seed (two scales: 300 m, 90 m). */
+function scrubPatch(x: number, z: number): number {
+  const vn = (cell: number, salt: number) => {
+    const fx = x / cell, fz = z / cell, ix = Math.floor(fx), iz = Math.floor(fz)
+    const u = (fx - ix) * (fx - ix) * (3 - 2 * (fx - ix)), w = (fz - iz) * (fz - iz) * (3 - 2 * (fz - iz))
+    const h = (a: number, b: number) => cellSeed(a, b, salt) / 4294967296
+    return (h(ix, iz) * (1 - u) + h(ix + 1, iz) * u) * (1 - w) + (h(ix, iz + 1) * (1 - u) + h(ix + 1, iz + 1) * u) * w
+  }
+  const n = 0.6 * vn(300, 21) + 0.4 * vn(90, 22)
+  return Math.min(1, Math.max(0, (n - 0.45) / 0.25))
+}
+
 /** Where the bushes stand, into `out` (STRIDE numbers a bush): a row of the grid at a time — it YIELDS after each (a
  *  world built behind another spreads it over frames: World.build). */
 export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generator<void, void, void> {
@@ -274,15 +291,21 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
       const td = map.trackDist(x, z), rd = map.riverDist(x, z), sd = Math.hypot(x - map.meta.spawn.x, z - map.meta.spawn.z)
       // (the DESERT — Over the Hill's, not the valley's, the user: round light yellow-green bushes thick along the
       //  oasis and in its growth, a few scattered over the open sand, none on the dunes' loose crests)
-      const p = map.desert ? 0.03 + 0.4 * Math.min(1, mk[3] / 0.4) + (rd > 9 && rd < 70 ? 0.3 : 0) + (td > hw + 1.5 && td < 10 ? 0.06 : 0) - 0.025 * Math.max(0, mk[1] - 0.8) / 0.2
+      // (2026-11-04, the user: "fuller, not empty": the open desert's SCRUB in patches — thicker where a slow noise says
+      //  (the runnels the rare rain finds), at the walls' feet and in the lee of the rocks (the drifts, G 0.5–0.9), none
+      //  on the erg's loose crests)
+      const patchy = map.desert ? scrubPatch(x, z) : 0
+      const p = map.desert ? 0.03 + 0.4 * Math.min(1, mk[3] / 0.4) + (rd > 9 && rd < 70 ? 0.3 : 0) + (td > hw + 1.5 && td < 10 ? 0.08 : 0)
+          + 0.16 * patchy + (mk[1] > 0.5 && mk[1] < 0.9 ? 0.05 : 0) - 0.2 * Math.max(0, mk[1] - 0.9) / 0.1
         : 0.05 + 0.18 * green + 0.3 * edge + 0.12 * Math.min(1, mk[2] / 0.6) - 0.15 * Math.max(0, mk[3] - 0.6)
         + (rd > 11 && rd < 34 ? 0.45 : 0) + (td > hw + 1.5 && td < 12 ? 0.3 : 0) + (sd > 12 && sd < 150 ? 0.25 : 0)
       if (rnd() > p) continue
       if (map.trailDist(x, z) < hw + 1.2) continue
       const gi = Math.round((x - g.origin) / g.step), gj = Math.round((z - g.origin) / g.step)
       if (fp[gj * g.n + gi] > 60) continue
-      const size = map.desert ? 0.9 + 1.3 * Math.pow(rnd(), 1.4) : 0.7 + 1.4 * Math.pow(rnd(), 1.6)
-      const r = rnd(), kind = map.desert ? 0 : r < 0.06 ? 2 : r < 0.3 ? 1 : 0
+      const oasis = map.desert && (mk[3] > 0.12 || (rd > 9 && rd < 70))
+      const size = map.desert ? (oasis ? 0.9 + 1.3 * Math.pow(rnd(), 1.4) : 0.5 + 1.0 * Math.pow(rnd(), 1.3)) : 0.7 + 1.4 * Math.pow(rnd(), 1.6)
+      const r = rnd(), kind = map.desert ? (oasis ? 0 : r < 0.7 ? 1 : 2) : r < 0.06 ? 2 : r < 0.3 ? 1 : 0
       out.push(x, map.height(x, z) - 0.12 * size, z, size, rnd() * Math.PI * 2, kind, rnd())
     }
   }

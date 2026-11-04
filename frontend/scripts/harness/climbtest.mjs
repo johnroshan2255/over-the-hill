@@ -2,7 +2,7 @@
 // and the pass, the swap at the gate, the desert's pass and escarpment — or the other way. It holds the road's centre
 // line (pure pursuit), slows for the hairpins, and reports where it is, how far off the line, any fall, flip or stall.
 //   node scripts/harness/climbtest.mjs [tier] [dir]      env: START=world:x,z  DIR=out|in (toward the gate | away)
-//                                                         SECONDS=600  (needs `npm run dev`, :5200)
+//                                                         SECONDS=600  PORT=5200 (needs `npm run dev`)
 import puppeteer from 'puppeteer-core'
 import fs from 'node:fs'
 const [tier = 'low', dir = 'vg/climb'] = process.argv.slice(2)
@@ -16,7 +16,7 @@ const ANGLE = process.platform === 'win32' ? 'd3d11' : 'metal'
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: [`--use-angle=${ANGLE}`, '--ignore-gpu-blocklist', '--mute-audio', '--window-size=960,540'], defaultViewport: { width: 960, height: 540 } })
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 300)) })
-await p.goto(`http://localhost:5200/?tier=${tier}&dpr=fixed&time=0&hour=12&weather=clear&world=${startWorld}&sound=0`, { waitUntil: 'load' })
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=${tier}&dpr=fixed&time=0&hour=12&weather=clear&world=${startWorld}&sound=0`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car.sim, { timeout: 120000, polling: 200 })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 

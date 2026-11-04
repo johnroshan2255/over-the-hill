@@ -116,7 +116,7 @@ NP = len(PY)
 
 cells = {}   # (ci, cj) → [verts list, faces list]
 rng = np.random.default_rng(11)
-def add_band(R, closed, level):
+def add_band(R, closed, level, sc=1.0):
     n = len(R)
     # downhill normal (from the ground's gradient), the riser's lean (its slope), the riser's middle in metres
     gxs, gzs = sample(gx, R[:, 0], R[:, 1]), sample(gz, R[:, 0], R[:, 1])
@@ -132,17 +132,18 @@ def add_band(R, closed, level):
     s = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(R, axis=0).T))])
     cracks = np.cumsum(rng.uniform(12, 35, size=int(s[-1] / 12) + 2))
     dc = np.min(np.abs(s[:, None] - cracks[None, :]), axis=1)
-    pinch = 0.25 + 0.75 * smoothstep(0.4, 1.6, dc)
+    pinch = 0.12 + 0.88 * smoothstep(0.5, 2.2, dc)
     blk = np.interp(s, np.concatenate([[0], cracks]), rng.uniform(0.8, 1.25, size=len(cracks) + 1))
     # (an open line fades into the terrain at its ends)
     fade = np.ones(n) if closed else np.minimum(smoothstep(0, 6, s), smoothstep(0, 6, s[-1] - s))
     jit = rng.uniform(0.86, 1.14, size=(n, NP))   # (each vertex its own: irregular facets)
     k = (pinch * blk * fade)[:, None] * jit
-    out = -PY[None, :] / sl[:, None] + PB[None, :] * k
-    along = rng.uniform(-0.9, 0.9, size=(n, 1)) * fade[:, None]
+    py = PY * sc
+    out = -py[None, :] / sl[:, None] + PB[None, :] * k * min(1.0, 0.45 + 0.55 * sc)
+    along = rng.uniform(-0.9, 0.9, size=(n, 1)) * fade[:, None] * min(1.0, sc)
     vx = R[:, 0][:, None] + nx[:, None] * out + tg[:, 0][:, None] * along
     vz = R[:, 1][:, None] + nz[:, None] * out + tg[:, 1][:, None] * along
-    vy = ymid[:, None] + PY[None, :] + rng.uniform(-0.35, 0.35, size=(n, NP))
+    vy = ymid[:, None] + py[None, :] + rng.uniform(-0.35, 0.35, size=(n, NP)) * min(1.0, sc)
     V = np.stack([vx, vy, vz], -1).reshape(-1, 3)
     # faces (quads) between consecutive rings
     m = n if closed else n - 1
@@ -172,10 +173,22 @@ def riser_runs(R, ok, closed):
         i = j
 
 log('contours and bands')
-lo, hi = math.floor(F[STEEP].min() / BED), math.ceil(F[STEEP].max() / BED)
+SPIRES_ = D['spires'].astype(np.float64) if 'spires' in D.files else np.zeros((0, 4))
+# (2026-11-04: the beds have their own thickness now — desert.py's strata — and only a HARD bed's riser is a cliff that
+#  gets a skin, sized to that riser; a soft bed is a plain slope, left to the terrain)
+LAYERS = D['layers'] if 'layers' in D.files else None
+levels = []
+if LAYERS is None:
+    lo, hi = math.floor(F[STEEP].min() / BED), math.ceil(F[STEEP].max() / BED)
+    levels = [((kb + 0.5) * BED, 1.0) for kb in range(lo, hi + 1)]
+else:
+    fmin, fmax = F[STEEP].min(), F[STEEP].max()
+    for b, t, hd, c in LAYERS:
+        rh = t * c * hd
+        if hd < 0.5 or rh < 2.5 or b + t < fmin or b > fmax: continue
+        levels.append((b + t * (1 - c / 2), rh / 9.45))
 nb = 0
-for kb in range(lo, hi + 1):
-    level = (kb + 0.5) * BED
+for level, sc in levels:
     for P, closed in contours(level):
         R, t_ = resample_line(P, closed, 5.0)
         if R is None: continue
@@ -189,7 +202,10 @@ for kb in range(lo, hi + 1):
             # (a spire's tip — a loop under ~50 m round — and short open scraps make shards, not slabs: skipped)
             L_ = len(R_) * 5.0
             if (closed_ and L_ < 50) or (not closed_ and L_ < 24): continue
-            add_band(R_, closed_, level)
+            # (none on the spires, 2026-11-04: a tower's wall is a cell or two wide on the 2 m grid — its ring stood out
+            #  of it on one side and sank into it on the other, a lens-shaped plate half way up the tower)
+            if len(SPIRES_) and (np.hypot(SPIRES_[:, 0] - R_[len(R_) // 2, 0], SPIRES_[:, 1] - R_[len(R_) // 2, 1]) < SPIRES_[:, 2] * 1.4 + 6).any(): continue
+            add_band(R_, closed_, level, sc)
             nb += 1
 log(f'  {nb} bands in {len(cells)} cells, {sum(c[2] for c in cells.values())} vertices')
 

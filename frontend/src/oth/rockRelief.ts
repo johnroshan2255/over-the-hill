@@ -15,12 +15,14 @@ export const ROCK_RELIEF_GLSL = /* glsl */ `
 // how much of the relief shows on a pixel px metres across: 1 near … 0 once its creases shrink under a pixel (~0.2 →
 // ~0.9 m). The rock's PAINTED colour breakup (paint.ts, Rocks.ts) — the fake relief from before — fades in only as
 // this fades out (the user: "we don't need that colour now, we have real noise there")
+vec2 gReliefWarp = vec2(0.0); // (set by rockRelief before its samples: a private global, not a uniform)
 float reliefShow(float px) { return 1.0 - smoothstep(3.0, 5.0, log2(max(px * (256.0 / 7.0), 1e-4))); }
 // one projection's share of the relief's height: uv = p seen along one axis, wi = its weight, o = its offset
 // (written out three times, no loop: WebGPU's translators guard every loop against running forever, and the guard
 //  stops the GPU compiler unrolling it — the fetches then wait on each other; docs/MIGRATION.md)
 float reliefH1(vec2 uv, float wi, float o, float lod1, float lod2, float fine) {
   if (wi < 0.03) return 0.0;
+  uv += gReliefWarp; // (rockRelief: the slow warp — no two 7 m tiles alike)
   // (read a mip or so blurrier than the pixel needs: the noise's finest octaves drop out — clean creases between
   //  smooth faces, not a busy grain)
   vec4 a = textureLod(uNoise, uv * (1.0 / 7.0) + o * 0.31, lod1 + 1.5);
@@ -46,6 +48,11 @@ vec3 rockRelief(vec3 p, vec3 N, float k, vec3 dpx, vec3 dpy, out float cav) {
   lod1 = max(lod1, 0.0); lod2 = max(lod2, 0.0);
   vec3 w = pow(abs(N), vec3(4.0));
   w /= w.x + w.y + w.z;
+  // THE WARP (2026-11-04 — the user: no repeated textures on the walls): the relief's texture repeats every 7 m, and
+  // on a big wall the same creases came back tile after tile. A slow field (≈ 40–90 m, ±4.5 m, sines of incommensurate
+  // frequencies — no fetch to wait on) shifts it, the same for this pixel's three samples (their differences, the
+  // slope, unchanged) — so no two tiles match
+  gReliefWarp = 4.5 * vec2(sin(0.107 * p.x + 0.071 * p.z + 1.3 * sin(0.043 * p.y)), sin(0.083 * p.y - 0.131 * p.z + 1.1 * sin(0.037 * p.x)));
   float h0 = reliefH(p, w, lod1, lod2, fine);
   float hx = reliefH(p + dpx, w, lod1, lod2, fine);
   float hy = reliefH(p + dpy, w, lod1, lod2, fine);
