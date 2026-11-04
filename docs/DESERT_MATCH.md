@@ -503,8 +503,20 @@ routes' lines); the A* climbed a slab stack table by table (stacks off-limits to
 tables' skirt kept off the routes) — every road within 0.5 m step, 18 % grade. Cost (abgpu vs the commit before):
 −0.29 … +0.09 ms.
 
+**Stacked rock as MESHES** (2026-11-04 — the user: "there are no beautiful cliffs and rocky hills in ours — a big
+single rock and hill; I want those"): `desert_stacks.py` (Blender) builds 25 STACKS — tables, mesas, towers, fins,
+hoodoos — each slab a closed pillow (an irregular outline, a bulging rounded lip, a domed top), offset from the one
+under it; two LODs (40 / 14 round) → `stacks.glb` + `stacks.json`. `desert.py` places 660 of them (meta.json `stacks`)
+in CLUSTERS that merge into rocky hills on the high ground, along the canyon's rims, the Slickrock Field's tables, a few
+lone towers — never on a road (none within its radius of a road's line), the water, the places or the spires — and a
+SAND DRIFT up one or two sides of each low table (the way onto it); the heightfield's masses are only a smooth rise
+under them now (its own slabs read as contour lines). `Rocks.ts` draws them (instanced, out to 1.8 km, the far LOD under
+~8 % of the view) and the physics hulls them near the car. Roads: every step ≤ 0.8 m, grade ≤ 26 %. Cost (abgpu vs the
+commit before): plain +0.25 / +0.15 ms, oasis +0.17 / +0.12 (ULTRA / LOW) — the stacks' triangles; a phone check due.
+
 Next:
-1. **Stacked-block rock** — the biggest gap left (the heightfield's slabs read from the ground, but from the air they're
+1. **Stacked-block rock** — the canyon's own walls are still the heightfield's beds (stacks line their rims); the
+   arch, the ksar, the escarpment could be stacks too (the heightfield's slabs read from the ground, but from the air they're
    thin contour-like rims: their bulging lips and undercuts need meshes): Blender meshes for the masses' walls (each bed a chunky slab with
    rounded edges, offset from the one below, flat-topped), in place of the heightfield's smooth walls.
 2. The arch: a thin rock ribbon over a deep canyon, framed by stacks — ours sits in a narrow slot.

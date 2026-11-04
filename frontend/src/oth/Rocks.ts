@@ -18,6 +18,9 @@ const VARIANTS = 12 // (2026-11-04: was 6 — the user: "the small rocks are all
 /** + the ROUNDED shapes (after the 6 blocks): the scenery's boulder walls (meta.scenery). */
 const ROUND = 2
 const CELL = 128
+/** The desert's stacks: their variants come after the stones and the round ones; drawn out to STACK_REACH m. */
+const STACK0 = 14 // (= VARIANTS + ROUND)
+const STACK_REACH = 1800
 
 /** A seed of its own for a cell / an item at (a, b) (salt: which loop) — placement one change elsewhere can't move. */
 export function cellSeed(a: number, b: number, salt: number): number {
@@ -38,6 +41,12 @@ export class Rocks {
   private readonly reach: number
   private rubbleK = 1
   private stoneFoot: [number, number][] | null = null
+  /** The stacks (desert): their real diameters by kind, their near / far meshes, their instances (drawn on their own
+   *  pass — big, seen from far: STACK_REACH, not the rocks' reach). */
+  private stackDiam: number[] = []
+  private readonly stackNear: GFX.InstancedMesh[] = []
+  private readonly stackFar: GFX.InstancedMesh[] = []
+  private stackList: Inst[] = []
   private readonly near: number
   /** The rounded shapes' far LOD (rockNear on): one mesh per ROUND variant. */
   private readonly farMeshes: GFX.InstancedMesh[] = []
@@ -71,7 +80,41 @@ export class Rocks {
     }
   }
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, stones: GFX.BufferGeometry[][] | null = null) {
+  /** The desert's STACKED ROCK (2026-11-04 — desert_stacks.py → stacks.glb): [kind][lod], each normalised to unit
+   *  size across (its base at y −0.5, like the stones), its real diameter alongside. null if the file is missing. */
+  static async loadStacks(url: string): Promise<{ geos: GFX.BufferGeometry[][]; diam: number[] } | null> {
+    try {
+      const gltf = await new GFX.GLTFLoader().loadAsync(url)
+      const raw: GFX.BufferGeometry[][] = []
+      gltf.scene.traverse((o) => {
+        const m = /^stack_(\d+)_(\d+)/.exec(o.name), mesh = o as GFX.Mesh
+        if (!m || !mesh.isMesh) return
+        mesh.updateWorldMatrix(true, false)
+        ;(raw[+m[1]] ??= [])[+m[2]] = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld)
+      })
+      const geos: GFX.BufferGeometry[][] = [], diam: number[] = []
+      for (const l of raw) {
+        if (!l?.[0] || !l[1]) return null
+        const p = l[0].attributes.position.array as Float32Array
+        let r = 0, y0 = Infinity
+        for (let i = 0; i < p.length; i += 3) { r = Math.max(r, Math.hypot(p[i], p[i + 2])); y0 = Math.min(y0, p[i + 1]) }
+        const d = 2 * r, k = 1 / d
+        diam.push(d)
+        geos.push(l.map((g) => {
+          g.deleteAttribute('normal')
+          g.applyMatrix4(new GFX.Matrix4().makeScale(k, k, k)).applyMatrix4(new GFX.Matrix4().makeTranslation(0, -y0 * k - 0.5, 0))
+          return toCreasedNormals(g, Math.PI / 2.2)
+        }))
+      }
+      return { geos, diam }
+    } catch {
+      return null
+    }
+  }
+
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, stones: GFX.BufferGeometry[][] | null = null,
+    stacks: { geos: GFX.BufferGeometry[][]; diam: number[] } | null = null) {
+    this.stackDiam = stacks?.diam ?? []
     this.reach = tier.rockReach
     this.near = tier.rockNear
     const mat = new GFX.ShaderMaterial({
@@ -118,6 +161,18 @@ export class Rocks {
         far.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
         this.farMeshes.push(far)
         this.group.add(far)
+      }
+    }
+    // the STACKS' meshes: their near and far shapes, after the stones and the round ones
+    for (const [k, l] of (stacks?.geos ?? []).entries()) {
+      const v = STACK0 + k, n = all.filter((r) => r.v === v).length
+      this.shapes[v] = l[1].attributes.position.array as Float32Array // (the physics' hull: the far shape's points)
+      for (const [lod, geo] of l.entries()) {
+        const mesh = new GFX.InstancedMesh(geo, mat, Math.max(1, n))
+        mesh.count = 0; mesh.frustumCulled = false
+        mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
+        ;(lod === 0 ? this.stackNear : this.stackFar)[k] = mesh
+        this.group.add(mesh)
       }
     }
     const g = map.inner, fp = new Uint8Array(g.n * g.n)
@@ -319,6 +374,16 @@ export class Rocks {
       const a = rnd() * Math.PI * 2, d = r.hw[i] * (0.6 + rnd() * 1.4)
       add(r.x[i] + Math.cos(a) * d, r.z[i] + Math.sin(a) * d, 0.6 + rnd() * 1.8, 0.35)
     }
+    // the desert's STACKED ROCK (meta.stacks — desert.py): each at its own scale and turn, its base on the lowest
+    // ground under it (a little sunk: never floating)
+    for (const [x, z, sc, rot, k] of map.meta.stacks ?? []) {
+      const D = (this.stackDiam[k] ?? 0) * sc
+      if (!D) continue
+      let lo = map.height(x, z)
+      for (let a = 0; a < 8; a++) lo = Math.min(lo, map.height(x + Math.cos(a * 0.785) * D * 0.3, z + Math.sin(a * 0.785) * D * 0.3))
+      const inst: Inst = { x, y: lo - 0.4 + 0.5 * D, z, s: D, sy: D, rot, tilt: 0, v: STACK0 + k, ax: 1, az: 1 }
+      out.push(inst); this.stackList.push(inst)
+    }
     return out
   }
 
@@ -375,7 +440,7 @@ export class Rocks {
       let yb = this.cellBox.get(k)
       if (!yb) {
         yb = [Infinity, -Infinity]
-        for (const r of list) { yb[0] = Math.min(yb[0], r.y - r.s * 0.3); yb[1] = Math.max(yb[1], r.y + r.sy * 0.7) }
+        for (const r of list) { yb[0] = Math.min(yb[0], r.y - r.s * 0.3); yb[1] = Math.max(yb[1], r.y + r.sy * 0.7) } // (the stacks: their own pass)
         this.cellBox.set(k, yb)
       }
       // (rocks hang over their cell's edge by up to half their size)
@@ -384,6 +449,7 @@ export class Rocks {
       if (!this.frustum.intersectsBox(this.box)) { this.culled.frustum++; continue }
       if (this.horizon?.hidden(x0 - 10, z0 - 10, x0 + CELL + 10, z0 + CELL + 10, yb[1])) { this.culled.occluded++; continue }
       for (const r of list) {
+        if (r.v >= STACK0) continue // (the stacks: their own pass, below)
         const dx = r.x - cx, dz = r.z - cz, d2 = dx * dx + dz * dz
         if (d2 > R * R) continue
         if (r.sy * r.sy < minRatio * minRatio * d2) { this.culled.small++; continue }
@@ -395,8 +461,22 @@ export class Rocks {
         mesh.setMatrixAt(mesh.count++, this.m)
       }
     }
+    // the STACKS: out to STACK_REACH, in view (a sphere round each), the far shape past ~8 % of the view's height
+    for (const m of [...this.stackNear, ...this.stackFar]) if (m) m.count = 0
+    const sph = new GFX.Sphere()
+    for (const r of this.stackList) {
+      const dx = r.x - cx, dz = r.z - cz, d2 = dx * dx + dz * dz
+      if (d2 > STACK_REACH * STACK_REACH) continue
+      sph.center.set(r.x, r.y + r.sy * 0.2, r.z); sph.radius = r.s * 0.9
+      if (!this.frustum.intersectsSphere(sph)) continue
+      const k = r.v - STACK0, mesh = r.sy * r.sy < 0.08 * 0.08 * d2 ? this.stackFar[k] : this.stackNear[k]
+      if (!mesh) continue
+      this.q.setFromEuler(this.e.set(0, r.rot, 0))
+      this.m.compose(this.p.set(r.x, r.y, r.z), this.q, this.sc.set(r.s, r.sy, r.s))
+      mesh.setMatrixAt(mesh.count++, this.m)
+    }
     this.count = 0
-    for (const m of [...this.meshes, ...this.farMeshes, ...this.stoneFar.filter(Boolean)]) { m.instanceMatrix.needsUpdate = true; this.count += m.count }
+    for (const m of [...this.meshes, ...this.farMeshes, ...this.stoneFar.filter(Boolean), ...this.stackNear.filter(Boolean), ...this.stackFar.filter(Boolean)]) { m.instanceMatrix.needsUpdate = true; this.count += m.count }
   }
 }
 
@@ -494,7 +574,7 @@ void main() {
 #ifdef OTH_ROCK_RELIEF
   paintK = 1.0 - reliefShow(max(length(dFdx(vWorld)), length(dFdy(vWorld))));
 #endif
-  vec3 albedo = STONE * mix(0.72, 1.0, smoothstep(0.0, 0.45, vUp)) * (1.0 + 0.06 * N.y); // (no per-face tone: smooth)
+  vec3 albedo = STONE * mix(0.72, 1.0, smoothstep(0.0, 0.45, vUp)) * mix(0.86, 1.1, smoothstep(0.2, 0.9, N.y)); // (no per-face tone: smooth; a slab's top lighter than its side)
   // HIGH / ULTRA on PCs: the crumpled 3D relief over every face (the light only: the colour above is the face's own)
   float cav = 1.0;
 #ifdef OTH_ROCK_RELIEF

@@ -53,6 +53,8 @@ export interface MapMeta {
   }
   /** The SCENERY pass (scripts/oth/scenery.mjs): the boulder walls along the stream roads ([x, z, size]). */
   scenery?: { boulders: [number, number, number][] }
+  /** The desert's STACKED ROCK (desert.py → desert_stacks.py's meshes): [x, z, scale, rot, kind] — Rocks.ts draws them. */
+  stacks?: [number, number, number, number, number][]
   spawn: { x: number; z: number; yaw: number }
   /** Plank bridges over the river and the streams: deck ends (x0, z0) → (x1, z1) on the banks, the deck's top there
    *  y0 → y1 (on the road at each end: a stream's deck slopes with its road; y = the higher), width w (m). */

@@ -115,7 +115,9 @@ export class World {
     })
     // (the desert's sculpted stones — Blender, desert_stones.py — fetched first: tiny, 30 kB)
     const stones = map.desert ? await Rocks.loadStones(`${WORLDS[id].path}/stones.glb`) : null
-    const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid, stones))
+    // (and its STACKED ROCK — desert_stacks.py: the slab stacks the rocky hills are built of)
+    const stacks = map.desert ? await Rocks.loadStacks(`${WORLDS[id].path}/stacks.glb`) : null
+    const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid, stones, stacks))
     const grass = await step('grass', () => new Grass(map, atmos, terrain, tier, rocks.footprint, env.renderer))
     const water = await step('water', () => new Water(map, atmos, terrain, tier, rocks.footprint))
     const falls = await step('falls', () => new Falls(map, atmos))

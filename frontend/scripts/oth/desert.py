@@ -353,8 +353,11 @@ def canyon_country(X, Z, H, up, up2, erg):
     cells = fbm(X / 55, Z / 55, SEED + 141, 3) + 0.4 * fbm(X / 18, Z / 18, SEED + 142, 2)
     th = 3 + 10 * smoothstep(-0.3, 0.6, fbm(X / 120, Z / 120, SEED + 143, 2)) + 8 * smoothstep(0.35, 0.6, cells)
     T = np.maximum(T, th * smoothstep(-0.05, 0.12, cells) * fk * smoothstep(9, 18, Dc))
-    U = slab_stack(X, Z, T, (1.6 + 0.8 * cliffy) * (1 - 0.3 * fk), SEED + 130)
-    slick = smoothstep(0.3, 1.2, U)
+    # (2026-11-04: the rock itself is MESHES now — desert_stacks.py's stacked slabs, placed below (STACKS): the high
+    #  ground here only a SMOOTH rise for them to stand on — the heightfield's slabs read as contour lines from the air.
+    #  The field's tables are meshes too)
+    U = blur(np.maximum(T_mass, T_skirt), 4) * 0.55
+    slick = np.zeros_like(U)
     log(f'  rock masses: {np.mean(m > 0.5) * 100:.0f} % of the box, slab stacks up to {U.max():.0f} m over {np.mean(slick > 0.5) * 100:.0f} %')
     return H + U, m, Dc, slick
 
@@ -760,9 +763,7 @@ for i, (ox, oz, R, top) in enumerate(OUTCROPS):
         # (a TABLE: 1–3 slabs, flat on top, its rims rounded — 3–10 m)
         T_OUT[win] = np.maximum(T_OUT[win], (3 + 7 * orng.random()) * (1 - smoothstep(0.75, 1.15, d)))
 # the knolls stacked (never on a road)
-_so = slab_stack(X, Z, T_OUT * smoothstep(TRAIL_HW + 6, TRAIL_HW + 16, Dt), 1.0, SEED + 140)
-H = H + _so
-SLICK = np.maximum(SLICK, smoothstep(0.3, 1.2, _so))
+# (the knolls are the STACKS' tables now — meshes, placed below)
 # the blocks' beds: their steep parts terraced like every wall, and in WALL for their skins
 gz0, gx0 = np.gradient(H, CELL)
 wall_o = smoothstep(0.45, 0.9, blur(np.hypot(gx0, gz0), 2)) * OUTK
@@ -775,6 +776,105 @@ ERG_OPEN = ERG_OPEN * (1 - smoothstep(0.05, 0.4, OUTK))
 log(f'  {len(OUTCROPS)} outcrops ({tries} tries)')
 
 # ---------------------------------------------------------------------------------------------------------- masks
+# ---------------------------------------------------------------------------------------------------------- stacks
+# STACKED ROCK (2026-11-04 — the user's gameplay frames: rocky hills and cliffs of many rounded slabs stacked like
+# pancakes; "what we have is a big single rock and hill … I want those"): desert_stacks.py's MESHES (tables, mesas,
+# towers, fins, hoodoos), placed here in CLUSTERS — rocky hills on the high ground, the Slickrock Field's tables, the
+# canyon's rims, a few lone towers — never on a road, in the water or the lagoon, on the places or the spires; within a
+# cluster they may overlap (a hill of many stacks). meta.json 'stacks': [x, z, scale, rot, kind] — Rocks.ts draws them
+# (instanced) and gives the near ones colliders (their hull: a table a ramp the car climbs)
+log('stacks')
+_sk_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'public', 'oth', 'desert', 'stacks.json')
+SK = json.load(open(_sk_path))['kinds'] if os.path.exists(_sk_path) else []
+by_kind = {}
+for k_, s_ in enumerate(SK): by_kind.setdefault(s_['kind'], []).append(k_)
+STACKS = []
+krng = np.random.default_rng(SEED + 150)
+REL_HIGH = relief(X, Z)[1]
+def stack_ok(x, z, r):
+    if abs(x) > 1890 or abs(z) > 1890: return False
+    if at2(Dt, x, z) < r + 9: return False
+    s__ = at2(Sr, x, z)
+    if at2(DrW, x, z) < float(river_hw(s__)) + r + 14: return False
+    lc_, ls_ = math.cos(LAGOON['rot']), math.sin(LAGOON['rot'])
+    lx_ = (x - LAGOON['cx']) * lc_ + (z - LAGOON['cz']) * ls_; lz_ = -(x - LAGOON['cx']) * ls_ + (z - LAGOON['cz']) * lc_
+    if math.hypot(lx_ / LAGOON['rx'], lz_ / LAGOON['rz']) < 1.25 + r / 80: return False
+    if any(math.hypot(x - a, z - b) < rr + r for a, b, rr in keep_clear): return False
+    if any(math.hypot(x - sx, z - sz) < rs * 1.3 + r for sx, sz, rs, _ in SPIRES): return False
+    if at2(Ds, x, z) < r + 20: return False
+    return True
+def pick(weights):
+    kinds = [k for k in weights if by_kind.get(k)]
+    w = np.array([weights[k] for k in kinds], float); k = kinds[int(krng.choice(len(kinds), p=w / w.sum()))]
+    return by_kind[k][int(krng.integers(len(by_kind[k])))]
+def place_stack(x, z, k, sc):
+    r = SK[k]['radius'] * sc
+    if not stack_ok(x, z, r): return False
+    # (within a cluster they may merge — but never two in the same spot)
+    if any(math.hypot(x - a, z - b) < 0.3 * (r + SK[kb]['radius'] * sb) for a, b, sb, _, kb in STACKS): return False
+    STACKS.append((x, z, sc, float(krng.uniform(0, 2 * math.pi)), k))
+    return True
+if SK:
+    # the SLICKROCK FIELD: tables mostly, a few mesas and fins
+    for _ in range(400):
+        if sum(1 for st in STACKS) >= 46: break
+        a_, d_ = krng.uniform(0, 2 * math.pi), FIELD['r'] * 0.95 * math.sqrt(krng.random())
+        place_stack(FIELD['x'] + math.cos(a_) * d_, FIELD['z'] + math.sin(a_) * d_ * 0.8,
+                    pick({'table': 0.62, 'mesa': 0.22, 'fin': 0.16}), float(krng.uniform(0.55, 1.05)))
+    # ROCKY HILLS: clusters on the high ground
+    # (big and dense — 2026-11-04: at their first sizes they read as small piles in front of the walls: a cluster now
+    #  merges into one rocky hill)
+    SCALE_BY = {'mesa': (1.2, 2.2), 'table': (0.8, 1.6), 'tower': (0.9, 1.6), 'fin': (1.0, 1.8), 'hoodoo': (0.8, 1.3)}
+    def place_kind(x, z, weights):
+        k = pick(weights); lo, hi = SCALE_BY[SK[k]['kind']]
+        return place_stack(x, z, k, float(krng.uniform(lo, hi)))
+    # the CANYON's RIMS lined with stacks — mesas and towers along its edge
+    for i_ in range(0, len(RIVER) - 1, 9):
+        if krng.random() > 0.5: continue
+        x_, z_ = RIVER[i_]; tx_, tz_ = RIVER[min(i_ + 1, len(RIVER) - 1)] - RIVER[max(i_ - 1, 0)]; tl_ = math.hypot(tx_, tz_) or 1.0
+        s__ = float(_racc[i_]); off_ = float(floor_hw(s__) + wall_w(s__)) + krng.uniform(5, 45)
+        for side_ in (1, -1):
+            place_kind(x_ - tz_ / tl_ * off_ * side_, z_ + tx_ / tl_ * off_ * side_, {'mesa': 0.5, 'tower': 0.3, 'fin': 0.2})
+    tries_ = 0
+    while len(STACKS) < 620 and tries_ < 6000:
+        tries_ += 1
+        cx_, cz_ = krng.uniform(-1850, 1850), krng.uniform(-1850, 1850)
+        if at2(REL_HIGH, cx_, cz_) < 0.5 and at2(MASSK, cx_, cz_) < 0.3: continue
+        n_ = int(krng.integers(8, 21))
+        for _ in range(n_ * 3):
+            a_, d_ = krng.uniform(0, 2 * math.pi), 160 * krng.random() ** 0.75
+            if place_kind(cx_ + math.cos(a_) * d_, cz_ + math.sin(a_) * d_, {'mesa': 0.36, 'table': 0.18, 'tower': 0.24, 'fin': 0.16, 'hoodoo': 0.06}):
+                n_ -= 1
+            if n_ <= 0: break
+    # a few LONE TOWERS and hoodoos out on the sand
+    for _ in range(300):
+        if len(STACKS) >= 660: break
+        place_stack(krng.uniform(-1850, 1850), krng.uniform(-1850, 1850), pick({'tower': 0.6, 'hoodoo': 0.4}), float(krng.uniform(0.7, 1.2)))
+log(f'  {len(STACKS)} stacks')
+# SAND DRIFTS up to the low TABLES (the way on: a car can't climb a slab's sheer rim, but sand blown against one side
+# makes a ramp — ~30 %, up to most of the table's height — then a short step onto the rock): one or two per table
+ramps_ = 0
+for x_, z_, sc_, rt_, k_ in STACKS:
+    kd = SK[k_]
+    if kd['kind'] != 'table' or kd['height'] * sc_ > 6.5: continue
+    r_ = kd['radius'] * sc_; ht_ = kd['height'] * sc_
+    L_ = ht_ * 0.85 / 0.3
+    w_ = int((r_ + L_ + 6) / CELL)
+    ci_, cj_ = int(round((x_ + HALF) / CELL)), int(round((z_ + HALF) / CELL))
+    win_ = (slice(max(cj_ - w_, 0), min(cj_ + w_ + 1, N_IN)), slice(max(ci_ - w_, 0), min(ci_ + w_ + 1, N_IN)))
+    dx_, dz_ = X[win_] - x_, Z[win_] - z_
+    rr_ = np.hypot(dx_, dz_)
+    base_ = float(np.min(H[win_][rr_ < r_ * 0.6])) if (rr_ < r_ * 0.6).any() else at2(H, x_, z_)
+    for _ in range(1 + int(krng.random() < 0.5)):
+        a_ = krng.uniform(0, 2 * math.pi); ux_, uz_ = math.cos(a_), math.sin(a_)
+        along_ = dx_ * ux_ + dz_ * uz_; side_ = np.abs(-dx_ * uz_ + dz_ * ux_)
+        prof_ = ht_ * 0.85 * (1 - smoothstep(r_ * 0.75, r_ * 0.75 + L_, along_)) * (1 - smoothstep(r_ * 0.55, r_ * 0.95, side_)) * (along_ > 0)
+        prof_ = prof_ * smoothstep(TRAIL_HW + 4, TRAIL_HW + 12, Dt[win_])
+        # (raised only where the drift is — max(H, base) over the window raised a road through it 6 m)
+        H[win_] = H[win_] + np.maximum(base_ + prof_ - H[win_], 0) * smoothstep(0.0, 0.5, prof_)
+        ramps_ += 1
+log(f'  {ramps_} sand drifts up to the tables')
+
 log('masks (4 m)')
 H4 = H[::2, ::2]; X4, Z4 = X[::2, ::2], Z[::2, ::2]
 gz4, gx4 = np.gradient(H4, 4.0)
@@ -886,6 +986,7 @@ meta = {
     'spawn': spawn,
     'gate': GATE,
     'bridges': BRIDGES,
+    'stacks': [[round(float(x), 1), round(float(z), 1), round(float(sc), 3), round(float(rt), 3), int(k)] for x, z, sc, rt, k in STACKS],
     'landmarks': LANDMARKS,
     # (every 8 m; the pass and the escarpment road every 4 m — their hairpins)
     'trails': {'hw': TRAIL_HW, 'lines': [[[round(float(a), 1), round(float(b), 1)] for a, b in T[::(2 if ti < 2 else 4)]] for ti, T in enumerate(TRAILS)], 'rough': []},
