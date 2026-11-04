@@ -172,7 +172,16 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   float wet = min(m.b / 0.85, 1.0);
   col = mix(col, DAMP * (0.9 + 0.2 * d6), smoothstep(0.3, 0.85, wet) * 0.7);
   g.forest = smoothstep(0.25, 0.75, m.a + (p.mid.b - 0.5) * 0.3);
-  col = mix(col, OASIS_FLOOR * (0.85 + 0.3 * d6), g.forest * 0.45);
+  // THE OASIS FLOOR GREEN (2026-11-04 — the user: "in the oasis we grow grass but the terrain colour is red; it must be
+  //  green like in the valley, with a proper transition"): the valley's own green field (grassPaint) where the growth
+  //  is, greenest on the damp banks, through a band of dry olive and khaki — the grass thinning — to the sand, its edge
+  //  wide and ragged (the no-repeat blotches push it about). The grass blades take this colour (Grass.ts), as the
+  //  valley's take theirs
+  float bank = smoothstep(0.45, 0.8, m.b / 0.85);
+  float green = clamp(max(smoothstep(0.03, 0.5, m.a + (d25 - 0.5) * 0.14 * (1.0 - smoothstep(0.3, 0.6, m.a)) + (d6 - 0.5) * 0.08), bank * 0.95), 0.0, 1.0);
+  vec3 lawn = grassPaint(mix(0.3, 0.05, bank), p);
+  vec3 dryEdge = mix(vec3(0.3, 0.22, 0.1), vec3(0.2, 0.19, 0.08), smoothstep(0.2, 0.5, green));
+  col = mix(col, mix(dryEdge, lawn, smoothstep(0.3, 0.8, green)), smoothstep(0.0, 0.45, green));
   // SANDSTONE: the beds' tones (uneven), sand on the flat tops; the faces' streaks are the terrain's (Terrain.ts)
   // (2026-11-04 — the user: "the reddish sudden rise of rocks … it must be gradual, the colour blending": the rock's
   //  edge a WIDE soft blend with a ragged line (the broad blotches push it about), and the rock near its foot goes
