@@ -528,19 +528,43 @@ void main() {
 #ifdef WHEEL
   float rough = 0.8;
 #else
-  float rough = mix(0.75, 0.38, m);
+  // (the paint's highlights are its own, below: the shared lobe kept broad and faint under them)
+  float rough = mix(0.75, 0.62, m);
 #endif
   // THE SAND COAT (Vehicle.weather): thickest low down and on what faces up, in blotches (fixed to the car)
+  float coatK = 0.0;
   if (uCoat > 0.002) {
     float blot = texture(uNoise, (vLocal.xz + vLocal.y * 0.7) * 0.45).r;
     float k = uCoat * (0.12 + 0.88 * (1.0 - smoothstep(0.3, 1.5, vWorld.y - uCarBase)) + 0.3 * max(N.y, 0.0));
     k = clamp(k * smoothstep(0.35, 0.8, blot + k * 0.4), 0.0, 0.8);
     albedo = mix(albedo, uCoatColor, k);
     rough = mix(rough, 0.95, k);
+    coatK = k;
   }
-  vec3 c = shade(albedo, N, V, rough, 0.05, 1.0, sun, 0.25);
+  // (the paint's light wraps further round — a softer terminator, the stylised look; the rest as before)
+  vec3 c = shade(albedo, N, V, rough, 0.05, 1.0, sun, mix(0.25, 0.55, m));
+#ifndef WHEEL
+  // THE PAINT: SATIN under a CLEAR COAT, its own light (2026-11-04 — a broad, gentle highlight that rolls across the
+  // panels; the shared shade()'s lobe was faint, × 0.25): the SATIN a wide soft lobe off the rough paint, half the
+  // paint's own colour; the CLEAR COAT a sharper glint (Schlick, f0 0.04) and the sky in it at a glance. Dust dulls both
+  float paintK = m * (1.0 - coatK / 0.8);
+  if (paintK > 0.01) {
+    vec3 H = normalize(uSunDir + V);
+    float NoH = max(dot(N, H), 0.0), NoL = max(dot(N, uSunDir), 0.0), NoV = max(dot(N, V), 0.0), VoH = max(dot(V, H), 0.0);
+    vec3 satin = uSunColor * sun * ggx(NoH, 0.65) * NoL * mix(vec3(1.0), albedo * 2.2, 0.5) * 0.36;
+    float Fc = 0.04 + 0.96 * pow(1.0 - VoH, 5.0);
+    vec3 glint = uSunColor * sun * ggx(NoH, 0.2) * Fc * NoL * 0.25;
+    vec3 R = reflect(-V, N);
+    float Fv = 0.04 + 0.96 * pow(1.0 - NoV, 5.0);
+    vec3 env = skyColor(normalize(vec3(R.x, abs(R.y) + 0.05, R.z))) * Fv * 0.16;
+    // (2026-11-04 — the user: "like theirs, not so shiny, glowless": their cars are BRIGHT and SOFT — a gentle glow of
+    //  the sky's light over the whole paint, lighter shade; a soft clear coat, never a mirror)
+    vec3 glow = albedo * ambient(N) * 0.45;
+    c += (satin + glint + env + glow) * paintK;
+  }
+#endif
   // a little painted rim light so the car reads against the field
-  c += albedo * uSunColor * pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.12 * sun;
+  c += albedo * uSunColor * pow(1.0 - max(dot(N, V), 0.0), 3.0) * (0.12 + 0.12 * m) * sun;
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
 #endif
   #include <tonemapping_fragment>
