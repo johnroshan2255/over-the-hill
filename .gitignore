@@ -14,3 +14,6 @@ __pycache__/
 
 # the LAN test certificate (frontend: npm run preview:lan)
 frontend/.cert
+
+# reference frames from Over the Hill gameplay videos (theirs: never committed)
+frontend/refer

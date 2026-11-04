@@ -68,10 +68,12 @@ export class Builder {
     return this.s / 4294967296
   }
 
-  /** Weathered wood: warm brown, some planks greyer, every piece its own tone. */
+  /** Weathered wood: warm brown, a few planks a little greyer, every piece its own tone. (2026-11-04 — the user:
+   *  "bridges must look wooden": a pale, half-grey wood read near white in the desert's light — a deeper, warmer brown,
+   *  hardly any grey; the same draws, so no plank moves) */
   wood(dark = 1): [number, number, number] {
-    const k = (0.82 + 0.36 * this.rnd()) * dark, grey = this.rnd() * 0.45
-    const r = 0.34 * (1 - grey) + 0.29 * grey, g = 0.235 * (1 - grey) + 0.255 * grey, b = 0.15 * (1 - grey) + 0.215 * grey
+    const k = (0.8 + 0.4 * this.rnd()) * dark, grey = this.rnd() * 0.2
+    const r = 0.155 * (1 - grey) + 0.15 * grey, g = 0.08 * (1 - grey) + 0.11 * grey, b = 0.038 * (1 - grey) + 0.08 * grey
     return [r * k, g * k, b * k]
   }
 
@@ -324,7 +326,7 @@ void main() {
   vec3 V = normalize(uCamPos - vWorld);
   // the grain: soft streaks along the wood (the paint noise, stretched)
   float grain = texture(uNoise, vec2(dot(vWorld.xz, vec2(0.7, 0.7)) * 0.9, vWorld.y * 0.6 + dot(vWorld.xz, vec2(-0.7, 0.7)) * 0.08)).b;
-  vec3 albedo = vCol * (0.86 + 0.28 * grain);
+  vec3 albedo = vCol * (0.7 + 0.6 * grain); // (the grain strong: it reads as wood)
   float sun = sunVisibility(vWorld.xz);
   vec3 c = shade(albedo, N, V, 0.85, 0.03, 1.0, sun, 0.2);
   c += headlight(albedo, N, vWorld);

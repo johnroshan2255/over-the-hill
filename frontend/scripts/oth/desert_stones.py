@@ -3,7 +3,7 @@
 #
 #   blender -b --factory-startup --python scripts/oth/desert_stones.py -- [OUT=public/oth/desert/stones.glb] [PREVIEW=<dir>]
 #
-# Six sandstone stones, each from an icosphere: a ROUNDED BOX of its own proportions (a weathered block, a rounded
+# Twelve sandstone stones, each from an icosphere: a ROUNDED BOX of its own proportions (a weathered block, a rounded
 # boulder, two flat slabs, a broken chunk), cut by FRACTURE PLANES (the flat broken faces of a block split off a wall),
 # BEDDED (a groove or two where the layers part, each layer a little out of line with the next, the way sandstone
 # weathers), pitted and lumped by a 3D noise, its foot flattened into the sand. Then Blender's Decimate makes each one
@@ -52,6 +52,14 @@ KINDS = [
     ('slab', (0.5, (0.65, 0.85), (0.26, 0.36)), 4.2, 3, 1),
     ('slab', (0.5, (0.7, 0.9), (0.3, 0.42)), 3.8, 4, 2),
     ('chunk', (0.5, (0.6, 0.8), (0.5, 0.75)), 3.0, 6, 1),
+    # (2026-11-04 — the user: "the small rocks are all the same shape, only the height changes": six more, each its
+    #  own kind)
+    ('block', (0.5, (0.6, 0.8), (0.6, 0.8)), 3.0, 5, 2),          # a tall block
+    ('round', (0.5, (0.85, 1.0), (0.35, 0.5)), 2.2, 1, 0),         # a flat rounded boulder
+    ('chunk', (0.5, (0.5, 0.7), (0.45, 0.6)), 3.5, 7, 0),          # a wedge, broken all round
+    ('slab', (0.5, (0.8, 0.95), (0.18, 0.26)), 4.5, 3, 1),         # a thin slab
+    ('block', (0.5, (0.55, 0.7), (0.8, 1.0)), 3.2, 4, 3),          # a short pillar, bedded
+    ('chunk', (0.5, (0.7, 0.9), (0.55, 0.7)), 2.8, 8, 0),          # a many-faced chunk
 ]
 
 

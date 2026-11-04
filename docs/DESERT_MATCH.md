@@ -475,8 +475,26 @@ desert's sky fill and bounce × 0.55 from dusk on, the rock's extra fill (`rockF
 quarter from dusk, the night's purple fill a third — the coral rock goes a dark red-brown at dusk, near-black at night.
 Cost (abgpu vs the commit before, 3 a side): +0.03 / +0.03 ms plain, +0.15 / −0.03 oasis (ULTRA / LOW) — the noise.
 
+**Stacked slabs you can drive on** (2026-11-04 — the user's gameplay frames, `frontend/refer/`, git-ignored: the rock
+IS the ground — pink slickrock in rounded slabs stacked like pancakes, each layer offset, the car crawling over their
+edges; "rocks we can actually climb, slowly — the same gameplay"): `desert.py slab_stack()` builds the rock masses from
+slabs (1.4–3.4 m thick on the slickrock, ~2.2–5.4 m on the cliff stacks), each slab its own outline (the wanted height
+plus its own noise), its rim rounded over ~2 m; compact steep stacks on the high ground with a SKIRT of low rock TABLES
+round them; four in five outcrops are now tables (1–3 slabs, 3–10 m), one in five a sheer block. The sand banks and
+the wall-softening keep off the slabs (they buried them into sand mounds); the slabs are bare rock (it grips: the
+physics reads the mask's rock as a hard surface). The rock relief is back on the desert's rock (the valley's "rock
+texture"). `scripts/harness/crawltest.mjs`: the car set at a foot, crawling at ~10 km/h toward a summit — 4 of 6 rock
+tables climbed to the top (one flipped, one stuck); a straight-line bot fails the valley's trekking hills too.
+
+**Also:** the sculpted stones stand on their own feet (the flat slabs hovered); TWELVE shapes, not six, and each
+stone its own proportions across (a hash of where it stands — nothing moves) — the valley's blocks too; the crossing's
+mist ~4× thinner at its thickest (the road readable 30–40 m ahead); the bridges' wood a deeper brown with a stronger
+grain (they read near white). Cost (abgpu vs the commit before, 3 a side): −0.21 … +0.12 ms (desert plain / oasis,
+the valley's spawn; ULTRA / LOW) — the noise.
+
 Next:
-1. **Stacked-block rock** — the biggest gap left: Blender meshes for the masses' walls (each bed a chunky slab with
+1. **Stacked-block rock** — the biggest gap left (the heightfield's slabs read from the ground, but from the air they're
+   thin contour-like rims: their bulging lips and undercuts need meshes): Blender meshes for the masses' walls (each bed a chunky slab with
    rounded edges, offset from the one below, flat-topped), in place of the heightfield's smooth walls.
 2. The arch: a thin rock ribbon over a deep canyon, framed by stacks — ours sits in a narrow slot.
 3. Sunset and night: a more saturated sky, the land lit by it (theirs: olive-gold sand under a hot pink sky).

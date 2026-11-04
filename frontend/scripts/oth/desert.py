@@ -264,6 +264,26 @@ ROUTE_SKELETON = [
     [(1440, -560), (1700, -360), (1560, -150), (1430, -20)],
     [(-107, 1440), (-187, 1440)],
 ]
+def slab_stack(X, Z, T, scale, seed):
+    """STACKED SLABS (2026-11-04 — the user's gameplay frames: the rock IS the ground, pink slickrock in rounded slabs
+    stacked like pancakes, each layer a little offset from the one under it, a car crawling over their edges). T: the
+    stack's height wanted (m, 0 = none); scale: the slabs' thickness × (1 slickrock: 1.4–3.4 m — a car crawls the
+    edge; more for the cliff stacks). Each slab its OWN outline — the wanted height plus its own noise, so no two edges
+    line up — its rim rounded over a few metres. Returns the stack's height (m)."""
+    rng = np.random.default_rng(seed)
+    S = np.zeros_like(T); L = np.zeros_like(T)
+    live = T > 0.3
+    for k in range(80):
+        tk = (1.4 + 2.0 * rng.random() ** 1.5) * scale
+        idx = live & (T + 12 > L + 0.5 * tk)
+        if not idx.any(): break
+        xs, zs, lv, tt = X[idx], Z[idx], L[idx], tk[idx] if np.ndim(tk) else tk
+        F = T[idx] + (4.0 + 0.1 * lv) * (0.55 * fbm(xs / 70, zs / 70, seed + 7 * k, 2) + 0.45 * fbm(xs / 26, zs / 26, seed + 7 * k + 3, 2))
+        mid = lv + 0.5 * tt
+        S[idx] += tt * smoothstep(mid - 0.55, mid + 0.55, F) * smoothstep(0.3, 2.0, T[idx])   # (a crisp lip, rounded over ~2 m)
+        L = L + tk
+    return S
+
 def canyon_country(X, Z, H, up, up2, erg):
     log('canyon country')
     Dc = np.full(X.shape, 1e9)
@@ -296,11 +316,26 @@ def canyon_country(X, Z, H, up, up2, erg):
     # (2026-11-04: their edges rise GRADUALLY — a long shoulder, not a step — the user: "a sudden rise")
     tiers = 0.58 * smoothstep(0.04, 0.5, m) + 0.42 * smoothstep(0.55, 0.9, inner)
     lift = 28 + 52 * smoothstep(-0.4, 0.5, fbm(X / 1300, Z / 1300, SEED + 87, 2))   # (the high ground is already high)
-    U = lift * tiers * (1 + 0.06 * fbm(X / 150, Z / 150, SEED + 88, 2))
-    log(f'  rock masses: {np.mean(m > 0.5) * 100:.0f} % of the box, up to {U.max():.0f} m')
-    return H + U, m, Dc
+    U_cliff = lift * tiers * (1 + 0.06 * fbm(X / 150, Z / 150, SEED + 88, 2))
+    # SLICKROCK or CLIFF (2026-11-04 — the user: "in Over the Hill there are lots of rocks we can actually climb with
+    # the car, slowly — a proper gameplay; now we have huge rocks we can't climb"): most masses are SLICKROCK — a
+    # rounded rock hill, its slopes never over ~35°, stepped in crawlable ledges (below), rock on its bumps and risers
+    # and sand pooled in its hollows; about a quarter stay CLIFF masses (the tiers above) — landmarks to drive round
+    cliffy = smoothstep(0.12, 0.3, fbm(X / 900, Z / 900, SEED + 120, 2))
+    dome = blur(m, 16)
+    # (the masses built of STACKED SLABS — slab_stack: the slickrock's thin (a car crawls their edges), the cliff
+    #  stacks' thick and tall — landmarks)
+    # (2026-11-04, the user's frames: compact STEEP stacks of thick slabs — towers and walls, each rim a bulge — and a
+    #  SKIRT of low rock TABLES round their feet, 1–3 slabs on the sand: the rock a car drives on and crawls over)
+    T_mass = (26 + 46 * smoothstep(-0.4, 0.5, fbm(X / 1300, Z / 1300, SEED + 87, 2))) * (0.55 * smoothstep(0.05, 0.3, m) + 0.45 * smoothstep(0.5, 0.85, inner))
+    T_skirt = (4 + 4 * smoothstep(-0.3, 0.4, fbm(X / 300, Z / 300, SEED + 131, 2))) * smoothstep(0.02, 0.14, blur(m, 22))
+    T = np.maximum(T_mass, T_skirt)
+    U = slab_stack(X, Z, T, 1.6 + 0.8 * cliffy, SEED + 130)
+    slick = smoothstep(0.3, 1.2, U)
+    log(f'  rock masses: {np.mean(m > 0.5) * 100:.0f} % of the box, slab stacks up to {U.max():.0f} m over {np.mean(slick > 0.5) * 100:.0f} %')
+    return H + U, m, Dc, slick
 
-H, MASSK, DC_ROUTES = canyon_country(X, Z, H, UPN, UPS, ERG)
+H, MASSK, DC_ROUTES, SLICK = canyon_country(X, Z, H, UPN, UPS, ERG)
 
 # THE CANYON: carved along the river — the floor (its level just over the water), the walls rising to the plain or
 # the plateau over wall_w(s), then the beds terraced into them. One carving for the box (2 m) and the far world
@@ -347,6 +382,8 @@ H = np.where(Ds < 40, np.minimum(H, slot_floor + (H - slot_floor) * smoothstep(9
 # slot; half as much down the routes (a corridor between two walls would fill to a V)
 _ap = np.maximum(blur(H, 28) - H, 0) * 0.7
 _ap = _ap * smoothstep(river_hw(Sr) + 6, river_hw(Sr) + 30, DrW) * smoothstep(1.1, 1.4, Lq) * smoothstep(20, 40, Ds)
+# (…hardly over the slab stacks: they were buried into sand mounds — a slab's edge stays a slab's edge)
+_ap = _ap * (1 - 0.65 * smoothstep(0.1, 0.5, blur(SLICK, 4)))   # (a little: sand drifted part way up a slab's edge — a ramp onto it)
 H = H + _ap * (0.5 + 0.5 * smoothstep(15, 45, DC_ROUTES))
 log(f'  sand banks: up to {_ap.max():.0f} m')
 
@@ -364,6 +401,8 @@ wall_beds = wall * (1 - SPK)
 # (nor down the routes: a bed's ledge across a road's line on the canyon's gentle rim stood 2–5 m in a cell — no road
 #  could climb it)
 wall_beds = wall_beds * smoothstep(30, 70, DC_ROUTES)
+# (nor the big beds on the slickrock: its own small ledges, below — a 4×4 crawls those)
+wall_beds = wall_beds * (1 - SLICK)
 # (the beds' phase: a slow wobble + the joints' blocks, softened a cell so a joint is a crack, not a stair-step alias)
 phase = 2.5 * fbm(X / 500, Z / 500, SEED + 30, 2) + blur(joint_offsets(X, Z, 52.0, SEED + 31, 3.0), 1) * (1 - SPK)
 # (never below the ground the wall stands on: a bench cut into a wall's foot dug a MOAT round every spire and outcrop)
@@ -373,14 +412,15 @@ H = H + (np.maximum(strata(H, phase), foot) - H) * wall_beds
 #  drew as teeth and curtains; the skins hid it, the clean look has none)
 for _ in range(2):
     _gz, _gx = np.gradient(H, CELL)
-    H = H + (blur(H, 1) - H) * smoothstep(1.2, 2.6, np.hypot(_gx, _gz))
+    H = H + (blur(H, 1) - H) * smoothstep(1.2, 2.6, np.hypot(_gx, _gz)) * (1 - SLICK)   # (not the slabs' lips)
 # (…and NO wall steeper than ~67° (2.4 : 1): a cell's top lowered to within 2.4 cells' worth of its lowest neighbour,
 #  repeated until it holds — a 120 m wall over ~50 m, never 30 m within a cell. Only ever lowered: the corridors' floors
 #  — the roads — never move)
 _lim = 2.4 * CELL
-for _ in range(40):
+for _ in range(60):
     _lo = local_min(H, 1)
-    _H2 = np.where(SPK > 0.3, H, np.minimum(H, _lo + _lim))   # (not the spires: needles, not pyramids)
+    # (not the spires — needles, not pyramids — nor the slabs' rims: a slab's rounded edge is its own)
+    _H2 = np.where((SPK > 0.3) | (SLICK > 0.5), H, np.minimum(H, _lo + _lim))
     if np.max(H - _H2) < 0.05: break
     H = _H2
 PHASE = phase
@@ -637,6 +677,7 @@ log('outcrops')
 orng = np.random.default_rng(SEED + 70)
 OUTCROPS = []
 OUTK = np.zeros_like(H)
+T_OUT = np.zeros_like(H)   # (the knolls' stacks: the height each wants — slab_stack)
 gz0, gx0 = np.gradient(H, CELL)
 SL0 = np.hypot(gx0, gz0)
 keep_clear = [(LAGOON['cx'], LAGOON['cz'], 260), (FALL['x'], FALL['z'], 220), (ARCH['x'], ARCH['z'], 140), (GORGE_BRIDGE_X, 220, 160),
@@ -675,16 +716,28 @@ for i, (ox, oz, R, top) in enumerate(OUTCROPS):
     dx, dz = X[win] - ox, Z[win] - oz
     d = np.hypot(dx, dz) / blob_r(np.arctan2(dz, dx), R, i * 1.7)              # (1 at the rim, the outline never round)
     base = float(np.percentile(H[win][d < 1.15], 25))                              # (sat on the low side: never floating)
-    tiers = 1 + int(orng.random() * 2.6)
-    prof = np.zeros_like(d)
-    for t in range(tiers):                                                          # (each tier a slab narrower than the one under it)
-        rt = 1 - 0.27 * t
-        prof = np.maximum(prof, top * (t + 1) / tiers * (1 - smoothstep(rt - 0.13, rt, d)))
-    prof *= 0.97 + 0.03 * fbm(X[win] / 23, Z[win] / 23, SEED + 71 + i, 2)
-    # (raised only within its own outline — max(H, base) over the whole window stood every outcrop on a square pad)
-    H[win] = H[win] + np.maximum(base + prof - H[win], 0) * (1 - smoothstep(1.0, 1.3, d))
-    OUTK[win] = np.maximum(OUTK[win], 1 - smoothstep(1.25, 1.6, d))
-# their beds: the steep parts of the outcrops terraced like every wall, and in WALL for their skins
+    # (2026-11-04 — the user: "huge rocks at random places which we can't go or climb": four in five are KNOLLS —
+    #  small STACKS OF SLABS (slab_stack, below) a car crawls up; one in five keeps the sheer tiers — a block to drive
+    #  round)
+    block = orng.random() < 0.2
+    if block:
+        prof = np.zeros_like(d)
+        tiers = 1 + int(orng.random() * 2.6)
+        for t in range(tiers):                                                      # (each tier a slab narrower than the one under it)
+            rt = 1 - 0.27 * t
+            prof = np.maximum(prof, top * (t + 1) / tiers * (1 - smoothstep(rt - 0.13, rt, d)))
+        prof *= 0.97 + 0.03 * fbm(X[win] / 23, Z[win] / 23, SEED + 71 + i, 2)
+        # (raised only within its own outline — max(H, base) over the whole window stood every outcrop on a square pad)
+        H[win] = H[win] + np.maximum(base + prof - H[win], 0) * (1 - smoothstep(1.0, 1.3, d))
+        OUTK[win] = np.maximum(OUTK[win], 1 - smoothstep(1.25, 1.6, d))
+    else:
+        # (a TABLE: 1–3 slabs, flat on top, its rims rounded — 3–10 m)
+        T_OUT[win] = np.maximum(T_OUT[win], (3 + 7 * orng.random()) * (1 - smoothstep(0.75, 1.15, d)))
+# the knolls stacked (never on a road)
+_so = slab_stack(X, Z, T_OUT * smoothstep(TRAIL_HW + 6, TRAIL_HW + 16, Dt), 1.0, SEED + 140)
+H = H + _so
+SLICK = np.maximum(SLICK, smoothstep(0.3, 1.2, _so))
+# the blocks' beds: their steep parts terraced like every wall, and in WALL for their skins
 gz0, gx0 = np.gradient(H, CELL)
 wall_o = smoothstep(0.45, 0.9, blur(np.hypot(gx0, gz0), 2)) * OUTK
 # (never on a road: an outcrop's beds reach 1.6 radii out, and one beside the escarpment's top leg terraced the
@@ -710,6 +763,12 @@ patch = fbm(X4 / 90, Z4 / 90, SEED + 50, 3)
 patch = fbm(X4 / 260, Z4 / 260, SEED + 50, 3)
 rock = np.clip(smoothstep(0.42, 1.0, sl) + 0.85 * smoothstep(0.3, 0.9, WALL[::2, ::2]) + smoothstep(0.2, 0.4, patch) * UPN[::2, ::2] * 0.6
                + smoothstep(0.45, 0.75, MASSK[::2, ::2]), 0, 1)   # (the rock masses' tops are rock — 2026-11-04)
+# the SLICKROCK: bare rock on its bumps, ridges and risers, sand pooled in its hollows and lying thin on its shelves —
+# the edge between them broken by a noise (patches of sand on rock, rock showing through sand)
+_conv = H4 - blur(H4, 5)
+_sk = SLICK[::2, ::2]
+_slr = np.clip(0.8 + 0.4 * smoothstep(0.08, 0.35, sl) + 0.2 * np.clip(_conv / 1.5, -1, 1) + 0.15 * fbm(X4 / 40, Z4 / 40, SEED + 124, 2), 0, 1)   # (the slabs bare rock, tops and rims — it grips, a car crawls it; a little sand in their hollows)
+rock = np.maximum(rock * (1 - _sk), _slr * _sk)
 # (soft: the sand banks — slopes under ~25° — sand, the rock's edge blurred over 8–16 m: no hard line where the colour
 #  changes — 2026-11-04)
 rock = blur(rock, 2)
@@ -815,7 +874,7 @@ np.savez_compressed(os.path.join(CACHE, 'desert.npz'), H=H.astype(np.float32), W
                     arch=np.array([ARCH['x'], ARCH['z'], ARCH_Y], np.float32), aqueduct=np.array([AQUEDUCT['x0'], AQUEDUCT['z0'], AQUEDUCT['x1'], AQUEDUCT['z1']], np.float32),
                     ksar=np.array([KSAR['x'], KSAR['z']], np.float32), river=RIVER.astype(np.float32), lagoon=np.array([LAGOON['cx'], LAGOON['cz'], LAGOON['rx'], LAGOON['rz'], LAGOON['rot']], np.float32),
                     Dt=Dt.astype(np.float32), spires=np.array(SPIRES, np.float32), mesas=np.array(MESAS, np.float32),
-                    layers=np.stack([LAYER_B, LAYER_T, LAYER_H, LAYER_C], 1).astype(np.float64))
+                    layers=np.stack([LAYER_B, LAYER_T, LAYER_H, LAYER_C], 1).astype(np.float64), slick=SLICK[::2, ::2].astype(np.float32))
 log(f'wrote {OUT}: box {in_min:.1f}..{in_min + in_range:.1f} m, world {far_min:.1f}..{far_min + far_range:.1f} m')
 log(f'  rock {rock.mean():.2f}  sand {sand.mean():.2f}  wet {wetb.mean():.3f}  growth {grow.mean():.3f}  spires {len(SPIRES)}  mesas {len(MESAS)}')
 

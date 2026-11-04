@@ -436,9 +436,11 @@ float fogAmount(vec3 wpos) {
   float a = 1.0 - exp(-d / uFogRange.y);
   float low = exp(-max(wpos.y - 30.0, 0.0) / 380.0);
   float f = min(a * (0.86 + 0.14 * low), 0.94);
-  // THE CROSSING'S MIST: a fog round the camera itself (no clear air) — at 1 the land 85 % gone 10 m off, ~15 m to
-  // see; ~100 m at 0.55, ~600 m at 0.3 — whichever is thicker
-  if (uMist > 0.001) f = max(f, 1.0 - exp(-length(wpos - uCamPos) * 0.19 * MIST_K * uMist * uMist * uMist));
+  // THE CROSSING'S MIST: a fog round the camera itself (no clear air) — at 1 the land 85 % gone ~40 m off;
+  // whichever is thicker
+  // (2026-11-04 — the user: "the fog on the hill is okay but it hides the path": at its thickest 85 % gone at ~40 m, not
+  //  10 — the road readable 30–40 m ahead, ~3 s at the pass's pace; the sky behind still all mist)
+  if (uMist > 0.001) f = max(f, 1.0 - exp(-length(wpos - uCamPos) * 0.048 * MIST_K * uMist * uMist * uMist));
   // THE SANDSTORM: the dust round the camera — ~110 m to see at its height (never quite solid: shapes in it)
   if (uDust > 0.001) f = max(f, (1.0 - exp(-length(wpos - uCamPos) * 0.028 * MIST_K * uDust * uDust)) * 0.97);
   return f;

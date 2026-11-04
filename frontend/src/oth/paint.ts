@@ -181,7 +181,12 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   g.rock = smoothstep(0.28, 0.78, rv);
   g.rockNear = smoothstep(0.18, 0.5, rv);
   float bt = bedTone(h, p);
-  vec3 stone = mix(STONE, STONE_PALE, bt * 0.7) * (0.97 + 0.05 * d25);
+  // (the bare rock's own breakup — soft tone patches a few metres across and darker seams between slabs, from the
+  //  no-repeat reads: rock, not paint)
+  vec3 stone = mix(STONE, STONE_PALE, bt * 0.7) * (0.93 + 0.1 * d25) * (0.94 + 0.1 * d6);
+  stone *= 1.0 - 0.12 * smoothstep(0.62, 0.78, nA.a) * near;
+  // (a slab's SIDE darker than its top — the stacked layers read from afar: lit tops, deeper rims — 2026-11-04)
+  stone *= mix(1.0, 0.8, smoothstep(0.2, 0.6, steep));
   stone = mix(stone, SAND, (1.0 - smoothstep(0.03, 0.12, steep)) * 0.22); // (a dusting of sand on the tops)
   stone = mix(stone, mix(SAND_DEEP, stone, 0.45), (1.0 - smoothstep(0.35, 0.85, rv)) * 0.8); // (the foot: sandy)
   col = mix(col, stone, g.rock);

@@ -340,11 +340,9 @@ void main() {
   // HIGH / ULTRA on PCs: the rock's (and the scree's) crumpled 3D relief — the light only, the colour stays
   float cav = 1.0;
 #ifdef OTH_ROCK_RELIEF
-#ifdef OTH_DESERT
-  // (the desert's stylised sandstone: clean planes, no crumpled relief — 2026-11-04)
-#else
+  // (the desert too, 2026-11-04 — the user: "the way we put rock texture on the valley": the crumpled relief on its
+  //  bare rock — warped, never a repeating tile)
   N = rockRelief(vWorld, N, max(g.rock, g.scree * 0.6) * (1.0 - g.trail), dFdx(vWorld), dFdy(vWorld), cav); // (never on a track)
-#endif
 #endif
   col *= 1.0 + (facetRand(Nf) - 0.5) * 0.1 * facet;
 #ifdef OTH_DESERT

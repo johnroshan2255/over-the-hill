@@ -14,7 +14,7 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
  * meadows, a few in and along the river. One instanced draw per shape variant; the instances written are those
  * within the tier's reach, in view, not behind a hill and not too small to see (`update`).
  */
-const VARIANTS = 6
+const VARIANTS = 12 // (2026-11-04: was 6 — the user: "the small rocks are all the same shape")
 /** + the ROUNDED shapes (after the 6 blocks): the scenery's boulder walls (meta.scenery). */
 const ROUND = 2
 const CELL = 128
@@ -26,7 +26,7 @@ export function cellSeed(a: number, b: number, salt: number): number {
   return (h ^ (h >>> 16)) >>> 0
 }
 
-export interface Inst { x: number; y: number; z: number; s: number; sy: number; rot: number; tilt: number; v: number }
+export interface Inst { x: number; y: number; z: number; s: number; sy: number; rot: number; tilt: number; v: number; ax?: number; az?: number }
 
 export class Rocks {
   readonly group = new GFX.Group()
@@ -37,6 +37,7 @@ export class Rocks {
   private readonly e = new GFX.Euler()
   private readonly reach: number
   private rubbleK = 1
+  private stoneFoot: [number, number][] | null = null
   private readonly near: number
   /** The rounded shapes' far LOD (rockNear on): one mesh per ROUND variant. */
   private readonly farMeshes: GFX.InstancedMesh[] = []
@@ -82,6 +83,13 @@ export class Rocks {
     })
     // (LOW — the phones: the desert's small rubble 40 % as thick; the big blocks, what fills a view, all kept)
     this.rubbleK = tier.name === 'low' ? 0.4 : 1
+    // (each sculpted stone's foot and height, unit size: [lowest y, highest − lowest] — place() stands them on it)
+    this.stoneFoot = stones ? stones.slice(0, VARIANTS).map((l) => {
+      const p = l[0].attributes.position.array as Float32Array
+      let lo = Infinity, hi = -Infinity
+      for (let i = 1; i < p.length; i += 3) { lo = Math.min(lo, p[i]); hi = Math.max(hi, p[i]) }
+      return [lo, hi - lo] as [number, number]
+    }) : null
     const all = (this.all = this.place())
     for (let v = 0; v < VARIANTS + ROUND; v++) {
       const sculpted = v < VARIANTS ? stones?.[v] : undefined
@@ -181,7 +189,16 @@ export class Rocks {
       // (sunk by the ground's fall across the rock, so its uphill side never floats)
       const r = size * 0.5
       const y = Math.min(map.height(x - r, z), map.height(x + r, z), map.height(x, z - r), map.height(x, z + r), map.height(x, z))
-      out.push({ x, y: y - sink * size * 0.3, z, s: size, sy: size * (1.0 + 0.6 * rnd()), rot: rnd() * Math.PI * 2, tilt: (rnd() - 0.5) * 0.2, v: Math.floor(rnd() * VARIANTS) })
+      // (the same draws in the same order as ever: no stone in the valley moves)
+      const sy = size * (1.0 + 0.6 * rnd()), rot = rnd() * Math.PI * 2, tilt = (rnd() - 0.5) * 0.2, v = Math.floor(rnd() * VARIANTS)
+      // (a SCULPTED stone stands by its own foot — 2026-11-04, the user: "some rocks are above the ground, in the air":
+      //  the flat slabs' feet are higher than the old blocks', and the old lift left them hovering — its foot a fifth of
+      //  its height into the ground, a big block's a quarter)
+      const foot = this.stoneFoot?.[v]
+      const yy = foot ? y - foot[0] * sy - (sink < 0 ? 0.25 : 0.2) * foot[1] * sy : y - sink * size * 0.3
+      // (each its own proportions across — from a hash of where it stands: no draw, so nothing moves)
+      const hh = cellSeed(Math.round(x * 4), Math.round(z * 4), 31)
+      out.push({ x, y: yy, z, s: size, sy, rot, tilt, v, ax: 0.78 + 0.44 * ((hh & 1023) / 1023), az: 0.72 + 0.44 * (((hh >>> 10) & 1023) / 1023) })
     }
     // OUTCROPS: a jittered 40 m grid; likelier on steep ground and the rock mask, never in water
     for (let gz = -half; gz < half; gz += 40) {
@@ -194,7 +211,8 @@ export class Rocks {
         if (mk[0] > 0.55) continue
         const p = Math.min(0.6, Math.max(0, (sl - 0.22) * 1.6) + mk[0] * 1.2) * (dry(x, z) ? 1 : 0) * (1 - mk[3] * 0.5)
         if (rnd() > p) continue
-        const n = 4 + Math.floor(rnd() * 6), big = 5 + rnd() * 9
+        // (the desert's: stones, not house blocks — on its slickrock a car must crawl past them — 2026-11-04)
+        const n = 4 + Math.floor(rnd() * 6), big = map.desert ? 1.5 + rnd() * 3 : 5 + rnd() * 9
         for (let i = 0; i < n; i++) {
           const a = rnd() * Math.PI * 2, d = rnd() * big * 1.4
           const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d
@@ -322,7 +340,7 @@ export class Rocks {
   /** A rock's world matrix (the same one it is drawn with). */
   matrixOf(r: Inst, out: GFX.Matrix4): GFX.Matrix4 {
     this.q.setFromEuler(this.e.set(r.tilt, r.rot, r.tilt * 0.6))
-    return out.compose(new GFX.Vector3(r.x, r.y, r.z), this.q, new GFX.Vector3(r.s, r.sy, r.s * 0.9))
+    return out.compose(new GFX.Vector3(r.x, r.y, r.z), this.q, new GFX.Vector3(r.s * (r.ax ?? 1), r.sy, r.s * (r.az ?? 0.9)))
   }
 
   /**
@@ -373,7 +391,7 @@ export class Rocks {
         const mesh = r.v >= VARIANTS ? (d2 > near2 ? this.farMeshes[r.v - VARIANTS] : this.meshes[r.v])
           : this.stoneFar[r.v] && r.sy * r.sy < lodRatio * lodRatio * d2 ? this.stoneFar[r.v] : this.meshes[r.v]
         this.q.setFromEuler(this.e.set(r.tilt, r.rot, r.tilt * 0.6))
-        this.m.compose(this.p.set(r.x, r.y, r.z), this.q, this.sc.set(r.s, r.sy, r.s * 0.9))
+        this.m.compose(this.p.set(r.x, r.y, r.z), this.q, this.sc.set(r.s * (r.ax ?? 1), r.sy, r.s * (r.az ?? 0.9)))
         mesh.setMatrixAt(mesh.count++, this.m)
       }
     }
@@ -479,9 +497,7 @@ void main() {
   // HIGH / ULTRA on PCs: the crumpled 3D relief over every face (the light only: the colour above is the face's own)
   float cav = 1.0;
 #ifdef OTH_ROCK_RELIEF
-#ifndef OTH_DESERT
   N = rockRelief(vWorld, N, 1.0, dFdx(vWorld), dFdy(vWorld), cav);
-#endif
 #endif
   float sun = sunVisibility(vWorld.xz);
   vec3 c = shade(albedo, N, V, 0.75, 0.04, mix(0.6, 1.0, smoothstep(0.0, 0.5, vUp)) * cav, sun, 0.05);
