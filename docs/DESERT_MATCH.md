@@ -457,6 +457,16 @@ their arch and their saturated sunset / night don't yet.
 LOW −0.17; oasis ULTRA −0.67, LOW −0.15 — cheaper (no skins, half the palms, no relief or fine marks in the desert).
 Roads driven: the escarpment, the pass and the gate into the valley (climbtest).
 
+**Natural relief** (2026-11-04, the same day — the user: *"still a big flat plane with hills in random places; it needs
+real natural heights"*): `desert.py relief()` — the land itself rises and falls: broad swells and basins, ridges and
+valleys a few hundred metres across, knolls, all domain-warped — on the plain (±60 m), the north plateau (×0.7) and the
+high plateau (×0.55), calmed only at the falls' lip, the arch's slot and round the pass, the gate and the escarpment's
+road. The rock masses now stand on the HIGH GROUND (the relief's swells and ridges; 27 % of the box), the valleys between
+are sand, and SAND BANKS ramp up into the foot of every wall (the ground raised toward its 40 m surroundings — up to a
+quarter of the wall's height, fading over ~40 m; half as much down the routes). The roads follow the land up and down
+(grades ≤ 24 %, no step over 0.5 m); the rope bridge measured from the lower rim (the higher one made a 348 m bridge).
+Cost (abgpu vs the commit before): plain +0.06 / +0.09 ms, oasis +0.10 / +0.02 (ULTRA / LOW) — the noise here.
+
 Next:
 1. **Stacked-block rock** — the biggest gap left: Blender meshes for the masses' walls (each bed a chunky slab with
    rounded edges, offset from the one below, flat-topped), in place of the heightfield's smooth walls.

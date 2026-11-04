@@ -136,19 +136,39 @@ def local_min(A, r):
             out = np.minimum(out, p[tuple(sl)])
     return out
 
+def relief(X, Z):
+    """THE LAND'S OWN RELIEF (2026-11-04 — the user: "a big flat plane with hills put in random places … it needs real
+    natural heights"): broad swells and basins, ridges and valleys a few hundred metres across, knolls on them — all
+    domain-warped, so nothing is round or regular. Returns (metres, high): `high` 0..1 is the high ground, where the
+    rock masses stand (canyon_country)."""
+    wx = X + 260 * fbm(X / 1600, Z / 1600, SEED + 101, 2)
+    wz = Z + 260 * fbm(X / 1600 + 3.1, Z / 1600, SEED + 102, 2)
+    big = fbm(wx / 1500, wz / 1500, SEED + 1, 3)
+    mid = fbm(wx / 520, wz / 520, SEED + 103, 3)
+    ridge = ridged(wx / 850, wz / 850, SEED + 104, 3)
+    R = 60 * big + 27 * mid + 32 * (ridge - 0.45) + 8 * fbm(X / 170, Z / 170, SEED + 2, 3)
+    high = smoothstep(-0.12, 0.1, 0.55 * big + 0.32 * mid + 0.45 * (ridge - 0.45) + 0.08 * fbm(X / 220, Z / 220, SEED + 105, 2))
+    return R, high
+
 def landforms(X, Z, inner=True):
     """The big shapes: the plain, the north plateau, the high south plateau, mesas, spires, dunes (no canyon yet)."""
-    n1 = fbm(X / 900, Z / 900, SEED + 1, 3)
-    H = PLAIN + 14 * n1 + 6 * fbm(X / 230, Z / 230, SEED + 2, 3)
+    # (the plain: no plain — the land's relief, never below ~20 m over the canyon's rim level)
+    R_ = relief(X, Z)[0]
+    H = PLAIN + 18 + R_
+    # (the plateaus have it too — 2026-11-04: they were two flat tables — calmed only where something sits at a set
+    #  level: the falls' lip, the arch's slot, the pass, the gate and the escarpment's road)
+    def _rect(x0, x1, z0, z1): return np.hypot(np.maximum(np.maximum(x0 - X, X - x1), 0), np.maximum(np.maximum(z0 - Z, Z - z1), 0))
+    damp_n = smoothstep(150, 400, np.hypot(X - FALL['x'], Z - FALL['z'])) * smoothstep(60, 220, _rect(1050, 1330, -1600, -300))
+    damp_s = smoothstep(60, 220, _rect(-220, 440, 1380, 2200))
     # the NORTH PLATEAU: its rim a ragged line (bays and promontories); the plateau's top slopes gently, slickrock
     rim = Z + 340 + 160 * fbm(X / 700, Z / 700, SEED + 3, 3) + 60 * fbm(X / 180, Z / 180, SEED + 4, 2)
     up = 1 - smoothstep(-60, 30, rim)
-    top = NORTH + 10 * fbm(X / 600, Z / 600, SEED + 5, 2) + 5 * fbm(X / 120, Z / 120, SEED + 6, 2)
+    top = NORTH + 10 * fbm(X / 600, Z / 600, SEED + 5, 2) + 5 * fbm(X / 120, Z / 120, SEED + 6, 2) + 0.7 * R_ * damp_n
     H = H + (top - H) * up ** 0.8
     # the HIGH PLATEAU in the south (the pass): the escarpment's foot ~ z 1430, its rim ~ z 1600
     rim2 = Z - 1520 - 90 * fbm(X / 600, Z / 600, SEED + 7, 3) - 40 * fbm(X / 150, Z / 150, SEED + 8, 2)
     up2 = smoothstep(-80, 40, rim2)
-    H = H + (HIGH + 8 * fbm(X / 500, Z / 500, SEED + 9, 2) - H) * up2 ** 0.75
+    H = H + (HIGH + 8 * fbm(X / 500, Z / 500, SEED + 9, 2) + 0.55 * R_ * damp_s - H) * up2 ** 0.75
     # DUNES (the erg): the plain's west and the far world's — crescent ridges across the wind (from the north-west),
     # a long windward slope, a steep slip face; their crests wander
     wind = 0.6
@@ -254,11 +274,13 @@ def canyon_country(X, Z, H, up, up2, erg):
     Dw = Dc + 18 * fbm(X / 140, Z / 140, SEED + 80, 2) + 7 * fbm(X / 45, Z / 45, SEED + 81, 2)
     wc = 24 + 22 * smoothstep(-0.3, 0.3, fbm(X / 400, Z / 400, SEED + 82, 2))
     m = smoothstep(wc, wc + 42, Dw)
-    # side canyons through the masses (where a warped noise crosses zero: long, winding, joined) and open basins
+    # (2026-11-04: the masses stand on the HIGH GROUND — the relief's swells and ridges are rock, the valleys between
+    #  sand — not dropped on a flat plain wherever a noise said)
+    m = m * relief(X, Z)[1]
+    # side canyons through the masses (where a warped noise crosses zero: long, winding, joined)
     wx_ = X + 120 * fbm(X / 700, Z / 700, SEED + 83, 2); wz_ = Z + 120 * fbm(X / 700, Z / 700, SEED + 84, 2)
     side = 1 - smoothstep(0.022, 0.055, np.abs(fbm(wx_ / 640, wz_ / 640, SEED + 85, 3)))
-    basin = smoothstep(0.32, 0.45, -fbm(X / 1100, Z / 1100, SEED + 86, 2))
-    m = m * (1 - side) * (1 - basin)
+    m = m * (1 - side)
     # (a band down every route the masses never close: the corridors' wander could pinch one shut)
     m = m * smoothstep(14, 30, Dc)
     # where: the plain fully, the plateaus a little, the erg hardly; clear of the places and the spire forest
@@ -272,7 +294,7 @@ def canyon_country(X, Z, H, up, up2, erg):
     # two tiers: the mass's edge rises to its first, its heart (a wide blur: far from every edge) to the second
     inner = blur(m, 14)
     tiers = 0.58 * smoothstep(0.12, 0.32, m) + 0.42 * smoothstep(0.62, 0.82, inner)
-    lift = 40 + 80 * smoothstep(-0.4, 0.5, fbm(X / 1300, Z / 1300, SEED + 87, 2))
+    lift = 28 + 52 * smoothstep(-0.4, 0.5, fbm(X / 1300, Z / 1300, SEED + 87, 2))   # (the high ground is already high)
     U = lift * tiers * (1 + 0.06 * fbm(X / 150, Z / 150, SEED + 88, 2))
     log(f'  rock masses: {np.mean(m > 0.5) * 100:.0f} % of the box, up to {U.max():.0f} m')
     return H + U, m, Dc
@@ -317,6 +339,15 @@ H = np.where((Lq < 1.25) & (Dr < fw + 20), np.minimum(H, LAGOON_LEVEL - 3.2 + 3.
 Ds, _, _ = polyline_field(X, Z, spline(SLOT, 8.0), 80)
 slot_floor = np.interp(Z, [-1500, -760, -60], [NORTH - 34, NORTH - 46, 100])
 H = np.where(Ds < 40, np.minimum(H, slot_floor + (H - slot_floor) * smoothstep(9, 30, Ds) ** 0.6), H)
+
+# SAND BANKED AGAINST THE WALLS (2026-11-04 — "not a sudden hill"): at the foot of every wall the ground ramps up into
+# it — raised toward its 40 m surroundings (a quarter of the wall's height at its foot, fading over ~40 m), as blown
+# sand and fallen rock bank against a real cliff; nothing changes on open ground. Not into the water, the lagoon or the
+# slot; half as much down the routes (a corridor between two walls would fill to a V)
+_ap = np.maximum(blur(H, 20) - H, 0) * 0.55
+_ap = _ap * smoothstep(river_hw(Sr) + 6, river_hw(Sr) + 30, DrW) * smoothstep(1.1, 1.4, Lq) * smoothstep(20, 40, Ds)
+H = H + _ap * (0.5 + 0.5 * smoothstep(15, 45, DC_ROUTES))
+log(f'  sand banks: up to {_ap.max():.0f} m')
 
 # THE BEDS: wherever the ground is steep (the canyon's walls, the plateaus' rims, the mesas, the spires, the slot), it
 # steps in benches — flat ledges and steep risers, the beds wobbling a little in height
@@ -365,9 +396,10 @@ mes = smoothstep(0.05, 0.2, fbm(XF / 1400, ZF / 1400, SEED + 40, 3))
 HF = HF + ring * mes * (120 + 140 * smoothstep(0, 0.5, fbm(XF / 2600, ZF / 2600, SEED + 41, 2)))
 # CANYON COUNTRY beyond the box too (2026-11-04): masses from a noise alone (no roads out there), so the aerial and the
 # horizon aren't a flat plain past the box's edge (the seam below eases them in over 256 m)
-_mf = smoothstep(-0.1, 0.15, fbm(XF / 900, ZF / 900, SEED + 90, 3)) * (1 - smoothstep(0.022, 0.06, np.abs(fbm(XF / 640, ZF / 640, SEED + 85, 3))))
+_mf = relief(XF, ZF)[1] * (1 - smoothstep(0.022, 0.06, np.abs(fbm(XF / 640, ZF / 640, SEED + 85, 3))))
 _mf = blur(_mf, 1) * (1 - 0.8 * smoothstep(0.3, 0.8, _ergF)) * smoothstep(2048, 2300, np.maximum(np.abs(XF), np.abs(ZF)))
-HF = HF + (40 + 90 * smoothstep(-0.4, 0.5, fbm(XF / 1300, ZF / 1300, SEED + 87, 2))) * (0.6 * smoothstep(0.15, 0.4, _mf) + 0.4 * smoothstep(0.6, 0.85, blur(_mf, 3)))
+HF = HF + (28 + 60 * smoothstep(-0.4, 0.5, fbm(XF / 1300, ZF / 1300, SEED + 87, 2))) * (0.6 * smoothstep(0.15, 0.4, _mf) + 0.4 * smoothstep(0.6, 0.85, blur(_mf, 3)))
+HF = HF + np.maximum(blur(HF, 3) - HF, 0) * 0.55   # (sand banked at the walls' feet out there too)
 # the RIVER'S GORGE goes on out of the box, east to the world's edge (RIVER_OUT): the same canyon, its channel wide and
 # deep enough for 16 m cells to hold the water (meta water.riverOut draws it)
 HF, _, _, _, _ = carve_canyon(XF, ZF, HF, RIVER_FAR, chan=(16.0, 30.0), chan_depth=4.0)
@@ -575,7 +607,8 @@ log(f'  the arch: deck {ARCH_Y} m')
 BRIDGES = []
 TB = TRAILS[-1]
 gb = bilinear(H, HALF, TB[:, 0], TB[:, 1])
-rim_y = max(gb[0], gb[-1])
+rim_y = min(gb[0], gb[-1])   # (the lower rim: with the land's relief the two differ — the higher one made every point
+#  below it 'gorge', a 348 m bridge — 2026-11-04)
 low = np.nonzero(gb < rim_y - 4)[0]
 if len(low):
     a, b = TB[max(0, low[0] - 2)], TB[min(len(TB) - 1, low[-1] + 2)]
