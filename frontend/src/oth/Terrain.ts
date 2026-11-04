@@ -340,7 +340,11 @@ void main() {
   // HIGH / ULTRA on PCs: the rock's (and the scree's) crumpled 3D relief — the light only, the colour stays
   float cav = 1.0;
 #ifdef OTH_ROCK_RELIEF
+#ifdef OTH_DESERT
+  // (the desert's stylised sandstone: clean planes, no crumpled relief — 2026-11-04)
+#else
   N = rockRelief(vWorld, N, max(g.rock, g.scree * 0.6) * (1.0 - g.trail), dFdx(vWorld), dFdy(vWorld), cav); // (never on a track)
+#endif
 #endif
   col *= 1.0 + (facetRand(Nf) - 0.5) * 0.1 * facet;
 #ifdef OTH_DESERT
@@ -348,7 +352,8 @@ void main() {
   // (2026-11-04: not the gravel, rock, tracks or the damp), in PATCHES (a slow no-repeat noise: some sand lies smooth),
   // at two angles of the wind crossfading (one direction everywhere read as a repeated pattern), gone wherever a
   // ripple would be smaller than a pixel or two
-  float loose = g.loose * (1.0 - smoothstep(0.3, 0.7, m.b)) * (1.0 - smoothstep(0.05, 0.12, foot));
+  // (2026-11-04, the clean look: only on the dunes and the deep sheets, and gentler)
+  float loose = g.loose * smoothstep(0.75, 0.95, m.g) * (1.0 - smoothstep(0.3, 0.7, m.b)) * (1.0 - smoothstep(0.05, 0.12, foot));
   if (loose > 0.01) {
     float patchK = smoothstep(0.38, 0.62, g.ripK);
     loose *= 0.25 + 0.75 * patchK;
@@ -365,25 +370,7 @@ void main() {
     float ph = dot(xz, wd) * (wk > 0.5 ? 13.5 : 17.0) + warp;
     float rip = cos(ph) * 0.5 + 0.5 * cos(ph * 2.03 + 1.1) * 0.35;
 #endif
-    N = normalize(N + vec3(wd.x, 0.0, wd.y) * rip * 0.16 * loose);
-  }
-  // DESERT VARNISH on the cliffs (2026-11-04): dark streaks running down the sandstone faces from the ledges, a few
-  // bleached ones — what makes a real wall read as weathered rock, not a stack of bands. Projected on the face's own
-  // axis (x for a face looking ±z, z for one looking ±x), stretched down it; two scales so they never repeat
-  float faceK = g.rock * smoothstep(0.22, 0.45, steep) * (1.0 - g.trail);
-  if (faceK > 0.01 && foot < 6.0) {
-    // (the two projections' RESULTS blended — blending their coordinates swirled the streaks into wood grain round a
-    //  curved face; LOW reads only the face's main axis)
-    float wx = smoothstep(0.3, 0.7, abs(Ns.x) / (abs(Ns.x) + abs(Ns.z) + 1e-4));
-#ifdef OTH_SPEC
-    float st = mix(texture(uNoise, vec2(xz.x / 31.0, h / 260.0 + 0.3)).g, texture(uNoise, vec2(xz.y / 27.3 + 0.5, h / 230.0)).g, wx);
-#else
-    float st = texture(uNoise, vec2((wx > 0.5 ? xz.y : xz.x) / 31.0, h / 260.0 + 0.3)).g;
-#endif
-    float varnish = smoothstep(0.5, 0.86, st) * 0.85 * (1.0 - smoothstep(2.0, 6.0, foot));
-    float bleach = smoothstep(0.62, 0.8, 1.0 - st) * 0.5 * (1.0 - smoothstep(2.0, 6.0, foot));
-    col *= mix(vec3(1.0), vec3(0.66, 0.63, 0.64), varnish * faceK);
-    col *= mix(vec3(1.0), vec3(1.1, 1.08, 1.05), bleach * (1.0 - varnish) * faceK);
+    N = normalize(N + vec3(wd.x, 0.0, wd.y) * rip * 0.1 * loose);
   }
 #endif
   // CLIFF FACES (2026-10-27, "cliffs … the colour is the key"): a steep rock face reads as LAYERED stone — horizontal

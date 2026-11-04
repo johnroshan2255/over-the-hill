@@ -128,7 +128,8 @@ export class Atmosphere {
     // (each world's own wet spell: rain in the valley, a sandstorm in the desert — never rain on the sand)
     if (this.desert && kind === 'rain') kind = 'sandstorm'
     if (!this.desert && kind === 'sandstorm') kind = 'rain'
-    const cloudT = kind === 'rain' ? 0.95 : kind === 'cloudy' ? 0.62 : kind === 'sandstorm' ? 0.3 : 0.22
+    // (the desert's clear sky nearly cloudless — 2026-11-04, the stylised warm look)
+    const cloudT = kind === 'rain' ? 0.95 : kind === 'cloudy' ? 0.62 : kind === 'sandstorm' ? 0.3 : this.desert ? 0.04 : 0.22
     const rainT = kind === 'rain' && u.uCloud.value > 0.75 ? 1 : 0
     const ease = (v: number, t: number, rate: number) => (v < t ? Math.min(t, v + dt * rate) : Math.max(t, v - dt * rate))
     u.uCloud.value = ease(u.uCloud.value, cloudT, 1 / 60)
@@ -205,9 +206,14 @@ export class Atmosphere {
       // (2026-11-03, DESERT_MATCH round 1 — measured on real Saharan skies (Tassili n'Ajjer, Wadi Rum): a deep blue
       //  overhead paling to a light blue at the horizon, ≈ sRGB 125 181 254 some 25° up; ours was a pale cyan-white,
       //  214 224 233 — the zenith to the deep blue, the horizon to a pale blue, both at the keyframe's brightness)
-      u.uSkyZenith.value.lerp(D_BLUE.clone().multiplyScalar(zl), 0.85 * day)
-      u.uSkyHorizon.value.lerp(D_PALEBLUE.clone().multiplyScalar(hl * 0.85), 0.8 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.1), 0.45 * low)
-      u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 1.3), 0.55 * dk * (1 - GFX.MathUtils.smoothstep(s, -0.25, 0.0)))
+      // (2026-11-04 — the desert's own STYLISED, WARM look, replacing round 1's deep photographic blue: a pale cyan
+      //  overhead going to a warm near-white at the horizon by day; a hot pink sky at sunset, top to bottom; a purple
+      //  night)
+      u.uSkyZenith.value.lerp(D_BLUE.clone().multiplyScalar(zl * 1.05), 0.85 * day).lerp(D_PINK.clone().multiplyScalar(Math.max(zl, 0.01) * 1.4), 0.7 * low)
+      u.uSkyHorizon.value.lerp(D_PALEBLUE.clone().multiplyScalar(hl * 0.95), 0.85 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.25), 0.85 * low)
+      const nightK = dk * (1 - GFX.MathUtils.smoothstep(s, -0.25, 0.0))
+      u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 3.2), 0.9 * nightK)
+      u.uSkyHorizon.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(hl, 0.006) * 2.6).lerp(D_PINK.clone().multiplyScalar(Math.max(hl, 0.006) * 2.0), 0.35), 0.8 * nightK)
     }
     for (const c of [u.uSkyZenith.value, u.uSkyHorizon.value]) {
       const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
@@ -223,7 +229,11 @@ export class Atmosphere {
       u.uSunGlow.value.multiplyScalar(1 - 0.5 * dust)
     }
     // (the desert's air clearer still: its aerial views were pale and washed out — frame 221 196 170 vs their 213 175 158)
-    u.uFogRange.value.y = this.hazeLen * (1 + 1.3 * dk) * (1 - 0.45 * u.uRain.value)
+    // (2026-11-04: the desert's air THICK and warm — far layers fading to a peach-white, one behind another; it was
+    //  clearer than the valley's)
+    u.uFogRange.value.y = this.hazeLen * (1 - 0.1 * dk) * (1 - 0.45 * u.uRain.value)
+    // (…and the first 400 m clear: near and middle ground keep their colour, only the far layers melt into the haze)
+    u.uFogRange.value.x = 130 + 270 * dk
     const amb = a.amb + (b.amb - a.amb) * f
     const night = GFX.MathUtils.smoothstep(-s, 0.06, 0.2)
     u.uNight.value = night
@@ -256,24 +266,34 @@ export class Atmosphere {
     floorLum(u.uAmbGround.value, GFX.MathUtils.lerp(0.09, 0.006, night))
     // (DESERT_MATCH round 12 — the desert by day: a hard sun, deep shade; photographed, its scenes have half again our
     //  contrast — the sky's fill and the sand's bounce (and their floors) a third less)
-    const fill = 1 - 0.2 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)
+    // (2026-11-04: the desert's shade BRIGHT and WARM — a soft, stylised light, its shadows a rosy brown, never dark;
+    //  rounds 12–13's deeper shade was for the photographs)
+    const fill = 1 + 0.15 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)
     u.uAmbSky.value.multiplyScalar(fill)
     u.uAmbGround.value.multiplyScalar(fill)
+    if (dk > 0) {
+      const al = 0.2126 * u.uAmbSky.value.r + 0.7152 * u.uAmbSky.value.g + 0.0722 * u.uAmbSky.value.b
+      u.uAmbSky.value.lerp(D_WARMFILL.clone().multiplyScalar(al), 0.55 * dk)
+      // (by night a purple fill: the rocks read as dark magenta against the sky, never a black hole)
+      u.uAmbSky.value.lerp(D_PURPLE.clone().multiplyScalar(0.05), 0.75 * night * dk)
+    }
     // the HAZE's colour: the horizon leaning to the zenith, much of its tint kept — far ridges go blue-grey in layers
     keepTint(u.uFogColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.42), 0.75)
     // (the desert's haze: the sand's own warm colour in it)
-    if (dk > 0) { const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b; u.uFogColor.value.lerp(D_SANDHAZE.clone().multiplyScalar(fl), 0.12 * dk).lerp(u.uSkyHorizon.value, 0.45 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)) } // (by day the far land melts into a pale cyan-white, as theirs does)
+    if (dk > 0) { const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b; u.uFogColor.value.lerp(D_SANDHAZE.clone().multiplyScalar(fl * 1.05), 0.55 * dk).lerp(u.uSkyHorizon.value, 0.2 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)) } // (the far land melts into a warm peach-white)
     // the MIST's colour: the horizon's brightness as a cool grey-white (dark at night, rosy-grey at dusk)
     keepTint(u.uMistColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.2), 0.18).multiplyScalar(0.92)
   }
 }
 
 /** The desert's grade (Atmosphere.desert): colours of unit luminance-ish, scaled to the keyframe's brightness. */
-const D_BLUE = new GFX.Color(0.25, 0.6, 1.65) // (a clear desert zenith: deep blue)
-const D_PALEBLUE = new GFX.Color(0.75, 1.0, 1.25) // (its horizon: a pale blue, never white or cream)
-const D_PINK = new GFX.Color(1.5, 0.62, 0.78)
-const D_PURPLE = new GFX.Color(0.75, 0.42, 1.1)
-const D_SANDHAZE = new GFX.Color(1.12, 0.96, 0.82)
+// (2026-11-04: the stylised warm grade — was round 1's deep photographic blue)
+const D_BLUE = new GFX.Color(0.62, 0.95, 1.32) // (the zenith: a pale cyan)
+const D_PALEBLUE = new GFX.Color(1.06, 1.0, 0.96) // (the horizon: a warm near-white)
+const D_PINK = new GFX.Color(2.1, 0.5, 0.78) // (sunset: hot pink)
+const D_PURPLE = new GFX.Color(1.05, 0.42, 1.35) // (night: purple)
+const D_SANDHAZE = new GFX.Color(1.16, 0.93, 0.86) // (the haze: peach-white)
+const D_WARMFILL = new GFX.Color(1.32, 0.86, 0.8) // (the shade's fill: rosy)
 /** The sandstorm's dust (unit-ish luminance): Over the Hill's orange-brown haze. */
 const DUST = new GFX.Color(1.42, 0.86, 0.5)
 

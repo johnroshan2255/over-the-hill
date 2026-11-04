@@ -93,7 +93,7 @@ _LB, _LT, _LH, _LC = [-160.0], [], [], []
 while _LB[-1] < 900.0:
     soft = _srng.random() < 0.3
     t = _srng.uniform(3.0, 10.0) if soft else 7.0 + 30.0 * _srng.random() ** 1.3
-    _LT.append(t); _LH.append(0.0 if soft else _srng.uniform(0.8, 1.0)); _LC.append(_srng.uniform(0.25, 0.55))
+    _LT.append(t); _LH.append(0.0 if soft else _srng.uniform(0.8, 1.0)); _LC.append(_srng.uniform(0.45, 0.7))
     _LB.append(_LB[-1] + t)
 LAYER_B, LAYER_T, LAYER_H, LAYER_C = np.array(_LB[:-1]), np.array(_LT), np.array(_LH), np.array(_LC)
 
@@ -214,12 +214,70 @@ for si, (sx, sz, r, hgt) in enumerate(SPIRES):
     a = np.arctan2(dz[m], dx[m])
     d = np.hypot(dx[m], dz[m]) / (r * (1 + 0.16 * np.sin(3 * a + si) + 0.08 * np.sin(5 * a + 2 * si) + 0.05 * np.sin(9 * a + 3 * si)))
     base = bilinear(H, HALF, np.array([sx]), np.array([sz]))[0]
-    top = 1 - 0.08 * np.clip(d / 0.5, 0, 1) ** 2                                      # (the domed top)
-    side = 0.92 - 0.67 * smoothstep(0.5, 0.68, d)                                        # (the wall)
+    # (2026-11-04: most come to a POINT — faceted needles, the stylised look; a third keep a domed top)
+    pointed = si % 3 != 0
+    top = (1 - 0.32 * np.clip(d / 0.5, 0, 1) ** 1.1) if pointed else (1 - 0.08 * np.clip(d / 0.5, 0, 1) ** 2)
+    side = (0.68 if pointed else 0.92) - ((0.43 if pointed else 0.67) * smoothstep(0.5, 0.68, d))   # (the wall)
     apron = 0.25 * (1 - smoothstep(0.68, 1.3, d)) ** 1.5                                 # (the rubble cone)
     prof = np.where(d < 0.5, top, np.where(d < 0.68, side, apron))
     H[m] = np.maximum(H[m], base + hgt * prof)
     SPK[m] = np.maximum(SPK[m], 1 - smoothstep(1.1, 1.3, d))
+
+# CANYON COUNTRY (2026-11-04 — the user: "the main problem is the layout: a plane map, no height, just some rocks and
+# some hills on a plane"). The plain is filled with RAISED ROCK MASSES — 40–120 m, in two tiers — and the routes run
+# along CANYON FLOORS between them at the plain's old level (so every road, ramp, place and the gate still work): a
+# corridor 30–60 m wide down each route, its walls wandering; winding SIDE CANYONS through the masses (a noise's zero
+# line — long, connected), a few open sandy BASINS. On the plateaus smaller masses (fins and buttes on the skyline), the
+# erg mostly open. The beds (strata, below) step every wall; desert_rocks.py skins them.
+ROUTE_SKELETON = [
+    [(-147, 1440), (-60, 1100), (-150, 790)],
+    [(-1520, 130), (-1100, 120), (-760, 230), (-420, 30)],
+    [(-420, 30), (-150, 340), (30, 310), (560, 320), (840, 250)],
+    [(-760, -600), (-1000, -800), (-1350, -1200), (-900, -1500), (-500, -1250), (-760, -600)],
+    [(-500, -1250), (200, -1300), (800, -1000), (ARCH['x'] - 150, ARCH['z'])],
+    [(ARCH['x'] + 150, ARCH['z']), (1440, -560)],
+    [(GORGE_BRIDGE_X, 640), (1300, 900), (KSAR['x'], KSAR['z']), (600, 1150), (-60, 1100)],
+    [(-150, 790), (-600, 900), (-1100, 1050), (-1500, 900), (-1200, 700), (-700, 700), (-150, 790)],
+    # (the ledge ramps' lines — desert.py's carve_ramp — and the escarpment's lead: never cut through a mass)
+    [(-150, 790), (150, 760), (400, 660), (330, 520), (180, 470), (60, 400), (30, 310)],
+    [(-420, 30), (-760, -10), (-1050, -150), (-1120, -380), (-900, -540), (-760, -600)],
+    [(1440, -560), (1700, -360), (1560, -150), (1430, -20)],
+    [(-107, 1440), (-187, 1440)],
+]
+def canyon_country(X, Z, H, up, up2, erg):
+    log('canyon country')
+    Dc = np.full(X.shape, 1e9)
+    for P in ROUTE_SKELETON:
+        T = resample(chaikin(spline(np.array(P, float), 6.0), 2), 20.0) if len(P) > 2 else resample(np.array(P, float), 20.0)
+        Dc = np.minimum(Dc, polyline_field(X, Z, T, 160)[0])
+    # the corridor: its half width wandering 30–60 m, its walls never a straight line
+    Dw = Dc + 18 * fbm(X / 140, Z / 140, SEED + 80, 2) + 7 * fbm(X / 45, Z / 45, SEED + 81, 2)
+    wc = 24 + 22 * smoothstep(-0.3, 0.3, fbm(X / 400, Z / 400, SEED + 82, 2))
+    m = smoothstep(wc, wc + 42, Dw)
+    # side canyons through the masses (where a warped noise crosses zero: long, winding, joined) and open basins
+    wx_ = X + 120 * fbm(X / 700, Z / 700, SEED + 83, 2); wz_ = Z + 120 * fbm(X / 700, Z / 700, SEED + 84, 2)
+    side = 1 - smoothstep(0.022, 0.055, np.abs(fbm(wx_ / 640, wz_ / 640, SEED + 85, 3)))
+    basin = smoothstep(0.32, 0.45, -fbm(X / 1100, Z / 1100, SEED + 86, 2))
+    m = m * (1 - side) * (1 - basin)
+    # (a band down every route the masses never close: the corridors' wander could pinch one shut)
+    m = m * smoothstep(14, 30, Dc)
+    # where: the plain fully, the plateaus a little, the erg hardly; clear of the places and the spire forest
+    zone = (1 - up) * (1 - up2) + 0.6 * up * (1 - up2)
+    zone = zone * (1 - 0.8 * erg)
+    for (cx, cz, r) in [(KSAR['x'], KSAR['z'], 150), (130, 1490, 290), (ARCH['x'], ARCH['z'], 160), (GORGE_BRIDGE_X, 220, 200),
+                        (FALL['x'], FALL['z'], 220), (LAGOON['cx'], LAGOON['cz'], 220)]:
+        zone = zone * smoothstep(r, r + 60, np.hypot(X - cx, Z - cz))
+    zone = zone * (1 - smoothstep(0.02, 0.2, blur(SPK, 10)))
+    m = blur(m * zone, 2)
+    # two tiers: the mass's edge rises to its first, its heart (a wide blur: far from every edge) to the second
+    inner = blur(m, 14)
+    tiers = 0.58 * smoothstep(0.12, 0.32, m) + 0.42 * smoothstep(0.62, 0.82, inner)
+    lift = 40 + 80 * smoothstep(-0.4, 0.5, fbm(X / 1300, Z / 1300, SEED + 87, 2))
+    U = lift * tiers * (1 + 0.06 * fbm(X / 150, Z / 150, SEED + 88, 2))
+    log(f'  rock masses: {np.mean(m > 0.5) * 100:.0f} % of the box, up to {U.max():.0f} m')
+    return H + U, m, Dc
+
+H, MASSK, DC_ROUTES = canyon_country(X, Z, H, UPN, UPS, ERG)
 
 # THE CANYON: carved along the river — the floor (its level just over the water), the walls rising to the plain or
 # the plateau over wall_w(s), then the beds terraced into them. One carving for the box (2 m) and the far world
@@ -271,11 +329,28 @@ wall = smoothstep(0.45, 0.9, blur(slope, 2)) * (1 - smoothstep(0.05, 0.3, ERG_OP
 # (not on the spires: a tower's wall is a cell or two wide on the 2 m grid, and the beds made random shelves of it —
 #  lens-shaped recesses up the towers; their rings are the skins' — desert_rocks.py)
 wall_beds = wall * (1 - SPK)
+# (nor down the routes: a bed's ledge across a road's line on the canyon's gentle rim stood 2–5 m in a cell — no road
+#  could climb it)
+wall_beds = wall_beds * smoothstep(30, 70, DC_ROUTES)
 # (the beds' phase: a slow wobble + the joints' blocks, softened a cell so a joint is a crack, not a stair-step alias)
-phase = 2.5 * fbm(X / 500, Z / 500, SEED + 30, 2) + blur(joint_offsets(X, Z, 52.0, SEED + 31, 9.0), 1) * (1 - SPK)
+phase = 2.5 * fbm(X / 500, Z / 500, SEED + 30, 2) + blur(joint_offsets(X, Z, 52.0, SEED + 31, 3.0), 1) * (1 - SPK)
 # (never below the ground the wall stands on: a bench cut into a wall's foot dug a MOAT round every spire and outcrop)
 foot = local_min(H, 5)
 H = H + (np.maximum(strata(H, phase), foot) - H) * wall_beds
+# (2026-11-04: the steepest faces softened by a cell — a wall that rises 30–40 m within a cell or two of the 2 m grid
+#  drew as teeth and curtains; the skins hid it, the clean look has none)
+for _ in range(2):
+    _gz, _gx = np.gradient(H, CELL)
+    H = H + (blur(H, 1) - H) * smoothstep(1.2, 2.6, np.hypot(_gx, _gz))
+# (…and NO wall steeper than ~67° (2.4 : 1): a cell's top lowered to within 2.4 cells' worth of its lowest neighbour,
+#  repeated until it holds — a 120 m wall over ~50 m, never 30 m within a cell. Only ever lowered: the corridors' floors
+#  — the roads — never move)
+_lim = 2.4 * CELL
+for _ in range(40):
+    _lo = local_min(H, 1)
+    _H2 = np.where(SPK > 0.3, H, np.minimum(H, _lo + _lim))   # (not the spires: needles, not pyramids)
+    if np.max(H - _H2) < 0.05: break
+    H = _H2
 PHASE = phase
 WALL = wall
 
@@ -283,11 +358,16 @@ WALL = wall
 fd = np.hypot(X - FALL['x'], Z - FALL['z'])
 log('far world (16 m)')
 XF, ZF = grid(N_FAR, FAR_HALF)
-HF, _, _, _ = landforms(XF, ZF, inner=False)
+HF, _, _, _ergF = landforms(XF, ZF, inner=False)
 # the far world: a ring of high mesas and plateaus round the box, dune seas between
 ring = smoothstep(2300, 3400, np.maximum(np.abs(XF), np.abs(ZF)))
 mes = smoothstep(0.05, 0.2, fbm(XF / 1400, ZF / 1400, SEED + 40, 3))
 HF = HF + ring * mes * (120 + 140 * smoothstep(0, 0.5, fbm(XF / 2600, ZF / 2600, SEED + 41, 2)))
+# CANYON COUNTRY beyond the box too (2026-11-04): masses from a noise alone (no roads out there), so the aerial and the
+# horizon aren't a flat plain past the box's edge (the seam below eases them in over 256 m)
+_mf = smoothstep(-0.1, 0.15, fbm(XF / 900, ZF / 900, SEED + 90, 3)) * (1 - smoothstep(0.022, 0.06, np.abs(fbm(XF / 640, ZF / 640, SEED + 85, 3))))
+_mf = blur(_mf, 1) * (1 - 0.8 * smoothstep(0.3, 0.8, _ergF)) * smoothstep(2048, 2300, np.maximum(np.abs(XF), np.abs(ZF)))
+HF = HF + (40 + 90 * smoothstep(-0.4, 0.5, fbm(XF / 1300, ZF / 1300, SEED + 87, 2))) * (0.6 * smoothstep(0.15, 0.4, _mf) + 0.4 * smoothstep(0.6, 0.85, blur(_mf, 3)))
 # the RIVER'S GORGE goes on out of the box, east to the world's edge (RIVER_OUT): the same canyon, its channel wide and
 # deep enough for 16 m cells to hold the water (meta water.riverOut draws it)
 HF, _, _, _, _ = carve_canyon(XF, ZF, HF, RIVER_FAR, chan=(16.0, 30.0), chan_depth=4.0)
@@ -332,7 +412,8 @@ O_ESC = (GATE['x'] + P_ESC / 2, 1440.0)       # leg 0's start: the top leg's ben
 def esc_top(x, z): return HIGH + 2 + 1.5 * fbm(x / 160, z / 160, SEED + 60, 2)
 ESC = LedgeRoad(O=O_ESC, eu=(1, 0), ev=(0, 1), NL=NL_ESC, L=L_ESC, y0=ground_at(*O_ESC), top=esc_top, P=P_ESC,
                 y_top=HIGH + 2, SH=TRAIL_HW + 0.7, seed=SEED + 61,
-                strata_fn=lambda h, X_, Z_: strata(h, 2.5 * fbm(X_ / 500, Z_ / 500, SEED + 30, 2) + joint_offsets(X_, Z_, 52.0, SEED + 31, 6.0)))
+                # (no joints here: a joint's step leaked through the 2 m grid into the top leg — a 2 m pothole flipped the car)
+                strata_fn=lambda h, X_, Z_: strata(h, 2.5 * fbm(X_ / 500, Z_ / 500, SEED + 30, 2)))
 ew = (X > O_ESC[0] - 100) & (X < O_ESC[0] + L_ESC + 100) & (Z > O_ESC[1] - 45) & (Z < O_ESC[1] + 200)
 ej, ei = np.nonzero(ew.any(1))[0], np.nonzero(ew.any(0))[0]
 sl_ = (slice(ej[0], ej[-1] + 1), slice(ei[0], ei[-1] + 1))
@@ -374,6 +455,8 @@ lagoon8 = Lq[::4, ::4] < 1.15
 block8 = lagoon8 | (MESAK[::4, ::4] > 0.15)
 for (sx, sz, rr, _) in SPIRES: block8 |= np.hypot(X8 - sx, Z8 - sz) < rr + 10
 Hl = H8.ravel(); blockf = block8.ravel(); fordf = river8.ravel()
+# (off the routes' own lines a little dearer: the A* keeps to the corridors, where no bed steps across — 2026-11-04)
+offc = smoothstep(25, 70, DC_ROUTES[::4, ::4]).ravel()
 NB = [(1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0), (1, 1, 1.4142), (1, -1, 1.4142), (-1, 1, 1.4142), (-1, -1, 1.4142)]
 def cell_of(x, z): return int(round((x + HALF) / C8)), int(round((z + HALF) / C8))
 def astar(a, b, maxg=0.26):
@@ -392,7 +475,7 @@ def astar(a, b, maxg=0.26):
             if v in closed or blockf[v]: continue
             L = dl * C8; gr = abs(Hl[v] - hu) / L
             if gr > maxg: continue
-            ng = gu + L * (1 + 30 * gr * gr) + (160.0 if fordf[v] else 0.0)
+            ng = gu + L * (1 + 30 * gr * gr + 1.5 * offc[v]) + (160.0 if fordf[v] else 0.0)
             if ng < g.get(v, 1e30):
                 g[v] = ng; came[v] = u
                 heapq.heappush(pq, (ng + math.hypot(vx - gx_, vz - gz_) * C8 * 0.5, v))
@@ -421,6 +504,9 @@ def route(points, maxg=0.26):
     out = []
     for a, b in zip(points[:-1], points[1:]):
         p = astar(snap(*a), snap(*b), maxg)
+        # (a short steeper pitch, rather than no road: the canyon country's rims — the road's smoothing along its length
+        #  takes most of it out; 2026-11-04)
+        if p is None: p = astar(snap(*a), snap(*b), maxg * 1.3)
         if p is None:
             sa, sb = snap(*a), snap(*b)
             # (what's reachable from the start under the grade: the cells, and the reach's nearest to the goal)
@@ -464,7 +550,9 @@ Dt = np.full(H.shape, 1e9)
 n_ledge = 5
 Ds_ = polyline_field(X, Z, spline(SLOT, 8.0), 60)[0]
 for ti, T in enumerate(TRAILS):
-    D, S, _ = polyline_field(X, Z, T, 14)
+    # (the distance out to 90 m: the outcrops read it to keep off the roads — at 14 m it read 'far' 15 m from a road,
+    #  and outcrops stood over roads in 25 m blocks; 2026-11-04. trail.bin keeps only its first 8 m)
+    D, S, _ = polyline_field(X, Z, T, 90)
     Dt = np.minimum(Dt, D)
     if ti < n_ledge: continue
     hs = bilinear(H, HALF, T[:, 0], T[:, 1])
@@ -525,7 +613,7 @@ tries = 0
 # (ROCK GARDENS: most come in clusters — a centre, then outcrops within ~130 m of it — so the plain reads as groups of
 #  rock with open ground between, not an even sprinkle; a few stand alone)
 centre = None
-while len(OUTCROPS) < 520 and tries < 30000:
+while len(OUTCROPS) < 300 and tries < 30000:
     tries += 1
     if centre is None or orng.random() < 0.18:
         centre = (orng.uniform(-1880, 1880), orng.uniform(-1880, 1880))
@@ -565,6 +653,9 @@ for i, (ox, oz, R, top) in enumerate(OUTCROPS):
 # their beds: the steep parts of the outcrops terraced like every wall, and in WALL for their skins
 gz0, gx0 = np.gradient(H, CELL)
 wall_o = smoothstep(0.45, 0.9, blur(np.hypot(gx0, gz0), 2)) * OUTK
+# (never on a road: an outcrop's beds reach 1.6 radii out, and one beside the escarpment's top leg terraced the
+#  shelf's steep edge into a 2 m pothole that flipped the car — 2026-11-04)
+wall_o = wall_o * smoothstep(TRAIL_HW + 4, TRAIL_HW + 14, Dt)
 H = H + (np.maximum(strata(H, PHASE), local_min(H, 5)) - H) * wall_o
 WALL = np.maximum(WALL, wall_o)
 ERG_OPEN = ERG_OPEN * (1 - smoothstep(0.05, 0.4, OUTK))
@@ -583,7 +674,8 @@ canyon_floor = (Dr4 < floor_hw(Sr4) + 10) & (sl < 0.3)
 # R ROCK: the walls' beds, the steep, the plateaus' slickrock, the spires, the mesas' sides
 patch = fbm(X4 / 90, Z4 / 90, SEED + 50, 3)
 patch = fbm(X4 / 260, Z4 / 260, SEED + 50, 3)
-rock = np.clip(smoothstep(0.38, 0.65, sl) + WALL[::2, ::2] + smoothstep(0.2, 0.4, patch) * UPN[::2, ::2] * 0.6, 0, 1)
+rock = np.clip(smoothstep(0.38, 0.65, sl) + WALL[::2, ::2] + smoothstep(0.2, 0.4, patch) * UPN[::2, ::2] * 0.6
+               + smoothstep(0.45, 0.75, MASSK[::2, ::2]), 0, 1)   # (the rock masses' tops are rock — 2026-11-04)
 rock = rock * (1 - smoothstep(TRAIL_HW + 10, TRAIL_HW + 3, Dt4)) * (1 - near_water * 0.8) * (1 - smoothstep(0.05, 0.3, ERG4))
 # (the escarpment road's risers are rock right down to its shelves)
 DE4 = polyline_field(X4, Z4, np.vstack([ESC_LINE, PASSD]), 40)[0]

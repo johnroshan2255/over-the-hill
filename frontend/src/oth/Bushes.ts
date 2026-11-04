@@ -208,8 +208,10 @@ void main() {
   // (the oasis's bushes: a light yellow-green, sunlit ≈ sRGB 135 160 50; 2026-11-04 the open desert's SCRUB — a
   //  grey-olive saltbush (kind 1) and sun-bleached dead brush (kind 2): a bright green bush on the bare plain read as
   //  pasted on)
-  vec3 oasisB = mix(vec3(0.15, 0.24, 0.035), vec3(0.3, 0.4, 0.07), 0.5 + j * 0.5) * PLANT_VALUE * 1.3;
-  vec3 scrubB = mix(vec3(0.11, 0.115, 0.06), vec3(0.22, 0.215, 0.115), 0.5 + j * 0.6);
+  // (2026-11-04, the stylised look: the oasis's bushes a bright LIME, round and puffy; the open desert's scrub a softer
+  //  olive-lime)
+  vec3 oasisB = mix(vec3(0.2, 0.42, 0.05), vec3(0.34, 0.6, 0.09), 0.5 + j * 0.5) * PLANT_VALUE * 1.3;
+  vec3 scrubB = mix(vec3(0.15, 0.2, 0.06), vec3(0.27, 0.33, 0.1), 0.5 + j * 0.6);
   vec3 deadB = mix(vec3(0.19, 0.115, 0.06), vec3(0.33, 0.21, 0.11), 0.5 + j * 0.6);
   vAlb = aB1.y > 1.5 ? deadB : aB1.y > 0.5 ? scrubB : oasisB;
 #endif

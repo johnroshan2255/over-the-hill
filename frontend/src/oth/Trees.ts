@@ -374,8 +374,9 @@ vec3 leafTone(vec3 albedo, float tint, float species) {
 vec3 treeAlbedo(float species, float fol, float j) {
 #ifdef OTH_DESERT
   // (the desert's palms: a warm grey-brown trunk, deep green fronds lighter at their tips)
-  if (fol < 0.5) return vec3(0.3, 0.22, 0.15);
-  return mix(vec3(0.07, 0.16, 0.035), vec3(0.2, 0.32, 0.07), 0.5 + j * 0.6) * PLANT_VALUE * 1.25;
+  // (2026-11-04, the stylised look: darker, deeper green fronds — they read bright yellow-green — a warmer trunk)
+  if (fol < 0.5) return vec3(0.32, 0.2, 0.13);
+  return mix(vec3(0.03, 0.1, 0.03), vec3(0.09, 0.2, 0.05), 0.5 + j * 0.6) * PLANT_VALUE * 1.25;
 #endif
   if (fol < 0.5) {
     if (species > 2.5) return vec3(0.7, 0.68, 0.62);          // birch / aspen: white bark
@@ -673,7 +674,8 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       const px = x + (r2() - 0.5) * G2 * 1.2, pz = z + (r2() - 0.5) * G2 * 1.2
       map.maskAt(px, pz, mk)
       if (mk[3] < 0.08 || mk[2] > 0.86 || mk[0] > 0.3 || map.trailDist(px, pz) < map.meta.trails.hw + 2.5 || map.waterLevel(px, pz) !== null || inLagoon(px, pz)) continue
-      if (r2() > 0.15 + 0.75 * Math.min(1, (mk[3] - 0.08) / 0.5)) continue
+      // (2026-11-04: half as thick — single palms and small clumps along the water, not rows of a plantation)
+      if (r2() > 0.07 + 0.38 * Math.min(1, (mk[3] - 0.08) / 0.5)) continue
       if (rocks.biggestNear(px, pz, 3)) continue
       const y = map.height(px, pz), H = 9 + 8 * Math.pow(r2(), 0.8)
       out.push(px, y - 0.3, pz, H, r2() * Math.PI * 2, 5, r2(), r2())

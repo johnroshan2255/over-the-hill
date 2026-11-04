@@ -111,23 +111,22 @@ struct Ground { vec3 col; float rock; float forest; float snow; float bed; float
 // (2026-11-03, DESERT_MATCH round 2 — real Saharan / Wadi Rum sand, photographed: an orange-red ≈ 25° hue (sRGB 248 157
 //  97 open, 243 189 150 compacted); ours read 32° (233 189 140, 244 211 173), a pale yellow-beige: redder and a
 //  little darker)
-const vec3 SAND        = vec3(0.42, 0.193, 0.082);
-const vec3 SAND_DEEP   = vec3(0.37, 0.155, 0.067);
-const vec3 SAND_PALE   = vec3(0.47, 0.235, 0.103);
-// (2026-11-03, DESERT_MATCH round 3 — the photographed sandstone (Tassili, Iherir, Wadi Rum) is a tan-brown to golden,
-//  hue ≈ 26–38°, about half as bright as ours was (a pink-orange 20°, 235 170 137 on screen): darker, browner; the
-//  formations (Formations.ts) keep the same three)
-const vec3 STONE       = vec3(0.23, 0.133, 0.076);
-const vec3 STONE_PALE  = vec3(0.29, 0.18, 0.105);
-const vec3 STONE_DEEP  = vec3(0.15, 0.082, 0.048);
-const vec3 DAMP        = vec3(0.24, 0.15, 0.085);
-const vec3 OASIS_FLOOR = vec3(0.16, 0.15, 0.06);
-const vec3 TRACK_SAND  = vec3(0.46, 0.255, 0.14);
-// (2026-11-04 — the user: the ground "like a repeated texture". The floor is GRAVEL (reg) where the mask's loose sand is
-//  low — darker, browner, strewn with varnished pebbles — and SAND in the sheets, tails and drifts desert.py bakes)
-const vec3 GRAVEL      = vec3(0.29, 0.152, 0.08);
-const vec3 GRAVEL_PALE = vec3(0.37, 0.198, 0.103);
-const vec3 PEBBLE      = vec3(0.1, 0.058, 0.038);
+// (2026-11-04 — the desert's own STYLISED, WARM look, replacing rounds 2–3's photographed browns: peach SAND, salmon
+//  SANDSTONE, a little deeper in its beds; the shade's rosy fill is Atmosphere.ts's. Formations.ts, Rocks.ts and
+//  Water.ts keep the same stone)
+const vec3 SAND        = vec3(0.5, 0.28, 0.155);
+const vec3 SAND_DEEP   = vec3(0.45, 0.24, 0.13);
+const vec3 SAND_PALE   = vec3(0.55, 0.315, 0.18);
+// (coral: redder than the sand, so rock and sand read apart — 2026-11-04)
+const vec3 STONE       = vec3(0.5, 0.165, 0.09);
+const vec3 STONE_PALE  = vec3(0.58, 0.21, 0.115);
+const vec3 STONE_DEEP  = vec3(0.4, 0.125, 0.075);
+const vec3 DAMP        = vec3(0.3, 0.17, 0.1);
+const vec3 OASIS_FLOOR = vec3(0.1, 0.16, 0.045);
+const vec3 TRACK_SAND  = vec3(0.53, 0.3, 0.17);
+// (the gravel plains: only a deeper, redder sand now — the clean look has no pebbles)
+const vec3 GRAVEL      = vec3(0.46, 0.235, 0.13);
+const vec3 GRAVEL_PALE = vec3(0.52, 0.27, 0.15);
 // a value noise from hashes (no texture fetch), 0..1, smooth: the sand's speckle — and, unlike the paint texture (it
 // repeats every 0.85 / 3.7 / 13 m: on bare sand a visible pattern), it never repeats
 float sandHash(vec2 c) { return fract(sin(dot(c, vec2(127.1, 311.7))) * 43758.5453); }
@@ -140,15 +139,6 @@ float sandNoise(vec2 q) {
 // 47.3 m and an axis-aligned 71 m one (or 11.9 m and 13 m) doesn't. A: broad (≈ 12 m blotches), B: ≈ 3 m
 vec4 desertNoiseA(vec2 xz) { return PAINT_TEX(mat2(0.8, -0.6, 0.6, 0.8) * xz * (1.0 / 47.3) + vec2(0.31, 0.77)); }
 vec4 desertNoiseB(vec2 xz) { return PAINT_TEX(mat2(0.28, 0.96, -0.96, 0.28) * xz * (1.0 / 11.9) + vec2(0.53, 0.19)); }
-// PEBBLES: one in some cells of a grid (cell m), at its own spot and size — from hashes, so never a repeat. Returns
-// (coverage, the pebble's own 0..1 tone: most darker than the ground, some paler)
-vec2 pebbles(vec2 xz, float cell, float fill, float rad, float soft) {
-  vec2 q = xz / cell, c = floor(q), f = q - c;
-  float h = sandHash(c);
-  vec2 ctr = 0.28 + 0.44 * vec2(sandHash(c + 17.31), sandHash(c + 41.7));
-  float r = rad / cell * (0.55 + 0.9 * fract(h * 7.13)), sf = soft / cell;
-  return vec2(step(1.0 - fill, h) * (1.0 - smoothstep(r - sf, r + sf, length(f - ctr))), fract(h * 13.7));
-}
 // the sandstone's beds by height: tones of UNEVEN thickness (two smooth 1D noises — desert.py's strata are uneven too;
 // 2026-11-04: an even 9 m band, each with a dark foot, painted every wall "like a trenched hill")
 float bedHash(float i) { return fract(sin(i * 12.9898 + 4.1) * 43758.5453); }
@@ -174,30 +164,10 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   float gs = smoothstep(0.34, 0.56, m.g + (d25 - 0.5) * 0.22 + (d6 - 0.5) * 0.12);
   g.loose = gs;
   vec3 sandC = mix(SAND_DEEP, mix(SAND, SAND_PALE, smoothstep(0.25, 0.85, d25 * 0.6 + p.big.r * 0.4)), 0.35 + 0.65 * smoothstep(0.4, 0.9, m.g));
-  sandC *= 0.94 + 0.1 * d6 + (p.big.r - 0.5) * 0.12;
-  vec3 grav = mix(GRAVEL, GRAVEL_PALE, clamp(d25 * 0.75 + (p.big.b - 0.5) * 0.5, 0.0, 1.0)) * (0.9 + 0.16 * d6);
-  // the PEBBLES: grit (3 cm), stones (7 cm), each only while it's a few pixels across; past that, their average —
-  // the reg reads a little darker from a distance
-  if (frag && gs < 0.97) {
-    float nS = 1.0 - smoothstep(0.015, 0.05, foot), nM = 1.0 - smoothstep(0.05, 0.16, foot);
-#ifdef OTH_SPEC
-    vec2 pS = nS > 0.0 ? pebbles(xz, 0.11, 0.6, 0.022, max(0.006, foot * 0.5)) : vec2(0.0);
-#else
-    vec2 pS = vec2(0.0); // (LOW: no grit — the stones only)
-#endif
-    vec2 pM = nM > 0.0 ? pebbles(xz + 7.3, 0.4, 0.3, 0.045, max(0.01, foot * 0.5)) : vec2(0.0);
-    // (each its own tone, darker or paler than the gravel round it — never all one dark: that read as holes)
-    vec3 cS = mix(mix(PEBBLE, grav, 0.35), GRAVEL_PALE * 1.25, smoothstep(0.45, 0.85, pS.y));
-    vec3 cM = mix(mix(PEBBLE, grav, 0.25), GRAVEL_PALE * 1.2, smoothstep(0.5, 0.9, pM.y));
-    grav = mix(grav, cS, pS.x * nS * 0.7);
-    grav = mix(grav, cM, pM.x * nM * 0.85);
-    grav *= 1.0 - 0.05 * (1.0 - nS) - 0.03 * (1.0 - nM);
-  } else grav *= 0.92;
+  sandC *= 0.97 + 0.05 * d6 + (p.big.r - 0.5) * 0.08;
+  vec3 grav = mix(GRAVEL, GRAVEL_PALE, clamp(d25 * 0.75 + (p.big.b - 0.5) * 0.5, 0.0, 1.0)) * (0.97 + 0.05 * d6);
+  // (2026-11-04, the CLEAN stylised look: no pebbles, no grit — broad soft tone only)
   vec3 col = mix(grav, sandC, gs);
-  // SPECKLE (DESERT_MATCH round 9 — photographed sand is pocked and grainy at every scale, with no one direction):
-  // two octaves of value noise, 0.22 m and 0.6 m, each only while it spans a few pixels (no shimmer)
-  float sp1 = 1.0 - smoothstep(0.04, 0.08, foot), sp2 = 1.0 - smoothstep(0.12, 0.22, foot);
-  if (frag && sp2 > 0.0) col *= 1.0 + (sandNoise(xz * (1.0 / 0.22)) - 0.5) * 0.14 * sp1 + (sandNoise(xz * (1.0 / 0.6) + 17.3) - 0.5) * 0.1 * sp2;
   // damp sand toward the water, the oasis's olive floor under its palms and scrub
   float wet = min(m.b / 0.85, 1.0);
   col = mix(col, DAMP * (0.9 + 0.2 * d6), smoothstep(0.3, 0.85, wet) * 0.7);
@@ -208,8 +178,8 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   g.rock = smoothstep(0.42, 0.58, rv);
   g.rockNear = smoothstep(0.27, 0.433, rv);
   float bt = bedTone(h, p);
-  vec3 stone = mix(STONE * 0.82, STONE_PALE, bt) * (0.92 + 0.12 * d6) * (0.95 + 0.1 * d25);
-  stone = mix(stone, SAND_PALE * 0.9, (1.0 - smoothstep(0.03, 0.12, steep)) * 0.35); // (sand on the tops — a little: every ledge a pale line read as a trenched hill)
+  vec3 stone = mix(STONE, STONE_PALE, bt * 0.7) * (0.97 + 0.05 * d25);
+  stone = mix(stone, SAND, (1.0 - smoothstep(0.03, 0.12, steep)) * 0.22); // (a dusting of sand on the tops)
   col = mix(col, stone, g.rock);
   // the water's bed: wet gravel and sand
   g.bed = smoothstep(0.9, 0.97, m.b);
@@ -221,13 +191,9 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   if (trail < hw + 1.6) {
     float te = trail + (d6 - 0.5) * 1.5 + (frag ? (sandNoise(xz / 0.9 + 3.3) - 0.5) * 0.5 : 0.0);
     g.trail = (1.0 - smoothstep(hw - 0.4, hw + 0.2, te)) * (1.0 - g.bed);
-    float rut = max(1.0 - smoothstep(0.12, 0.4, abs(trail - 0.95)), 0.65 * (1.0 - smoothstep(0.1, 0.35, abs(trail - 2.05)))) * near;
-    float edge = smoothstep(hw - 1.4, hw - 0.2, te);
-    float tp = frag && foot < 0.16 ? pebbles(xz + 2.1, 0.45, mix(0.05, 0.35, edge), 0.035, max(0.01, foot * 0.5)).x * (1.0 - smoothstep(0.05, 0.16, foot)) : 0.0;
-    vec3 track = mix(TRACK_SAND * (0.93 + 0.1 * d6 + 0.05 * d25), col, 0.3);
-    track *= (1.0 - 0.2 * rut) * (1.0 + 0.06 * (1.0 - rut) * (1.0 - edge));
-    track = mix(track, mix(SAND, SAND_PALE, 0.6), edge * 0.45);
-    track = mix(track, mix(PEBBLE * 1.6, track * 1.15, 0.4), tp * 0.7);
+    // (2026-11-04, the clean look: only a faint trace — a little paler, two soft wheel lines — no pebbles)
+    float rut = max(1.0 - smoothstep(0.15, 0.45, abs(trail - 0.95)), 0.6 * (1.0 - smoothstep(0.12, 0.4, abs(trail - 2.05)))) * near;
+    vec3 track = mix(TRACK_SAND, col, 0.55) * (1.0 - 0.06 * rut);
     col = mix(col, track, g.trail);
   }
   g.loose *= (1.0 - g.rock) * (1.0 - g.trail);

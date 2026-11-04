@@ -157,9 +157,10 @@ const vec3 FOAM = vec3(0.83, 0.89, 0.94);
 const vec3 TEAL = vec3(0.1, 0.4, 0.44);
 const vec3 TEAL_DEEP = vec3(0.025, 0.19, 0.25);
 // the desert's gueltas (≈ sRGB 97 91 44 looking down into one) and the sandstone their canyons mirror (paint.ts STONE)
-const vec3 G_SHALLOW = vec3(0.2, 0.19, 0.07);
-const vec3 G_DEEP = vec3(0.07, 0.065, 0.015);
-const vec3 G_WALL = vec3(0.23, 0.133, 0.076);
+// (2026-11-04, the stylised look: a pale glossy blue, light where shallow — was round 4's olive guelta)
+const vec3 G_SHALLOW = vec3(0.36, 0.55, 0.72);
+const vec3 G_DEEP = vec3(0.12, 0.3, 0.5);
+const vec3 G_WALL = vec3(0.5, 0.165, 0.09);
 
 void main() {
   vec2 xz = vWorld.xz;

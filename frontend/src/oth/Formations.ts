@@ -110,10 +110,10 @@ ${SHADOW_GLSL}
 in vec3 vWorld;
 in vec3 vN;
 // (paint.ts's desert sandstone and sand: the same beds as the ground's — keep them in step)
-const vec3 STONE      = vec3(0.23, 0.133, 0.076);
-const vec3 STONE_PALE = vec3(0.29, 0.18, 0.105);
-const vec3 STONE_DEEP = vec3(0.15, 0.082, 0.048);
-const vec3 SAND_PALE  = vec3(0.47, 0.235, 0.103);
+const vec3 STONE      = vec3(0.5, 0.165, 0.09);
+const vec3 STONE_PALE = vec3(0.58, 0.21, 0.115);
+const vec3 STONE_DEEP = vec3(0.4, 0.125, 0.075);
+const vec3 SAND_PALE  = vec3(0.5, 0.28, 0.155);
 float facetRand(vec3 n) { return fract(sin(dot(floor(n * 400.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 // (paint.ts's bedTone: the beds' tones of uneven thickness — keep in step)
 float bedHash(float i) { return fract(sin(i * 12.9898 + 4.1) * 43758.5453); }
@@ -133,18 +133,12 @@ void main() {
   float fine = texture(uNoise, xz * (1.0 / 13.0) + vec2(0.71, 0.13)).g;
   float q = vWorld.y + (big - 0.5) * 6.0;
   float tone = clamp(0.72 * bedNoise(q / 19.0) + 0.28 * bedNoise(q / 5.5 + 7.3), 0.0, 1.0);
-  vec3 albedo = mix(STONE * 0.82, STONE_PALE, tone) * (0.92 + 0.12 * fine) * (0.94 + 0.12 * facetRand(Nf));
-  // the varnish streaks down the faces (Terrain.ts — the same)
-  float wx = smoothstep(0.3, 0.7, abs(Ns.x) / (abs(Ns.x) + abs(Ns.z) + 1e-4));
-  float st = mix(texture(uNoise, vec2(xz.x / 31.0, vWorld.y / 260.0 + 0.3)).g, texture(uNoise, vec2(xz.y / 27.3 + 0.5, vWorld.y / 230.0)).g, wx);
-  float faceK = 1.0 - smoothstep(0.35, 0.7, abs(Ns.y));
-  float varnish = smoothstep(0.5, 0.86, st) * 0.85;
-  albedo *= mix(vec3(1.0), vec3(0.66, 0.63, 0.64), varnish * faceK);
-  albedo *= mix(vec3(1.0), vec3(1.1, 1.08, 1.05), smoothstep(0.62, 0.8, 1.0 - st) * 0.5 * (1.0 - varnish) * faceK);
+  // (2026-11-04, the stylised look: salmon stone, soft bed tones, clean — no streaks; each facet a touch its own tone)
+  vec3 albedo = mix(STONE, STONE_PALE, tone * 0.7) * (0.97 + 0.05 * fine) * (0.96 + 0.08 * facetRand(Nf));
   // the tuck under each slab darker, sand dusting its lip
-  albedo = mix(albedo, STONE_DEEP, smoothstep(-0.15, -0.6, N.y) * 0.6);
+  albedo = mix(albedo, STONE_DEEP, smoothstep(-0.15, -0.6, N.y) * 0.3); // (2026-11-04: a softer tuck — the stylised shade is light)
   albedo = mix(albedo, SAND_PALE * 0.96, smoothstep(0.72, 0.92, N.y) * 0.6);
-  float ao = mix(0.62, 1.0, smoothstep(-0.7, 0.25, N.y));
+  float ao = mix(0.8, 1.0, smoothstep(-0.7, 0.25, N.y));
   float sun = sunVisibility(xz);
   vec3 c = shade(albedo, N, V, 0.8, 0.04, ao, sun, 0.25);
   c += rockFill(albedo, N) * ao;

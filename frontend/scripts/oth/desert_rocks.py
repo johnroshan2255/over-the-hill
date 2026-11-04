@@ -1,7 +1,7 @@
 # OVER THE HILL — the DESERT's sandstone, modelled in Blender over the terrain desert.py baked (2026-11-02, the user:
 # "make this new map in Blender so you can sculpt the desert cliffs, rocks and all").
 #
-#   blender -b --factory-startup --python scripts/oth/desert_rocks.py -- [OUT=public/oth/desert] [PREVIEW=<dir>]
+#   blender -b --factory-startup --python scripts/oth/desert_rocks.py -- [OUT=public/oth/desert] [PREVIEW=<dir>] [SKINS=1]
 #
 # Over the Hill's sandstone is STACKED SLABS: every bed a thick rounded band, bulging out of the wall, a lip over the
 # ledge above, split into blocks by cracks, bed on bed up every wall, mesa and spire. The terrain already steps in
@@ -130,20 +130,20 @@ def add_band(R, closed, level, sc=1.0):
     ymid = level - sample(PH2[::2, ::2], R[:, 0], R[:, 1]) + BED * 0.0
     # the slab's bulge: a little different block to block, pinched in at the CRACKS
     s = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(R, axis=0).T))])
-    cracks = np.cumsum(rng.uniform(12, 35, size=int(s[-1] / 12) + 2))
+    cracks = np.cumsum(rng.uniform(18, 45, size=int(s[-1] / 18) + 2))
     dc = np.min(np.abs(s[:, None] - cracks[None, :]), axis=1)
-    pinch = 0.12 + 0.88 * smoothstep(0.5, 2.2, dc)
+    pinch = 0.45 + 0.55 * smoothstep(0.6, 2.6, dc)
     blk = np.interp(s, np.concatenate([[0], cracks]), rng.uniform(0.8, 1.25, size=len(cracks) + 1))
     # (an open line fades into the terrain at its ends)
     fade = np.ones(n) if closed else np.minimum(smoothstep(0, 6, s), smoothstep(0, 6, s[-1] - s))
-    jit = rng.uniform(0.86, 1.14, size=(n, NP))   # (each vertex its own: irregular facets)
+    jit = rng.uniform(0.95, 1.05, size=(n, NP))   # (each vertex a little its own: soft facets, never spikes — 2026-11-04)
     k = (pinch * blk * fade)[:, None] * jit
     py = PY * sc
     out = -py[None, :] / sl[:, None] + PB[None, :] * k * min(1.0, 0.45 + 0.55 * sc)
-    along = rng.uniform(-0.9, 0.9, size=(n, 1)) * fade[:, None] * min(1.0, sc)
+    along = rng.uniform(-0.35, 0.35, size=(n, 1)) * fade[:, None] * min(1.0, sc)
     vx = R[:, 0][:, None] + nx[:, None] * out + tg[:, 0][:, None] * along
     vz = R[:, 1][:, None] + nz[:, None] * out + tg[:, 1][:, None] * along
-    vy = ymid[:, None] + py[None, :] + rng.uniform(-0.35, 0.35, size=(n, NP)) * min(1.0, sc)
+    vy = ymid[:, None] + py[None, :] + rng.uniform(-0.15, 0.15, size=(n, NP)) * min(1.0, sc)
     V = np.stack([vx, vy, vz], -1).reshape(-1, 3)
     # faces (quads) between consecutive rings
     m = n if closed else n - 1
@@ -187,6 +187,9 @@ else:
         rh = t * c * hd
         if hd < 0.5 or rh < 2.5 or b + t < fmin or b > fmax: continue
         levels.append((b + t * (1 - c / 2), rh / 9.45))
+# (2026-11-04, the stylised look: the skins are OPT-IN — SKINS=1. Where a band met the terrain at a grazing angle it
+#  poked in and out in triangles, a dark sawtooth along every wall; the clean look is the terrain's own planes and beds)
+if ARGS.get('SKINS', '0') != '1': levels = []
 nb = 0
 for level, sc in levels:
     for P, closed in contours(level):

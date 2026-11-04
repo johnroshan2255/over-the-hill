@@ -461,7 +461,7 @@ in vec3 vWorld;
 in vec3 vN;
 in float vUp;
 #ifdef OTH_DESERT
-const vec3 STONE = vec3(0.23, 0.133, 0.076); // (the sandstone: paint.ts's STONE — keep in step; was the old pink)
+const vec3 STONE = vec3(0.5, 0.165, 0.09); // (the sandstone: paint.ts's STONE — keep in step)
 #else
 const vec3 STONE = vec3(0.2, 0.205, 0.23);
 #endif
@@ -479,7 +479,9 @@ void main() {
   // HIGH / ULTRA on PCs: the crumpled 3D relief over every face (the light only: the colour above is the face's own)
   float cav = 1.0;
 #ifdef OTH_ROCK_RELIEF
+#ifndef OTH_DESERT
   N = rockRelief(vWorld, N, 1.0, dFdx(vWorld), dFdy(vWorld), cav);
+#endif
 #endif
   float sun = sunVisibility(vWorld.xz);
   vec3 c = shade(albedo, N, V, 0.75, 0.04, mix(0.6, 1.0, smoothstep(0.0, 0.5, vUp)) * cav, sun, 0.05);

@@ -416,6 +416,53 @@ Next:
 2. LOW's walls still band hard 100–300 m off (LOW's terrain mesh is coarser there: the ledges smear into waves).
 3. The aqueduct, the ksar and the arch are still box slabs: sculpt them like the stones.
 4. Re-score the pairs (§4–6) with the new desert.
+
+---
+
+## 14. Canyon country, and the stylised warm look (2026-11-04)
+
+The user: *"the main problem is the layout — a plane map, no height, just some rocks and some hills on a plane; and the
+type of colour and style they have is different."* Over the Hill's seven desert screenshots (their Steam page) are in
+`scripts/oth/.cache/ref/oth-desert/` (git-ignored, README there) as a reference for mood and style — never copied or
+traced; the map and the art are our own. `scripts/oth/.cache/ref/compare2/` holds our renders against them
+(`pair_1…7.jpg`) and their scores.
+
+**Layout** (`desert.py` `canyon_country`): the plain filled with RAISED ROCK MASSES — 40–120 m, two tiers — over 51 % of
+the box; every route (and ramp) runs down a CANYON FLOOR 24–46 m wide at the plain's old level (`ROUTE_SKELETON`, the A*
+routes' own waypoints), winding SIDE CANYONS through the masses (a warped noise's zero line), a few open BASINS; smaller
+masses on the plateaus, the erg mostly open; masses beyond the box too (the far world: no flat horizon). A band down
+every route the masses never close, and no bed steps across it; the A* keeps near its line (a cost off it) and may take a
+short 34 % pitch rather than no road. No wall steeper than ~67° (only ever lowered — a 2 m grid draws a steeper one as
+teeth and curtains), the spires excepted; most spires pointed.
+
+**Look** (desert only): a pale cyan sky to a warm near-white horizon, nearly cloudless; a thick warm peach haze past
+400 m (the near ground clear); a rosy, brighter shade; a hot pink sunset, a purple night with a purple fill; coral rock,
+peach sand (redder rock so the two read apart), the mass tops rock; CLEAN surfaces — no pebbles, grit, varnish or rock
+relief, soft broad tone only, ripples on the dunes only; the track a faint trace; pale blue water; darker palm fronds,
+half the palms; lime oasis bushes. The skins (`desert_rocks.py`) are opt-in now (`SKINS=1`): their bands sawtoothed
+along the walls.
+
+**Fixed on the way** (old bugs): the outcrops' road check read a distance computed only 14 m out — outcrops stood over
+roads in 10–25 m blocks; their beds terraced the escarpment's top leg into a 2 m pothole (it flipped the car); a bed's
+ledge across the main road at the canyon's rim. Every road now within ±0.65 m of its neighbours along it (the arch deck
+and the rope bridge excepted: spans).
+
+**Scores** (`compare.py`, ours vs their screenshots, whole frames; colour in brackets): oasis 58 → 71 (39 → 55), arch
+69 → 57 (48 → 46), spires 65 → 51 (31 → 32), gorge 56 → 64 (18 → 35), lagoon 42 → 66 (3 → 45), sunset 42 → 41
+(2 → 11), night 61 → 45 (9 → 11); overall 56 → 56 — the colour columns up, the texture columns down (theirs carry more
+edges: block on block). By eye: the oasis and the canyons now read in their family; their stacked-block rock shapes,
+their arch and their saturated sunset / night don't yet.
+
+**Cost** (abgpu, the commit before vs this, 1080p uncapped, WebGPU, 4 interleaved loads a side): plain ULTRA −0.18 ms,
+LOW −0.17; oasis ULTRA −0.67, LOW −0.15 — cheaper (no skins, half the palms, no relief or fine marks in the desert).
+Roads driven: the escarpment, the pass and the gate into the valley (climbtest).
+
+Next:
+1. **Stacked-block rock** — the biggest gap left: Blender meshes for the masses' walls (each bed a chunky slab with
+   rounded edges, offset from the one below, flat-topped), in place of the heightfield's smooth walls.
+2. The arch: a thin rock ribbon over a deep canyon, framed by stacks — ours sits in a narrow slot.
+3. Sunset and night: a more saturated sky, the land lit by it (theirs: olive-gold sand under a hot pink sky).
+4. A ₹15k phone on LOW.
 ---
 
 ## 11. Starting it with Claude Code at home
