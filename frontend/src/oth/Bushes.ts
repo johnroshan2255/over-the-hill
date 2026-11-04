@@ -308,7 +308,11 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
       const oasis = map.desert && (mk[3] > 0.12 || (rd > 9 && rd < 70))
       const size = map.desert ? (oasis ? 0.9 + 1.3 * Math.pow(rnd(), 1.4) : 0.5 + 1.0 * Math.pow(rnd(), 1.3)) : 0.7 + 1.4 * Math.pow(rnd(), 1.6)
       const r = rnd(), kind = map.desert ? (oasis ? 0 : r < 0.7 ? 1 : 2) : r < 0.06 ? 2 : r < 0.3 ? 1 : 0
-      out.push(x, map.height(x, z) - 0.12 * size, z, size, rnd() * Math.PI * 2, kind, rnd())
+      const rot = rnd() * Math.PI * 2, tint = rnd()
+      // (none standing in a lake's or a pond's shallows — the lagoon's, where the mask's wet band stops short of the
+      //  water; tested after this bush's draws, so every other bush keeps its place)
+      if (map.stillDepth(x, z) > -0.2) continue
+      out.push(x, map.height(x, z) - 0.12 * size, z, size, rot, kind, tint)
     }
   }
 }

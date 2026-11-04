@@ -95,7 +95,7 @@ export class TyreTracks {
       const c = this.c.set(hx, hy + wk.lift - model.wheelRadius * 0.9, hz).applyQuaternion(q).add(p)
       // what it rolls on: the tracks' dirt, mud, the water's sand — not rock, planks, grass or water
       const ground = this.map.height(c.x, c.z)
-      const onGround = wk.contact && c.y < ground + 0.35 && this.map.bridgeAt(c.x, c.z) === null && this.map.waterLevel(c.x, c.z) === null
+      const onGround = wk.contact && c.y < ground + 0.35 && this.map.bridgeAt(c.x, c.z) === null && this.map.waterAt(c.x, c.z) === null
       const mud = this.map.mudAt(c.x, c.z), track = Math.max(0, Math.min(1, (hw + 0.3 - this.map.trailDist(c.x, c.z)) / 0.8))
       // (the desert's LOOSE SAND — its mask's G, not on the rock: deep ruts, darker, lasting longer)
       const sand = this.map.desert ? this.map.maskAt(c.x, c.z, this.mk)[1] * (1 - Math.min(1, this.mk[0] * 2)) * (1 - track) : 0

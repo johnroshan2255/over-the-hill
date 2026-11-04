@@ -54,6 +54,7 @@ export class Grass {
       uTreeSh: t.uTreeSh, uTreeShGrid: t.uTreeShGrid, uTreeShOn: t.uTreeShOn,
       uMask: { value: map.maskTex },
       uMud: { value: map.mudTex },
+      uOwn: { value: map.waterTex },
       uRocks: { value: rockFootprint },
       uTrail: { value: map.trailTex },
       uTrailHW: { value: map.meta.trails.hw },
@@ -411,6 +412,7 @@ ${PAINT_GLSL}
 ${SHADOW_GLSL}
 uniform sampler2D uMask;
 uniform sampler2D uMud;
+uniform sampler2D uOwn;
 uniform sampler2D uNIn;
 uniform sampler2D uRocks;
 uniform sampler2D uTrail;
@@ -453,6 +455,10 @@ void main() {
   // WILDFLOWERS (mud.bin G): where the field blossoms, one blade in ~5 is a flower — a grass blade in bloom at its
   // top (below), standing a little over the others
   grow *= 1.0 - smoothstep(0.25, 0.55, mud); // (none in the mud: a reedy fringe round it, below)
+  // (none on a lake's or a pond's floor — mapPrep.ts waterOwner G: the depth under it, 128 + 64 / m; the desert's oasis
+  //  grew a carpet under the lagoon's shallows)
+  float under = (textureLod(uOwn, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0).g * 255.0 - 128.0) / 64.0;
+  grow *= 1.0 - smoothstep(-0.02, 0.06, under);
   vec2 inUv = ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x;
   grow *= 1.0 - smoothstep(0.0, 0.3, textureLod(uRocks, inUv, 0.0).r); // (none at a boulder's foot)
   // SHORTER TOWARD BARE GROUND (the user: "when the grass comes to rock or the path, its height must reduce

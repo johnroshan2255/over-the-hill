@@ -279,7 +279,7 @@ export class Vehicle {
     this.sim.keepAbove(this.map.height(t.x, t.z))
     // FORDING (a river, a stream, a pond's edge): the water drags the car back by its depth (and holds it up a little
     // when it's deep) — a crossing is slow, a deep one a struggle
-    const lvl = this.map.waterLevel(t.x, t.z)
+    const lvl = this.map.waterAt(t.x, t.z)
     if (lvl !== null) {
       const depth = lvl - this.map.height(t.x, t.z)
       if (depth > 0.15) {
@@ -346,7 +346,7 @@ export class Vehicle {
     const p = this.pos, u = atmos.uniforms, ground = this.map.height(p.x, p.z)
     this.baseU.value = ground
     const speed = Math.min(1, Math.abs(this.sim.speed) / 8)
-    const lvl = this.map.waterLevel(p.x, p.z)
+    const lvl = this.map.waterAt(p.x, p.z)
     if (lvl !== null && lvl - ground > 0.2 && p.y < lvl + 0.6) { this.coat -= (dt / 3.5) * (0.3 + speed); return }
     const m = this.map.maskAt(p.x, p.z, this.mk), onGround = p.y - ground < 1.5
     const track = Math.max(0, Math.min(1, (this.map.meta.trails.hw + 0.3 - this.map.trailDist(p.x, p.z)) / 0.6))

@@ -13,6 +13,38 @@ import type { MapData } from './MapData'
  */
 const ROWS = 12
 
+type Fall = NonNullable<MapData['meta']['water']['falls']>[number]
+/** A fall's LIP where the ground really ends (2026-11-04, the user's screenshots: sheets hanging in the air — the
+ *  valley's Hidden Falls and Veil Falls 3–5 m out in front of their cliffs, the desert's Spring Falls 126 m over the
+ *  canyon floor with no cliff at all): along the fall's way out (lip → foot) the first point where the ground drops a
+ *  quarter of the fall (≥ 2.5 m) under the water's surface, searched from 30 m behind the lip, then back to the brink
+ *  (the last point within 1.5 m of the surface); `face(y)` = how far out from there the ground is first below y — the
+ *  sheet keeps in front of the rock it falls past. Null when the ground behind the lip is already far below it:
+ *  there's no cliff to fall from. */
+export function fallLip(map: MapData, f: Fall): { x: number; z: number; y: number; dx: number; dz: number; hw: number; drop: number; face: (y: number, side: number) => number } | null {
+  let dx = f.bx - f.x, dz = f.bz - f.z
+  const l = Math.hypot(dx, dz)
+  if (l < 1e-3) return null
+  dx /= l; dz /= l
+  const H = Math.max(0.5, f.y - f.by), D = Math.max(2.5, 0.25 * H)
+  const g = (s: number, side = 0) => map.height(f.x + dx * s - dz * side, f.z + dz * s + dx * side)
+  let edge = NaN
+  for (let s = -30, top = false; s <= 12; s += 0.25) {
+    const below = g(s) < f.y - D
+    if (!below) top = true
+    else if (top) { edge = s - 0.25; break }
+  }
+  if (Number.isNaN(edge)) return null
+  // … and back up to the brink (a sloped or stepped face: the point a quarter of the way down lay metres out from it)
+  while (edge > -30 && g(edge) < f.y - 1.5) edge -= 0.25
+  const x = f.x + dx * edge, z = f.z + dz * edge
+  const face = (y: number, side: number) => {
+    for (let s = 0; s <= 40; s += 0.25) if (map.height(x + dx * s - dz * side, z + dz * s + dx * side) < y) return s
+    return 40
+  }
+  return { x, z, y: f.y, dx, dz, hw: f.hw, drop: H, face }
+}
+
 export class Falls {
   readonly group = new GFX.Group()
   /** The hills' occlusion (main.ts). */
@@ -42,17 +74,21 @@ export class Falls {
       const fpos: number[] = [], corner: number[] = [], size: number[] = [], kind: number[] = [], fidx: number[] = []
       const box = new GFX.Box3()
       for (const f of cell) {
-        let dx = f.bx - f.x, dz = f.bz - f.z
-        const l = Math.hypot(dx, dz) || 1
-        dx /= l; dz /= l
-        const sx = -dz, sz = dx, H = Math.max(0.5, f.y - f.by)
-        // (the arc: thrown out over the lip, ~0.4 m for a short drop … ~2 m for a tall one)
+        const lip = fallLip(map, f)
+        if (!lip) { console.warn(`[falls] no cliff under the lip at ${f.x}, ${f.z} (${f.y} m): not drawn`); continue }
+        const { dx, dz } = lip, sx = -dz, sz = dx, H = Math.max(0.5, f.y - f.by)
+        // (the arc: thrown out over the lip, ~0.4 m for a short drop … ~2 m for a tall one — and never into the face)
         const reach = (t: number) => 0.25 + Math.min(2.2, 0.55 * Math.sqrt(H)) * Math.sqrt(t)
         const base = pos.length / 3
+        // (no further out than the foot itself: a scree apron above the pool would draw the sheet's last rows out along it)
+        const far = Math.max(reach(1), (f.bx - lip.x) * dx + (f.bz - lip.z) * dz + 1)
+        let foot = 0
         for (let r = 0; r <= ROWS; r++) {
-          const t = r / ROWS, w = f.hw * (1 + 0.18 * t), o = reach(t)
+          const t = r / ROWS, w = f.hw * (1 + 0.18 * t), y = f.y + 0.05 - (H + 0.1) * t
           for (const side of [-1, 1]) {
-            pos.push(f.x + dx * o + sx * w * side, f.y + 0.05 - (H + 0.1) * t, f.z + dz * o + sz * w * side)
+            const o = Math.max(reach(t), r === 0 ? 0 : Math.min(far, lip.face(y + 0.3, w * side) + 0.35))
+            if (r === ROWS) foot += o / 2
+            pos.push(lip.x + dx * o + sx * w * side, y, lip.z + dz * o + sz * w * side)
             box.expandByPoint(new GFX.Vector3(pos[pos.length - 3], pos[pos.length - 2], pos[pos.length - 1]))
             uv.push(side, t)
             drop.push(H)
@@ -60,7 +96,7 @@ export class Falls {
           if (r < ROWS) { const k = base + r * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2) }
         }
         // the foot: where the sheet meets the pool
-        const o = reach(1), cx = f.x + dx * o, cz = f.z + dz * o
+        const cx = lip.x + dx * foot, cz = lip.z + dz * foot
         const quad = (y: number, s: number, kd: number) => {
           const b = fpos.length / 3
           for (const [a, c] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { fpos.push(cx, y, cz); corner.push(a, c); size.push(s); kind.push(kd) }

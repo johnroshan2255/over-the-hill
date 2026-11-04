@@ -57,6 +57,35 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   world 16 m), soft penumbra, re-baked when the sun moves ~1°; one fetch per pixel / blade root, no shadow-map pass.
 - **Water** (`Water.ts`): lake disc + river ribbon; depth from the height grid in the fragment shader (no depth
   pre-pass) → see-through shallows → teal, shore line, Fresnel sky, glints, downstream flow.
+  **ONE WATER** (2026-11-04/05, the user: "two types of water, not connected, one goes above the other — a proper
+  transition, on the ground, not in the air"; the valley's lake laid a sheet over the meadow by its outlet and its river
+  ran on into it as a second layer; the desert's river drew its own angular band across the lagoon). In the loader's
+  worker (`mapPrep.ts`, ~150–200 ms a world):
+  - `reconcileWater`: where a river / stream crosses a lake's or pond's ellipse its surface is eased to that water's
+    level (≤ 5 %: the lake pours out down a short rapid, a river runs down into it — the valley's outlet was a 1.2 m
+    step), at it inside, downstream never rising; where that lifts it over its banks its ribbon reaches further (`wk`).
+    The still levels never move (their beaches, docks and the rowboat are made for them — lowered to the outlet's
+    banks, the lake left a bare ring and buried the boat). A stream joining the river takes the river's surface there.
+  - `waterOwner`: each lake / pond floods from its middle over ground below its level inside its disc, on into a
+    channel only while the flow there is at its own level (never down an outlet to the lower land beside it) → RGBA8 on
+    the mask's 4 m grid (`MapData.waterTex`: R its ground, G the depth under it, B how near it is, A the river's own
+    water) + the owning body (`MapData.stillLevel` / `stillDepth`).
+  - Drawing (`Water.ts`): the still water only on its ground, the ribbons only off it — a hard hand-over (a cross-fade
+    of two half-clear layers let the bed show through), the ribbon at that water's exact level there on its fine line
+    (`meetStill`: held 6 m past its ground at its middle or either edge, then ≤ 5 %), and in its look (`stillLook`, B:
+    all still where they meet, its own over ~22 m, its foam building over ~32 m); a stream runs 16 m on into the river
+    it joins and fades out there (A — from 10 m in at the river's ends: a creek into the river's head, end to end, left a
+    wedge of bed between two square-cut ends); every ribbon fades in over its first 8 m.
+  - RIBBONS: the lines resampled every ≤ 4 m (Catmull-Rom; 18–26 m chords with a corner at every point), the inner
+    reach held to 85 % of a tight bend's radius, the outer 20 % faded; the rapids' shallows clear (the bed, a ford's
+    track), calm shallows don't foam; the still water's shore foam a band in metres from the waterline (screen-space
+    slope — by depth alone a wide flat shallow was a white pane).
+  - The grass bake grows nothing under still water, no bush stands in it; `MapData.waterAt` (the drawn water: the car's
+    splash, drag, tracks, dust, where a tent can go). Seeded placement (camps, props, trees, the GPS) keeps `waterLevel`
+    — a rejected candidate shifts the rest, and the camps' ids are saved.
+  **Falls** (`Falls.ts fallLip`): each sheet starts at the brink where the ground really ends (searched along lip →
+  foot) and keeps in front of the face it falls past; a fall with no cliff under its lip isn't drawn (a console
+  warning); a stream's run over a lip stops at the edge.
 - **Post** (`Post.ts`): REMOVED in the PlayCanvas port (2026-11-03; off by default since 2026-10-27 — the user's call):
   every tier draws straight to the canvas, each shader tone-mapping its own output (the sky paints the sun's glow).
 - **Tiers** (`quality.ts`, `?tier=`; DEFAULT ULTRA on every device — the user's call, 2026-10-26; with trees, bushes,

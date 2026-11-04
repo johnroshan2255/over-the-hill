@@ -124,6 +124,23 @@ angular stacked slabs now — rocky hills, terraces you crawl up, cliffs of slab
 and spires rebuilt as stacks, shadows from the stacks in the baked shadow images, clean sand, sharp dunes with rock
 shelves, a patchy oasis in a bowl of rock, a skyline of stacks. Details, cost and what's left: `docs/DESERT_MATCH.md` §15.
 
+## Done — round 5: ONE WATER (2026-11-04/05)
+
+The user's screenshots, valley and desert: "two types of water, not connected, one goes above the other — a proper
+transition, on the ground, not in the air"; a waterfall standing in the open sand. Now (ARCHITECTURE.md, Water):
+- the lake / ponds draw only on their own ground and the rivers / streams only off it (`mapPrep.ts waterOwner`, in the
+  worker); where they meet, one surface at one height (`reconcileWater` + `Water.ts meetStill`: the valley's outlet
+  was a 1.2 m step — it pours out down a short rapid now) and one look (`stillLook`); a stream fades into the river;
+  smooth ribbons (Catmull-Rom, no corners at bends, faded edges); no grass on a lake's floor, no bush in its shallows;
+  the car feels the water that's drawn (`MapData.waterAt`). The still levels never move (beaches, docks, the rowboat).
+- every fall's sheet starts at its real brink and hugs its face (the valley's Hidden / Veil Falls hung 3–5 m out);
+  a fall with no cliff isn't drawn. The desert's Spring Falls pours off a real 60 m cliff (`desert.py head_wall`) into a
+  pool, a creek on to the river; the two road crossings of the river are real FORDS (they were dams) — DESERT_MATCH §15.
+- Checked in headless Chrome at every junction (scratchpad shots), WebGPU clean both worlds / tiers, `npm test`.
+- Left: the valley lake's floor dips toward the drowned river valley at its outlet — a broad darker tongue of real
+  depth seen at low angles; the ford's edges follow the road's carve (angular corners); the desert's new cliff face is
+  bare heightfield (slab walls can't fit the clearances); `waterOwner` ~200 ms of the worker's load per world.
+
 ## Next, in order
 
 1. **Look**: the sky still short of their cyan-white (the light clouds grey it; try fewer clouds in the desert's clear

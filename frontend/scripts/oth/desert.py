@@ -72,7 +72,17 @@ def river_hw(s):
     x = np.interp(s, _racc, RIVER[:, 0])
     return np.where(x > 860, 7.0, 10 + 4 * np.sin(s / 160))
 LAGOON = dict(cx=-330.0, cz=290.0, rx=145.0, rz=80.0, rot=0.25)   # (on the floor, beside the river — never into a wall)
-FALL = dict(x=-1700.0, z=10.0)       # the waterfall: off the north plateau into the head pool
+FALL = dict(x=-1700.0, z=10.0)       # the canyon head's amphitheatre: kept calm and clear round it (the masses, outcrops, stacks)
+# SPRING FALLS (2026-11-04): off the HEAD WALL at the west end of the amphitheatre (head_wall, below) — the lip in the
+# middle of its crest, the sheet falling east down the canyon's axis into the plunge pool, a creek from it to the river
+FALL_LIP = dict(x=-1900.0, z=30.0, y=164.0)
+FALL_HW = 9.0                  # (the sheet's half width)
+FALL_K = 6.0                   # (the face under it 6 : 1 — 80° — its flanks 4 : 1, the notch's sides 2.4 : 1)
+FALL_FLOOR = 106.0             # (the notch's floor: the canyon floor's own level)
+POOL_LEVEL = 104.6             # (the plunge pool; the river's head is 104.0)
+FALL_STREAM = np.array([(-1879.0, 30.0), (-1846.0, 31.0), (-1805.0, 37.0), (-1760.0, 45.0), (-1715.0, 42.0), (-1673.7, 30.4),
+                        (-1640.0, 40.0)], float)   # (the pool's outflow; its last leg along the river's first, end to end)
+FALL_VIEW = (-1770.0, 75.0)    # (the landmark: on the floor, the fall ahead ~140 m off, beside the creek)
 ARCH = dict(x=1180.0, z=-760.0, rot=math.pi / 2, span=46.0)   # the natural arch over the side slot (the track runs W–E over it)
 SLOT = np.array([(1260, -1500), (1210, -1150), (1180, -760), (1150, -420), (1120, -60)], float)  # the slot, to the gorge
 GORGE_BRIDGE_X = 1420.0
@@ -461,8 +471,7 @@ for _ in range(60):
 PHASE = phase
 WALL = wall
 
-# the head's waterfall cliff: a sheer amphitheatre wall where the river begins
-fd = np.hypot(X - FALL['x'], Z - FALL['z'])
+# (the head's waterfall cliff: head_wall, cut after the stacks are placed — below)
 log('far world (16 m)')
 XF, ZF = grid(N_FAR, FAR_HALF)
 HF, _, _, _ergF = landforms(XF, ZF, inner=False)
@@ -883,51 +892,59 @@ if SK:
                 if at2(slw, x_, z_) > 0.5 and at2(ERG_OPEN, x_, z_) < 0.15 and at2(MESAK, x_, z_) < 0.1: cand.append((x_, z_))
         krng.shuffle(cand)
         WALLS_ = []
-        for x_, z_ in cand:
-            gx_, gz_ = at2(gxw, x_, z_), at2(gzw, x_, z_); gl_ = math.hypot(gx_, gz_)
-            if gl_ < 0.45: continue
-            ux_, uz_ = gx_ / gl_, gz_ / gl_                       # (uphill)
-            tx_, tz_ = -uz_, ux_                                  # (along the contour)
-            k = walls_[int(krng.integers(len(walls_)))]
-            hw_ = float(at2(H, x_ + ux_ * 50, z_ + uz_ * 50) - at2(H, x_ - ux_ * 50, z_ - uz_ * 50))   # (the face's height)
-            if hw_ < 12: continue
-            # (sized to cover the face: the cliff's height over 100 m; its beds step back uphill — local +z. Where a
-            #  full-size one won't fit — a road on the rim above, a narrow slot, the gorge — a smaller one, then smaller:
-            #  a lower cliff of slabs is better than the bare face)
-            ok = False
-            for f_, mode_ in ((1.0, 'up'), (0.7, 'up'), (0.5, 'up'), (0.7, 'down'), (0.5, 'down')):
-                sc = float(np.clip(hw_ * f_ / SK[k]['height'], 0.45, 2.2))
-                L_ = SK[k]['radius'] * sc; W_ = 18 * sc            # (half its length; ~ its front's reach from its middle)
-                # (into the face: its front at the face's foot — or, by a road (a ramp's cut up the wall) or the arch's
-                #  slot, pushed back uphill until its front stands at its edge: the cut face covered, the way clear.
-                #  'down': a road along the face's TOP (a bench, a hairpin): the cliff stood out in front of the face
-                #  instead, its back clear of the road — 2026-11-04, the escarpment bastion's ends)
-                if mode_ == 'up':
-                    sh_ = min(max(0.35 * W_, W_ + TRAIL_HW + 3 - at2(Dt, x_, z_), W_ + 7 - at2(Ds, x_, z_)), 2.0 * W_)
-                else:
-                    sh_ = -0.7 * W_
-                cx_, cz_ = x_ + ux_ * sh_, z_ + uz_ * sh_
-                if abs(cx_) > 1890 or abs(cz_) > 1890: break
-                ok = True
-                for t_ in np.linspace(-1, 1, 7):
-                    px_, pz_ = cx_ + tx_ * L_ * 0.9 * t_, cz_ + tz_ * L_ * 0.9 * t_
-                    if at2(Dt, px_, pz_) < W_ + TRAIL_HW + 1.5 or at2(DrW, px_, pz_) < float(river_hw(at2(Sr, px_, pz_))) + W_ + 8:
-                        ok = False; break
-                    if at2(Ds, px_, pz_) < W_ + 6: ok = False; break
-                    if any(math.hypot(px_ - a, pz_ - b) < rr + W_ for a, b, rr in wall_clear): ok = False; break
-                    if aq_dist(px_, pz_) < W_ + 14: ok = False; break
-                    if any(math.hypot(px_ - sx, pz_ - sz) < rs * 1.2 + W_ for sx, sz, rs, _ in SPIRES): ok = False; break
-                if ok: break
-            if not ok: continue
-            # (end to end along a face, never two in one spot: 0.5 of their lengths apart ALONG it — but a second row
-            #  higher up a tall face is welcome: rows apart ACROSS it by their widths)
-            if any(abs((cx_ - a) * t2x + (cz_ - b) * t2z) < 0.5 * (L_ + l2) and abs(-(cx_ - a) * t2z + (cz_ - b) * t2x) < 0.7 * (W_ + w2)
-                   for a, b, l2, t2x, t2z, w2 in WALLS_): continue
-            lc_, ls_ = math.cos(LAGOON['rot']), math.sin(LAGOON['rot'])
-            lx_ = (cx_ - LAGOON['cx']) * lc_ + (cz_ - LAGOON['cz']) * ls_; lz_ = -(cx_ - LAGOON['cx']) * ls_ + (cz_ - LAGOON['cz']) * lc_
-            if math.hypot(lx_ / LAGOON['rx'], lz_ / LAGOON['rz']) < 1.15 + W_ / 70: continue
-            WALLS_.append((cx_, cz_, L_, tx_, tz_, W_))
-            STACKS.append((cx_, cz_, sc, float(math.atan2(ux_, uz_) + krng.uniform(-0.08, 0.08)), k))   # (local +z uphill)
+        def wall_pass(cand, rng, gxw, gzw, Hs, blocked=None):
+            """The walls along the faces at the candidates (x, z), in their order: gxw / gzw the slope of the heights Hs
+            (blurred); blocked(x, z, W) → True where a wall's line may not reach (Spring Falls' second pass, below)."""
+            n_ = 0
+            for x_, z_ in cand:
+                gx_, gz_ = at2(gxw, x_, z_), at2(gzw, x_, z_); gl_ = math.hypot(gx_, gz_)
+                if gl_ < 0.45: continue
+                ux_, uz_ = gx_ / gl_, gz_ / gl_                       # (uphill)
+                tx_, tz_ = -uz_, ux_                                  # (along the contour)
+                k = walls_[int(rng.integers(len(walls_)))]
+                hw_ = float(at2(Hs, x_ + ux_ * 50, z_ + uz_ * 50) - at2(Hs, x_ - ux_ * 50, z_ - uz_ * 50))   # (the face's height)
+                if hw_ < 12: continue
+                # (sized to cover the face: the cliff's height over 100 m; its beds step back uphill — local +z. Where a
+                #  full-size one won't fit — a road on the rim above, a narrow slot, the gorge — a smaller one, then
+                #  smaller: a lower cliff of slabs is better than the bare face)
+                ok = False
+                for f_, mode_ in ((1.0, 'up'), (0.7, 'up'), (0.5, 'up'), (0.7, 'down'), (0.5, 'down')):
+                    sc = float(np.clip(hw_ * f_ / SK[k]['height'], 0.45, 2.2))
+                    L_ = SK[k]['radius'] * sc; W_ = 18 * sc            # (half its length; ~ its front's reach from its middle)
+                    # (into the face: its front at the face's foot — or, by a road (a ramp's cut up the wall) or the
+                    #  arch's slot, pushed back uphill until its front stands at its edge: the cut face covered, the way
+                    #  clear. 'down': a road along the face's TOP (a bench, a hairpin): the cliff stood out in front of
+                    #  the face instead, its back clear of the road — 2026-11-04, the escarpment bastion's ends)
+                    if mode_ == 'up':
+                        sh_ = min(max(0.35 * W_, W_ + TRAIL_HW + 3 - at2(Dt, x_, z_), W_ + 7 - at2(Ds, x_, z_)), 2.0 * W_)
+                    else:
+                        sh_ = -0.7 * W_
+                    cx_, cz_ = x_ + ux_ * sh_, z_ + uz_ * sh_
+                    if abs(cx_) > 1890 or abs(cz_) > 1890: break
+                    ok = True
+                    for t_ in np.linspace(-1, 1, 7):
+                        px_, pz_ = cx_ + tx_ * L_ * 0.9 * t_, cz_ + tz_ * L_ * 0.9 * t_
+                        if at2(Dt, px_, pz_) < W_ + TRAIL_HW + 1.5 or at2(DrW, px_, pz_) < float(river_hw(at2(Sr, px_, pz_))) + W_ + 8:
+                            ok = False; break
+                        if at2(Ds, px_, pz_) < W_ + 6: ok = False; break
+                        if any(math.hypot(px_ - a, pz_ - b) < rr + W_ for a, b, rr in wall_clear): ok = False; break
+                        if aq_dist(px_, pz_) < W_ + 14: ok = False; break
+                        if any(math.hypot(px_ - sx, pz_ - sz) < rs * 1.2 + W_ for sx, sz, rs, _ in SPIRES): ok = False; break
+                        if blocked is not None and blocked(px_, pz_, W_): ok = False; break
+                    if ok: break
+                if not ok: continue
+                # (end to end along a face, never two in one spot: 0.5 of their lengths apart ALONG it — but a second
+                #  row higher up a tall face is welcome: rows apart ACROSS it by their widths)
+                if any(abs((cx_ - a) * t2x + (cz_ - b) * t2z) < 0.5 * (L_ + l2) and abs(-(cx_ - a) * t2z + (cz_ - b) * t2x) < 0.7 * (W_ + w2)
+                       for a, b, l2, t2x, t2z, w2 in WALLS_): continue
+                lc_, ls_ = math.cos(LAGOON['rot']), math.sin(LAGOON['rot'])
+                lx_ = (cx_ - LAGOON['cx']) * lc_ + (cz_ - LAGOON['cz']) * ls_; lz_ = -(cx_ - LAGOON['cx']) * ls_ + (cz_ - LAGOON['cz']) * lc_
+                if math.hypot(lx_ / LAGOON['rx'], lz_ / LAGOON['rz']) < 1.15 + W_ / 70: continue
+                WALLS_.append((cx_, cz_, L_, tx_, tz_, W_))
+                STACKS.append((cx_, cz_, sc, float(math.atan2(ux_, uz_) + rng.uniform(-0.08, 0.08)), k))   # (local +z uphill)
+                n_ += 1
+            return n_
+        wall_pass(cand, krng, gxw, gzw, H)
         log(f'  {len(WALLS_)} walls of slabs along the steep faces')
     # THE ESCARPMENT'S BASTION faced in slabs (2026-11-04 — the user: the "block" seen from the air: the ledge road's
     # bastion, its risers smooth heightfield slopes with flat ends). Between every two legs a row of WALL stacks that
@@ -1083,6 +1100,157 @@ for x_, z_, sc_, rt_, k_ in STACKS:
         ramps_ += 1
 log(f'  {ramps_} sand drifts up to the tables')
 
+# ---------------------------------------------------------------------------------------------------------- the falls
+# SPRING FALLS' HEAD WALL (2026-11-04 — the user's screenshots: the waterfall stood as a 128 m column of water out on
+# the open canyon floor, no cliff behind it: every terrain rewrite since cd80c2d had dropped the wall it poured off,
+# and its lip was still the old plateau's NORTH − 6). Now a CIRQUE cut west into the head's wall at the end of the
+# canyon's axis — seen head-on from the floor road's end — its back a near-vertical face (FALL_K under the sheet), the
+# lip on its top edge where a gully cut back into the slope brings the water (the crest either side 2.5 m higher), a
+# PLUNGE POOL at the face's foot (meta ponds), a CREEK from it to the river's head (meta streams; its ribbon meets the
+# river's end to end), the notch opening out to the floor. In the heights: the physics, the shadows and the water see
+# it. Cut AFTER the stacks are placed, so no other stack, road or height moves: the stacks it cuts or buries, or that
+# stand in the fall's line, over the pool or the creek, are taken out, and its new faces get walls of their own (a
+# second wall pass with its own random stream) — never in front of the sheet, over the pool or the creek.
+def head_wall(X, Z, H):
+    """The cirque, its pool and its creek cut into H (a copy). Returns the new heights and what the water, the stacks
+    and the masks need."""
+    lx, lz, ly = FALL_LIP['x'], FALL_LIP['z'], FALL_LIP['y']
+    # (a window round it: nothing outside it moves — the box's edge, the seam, the floor road untouched)
+    i0, i1 = int((-2000 + HALF) / CELL), int((-1590 + HALF) / CELL)
+    j0, j1 = int((-170 + HALF) / CELL), int((240 + HALF) / CELL)
+    sl_ = (slice(j0, j1), slice(i0, i1))
+    Xw, Zw, Hw = X[sl_], Z[sl_], H[sl_].copy()
+    run = (ly - FALL_FLOOR) / FALL_K                     # (the face's run under the lip)
+    Rc = 70.0                                            # (the cirque: its crest an arc this radius round (ccx, lz))
+    ccx = lx + Rc
+    lat = np.abs(Zw - lz)                                # (across the fall's line)
+    back = lx - Xw                                       # (behind the lip, along it)
+    # the HEADLAND: the crest either side of the lip 2.5 m over it, raised where the slope behind was lower
+    dl = np.hypot(Xw - (lx - 12), Zw - lz)
+    Hf = np.maximum(Hw, ly + 2.5 + 1.4 * fbm(Xw / 26, Zw / 26, SEED + 170, 2) - 0.06 * dl - 0.6 * np.maximum(dl - 30, 0))
+    Hw = np.where(dl < 120, Hf, Hw)
+    # the GULLY behind the lip: the water's bed cut back into the slope at ~7°, wandering, narrowing, its banks ~1 : 1,
+    # its head steepening up into the hill
+    b_ = np.maximum(back, 0)
+    glat = np.abs(Zw - lz - 3.5 * np.sin(b_ / 13.0) * smoothstep(4, 22, b_))
+    gw = 7.5 - 0.06 * np.minimum(b_, 60) + 1.2 * fbm(Xw / 18, Zw / 18, SEED + 174, 2) * smoothstep(3, 12, b_)
+    gully = ly + 0.12 * b_ + 0.9 * np.maximum(b_ - 28, 0) + 0.9 * np.maximum(glat - gw, 0)
+    Hw = np.where(back > -run - 2, np.minimum(Hw, gully), Hw)
+    # the CIRQUE and the NOTCH opening out to the canyon's floor: its crest an arc through the lip; the face FALL_K
+    # under the sheet, 2.4 : 1 either side of it (as steep as every wall: steeper, a face curving across the 2 m grid
+    # draws as teeth along its crest) — its foot coming forward there, the crest staying on the arc; the notch's sides
+    # wandering a little and easing out to the floor at its mouth
+    fallz = smoothstep(24, 14, lat) * (Xw < ccx)                     # (the face the sheet falls down)
+    notch = np.array([(ccx, lz), (-1790.0, 35.0), (-1752.0, 38.0)])
+    Dn, Sn, Ln = polyline_field(Xw, Zw, notch, 160)
+    k = 2.4 + (FALL_K - 2.4) * fallz - 1.9 * smoothstep(25, Ln, Sn)
+    w0 = Rc - (ly - FALL_FLOOR) / 2.4                                 # (the foot's radius beside the sheet)
+    wn = np.interp(Sn, np.concatenate([[0], np.cumsum(np.hypot(*np.diff(notch, axis=0).T))]), [w0, 62.0, 80.0])
+    wn = wn + ((Rc - (ly - FALL_FLOOR) / k) - w0) * (Sn < 1e-6)       # (at the back: the foot under the crest's arc)
+    dn = Dn - wn + 4.0 * fbm(Xw / 28, Zw / 28, SEED + 171, 2) * smoothstep(30, 50, lat)
+    floor = FALL_FLOOR + 0.35 * fbm(Xw / 60, Zw / 60, SEED + 172, 2)
+    # the PLUNGE POOL: deep against the face, shelving to its waterline at 0.88 of its ellipse, a bank up to the floor
+    pool = dict(cx=round(lx + run + 10.5, 2), cz=lz, rx=21.0, rz=17.0, rot=0.0, level=POOL_LEVEL)
+    q = np.hypot((Xw - pool['cx']) / pool['rx'], (Zw - pool['cz']) / pool['rz'])
+    bed = POOL_LEVEL - 4.2 + 4.2 * smoothstep(0.45, 0.88, q) + (floor - POOL_LEVEL) * smoothstep(0.88, 1.35, q)
+    face = floor + k * dn                                             # (below the floor too: it plunges into the pool)
+    Hw = np.minimum(Hw, np.maximum(face, np.minimum(floor, bed)))
+    # (the face softened a cell but under the sheet — a steep face curving across the 2 m grid drew as teeth, as the
+    #  walls' did before theirs were: the BEDS' pass)
+    cut_ = blur((np.abs(Hw - H[sl_]) > 0.3).astype(np.float64), 1) > 0.01         # (its own faces only)
+    for _ in range(2):
+        gzs, gxs = np.gradient(Hw, CELL)
+        Hw = Hw + (blur(Hw, 1) - Hw) * smoothstep(1.2, 2.6, np.hypot(gxs, gzs)) * (1 - fallz) * cut_
+    # the CREEK: the pool to the river's head, its surface 104.6 → 104, widening to the river's own ribbon there
+    # (10 × 1.75 = 10.94 × 1.6: Water.ts's widening of each); its bed like the river's (0.8 m under, banks to 1.35 hw)
+    T = resample(spline(FALL_STREAM, 4.0), 4.0)
+    T = np.vstack([T[:-1] if np.hypot(*(T[-1] - FALL_STREAM[-1])) < 1.5 else T, FALL_STREAM[-1:]])   # (ending ON the river's head)
+    ss = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(T, axis=0).T))])
+    sy = POOL_LEVEL - (POOL_LEVEL - 104.0) * ss / ss[-1]
+    shw = 4.5 + (10.94 - 4.5) * smoothstep(0.35 * ss[-1], ss[-1], ss)
+    Ds, Ss, _ = polyline_field(Xw, Zw, T, 60)
+    hs, ys = np.interp(Ss, ss, shw), np.interp(Ss, ss, sy)
+    bank = smoothstep(0.7 * hs, 1.35 * hs, Ds)
+    chan = ys - 0.8 + (2.6 + 0.3 * fbm(Xw / 40, Zw / 40, SEED + 173, 2)) * bank + 30 * smoothstep(1.4 * hs, 1.6 * hs, Ds)
+    Hw = np.where(Ds < 1.6 * hs, np.minimum(Hw, chan), Hw)
+    Hn = H.copy(); Hn[sl_] = Hw
+    # (the fields the stacks and the masks read, over the whole box: the creek's distance, half width and surface,
+    #  the pool's ellipse, the fall's line — from 25 m behind the lip to the pool's middle)
+    def full(A, fill):
+        F = np.full(H.shape, fill, np.float64); F[sl_] = A; return F
+    Dl, _, _ = polyline_field(Xw, Zw, np.array([(lx - 25, lz), (lx, lz), (pool['cx'], lz)]), 80)
+    fall = {'x': lx, 'z': lz, 'y': ly, 'bx': round(lx + run, 2), 'bz': lz, 'by': POOL_LEVEL, 'hw': FALL_HW}
+    stream = {'x': [round(float(v), 2) for v in T[::-1, 0]], 'z': [round(float(v), 2) for v in T[::-1, 1]],
+              'y': [round(float(v), 3) for v in sy[::-1]], 'hw': [round(float(v), 2) for v in shw[::-1]]}
+    return Hn, dict(pond=pool, stream=stream, fall=fall, Ds=full(Ds, 1e9), hs=full(hs, 5.0), ys=full(ys, 0.0),
+                    q=full(q, 1e9), Dl=full(Dl, 1e9), run=run)
+
+H_PRE_FALL = H.copy()
+H, FALLS_ = head_wall(X, Z, H)
+_dH = H - H_PRE_FALL
+FALL_CHANGED = blur((np.abs(_dH) > 0.3).astype(np.float64), 2) > 0.02          # (what it moved, and a few metres round)
+_gzf, _gxf = np.gradient(H, CELL)
+WALL = np.where(FALL_CHANGED, smoothstep(0.45, 0.9, blur(np.hypot(_gxf, _gzf), 2)), WALL)   # (its faces: the rock's)
+log(f'  Spring Falls: lip {FALL_LIP["y"]:.0f} m over the pool at {POOL_LEVEL} m, the head wall cut {-_dH.min():.0f} m, '
+    f'raised {_dH.max():.0f} m, {int((np.abs(_dH) > 0.05).sum())} cells')
+def fall_blocked(px, pz, r=0.0):
+    """True where a stack's point (r m of it round) would stand in the fall's line, over the pool or the creek."""
+    px, pz = np.atleast_1d(px).astype(float), np.atleast_1d(pz).astype(float)
+    P = FALLS_['pond']
+    return bool(np.any((bilinear(FALLS_['Dl'], HALF, px, pz) < FALL_HW + 8 + r)
+                       | (np.hypot(px - P['cx'], pz - P['cz']) < max(P['rx'], P['rz']) + 6 + r)
+                       | (bilinear(FALLS_['Ds'], HALF, px, pz) < 1.6 * bilinear(FALLS_['hs'], HALF, px, pz) + 4 + r)))
+if SK:
+    # the stacks it cut or buried (their slabs' feet or the ground their foot is read from, on what it moved) or that
+    # stand in the fall's way: out
+    _ang = np.arange(12) * 0.5236
+    def stack_pts(x, z, sc, rot, k):
+        c_, s_ = math.cos(rot), math.sin(rot); xs_, zs_ = [np.array([x])], [np.array([z])]
+        for sl in SK[k].get('slabs', []):
+            a = np.array(sl, float).reshape(-1, 3)
+            xs_.append(x + (a[:, 0] * c_ + a[:, 2] * s_) * sc); zs_.append(z + (-a[:, 0] * s_ + a[:, 2] * c_) * sc)
+        D_ = 2 * SK[k]['radius'] * sc
+        for f in (0.18, 0.32, 0.44): xs_.append(x + np.cos(_ang) * D_ * f); zs_.append(z + np.sin(_ang) * D_ * f)
+        return np.concatenate(xs_), np.concatenate(zs_)
+    _chg = FALL_CHANGED.astype(np.float64)
+    kept_, out_ = [], []
+    for st in STACKS:
+        x_, z_, sc_, rt_, k_ = st
+        if abs(x_) < HALF and abs(z_) < HALF and math.hypot(x_ - FALL_LIP['x'], z_ - FALL_LIP['z']) < 520:
+            px_, pz_ = stack_pts(x_, z_, sc_, rt_, k_)
+            if np.any(bilinear(_chg, HALF, px_, pz_) > 0.01) or fall_blocked(px_, pz_):
+                out_.append(st); continue
+        kept_.append(st)
+    STACKS = kept_
+    gone_ = {(round(float(s[0]), 3), round(float(s[1]), 3)) for s in out_}
+    if by_kind.get('wall'):
+        WALLS_ = [w for w in WALLS_ if (round(float(w[0]), 3), round(float(w[1]), 3)) not in gone_]
+        # the head wall's own faces lined with slabs, as every steep face (wall_pass) — its own random stream
+        frng = np.random.default_rng(SEED + 160)
+        gzf_, gxf_ = np.gradient(blur(H, 2), CELL)
+        slf_ = np.hypot(gxf_, gzf_)
+        near_ = (blur(FALL_CHANGED.astype(np.float64), 12) > 0.01).astype(np.float64)
+        cand_ = []
+        for zz in np.arange(-180, 250, 22.0):
+            for xx in np.arange(-1990, -1600, 22.0):
+                x_, z_ = xx + frng.uniform(-8, 8), zz + frng.uniform(-8, 8)
+                if at2(near_, x_, z_) > 0.5 and at2(slf_, x_, z_) > 0.5 and at2(ERG_OPEN, x_, z_) < 0.15 and at2(MESAK, x_, z_) < 0.1:
+                    cand_.append((x_, z_))
+        frng.shuffle(cand_)
+        n0_ = len(STACKS)
+        wall_pass(cand_, frng, gxf_, gzf_, H, blocked=lambda x, z, W: fall_blocked(x, z, W))
+        # (off the roads by their slabs' outlines, as every stack)
+        new_ = []
+        for (x_, z_, sc_, rt_, k_) in STACKS[n0_:]:
+            for t_ in range(4):
+                if stack_clear(x_, z_, sc_, rt_, k_):
+                    px_, pz_ = stack_pts(x_, z_, sc_, rt_, k_)
+                    if not fall_blocked(px_, pz_): new_.append((x_, z_, sc_, rt_, k_))
+                    break
+                sc_ *= 0.85
+        STACKS = STACKS[:n0_] + new_
+        log(f'  Spring Falls: {len(out_)} stacks out of its way, {len(new_)} walls of slabs on its own faces')
+
 def hull2(P):
     """The convex hull of 2D points (monotone chain), counter-clockwise in (x, z)."""
     pts = sorted(set((float(x), float(z)) for x, z in P))
@@ -1144,6 +1312,59 @@ for (x_, z_, sc_, rt_, k_), b_ in zip(STACKS, STACK_BASE):
             H[win] = np.where(m_, bot_ + 0.15, Hw); filled_ += int(m_.sum())
 log(f'  {filled_} cells raised to a slab\'s underside')
 
+# THE FORDS (2026-11-04 — the user's screenshot: "two waters not connected"): a road's bed was carved to the ground's
+# SMOOTHED profile along it, which filled the river's channel where it crossed — a dam: the lagoon's outlet 0.45 m under
+# the road's top, the floor road's crossing 0.2 m, the water ending at the embankment's edges on both sides. Every road
+# across the river now dips through it: its bed FORD_DEPTH under the river's surface across the channel, up out of it
+# at 10 % to its own profile 10–15 m up each bank; only ever lowered, and off the carriageway never under the water
+# (the banks beside it stay the channel's). Done last, after the stacks' feet and the gaps under them: nothing else
+# moves.
+FORD_DEPTH = 0.2
+# the river's surface as meta.json gives it (Water.ts): held at the LAGOON's level through the lagoon, from the point
+# before its shore to the point past it — the lines cross its ellipse at its level, so the runtime's reconcile
+# (mapPrep.ts) leaves both alone — eased back out to the river's own fall (40 m upstream, 60 m down: a riffle out of it)
+RIVER_RS = _racc[::3]
+RIVER_Y = river_surface(RIVER_RS)
+_lc, _ls = math.cos(LAGOON['rot']), math.sin(LAGOON['rot'])
+_rdx, _rdz = RIVER[::3, 0] - LAGOON['cx'], RIVER[::3, 1] - LAGOON['cz']
+_rin = np.nonzero(np.hypot((_rdx * _lc + _rdz * _ls) / LAGOON['rx'], (-_rdx * _ls + _rdz * _lc) / LAGOON['rz']) < 1)[0]
+if len(_rin):
+    _a, _b = _rin[0] - 1, _rin[-1] + 1
+    _y0 = RIVER_Y.copy()
+    RIVER_Y[_a:_b + 1] = LAGOON_LEVEL
+    for k in range(_b + 1, len(RIVER_RS)): RIVER_Y[k] = _y0[k] + (LAGOON_LEVEL - _y0[_b]) * (1 - smoothstep(0, 60, RIVER_RS[k] - RIVER_RS[_b]))
+    for k in range(_a - 1, -1, -1): RIVER_Y[k] = _y0[k] + (LAGOON_LEVEL - _y0[_a]) * (1 - smoothstep(0, 40, RIVER_RS[_a] - RIVER_RS[k]))
+FORDS = []
+FORD_CHAN = DrW < river_hw(Sr) * 0.95                    # (the river's water, as the fords find it on a road)
+for ti in range(n_ledge, len(TRAILS) - 2):              # (the A* roads: not the ledge roads, the arch's deck, the bridge)
+    T = TRAILS[ti]
+    sT, dT = bilinear(Sr, HALF, T[:, 0], T[:, 1]), bilinear(DrW, HALF, T[:, 0], T[:, 1])
+    wet = np.nonzero(dT < river_hw(sT) * 0.95)[0]
+    if not len(wet): continue
+    for g in np.split(wet, np.nonzero(np.diff(wet) > 3)[0] + 1):
+        # the road ±60 m round the crossing: its profile, the ford's bed, the dip eased in
+        k0, k1 = max(int(g[0]) - 32, 0), min(int(g[-1]) + 32, len(T) - 1)
+        Tc = T[k0:k1 + 1]
+        ss = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(Tc, axis=0).T))])
+        hs = bilinear(H, HALF, Tc[:, 0], Tc[:, 1])
+        yw = float(np.interp(sT[g[len(g) // 2]], RIVER_RS, RIVER_Y))
+        bed = yw - FORD_DEPTH
+        out_ = np.maximum(np.maximum(ss[g[0] - k0] - ss, ss - ss[g[-1] - k0]), 0)   # (along it, out of the water)
+        # (across the channel at the ford's bed, up out of it at 10 % — dry 2 m past the water's edge, so the water stays
+        #  in the channel — joining the road's own profile 10–15 m up the bank; the corners eased over 10 m)
+        dip = hs - np.minimum(hs, bed + 0.1 * out_)
+        dip = np.convolve(np.pad(dip, 2, mode='edge'), np.ones(5) / 5, mode='valid')     # (its corners eased: 0 where there's none)
+        dip = np.where(out_ <= 0, np.maximum(dip, hs - bed), dip)
+        Dc, Sc, _ = polyline_field(X, Z, Tc, 16)
+        Hn = H - np.interp(Sc, ss, dip) * (1 - smoothstep(TRAIL_HW + 0.5, TRAIL_HW + 9, Dc)) * (Dc < 16)
+        # (in the channel the road's whole band under the water — the old embankment's shoulders stood across it as two
+        #  dry bars either side of the ford; off it, beside the carriageway, never under: the banks stay the banks)
+        Hn = np.where(FORD_CHAN & (Dc < TRAIL_HW + 9), np.minimum(Hn, bed), Hn)
+        H = np.where((Dc > TRAIL_HW + 0.5) & ~FORD_CHAN, np.maximum(Hn, np.minimum(H, yw + 0.25)), Hn)
+        FORDS.append(dict(trail=ti, x=round(float(T[g[len(g) // 2], 0]), 1), z=round(float(T[g[len(g) // 2], 1]), 1), y=round(yw, 3),
+                          road_was=round(float(hs[g[len(g) // 2] - k0]), 2), bed=round(bed, 2)))
+log(f'  fords: {FORDS}')
+
 log('masks (4 m)')
 H4 = H[::2, ::2]; X4, Z4 = X[::2, ::2], Z[::2, ::2]
 gz4, gx4 = np.gradient(H4, 4.0)
@@ -1153,6 +1374,14 @@ rh4 = river_hw(Sr4)
 water4 = (Dr4 < rh4) | (Lq4 < 1.0)
 near_water = np.maximum(1 - smoothstep(rh4 + 8, rh4 + 70, Dr4), 1 - smoothstep(1.05, 1.6, Lq4))
 canyon_floor = (Dr4 < floor_hw(Sr4) + 10) & (sl < 0.3)
+# (Spring Falls' pool and creek: open water where the ground lies under their surface; the damp and the oasis's growth
+#  along them, on the gentle ground — not up the head wall's faces, which stay rock)
+_fD4, _fh4, _fq4 = FALLS_['Ds'][::2, ::2], FALLS_['hs'][::2, ::2], FALLS_['q'][::2, ::2]
+_fy4 = np.where(_fq4 < 1.0, POOL_LEVEL, FALLS_['ys'][::2, ::2])
+water4 = water4 | (((_fD4 < _fh4) | (_fq4 < 1.0)) & (H4 < _fy4 + 0.1))
+near_water = np.maximum(near_water, np.maximum(1 - smoothstep(_fh4 + 6, _fh4 + 50, _fD4), 1 - smoothstep(1.0, 2.2, _fq4))
+                        * (1 - smoothstep(0.4, 0.7, sl)) * (1 - smoothstep(POOL_LEVEL + 4, POOL_LEVEL + 10, H4)))   # (not up on the crest)
+canyon_floor = canyon_floor | ((_fD4 < 70) & (sl < 0.3) & (H4 < POOL_LEVEL + 10))
 # R ROCK: the walls' beds, the steep, the plateaus' slickrock, the spires, the mesas' sides
 patch = fbm(X4 / 90, Z4 / 90, SEED + 50, 3)
 patch = fbm(X4 / 260, Z4 / 260, SEED + 50, 3)
@@ -1195,16 +1424,21 @@ wetb = np.where(water4, 1.0, 0.8 * near_water * canyon_floor)
 # bushes on the plain
 grow = near_water * canyon_floor * (0.6 + 0.4 * smoothstep(-0.2, 0.3, fbm(X4 / 120, Z4 / 120, SEED + 52, 2)))
 grow = np.clip(grow * (1 - water4) * (1 - smoothstep(TRAIL_HW + 2, TRAIL_HW, Dt4)), 0, 1)
+# (no palm in front of the falling sheet: the view down the canyon's axis to it kept open, from the lip to 40 m past
+#  the pool's middle)
+_fx1 = FALLS_['pond']['cx'] + 40
+_fl4 = np.hypot(X4 - np.clip(X4, FALL_LIP['x'], _fx1), Z4 - FALL_LIP['z'])
+grow = grow * smoothstep(FALL_HW + 4, FALL_HW + 18, _fl4)
 
 # ---------------------------------------------------------------------------------------------------------- places
 s_lag = float(np.interp(LAGOON['cx'], RIVER[:, 0], _racc))
-falls = [{'x': FALL['x'], 'z': FALL['z'] - 30, 'y': NORTH - 6, 'bx': FALL['x'] + 10, 'bz': FALL['z'] + 30,
-          'by': float(river_surface(0.0)), 'hw': 9.0}]
+# (Spring Falls: its lip on the head wall's crest, its foot where the sheet meets the pool — head_wall)
+falls = [FALLS_['fall']]
 gy = ground_at(GATE['x'], GATE['z'])
 GATE['y'] = round(gy, 2)
 def ground(x, z): return round(float(bilinear(H, HALF, np.array([x]), np.array([z]))[0]), 2)
 LANDMARKS = [
-    {'id': 1, 'kind': 'falls', 'name': 'Spring Falls', 'x': FALL['x'], 'z': FALL['z'] + 60, 'r': 40},
+    {'id': 1, 'kind': 'falls', 'name': 'Spring Falls', 'x': FALL_VIEW[0], 'z': FALL_VIEW[1], 'r': 40},
     {'id': 2, 'kind': 'oasis', 'name': 'The Lagoon', 'x': LAGOON['cx'], 'z': LAGOON['cz'], 'r': 160},
     {'id': 3, 'kind': 'aqueduct', 'name': 'Old Aqueduct', 'x': (AQUEDUCT['x0'] + AQUEDUCT['x1']) / 2, 'z': (AQUEDUCT['z0'] + AQUEDUCT['z1']) / 2, 'r': 60},
     {'id': 4, 'kind': 'arch', 'name': 'Sky Arch', 'x': ARCH['x'], 'z': ARCH['z'], 'r': 40},
@@ -1244,9 +1478,11 @@ meta = {
     'mask': {'n': N_MID, 'step': 4.0, 'origin': -HALF},
     'water': {
         'lake': {'cx': LAGOON['cx'], 'cz': LAGOON['cz'], 'rx': LAGOON['rx'], 'rz': LAGOON['rz'], 'rot': LAGOON['rot'], 'level': LAGOON_LEVEL},
-        'ponds': [],
+        # (Spring Falls' plunge pool, and its creek to the river's head — mouth first, as the valley's streams)
+        'ponds': [FALLS_['pond']],
         'river': {'x': [round(float(v), 2) for v in rv[:, 0]], 'z': [round(float(v), 2) for v in rv[:, 1]],
-                  'y': [round(float(v), 3) for v in river_surface(rs)], 'hw': [round(float(v), 2) for v in river_hw(rs)]},
+                  'y': [round(float(v), 3) for v in RIVER_Y], 'hw': [round(float(v), 2) for v in river_hw(rs)]},   # (the lagoon's level through it — the fords)
+        'streams': [FALLS_['stream']],
         'falls': falls,
         # the river on beyond the box (drawn only — Water.ts): downstream first, at the gorge's level
         'riverOut': {'x': [round(float(v), 2) for v in RIVER_OUT[::-3, 0]], 'z': [round(float(v), 2) for v in RIVER_OUT[::-3, 1]],

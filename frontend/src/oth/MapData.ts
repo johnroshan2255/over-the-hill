@@ -41,13 +41,14 @@ export interface MapMeta {
     lake: Pond
     /** The ponds and small lakes (scripts/oth/terrain.py): each a flat disc of water at its level in its bowl. */
     ponds?: Pond[]
-    river: { x: number[]; z: number[]; y: number[]; hw: number[] }
+    river: { x: number[]; z: number[]; y: number[]; hw: number[]; wk?: number[] }
     /** The river on beyond the box (the desert's gorge, out to the world's edge — scripts/oth/desert.py): drawn only,
      *  downstream first. */
-    riverOut?: { x: number[]; z: number[]; y: number[]; hw: number[] }
+    riverOut?: { x: number[]; z: number[]; y: number[]; hw: number[]; wk?: number[] }
     /** Mountain STREAMS (scripts/oth/terrain.py): centre line from the mouth (index 0) up to the source, the surface
      *  height and half width along it — rapids, falling over WATERFALLS where they drop off a step. */
-    streams?: { x: number[]; z: number[]; y: number[]; hw: number[] }[]
+    /** (wk: the ribbon's reach × the half width per point, where mapPrep.ts reconcileWater raised it over its banks) */
+    streams?: { x: number[]; z: number[]; y: number[]; hw: number[]; wk?: number[] }[]
     /** WATERFALLS: the lip (x, z, y top), the foot (bx, bz, by bottom), the sheet's half width. */
     falls?: { x: number; z: number; y: number; bx: number; bz: number; by: number; hw: number }[]
   }
@@ -127,6 +128,10 @@ export class MapData {
    *  sink — G wildflowers: the grass blossoms). */
   readonly mud: Uint8Array
   readonly mudTex: GFX.DataTexture
+  /** The ground the still water owns (RGBA8 on the mask's 4 m grid, mapPrep.ts waterOwner): R — the lake and the ponds
+   *  draw only on it, the river and the streams only off it; G — the depth under it (128 + 64 / m): no grass there;
+   *  B — how near it is (a ribbon takes its look as it comes to it); A — the river's own water (a stream fades into it). */
+  readonly waterTex: GFX.DataTexture
   /** The desert's world (meta.biome): the materials' OTH_DESERT. */
   get desert(): boolean { return this.meta.biome === 'desert' }
   /** Its shader define (none for the valley). */
@@ -169,6 +174,31 @@ export class MapData {
     this.mudTex.generateMipmaps = true
     this.mudTex.unpackAlignment = 1
     this.mudTex.needsUpdate = true
+    this.waterTex = new GFX.DataTexture(p.water, mn, mn, GFX.RGBAFormat, GFX.UnsignedByteType)
+    this.waterTex.minFilter = this.waterTex.magFilter = GFX.LinearFilter
+    this.waterTex.generateMipmaps = false
+    this.waterTex.unpackAlignment = 1
+    this.waterTex.wrapS = this.waterTex.wrapT = GFX.ClampToEdgeWrapping
+    this.waterTex.needsUpdate = true
+    this.waterBody = p.waterBody
+  }
+
+  /** Which lake / pond owns each 4 m cell (mapPrep.ts waterOwner: 0 none, 1 the lake, 2 + i pond i). */
+  private readonly waterBody: Uint8Array
+  /** The surface of the lake or pond that owns (x, z) — where it draws (mapPrep.ts waterOwner) — or null. */
+  stillLevel(x: number, z: number): number | null {
+    const g = this.meta.mask
+    const i = Math.round((x - g.origin) / g.step), j = Math.round((z - g.origin) / g.step)
+    if (i < 0 || j < 0 || i >= g.n || j >= g.n) return null
+    const b = this.waterBody[j * g.n + i]
+    if (!b) return null
+    const W = this.meta.water
+    return b === 1 ? W.lake.level : W.ponds![b - 2].level
+  }
+  /** How deep a lake or pond is at (x, z) (m; < 0: that far above its surface, at its shore) — −Infinity off them. */
+  stillDepth(x: number, z: number): number {
+    const lv = this.stillLevel(x, z)
+    return lv === null ? -Infinity : lv - this.height(x, z)
   }
 
   /** The WATER's surface at (x, z) (m), or null on dry ground: the lake, a pond, else the nearest river / stream point
@@ -191,6 +221,16 @@ export class MapData {
     return y
   }
   private readonly _wk: [number, number, number, number] = [0, 0, 0, 0]
+  /** The water the car is in at (x, z) — as it's DRAWN: a lake's or a pond's own ground first (mapPrep.ts
+   *  waterOwner — the desert lagoon's outer shallows lie past the mask's wet band: a car drove through them dry), then
+   *  waterLevel. For what's felt as it happens (the splash, the drag, the tracks, the dust, where a tent can go);
+   *  the seeded placement (camps, props, trees, the GPS) keeps waterLevel — every candidate it rejects shifts the
+   *  rest, and the camps' ids are saved. */
+  waterAt(x: number, z: number): number | null {
+    const lv = this.stillLevel(x, z)
+    if (lv !== null && this.height(x, z) < lv) return lv
+    return this.waterLevel(x, z)
+  }
 
   /** Mud at (x, z), 0 … 1 (bilinear on the 4 m grid). */
   mudAt(x: number, z: number): number {

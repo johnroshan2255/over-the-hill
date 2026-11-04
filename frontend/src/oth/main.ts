@@ -379,7 +379,7 @@ async function boot() {
     if (myCamp && (myCamp.x - p.x) ** 2 + (myCamp.z - p.z) ** 2 < 25 * 25) return { name: 'Your camp', own: true }
     return null
   }
-  const canCamp = () => driving && !!car.sim && car.speedKmh < 3 && car.grounded() && map.waterLevel(car.pos.x, car.pos.z) === null
+  const canCamp = () => driving && !!car.sim && car.speedKmh < 3 && car.grounded() && map.waterAt(car.pos.x, car.pos.z) === null
   const closeMenu = () => {
     pause?.close()
     pause = null
@@ -396,7 +396,7 @@ async function boot() {
     if (!here) {
       // pitch it beside the car (its right, else its left), facing the car
       const h = car.sim!.heading, p = car.pos
-      const spot = [4.6, -4.6].map((side) => [p.x + Math.cos(h) * side, p.z - Math.sin(h) * side]).find(([x, z]) => map.waterLevel(x, z) === null) ?? [p.x, p.z]
+      const spot = [4.6, -4.6].map((side) => [p.x + Math.cos(h) * side, p.z - Math.sin(h) * side]).find(([x, z]) => map.waterAt(x, z) === null) ?? [p.x, p.z]
       myCamp = { x: spot[0], y: map.height(spot[0], spot[1]), z: spot[1], rot: h + Math.PI / 2 }
       world.props.pitch(myCamp)
       toast('Camp pitched · progress saved')
@@ -463,7 +463,7 @@ async function boot() {
     const moved = Math.hypot(car.pos.x - lastPos.x, car.pos.z - lastPos.z)
     if (moved < 5) travelled += moved
     lastPos.copy(car.pos)
-    if (car.sim && car.grounded() && map.waterLevel(car.pos.x, car.pos.z) === null) { safe.x = car.pos.x; safe.z = car.pos.z; safe.heading = car.sim.heading }
+    if (car.sim && car.grounded() && map.waterAt(car.pos.x, car.pos.z) === null) { safe.x = car.pos.x; safe.z = car.pos.z; safe.heading = car.sim.heading }
     if ((saveT += dt) > 20) { saveT = 0; save() }
     // the supply crates the car reaches
     const got = world.props.pickUp(dt, car.pos.x, car.pos.y, car.pos.z)

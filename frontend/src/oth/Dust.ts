@@ -151,7 +151,7 @@ export class Dust {
       const deck = this.map.bridgeAt(c.x, c.z)
       if (deck !== null && c.y > deck - 0.6) { this.acc[k] = 0; continue } // (planks: no dust)
       // WATER (a ford, a pond's edge): SPLASHES — white spray thrown up and out, more with speed and depth; no dust
-      const lvl = this.map.waterLevel(c.x, c.z), ground = this.map.height(c.x, c.z)
+      const lvl = this.map.waterAt(c.x, c.z), ground = this.map.height(c.x, c.z)
       if (lvl !== null && lvl > ground + 0.05) {
         const depth = Math.min(1, lvl - ground)
         this.acc[k] += (go * 24 + 4 * Math.min(1, speed / 2)) * (0.4 + depth) * dt

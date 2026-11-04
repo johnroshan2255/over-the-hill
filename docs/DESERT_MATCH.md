@@ -584,6 +584,25 @@ streaming, the frame, the time stuck, a wheel's ray starting inside rock) found,
 
 `npm test` passes, WebGPU transpiles clean, the chart and `desert_rocks.py` re-run.
 
+**Spring Falls off a real cliff; fords, not dams** (2026-11-04 — the user's screenshots: the fall a 128 m column of
+water standing on the open canyon floor, no cliff behind it — every terrain rewrite since cd80c2d had dropped the head
+wall, its lip still the old plateau's `NORTH − 6`; and the road across the river at the lagoon's outlet a dam, "two
+waters not connected"). `desert.py head_wall`, cut AFTER the stacks are placed (no road, other stack or height outside
+its window moves): a CIRQUE cut west into the head's wall at the end of the canyon's axis (seen head-on from the floor
+road's end), its crest an arc (r 70 m) through the LIP (−1900, 30) at 164 m; the face 6 : 1 (80°) under the sheet,
+2.4 : 1 either side (a steeper face curving across the 2 m grid drew teeth along its crest); behind the lip a gully cut
+back into the slope (its bed ~7°), the crest either side ~2 m higher; a PLUNGE POOL at its foot (meta `ponds`: 104.6 m,
+4.2 m deep, ~750 m² of water) and a CREEK from it to the river's head (meta `streams`: 104.6 → 104.0 m, hw 4.5 → 10.94 —
+its ribbon meets the river's end to end, 17.5 m half widths both); the notch opening out east to the floor; palms kept
+off the view down the axis. 6 slab walls it cut taken out, 5 on its own faces (`wall_pass`, its own random stream; never
+within the sheet's line, the pool or the creek: the nearest slab 12 m off). The landmark on the floor 138 m from the lip.
+THE FORDS: every A* road's crossing of the river dips through it — 0.15–0.23 m of water over the road across the
+channel, up out of it at 10 %, the banks beside it kept ≥ 0.25 m over the water (the lagoon's outlet, trail 7: road
+99.56 → 99.27–99.36 under a 99.50 surface; the floor road's, trail 6: 101.56 → 101.16–101.23 under 101.38); the
+river's meta surface held at the lagoon's level (99.712) from the point before its shore to the point past it, eased
+out over 40 m up / 60 m down (the runtime's `reconcileWater` then leaves both alone). Heights identical outside the
+head's window and the two fords; `desert_rocks.py` re-run (no change), the chart re-baked.
+
 ---
 
 ## 11. Starting it with Claude Code at home

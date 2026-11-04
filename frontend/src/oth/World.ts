@@ -221,7 +221,7 @@ export class World {
       }
     })
     const M = this.map
-    for (const t of [M.inner.tex, M.far.tex, M.inner.normalTex, M.far.normalTex, M.maskTex, M.trailTex, M.mudTex, this.rocks.footprint]) take(t)
+    for (const t of [M.inner.tex, M.far.tex, M.inner.normalTex, M.far.normalTex, M.maskTex, M.trailTex, M.mudTex, M.waterTex, this.rocks.footprint]) take(t)
     for (const t of textures) t.dispose()
     this.trees.atlas?.dispose()
     this.grass.dispose()
