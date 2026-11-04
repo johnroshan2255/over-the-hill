@@ -139,13 +139,14 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
   const camps: Landmark[] = []
   const used: Record<string, number> = {}
   let nextId = Math.max(0, ...pads.map((l) => l.id)) + 1
-  const campOk = (x: number, z: number) => free(x, z, { clear: 5, maxSlope: 0.08, offTrack: hw + 5, spacing: 0, kind: 'camp' }) &&
+  // (2026-11-04: the camps are BASE CAMPS now — a camper, a trailer, tarps … ~24 × 14 m: more room clear)
+  const campOk = (x: number, z: number) => free(x, z, { clear: 9, maxSlope: 0.08, offTrack: hw + 8, spacing: 0, kind: 'camp' }) &&
     !camps.some((c) => (c.x - x) ** 2 + (c.z - z) ** 2 < 380 * 380) && !pads.some((l) => (l.x - x) ** 2 + (l.z - z) ** 2 < (AREA.has(l.kind) ? 25 : 110) ** 2)
   const camp = (kind: string, x: number, z: number, faceX: number, faceZ: number) => {
     const names = (desert ? DESERT_CAMP_NAMES : CAMP_NAMES)[kind] ?? [], n = used[kind] ?? 0
     if (n >= names.length || camps.length >= 9) return false
     used[kind] = n + 1
-    camps.push({ id: nextId++, kind: 'camp', name: names[n], x, z, y: map.height(x, z), rot: Math.atan2(faceX - x, faceZ - z), r: 9 })
+    camps.push({ id: nextId++, kind: 'camp', name: names[n], x, z, y: map.height(x, z), rot: Math.atan2(faceX - x, faceZ - z), r: 13 })
     return true
   }
   const tryCamp = (kind: string, x: number, z: number, faceX: number, faceZ: number, r0: number, r1: number) => {
@@ -161,9 +162,10 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
   }
   const lake = meta.water.lake
   for (let k = 0; k < 3; k++) {
-    for (let t = 0; t < 10; t++) {
-      const a = rnd() * 6.283, c = Math.cos(lake.rot), s = Math.sin(lake.rot)
-      const ex = Math.cos(a) * (lake.rx + 30), ez = Math.sin(a) * (lake.rz + 30)
+    // (the base camps want room: a few distances out, past the palms — 2026-11-04)
+    for (let t = 0; t < 25; t++) {
+      const a = rnd() * 6.283, c = Math.cos(lake.rot), s = Math.sin(lake.rot), d = 30 + (t % 5) * 12
+      const ex = Math.cos(a) * (lake.rx + d), ez = Math.sin(a) * (lake.rz + d)
       const x = lake.cx + ex * c - ez * s, z = lake.cz + ex * s + ez * c
       if (campOk(x, z)) { camp('lake', x, z, lake.cx, lake.cz); break }
     }
@@ -171,9 +173,10 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
   const riv = meta.water.river
   for (let i = 12; i < riv.x.length - 12 && (used.river ?? 0) < 3; i += 9) {
     const dx = riv.x[i + 1] - riv.x[i - 1], dz = riv.z[i + 1] - riv.z[i - 1], l = Math.hypot(dx, dz) || 1
-    for (const side of [1, -1]) {
-      const off = riv.hw[i] * 1.75 + 16, x = riv.x[i] - (dz / l) * off * side, z = riv.z[i] + (dx / l) * off * side
-      if (campOk(x, z)) { camp('river', x, z, riv.x[i], riv.z[i]); break }
+    let done = false
+    for (let k = 0; k < 5 && !done; k++) for (const side of [1, -1]) {
+      const off = riv.hw[i] * 1.75 + 16 + k * 12, x = riv.x[i] - (dz / l) * off * side, z = riv.z[i] + (dx / l) * off * side
+      if (campOk(x, z)) { camp('river', x, z, riv.x[i], riv.z[i]); done = true; break }
     }
   }
   for (const P of [...(meta.water.ponds ?? [])].sort((a, b) => b.rx * b.rz - a.rx * a.rz)) {

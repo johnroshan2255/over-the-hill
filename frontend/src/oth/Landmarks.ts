@@ -68,6 +68,111 @@ export class Landmarks {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------- the base camp
+/** THE BASE CAMP (2026-11-04 — the user, a gameplay frame: "camps must look like this — big, the style, the size"):
+ *  at full vehicle scale behind the tent — an EXPEDITION CAMPER (a 4×4 truck, a box body, the roof rack's spare wheels
+ *  and cargo box, a ladder, an awning on poles, a roll-up rear door and its loading ramp), a car-hauler TRAILER with a
+ *  tarped load, two ground TARPS, a TOOL CHEST on castors, JACK STANDS, stacked TYRES, JERRYCANS, a folding TABLE and
+ *  CHAIRS, STRING LIGHTS that glow from dusk. Our own colours. Local frame: the camp faces +z; colliders by `col`. */
+const PAINT: RGB = [0.42, 0.33, 0.16], PAINT_DARK: RGB = [0.27, 0.21, 0.1], BODY: RGB = [0.62, 0.58, 0.48]
+const RUBBER: RGB = [0.045, 0.045, 0.05], HUB: RGB = [0.32, 0.32, 0.34], STEEL: RGB = [0.22, 0.22, 0.24]
+const TARP: RGB = [0.14, 0.22, 0.2], TARP2: RGB = [0.3, 0.22, 0.12], AWNING: RGB = [0.55, 0.52, 0.45], CHEST: RGB = [0.08, 0.2, 0.26]
+/** A wheel: a tyre (a short fat cylinder) and its hub, its axle along `ax` (unit), centre c. */
+function wheel(b: Builder, c: GFX.Vector3, ax: GFX.Vector3, r: number, w: number) {
+  b.log(c.clone().addScaledVector(ax, -w / 2), c.clone().addScaledVector(ax, w / 2), r, RUBBER)
+  b.log(c.clone().addScaledVector(ax, -w / 2 - 0.01), c.clone().addScaledVector(ax, w / 2 + 0.01), r * 0.55, HUB)
+}
+export function baseCamp(b: Builder, col?: Col): void {
+  // THE CAMPER: along x behind the tent, its side (windows, awning, ladder) facing the camp (+z)
+  const cx = -1.2, cz = -7.4, wy = 0.62
+  box(b, cx - 0.4, 0.98, cz, 3.9, 0.16, 0.8, STEEL)                                   // the chassis rails
+  for (const x of [cx - 2.6, cx + 2.2]) for (const s of [-1, 1]) wheel(b, V(x, wy, cz + s * 1.08), Z, wy, 0.42)
+  for (const x of [cx - 2.6, cx + 2.2]) for (const s of [-1, 1]) box(b, x, 1.32, cz + s * 1.12, 0.78, 0.06, 0.24, RUBBER) // mudguards
+  // the cab: forward (+x), its windscreen and side windows
+  const kx = cx + 2.75
+  box(b, kx, 1.95, cz, 0.85, 0.82, 1.18, PAINT)
+  box(b, kx + 0.5, 1.5, cz, 0.4, 0.38, 1.16, PAINT_DARK)                              // the bonnet's nose
+  b.quad(V(kx + 0.86, 2.15, cz - 1.0), V(kx + 0.86, 2.15, cz + 1.0), V(kx + 0.86, 2.7, cz + 0.98), V(kx + 0.86, 2.7, cz - 0.98), GLASS)
+  for (const s of [-1, 1]) box(b, kx + 0.15, 2.38, cz + s * 1.19, 0.5, 0.26, 0.005, GLASS)
+  box(b, kx + 1.0, 1.05, cz, 0.12, 0.14, 1.22, STEEL)                                 // the bumper
+  b.setGlow(0.5); for (const s of [-1, 1]) box(b, kx + 0.92, 1.42, cz + s * 0.82, 0.04, 0.09, 0.14, [0.5, 0.48, 0.4]); b.setGlow(0)
+  // the box body: its roof a touch lighter, a band low along it, two windows and a door on the camp's side
+  const bx = cx - 1.05, bl = 2.95
+  box(b, bx, 2.42, cz, bl, 1.3, 1.26, BODY)
+  box(b, bx, 3.76, cz, bl - 0.06, 0.05, 1.22, shade(BODY, 1.08))
+  box(b, bx, 1.33, cz + 1.27, bl, 0.08, 0.005, PAINT_DARK)
+  for (const x of [bx - 1.6, bx + 0.6]) { box(b, x, 2.75, cz + 1.27, 0.55, 0.36, 0.006, GLASS); box(b, x, 2.75, cz + 1.268, 0.62, 0.42, 0.004, shade(BODY, 0.7)) }
+  box(b, bx + 1.85, 2.3, cz + 1.27, 0.42, 0.95, 0.006, shade(BODY, 0.82))           // the side door
+  col?.(cx - 0.3, 2.0, cz, 4.0, 1.9, 1.3)
+  // the ROLL-UP DOOR at the back (−x), up: its slats, and the LOADING RAMP down from the floor
+  const rx = bx - bl
+  for (let k = 0; k < 6; k++) box(b, rx - 0.01, 1.55 + k * 0.33, cz, 0.012, 0.13, 1.12, shade(BODY, k % 2 ? 0.9 : 0.78))
+  for (const s of [-0.55, 0.55]) {
+    const t0 = V(rx - 0.05, 1.3, cz + s), t1 = V(rx - 3.3, 0.02, cz + s), w = 0.32
+    b.quad(t0.clone().add(V(0, 0, -w)), t0.clone().add(V(0, 0, w)), t1.clone().add(V(0, 0, w)), t1.clone().add(V(0, 0, -w)), s < 0 ? shade(BODY, 0.85) : DARK)
+  }
+  // the ROOF RACK: rails, two spare wheels laid flat, a black cargo box, a long kayak
+  for (const s of [-1, 1]) b.log(V(bx - bl + 0.2, 3.98, cz + s * 1.05), V(bx + bl - 0.2, 3.98, cz + s * 1.05), 0.035, STEEL)
+  for (const x of [bx - 1.9, bx - 0.6]) wheel(b, V(x, 4.05, cz - 0.35), Y, 0.5, 0.36)
+  box(b, bx + 1.4, 4.12, cz - 0.1, 0.75, 0.3, 0.6, [0.05, 0.05, 0.055])
+  b.box(V(bx + 0.2, 4.1, cz + 0.72), X, Y, Z, 2.6, 0.13, 0.3, [0.5, 0.36, 0.12])     // the kayak
+  // the LADDER up the side, by the back
+  for (const s of [-0.24, 0.24]) b.log(V(rx + 0.55 + s, 0.05, cz + 1.4), V(rx + 0.55 + s, 3.95, cz + 1.3), 0.025, STEEL)
+  for (let k = 1; k < 12; k++) { const y = k * 0.33; b.log(V(rx + 0.31, y, cz + 1.4 - y * 0.026), V(rx + 0.79, y, cz + 1.4 - y * 0.026), 0.018, STEEL) }
+  // the AWNING: off the body's top edge, out over the camp on two poles
+  const a0 = V(bx - 2.4, 3.55, cz + 1.3), a1 = V(bx + 2.2, 3.55, cz + 1.3), a2 = V(bx + 2.2, 2.75, cz + 4.4), a3 = V(bx - 2.4, 2.75, cz + 4.4)
+  b.quad(a0, a1, a2, a3, AWNING); b.quad(a3, a2, a1, a0, shade(AWNING, 0.8))
+  for (const x of [bx - 2.4, bx + 2.2]) b.log(V(x, 0, cz + 4.4), V(x, 2.78, cz + 4.4), 0.03, STEEL)
+  // THE TRAILER: a car-hauler deck on two wheels, its A-frame to the camper's hitch side, a tarped load on it
+  const tx = 9.6, tz = -6.6
+  box(b, tx, 0.78, tz, 2.6, 0.08, 1.1, STEEL)
+  for (const s of [-1, 1]) wheel(b, V(tx - 0.2, 0.36, tz + s * 1.2), Z, 0.36, 0.24)
+  b.log(V(tx - 2.6, 0.7, tz - 0.8), V(tx - 3.9, 0.55, tz), 0.04, STEEL); b.log(V(tx - 2.6, 0.7, tz + 0.8), V(tx - 3.9, 0.55, tz), 0.04, STEEL)
+  box(b, tx, 1.35, tz, 2.1, 0.5, 0.95, [0.6, 0.6, 0.58])                               // the tarped load
+  box(b, tx + 0.2, 2.0, tz, 1.2, 0.2, 0.85, [0.56, 0.56, 0.54])
+  col?.(tx, 1.2, tz, 2.6, 1.0, 1.2)
+  // TWO TARPS on the ground: the workshop's, the table's
+  box(b, 3.6, 0.025, -1.6, 3.2, 0.02, 2.4, TARP)
+  box(b, -5.6, 0.025, -2.6, 2.2, 0.02, 1.8, TARP2)
+  // the TOOL CHEST on castors, its drawers
+  const ch = V(-6.7, 0, -2.2)
+  box(b, ch.x, 0.62, ch.z, 0.55, 0.5, 0.32, CHEST)
+  for (let k = 0; k < 5; k++) box(b, ch.x, 0.3 + k * 0.17, ch.z + 0.33, 0.5, 0.06, 0.01, shade(CHEST, 1.5))
+  box(b, ch.x, 1.16, ch.z, 0.57, 0.04, 0.34, [0.12, 0.12, 0.13])
+  for (const sx of [-0.45, 0.45]) for (const sz of [-0.24, 0.24]) b.log(V(ch.x + sx, 0, ch.z + sz), V(ch.x + sx, 0.12, ch.z + sz), 0.05, RUBBER)
+  col?.(ch.x, 0.6, ch.z, 0.6, 0.6, 0.35)
+  // JACK STANDS on the workshop tarp, three pyramids of rods and a saddle
+  for (const [jx, jz] of [[2.2, -2.6], [4.9, -2.4], [3.5, -0.4]]) {
+    for (let k = 0; k < 3; k++) { const a = (k / 3) * Math.PI * 2; b.log(V(jx + Math.cos(a) * 0.26, 0.04, jz + Math.sin(a) * 0.26), V(jx, 0.5, jz), 0.025, [0.5, 0.36, 0.06]) }
+    b.log(V(jx, 0.45, jz), V(jx, 0.66, jz), 0.03, STEEL)
+  }
+  // TYRES: a stack of three, a pair leaning, one lying by the trailer
+  for (let k = 0; k < 3; k++) wheel(b, V(6.4, 0.16 + k * 0.32, -3.3), Y, 0.48, 0.3)
+  for (const [x, z, a] of [[1.0, -3.4, 0.25], [1.5, -3.5, 0.1]] as const) wheel(b, V(x, 0.46, z), V(Math.cos(a), 0, Math.sin(a)).applyAxisAngle(Y, 0), 0.46, 0.3)
+  wheel(b, V(11.8, 0.15, -4.4), Y, 0.4, 0.26)
+  // JERRYCANS by the camper's cab
+  for (let k = 0; k < 3; k++) box(b, cx + 3.9 + k * 0.4, 0.26, cz + 1.8, 0.17, 0.26, 0.09, k === 1 ? [0.38, 0.06, 0.04] : [0.12, 0.2, 0.08])
+  // a folding TABLE and two CHAIRS on the table's tarp
+  const tb = V(-5.4, 0, -2.8)
+  box(b, tb.x, 0.74, tb.z, 0.6, 0.025, 0.4, [0.75, 0.72, 0.64])
+  for (const sx of [-0.52, 0.52]) for (const sz of [-0.32, 0.32]) b.log(V(tb.x + sx, 0, tb.z + sz), V(tb.x + sx, 0.73, tb.z + sz), 0.015, STEEL)
+  for (const [x, z, a] of [[-4.5, -1.8, 0.4], [-6.2, -1.7, -0.5]] as const) {
+    const u = V(Math.cos(a), 0, Math.sin(a)), w = V(-Math.sin(a), 0, Math.cos(a))
+    b.box(V(x, 0.42, z), u, Y, w, 0.24, 0.02, 0.24, [0.15, 0.24, 0.22])
+    b.box(V(x, 0.7, z).addScaledVector(w, -0.25), u, Y, w, 0.24, 0.26, 0.02, [0.15, 0.24, 0.22])
+    for (const su of [-0.22, 0.22]) b.log(V(x, 0, z).addScaledVector(u, su).addScaledVector(w, 0.2), V(x, 0.42, z).addScaledVector(u, su).addScaledVector(w, -0.2), 0.012, STEEL)
+  }
+  // STRING LIGHTS: from the awning's front corner out to a pole by the fire, sagging; the bulbs glow from dusk
+  const p0 = V(bx + 2.2, 2.75, cz + 4.4), pole = V(4.6, 0, 2.6), p1 = pole.clone().setY(2.6)
+  b.log(pole, p1, 0.035, STEEL)
+  const n = 14
+  for (let k = 0; k <= n; k++) {
+    const t = k / n, q = p0.clone().lerp(p1, t); q.y -= Math.sin(Math.PI * t) * 0.55
+    if (k < n) { const r = p0.clone().lerp(p1, (k + 1) / n); r.y -= Math.sin((Math.PI * (k + 1)) / n) * 0.55; b.log(q, r, 0.006, DARK) }
+    b.setGlow(0.8); box(b, q.x, q.y - 0.05, q.z, 0.035, 0.045, 0.035, [0.55, 0.45, 0.25]); b.setGlow(0)
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------- the kit
 type Col = (cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ground?: boolean) => void
 type RGB = [number, number, number]
@@ -284,6 +389,7 @@ const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col
   /** CAMPSITE (Places.ts — the scenic flat spots): `campKit` — the player's own camp is the same. */
   camp(b, _l, col) {
     campKit(b, col)
+    baseCamp(b, col)
   },
 
   /** METEORITE: a dark scorched boulder in its crater, cracks glowing ember-orange at night, chips scattered round. */
