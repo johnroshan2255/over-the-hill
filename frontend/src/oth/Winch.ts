@@ -54,7 +54,7 @@ export class Winch {
   toggle(): void {
     if (this.anchor) { this.anchor = null; this.mesh.visible = false; this.onMessage?.('Winch released'); return }
     const sim = this.car.sim
-    if (!sim) return
+    if (!sim || this.car.parked) return // (no winching from the bike)
     this.hookPoint()
     const f = this.forward()
     let best: GFX.Vector3 | null = null, bd = 1e9, what = ''

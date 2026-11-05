@@ -20,7 +20,7 @@ export class TyreTracks {
   private readonly a1: GFX.InstancedBufferAttribute // end xyz, darkness
   private head = 0
   private readonly geo: GFX.InstancedBufferGeometry
-  private readonly last: (GFX.Vector3 | null)[] = [null, null, null, null]
+  private readonly last: (GFX.Vector3 | null)[] = [null, null, null, null, null, null] // (the car's four, the bike's two)
   private readonly c = new GFX.Vector3()
   private readonly time = { value: 0 }
   /** When the newest mark was laid (s), and round the marks laid since they last all faded: `cull`. */
@@ -50,8 +50,9 @@ export class TyreTracks {
         void main() {
           vec3 d = aE.xyz - aS.xyz;
           // (a SAND rut: wider, and it lasts 2.5× as long — till the wind fills it)
-          float sand = step(5.0, aE.w), k0 = aE.w - 10.0 * sand, life = mix(1.0, 2.5, sand);
-          vec3 side = normalize(vec3(-d.z, 0.0, d.x) + 1e-5) * mix(0.15, 0.19, sand);
+          float thin = step(50.0, aE.w), code = aE.w - 100.0 * thin; // (+100: a bike's narrow tyre)
+          float sand = step(5.0, code), k0 = code - 10.0 * sand, life = mix(1.0, 2.5, sand);
+          vec3 side = normalize(vec3(-d.z, 0.0, d.x) + 1e-5) * mix(0.15, 0.19, sand) * mix(1.0, 0.24, thin);
           vec3 w = mix(aS.xyz, aE.xyz, position.x) + side * position.y + vec3(0.0, 0.06, 0.0);
           vUv = vec2(position.x * length(d), position.y);
           float age = uTime - aS.w;
@@ -86,36 +87,52 @@ export class TyreTracks {
   update(car: Vehicle, t: number): void {
     this.time.value = t
     const sim = car.sim, model = car.model
-    if (!sim || !model) return
-    const q = car.root.quaternion, p = car.root.position, hw = this.map.meta.trails.hw
+    if (!sim || !model || car.parked) return
+    const q = car.root.quaternion, p = car.root.position
     let wrote = false
     for (let k = 0; k < 4; k++) {
       const wk = sim.wheels[k]
       const [hx, hy, hz] = model.wheelPos[k]
       const c = this.c.set(hx, hy + wk.lift - model.wheelRadius * 0.9, hz).applyQuaternion(q).add(p)
-      // what it rolls on: the tracks' dirt, mud, the water's sand — not rock, planks, grass or water
-      const ground = this.map.height(c.x, c.z)
-      const onGround = wk.contact && c.y < ground + 0.35 && this.map.bridgeAt(c.x, c.z) === null && this.map.waterAt(c.x, c.z) === null
-      const mud = this.map.mudAt(c.x, c.z), track = Math.max(0, Math.min(1, (hw + 0.3 - this.map.trailDist(c.x, c.z)) / 0.8))
-      // (the desert's LOOSE SAND — its mask's G, not on the rock: deep ruts, darker, lasting longer)
-      const sand = this.map.desert ? this.map.maskAt(c.x, c.z, this.mk)[1] * (1 - Math.min(1, this.mk[0] * 2)) * (1 - track) : 0
-      const dark = onGround ? Math.max(mud * 0.6, track * 0.32, sand * 0.44) : 0
-      const prev = this.last[k]
-      if (dark < 0.05) { this.last[k] = null; continue }
-      c.y = ground
-      if (!prev) { this.last[k] = c.clone(); continue }
-      if (prev.distanceToSquared(c) < 0.16) continue
-      if (prev.distanceToSquared(c) > 4) { prev.copy(c); continue } // (a jump / a reset: no streak across)
-      const i = this.head
-      this.head = (this.head + 1) % this.n
-      this.a0.setXYZW(i, prev.x, prev.y, prev.z, t)
-      this.a1.setXYZW(i, c.x, c.y, c.z, dark + (sand > 0.3 ? 10 : 0)) // (+10: a sand rut)
-      if (t - this.newest > 300) this.box.makeEmpty() // (all the older marks have faded)
-      this.box.expandByPoint(prev).expandByPoint(c)
-      this.newest = t
-      prev.copy(c)
-      wrote = true
+      if (this.mark(k, c, wk.contact, t, false)) wrote = true
     }
+    if (wrote) { this.a0.needsUpdate = true; this.a1.needsUpdate = true; this.geo.instanceCount = Math.max(this.geo.instanceCount, this.head === 0 ? this.n : this.head) }
+  }
+
+  /** One tyre's mark at c (world, its contact point; k its slot): a segment from the last one where the ground takes
+   *  marks. True when one was written. */
+  private mark(k: number, c: GFX.Vector3, contact: boolean, t: number, thin: boolean): boolean {
+    const hw = this.map.meta.trails.hw
+    // what it rolls on: the tracks' dirt, mud, the water's sand — not rock, planks, grass or water
+    const ground = this.map.height(c.x, c.z)
+    const onGround = contact && c.y < ground + 0.35 && this.map.bridgeAt(c.x, c.z) === null && this.map.waterAt(c.x, c.z) === null
+    const mud = this.map.mudAt(c.x, c.z), track = Math.max(0, Math.min(1, (hw + 0.3 - this.map.trailDist(c.x, c.z)) / 0.8))
+    // (the desert's LOOSE SAND — its mask's G, not on the rock: deep ruts, darker, lasting longer)
+    const sand = this.map.desert ? this.map.maskAt(c.x, c.z, this.mk)[1] * (1 - Math.min(1, this.mk[0] * 2)) * (1 - track) : 0
+    const dark = onGround ? Math.max(mud * 0.6, track * 0.32, sand * 0.44) : 0
+    const prev = this.last[k]
+    if (dark < 0.05) { this.last[k] = null; return false }
+    c.y = ground
+    if (!prev) { this.last[k] = c.clone(); return false }
+    if (prev.distanceToSquared(c) < 0.16) return false
+    if (prev.distanceToSquared(c) > 4) { prev.copy(c); return false } // (a jump / a reset: no streak across)
+    const i = this.head
+    this.head = (this.head + 1) % this.n
+    this.a0.setXYZW(i, prev.x, prev.y, prev.z, t)
+    this.a1.setXYZW(i, c.x, c.y, c.z, dark + (sand > 0.3 ? 10 : 0) + (thin ? 100 : 0)) // (+10: a sand rut; +100 a bike's)
+    if (t - this.newest > 300) this.box.makeEmpty() // (all the older marks have faded)
+    this.box.expandByPoint(prev).expandByPoint(c)
+    this.newest = t
+    prev.copy(c)
+    return true
+    return false
+  }
+
+  /** The BIKE's two tyres (main.ts while riding): narrow marks. */
+  bikeMarks(wheels: { contact: boolean; ground: { x: number; y: number; z: number } }[], t: number): void {
+    this.time.value = t
+    let wrote = false
+    wheels.forEach((w, i) => { if (this.mark(4 + i, this.c.set(w.ground.x, w.ground.y, w.ground.z), w.contact, t, true)) wrote = true })
     if (wrote) { this.a0.needsUpdate = true; this.a1.needsUpdate = true; this.geo.instanceCount = Math.max(this.geo.instanceCount, this.head === 0 ? this.n : this.head) }
   }
 

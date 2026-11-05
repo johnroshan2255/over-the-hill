@@ -10,8 +10,9 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview --port 5200",
     "preview:lan": "LAN=1 vite preview --host --port 5300",
-    "test": "npm run test:drivetrain",
+    "test": "npm run test:drivetrain && npm run test:mtb",
     "test:drivetrain": "rolldown tests/drivetrain.test.ts --format esm --platform node --external @dimforge/rapier3d-compat -o node_modules/.cache/tests/drivetrain.test.mjs --log-level warn && node node_modules/.cache/tests/drivetrain.test.mjs",
+    "test:mtb": "rolldown tests/mtb.test.ts --format esm --platform node --external @dimforge/rapier3d-compat -o node_modules/.cache/tests/mtb.test.mjs --log-level warn && node node_modules/.cache/tests/mtb.test.mjs",
     "shot": "node scripts/shot.mjs"
   },
   "dependencies": {

@@ -1,0 +1,196 @@
+{
+  "about": "THE MOUNTAIN BIKE's geometry: ONE source for the model (scripts/oth/mtb.py, Blender), the physics (MtbSim.ts) and the renderer (src/oth/Bike.ts). A full-suspension enduro bike, size L, 27.5-inch wheels, a 150 mm fork and 142 mm of rear travel on a single pivot; a 1.80 m rider. Metres. GAME SPACE: +x right, +y up, +z BACKWARD (the bike faces -z); the origin is on the ground midway between the axles; the suspension FULLY EXTENDED (unladen) — the pose the model is built in. In Blender (z up, the glTF exporter's +Y up): the bike faces Blender +Y, game (x, y, z) = Blender (x, z, -y).",
+  "rotation": "ONE rotation sense for the wheels' roll, the cranks and the swingarm: R(a) takes a point at (y, z) (relative to the axle / the BB / the pivot) to (y cos a + z sin a, -y sin a + z cos a) — in a right-handed frame, a turn of -a about +x. Rolling forward, pedalling forward and compressing are all positive.",
+  "wheel": {
+    "radius": 0.355,
+    "tyreWidth": 0.061,
+    "rimRadius": 0.292,
+    "rimWidth": 0.03,
+    "hubWidthFront": 0.11,
+    "hubWidthRear": 0.148,
+    "discRadius": 0.1,
+    "about": "a wheel's spin s (rad) grows rolling forward: R(s) about the axle — the top of the tyre moves forward (-z)."
+  },
+  "frontAxle": [
+    0,
+    0.355,
+    -0.6125
+  ],
+  "rearAxle": [
+    0,
+    0.355,
+    0.6125
+  ],
+  "steer": {
+    "headAngleDeg": 65,
+    "axis": [
+      0,
+      0.906308,
+      0.422618
+    ],
+    "about": "the steering axis runs through crown / headTubeBottom / headTubeTop / steererTop; `axis` points UP it (and back). The bars, stem, steerer, crown, stanchions, fork lowers and front wheel all turn about it. maxSteerDeg: the bars' lock either way.",
+    "crown": [
+      0,
+      0.8485,
+      -0.3338
+    ],
+    "headTubeBottom": [
+      0,
+      0.8802,
+      -0.3191
+    ],
+    "headTubeTop": [
+      0,
+      0.9799,
+      -0.2726
+    ],
+    "steererTop": [
+      0,
+      1.0207,
+      -0.2535
+    ],
+    "maxSteerDeg": 40
+  },
+  "fork": {
+    "about": "telescopic: the LOWERS (and the front axle) slide UP the steering axis by up to `travel` as the fork compresses; the stanchions (upper tubes, fixed in the crown) slide into them. The axle sits `offset` ahead of the axis, `axleToCrown` along it below the crown.",
+    "travel": 0.15,
+    "axleToCrown": 0.565,
+    "offset": 0.044,
+    "stanchionDiameter": 0.036,
+    "stanchionHalfSpacing": 0.067,
+    "lowersLength": 0.36
+  },
+  "stem": {
+    "length": 0.04,
+    "barClamp": [
+      0,
+      1.0194,
+      -0.2983
+    ]
+  },
+  "bar": {
+    "width": 0.78,
+    "rise": 0.025,
+    "backsweepDeg": 9,
+    "upsweepDeg": 5,
+    "grips": [
+      [
+        -0.325,
+        1.044,
+        -0.259
+      ],
+      [
+        0.325,
+        1.044,
+        -0.259
+      ]
+    ]
+  },
+  "bb": [
+    0,
+    0.345,
+    0.1775
+  ],
+  "crank": {
+    "about": "angle θ = 0: the RIGHT arm points forward (-z), level; θ grows pedalling forward, R(θ) about the BB — the right arm's direction is (0, -sin θ, -cos θ), the right pedal going DOWN first; the left arm opposite. Each pedal spindle is at the arm's end, pedalX out from the centre line (right +x, left -x).",
+    "length": 0.17,
+    "pedalX": 0.155,
+    "pedalSize": [
+      0.1,
+      0.018,
+      0.105
+    ],
+    "chainringTeeth": 32,
+    "chainringRadius": 0.0648,
+    "chainlineX": 0.055
+  },
+  "cassette": {
+    "teeth": [
+      10,
+      12,
+      14,
+      16,
+      18,
+      21,
+      24,
+      28,
+      33,
+      39,
+      45,
+      51
+    ],
+    "largestRadius": 0.1032
+  },
+  "seat": {
+    "seatTubeAngleDeg": 77,
+    "saddleTop": [
+      0,
+      1.027,
+      0.335
+    ],
+    "saddleLength": 0.27,
+    "saddleWidth": 0.14
+  },
+  "rear": {
+    "about": "single pivot: the SWINGARM (chainstays, seatstays, a yoke to the shock, the dropouts, the rear brake, the derailleur) turns R(a) about the pivot (an x-axis), a = 0 … swingarmMaxRotation as the rear compresses — the rear axle rises. The SHOCK runs from shockFrameMount (on the frame) to shockSwingarmMount (on the swingarm's yoke, moving with it): eye to eye shockEyeToEye unladen, shorter by up to shockStroke; at full stroke a = swingarmMaxRotation and the axle has risen wheelTravel.",
+    "pivot": [
+      0,
+      0.43,
+      0.16
+    ],
+    "shockFrameMount": [
+      0,
+      0.61,
+      -0.05
+    ],
+    "shockSwingarmMount": [
+      0,
+      0.61,
+      0.16
+    ],
+    "shockEyeToEye": 0.21,
+    "shockStroke": 0.055,
+    "swingarmMaxRotation": 0.312,
+    "wheelTravel": 0.1425
+  },
+  "mass": {
+    "bike": 15.5,
+    "rider": 75,
+    "bikeCom": [
+      0,
+      0.55,
+      0.02
+    ],
+    "riderComSeated": [
+      0,
+      1.25,
+      0.16
+    ]
+  },
+  "rider": {
+    "about": "a 1.80 m adult in riding kit (helmet, jersey, shorts, knee pads, gloves, flat-pedal shoes). Each segment is built STRAIGHT along local -y from its PROXIMAL joint (its origin) to its distal joint at (0, -length, 0) — the arms and legs hanging down, the body facing -z (knees and toes to -z, elbows to +z). The torso is built UPRIGHT along +y from the hip centre (origin) to the shoulder line; the head UP along +y from the neck joint. `seatedHip` is the hip centre's place sitting on the saddle (game space).",
+    "height": 1.8,
+    "hipHalfWidth": 0.09,
+    "thigh": 0.44,
+    "shin": 0.45,
+    "ankleHeight": 0.075,
+    "footLength": 0.27,
+    "ballOfFoot": [
+      0,
+      -0.075,
+      -0.115
+    ],
+    "shoulderHalfWidth": 0.18,
+    "spine": 0.5,
+    "neck": 0.07,
+    "head": 0.23,
+    "upperArm": 0.3,
+    "forearm": 0.26,
+    "handToGrip": 0.07,
+    "seatedHip": [
+      0,
+      1.107,
+      0.36
+    ]
+  }
+}

@@ -5,6 +5,9 @@ import { type Camp, continueRequested, loadProgress, requestContinue, saveProgre
 import { gameParams } from '../settings'
 import { Menu } from '../ui/Menu'
 import { Atmosphere } from './Atmosphere'
+import { Bike } from './Bike'
+import mtbUrl from '../assets/models/vehicles/mtb.glb?url'
+import { MtbSim } from '../gameplay/vehicle/MtbSim'
 import { OthAudio } from './Audio'
 import { Dust } from './Dust'
 import { ChaseCam } from './ChaseCam'
@@ -169,6 +172,24 @@ async function boot() {
   }
   await car.setCar(q.get('car') ?? 'gwagen')
   scene.add(car.root, car.shadowMesh)
+  // THE MOUNTAIN BIKE (Bike.ts): carried on the car, taken out with B
+  const bike = new Bike(map, physics, atmos, shadow, env.farGrid)
+  bike.makeSim = (ph) => new MtbSim(ph.pw)
+  await bike.load(mtbUrl)
+  scene.add(bike.root, bike.shadowMesh)
+  /** On the bike (B) — the car parked where it was left. */
+  let riding = false
+  /** WHAT THE PLAYER IS ON — the car, or the bike while riding: the cameras, the crossing, the map and the GPS, the
+   *  pickups, the camp, the saved spot follow it. */
+  const ride = {
+    get pos(): GFX.Vector3 { return riding ? bike.pos : car.pos },
+    get sim() { return riding ? bike.sim : car.sim },
+    get heading(): number { return riding ? bike.heading : car.sim?.heading ?? 0 },
+    get speedKmh(): number { return riding ? bike.speedKmh : car.speedKmh },
+    get gear(): string { return riding ? bike.gear : car.gear },
+    get body() { return riding ? bike.sim?.body : car.sim?.body },
+    grounded: (): boolean => (riding ? bike.grounded() : car.grounded()),
+  }
   // the tyres' dust and the exhaust smoke
   const dust = new Dust(map, atmos, tier)
   scene.add(dust.mesh)
@@ -192,7 +213,7 @@ async function boot() {
   const chartSize = isMobileDevice() ? 768 : 1024
   const charts = (w: World) => {
     const chart = new Chart(w.map, chartSize)
-    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => car.pos, carHeading: () => car.sim?.heading ?? 0, myCamp: () => myCamp }
+    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp }
     const mapView = new MapView(o)
     return { chart, mapView, radar: q.get('radar') === '0' ? null : new Radar({ ...o, openMap: () => mapView.toggle() }) }
   }
@@ -210,7 +231,7 @@ async function boot() {
   const mapBtn = mapButton(toggleRadar)
   mapBtn.classList.toggle('on', radarOn)
   window.addEventListener('keydown', (e) => { if (e.code === 'KeyN' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) toggleRadar() })
-  const chase = new ChaseCam(camera, map, car, renderer.domElement)
+  const chase = new ChaseCam(camera, map, ride, renderer.domElement)
   // (the chase camera stops in front of the rock: a ray from the car out to it, against the slab stacks, formations,
   //  ramps and bridges — StaticMesh — never the car itself)
   {
@@ -221,12 +242,71 @@ async function boot() {
       ray.origin.x = ox; ray.origin.y = oy; ray.origin.z = oz
       ray.dir.x = dx; ray.dir.y = dy; ray.dir.z = dz
       // (solid false: a ray starting in rock finds where it leaves it, not 0)
-      const hit = physics.pw.world.castRay(ray, len, false, undefined, camGroups, undefined, car.sim?.body)
+      const hit = physics.pw.world.castRay(ray, len, false, undefined, camGroups, undefined, ride.body)
       return hit ? hit.timeOfImpact : null
     }
   }
   chase.snap()
   let driving = q.get('drive') !== '0'
+
+  // THE BIKE ⇄ THE CAR (B): off the car onto the bike (taken off it, stood beside it), back in by the car — or, far from
+  // it, the car brought to you (as in GTA). Where a vehicle goes: beside the other, on dry ground clear of trunks.
+  const clearAt = (x: number, z: number, r: number): boolean => {
+    if (map.waterAt(x, z) !== null || !map.inBox(x, z)) return false
+    const d = world.trees.data
+    for (let i = 0; i < world.trees.count; i++) if ((d[i * TREE_STRIDE] - x) ** 2 + (d[i * TREE_STRIDE + 2] - z) ** 2 < r * r) return false
+    // (not on a slope steeper than ~30 %)
+    const h = map.height(x, z)
+    return Math.abs(map.height(x + r, z) - h) < 0.3 * r && Math.abs(map.height(x, z + r) - h) < 0.3 * r
+  }
+  /** A spot beside (x, z) facing h: offsets [right, back] tried in turn (m). */
+  const besides = (x: number, z: number, h: number, offs: [number, number][], r: number): { x: number; z: number } | null => {
+    for (const [sx, sz] of offs) {
+      const px = x + Math.cos(h) * sx + Math.sin(h) * sz, pz = z - Math.sin(h) * sx + Math.cos(h) * sz
+      if (clearAt(px, pz, r)) return { x: px, z: pz }
+    }
+    return null
+  }
+  /** The car brought beside the bike (parked: keep — false while riding on; true: taken at once). */
+  const bringCar = (unpark: boolean) => {
+    const h = bike.heading, p = bike.pos, half = car.half
+    const at = besides(p.x, p.z, h, [[half.x + 1.6, 0], [-(half.x + 1.6), 0], [0, half.z + 2], [0, -(half.z + 2)]], half.x + 0.4) ?? { x: p.x + Math.cos(h) * 4, z: p.z - Math.sin(h) * 4 }
+    if (unpark) car.unpark({ x: at.x, z: at.z, heading: h })
+    else car.placeAt(at.x, at.z, h)
+  }
+  const toggleRide = () => {
+    if (!car.sim || !bike.makeSim) return
+    if (!riding) {
+      if (car.speedKmh > 8) { toast('Stop the car to take the bike'); return }
+      const h = car.sim.heading, p = car.pos, half = car.half
+      const at = besides(p.x, p.z, h, [[half.x + 1.0, 0], [-(half.x + 1.0), 0], [0, half.z + 1.4], [0, -(half.z + 1.4)]], 0.8)
+      if (!at) { toast('No room here to take the bike off'); return }
+      if (winch.attached) winch.toggle() // (the line lets go)
+      car.park()
+      bike.mount(at.x, at.z, h)
+      riding = true
+      chase.frame(5.2, 1.25)
+      chase.snap()
+      toast('On the bike · B back to the car')
+    } else {
+      const far = Math.hypot(bike.pos.x - car.pos.x, bike.pos.z - car.pos.z) > 15
+      if (far) bringCar(true)
+      else car.unpark()
+      bike.dismount()
+      riding = false
+      chase.frame(9, 1.6)
+      chase.snap()
+      toast(far ? 'Your 4×4 is brought to you' : 'Back in the 4×4')
+    }
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || !driving || pause) return
+    if (e.code === 'KeyB') toggleRide()
+    if (e.code === 'KeyR' && riding) bike.reset()
+  })
+  // (?ride=bike: start on the bike — the harnesses; ?bikedraw=0: the bike not drawn — the cost A/B)
+  bike.hidden = q.get('bikedraw') === '0'
+  if (q.get('ride') === 'bike' && driving) toggleRide()
 
   const fly = new FlyCam(camera, map, renderer.domElement)
   const sp = map.meta.spawn
@@ -240,9 +320,10 @@ async function boot() {
       fly.place(camera.position.x, camera.position.z, camera.position.y - map.height(camera.position.x, camera.position.z), Math.atan2(-d.x, -d.z), Math.asin(d.y))
     } else chase.snap()
   })
-  const ui = driveUi(car)
+  const ui = driveUi(car, ride, bike)
   // SOUND: the engine, the tyres, the music and the valley's ambience (starts on the first key / tap — Audio.ts)
   const audio = new OthAudio(map, car, atmos)
+  audio.bike = bike
   audio.fires = world.props.fires
   const readouts = gameHud(journal.coins)
   if (q.get('sound') === '0') audio.muted = true
@@ -290,7 +371,8 @@ async function boot() {
     build: buildWorld,
     enter: (w) => { enter(w) },
     move: (dx, dy, dz) => {
-      car.shift(dx, dy, dz)
+      if (riding) bike.shift(dx, dy, dz)
+      else car.shift(dx, dy, dz)
       dust.shift(dx, dy, dz)
       tyreTracks.clear()
       if (!driving) { camera.position.x += dx; camera.position.y += dy; camera.position.z += dz; camera.updateMatrixWorld() }
@@ -300,7 +382,10 @@ async function boot() {
     dispose: (w) => { shadow.forget(w.map); w.dispose(keep) },
     atmos,
   })
-  crossing.onSwap = (_, to) => regionTitle(WORLDS[to.id].name)
+  crossing.onSwap = (_, to) => {
+    regionTitle(WORLDS[to.id].name)
+    if (riding) bringCar(false) // (the car was left in the other world: it comes along, parked by the road)
+  }
 
   const baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100 // (?maxdpr=: the pixel-ratio cap, cost tests)
   let dprScale = 1, dprT = performance.now() + 4000
@@ -335,7 +420,7 @@ async function boot() {
   const camps: Partial<Record<WorldId, Camp | null>> = { ...(saved?.camps ?? {}), ...(saved?.camp && saved.map ? { [saved.map]: saved.camp } : {}) }
   let myCamp: Camp | null = camps[world.id] ?? null
   if (myCamp) world.props.pitch(myCamp)
-  const lastPos = new GFX.Vector3().copy(car.pos)
+  const lastPos = new GFX.Vector3().copy(ride.pos)
   const save = () => {
     if (Number.isNaN(safe.x) || !saving) return
     saveProgress({ v: 1, map: map.meta.id, car: car.id, x: safe.x, z: safe.z, heading: safe.heading, hour: atmos.hour, travelled, playSeconds, savedAt: Date.now(), camp: myCamp, camps: { ...camps, [world.id]: myCamp } })
@@ -373,13 +458,13 @@ async function boot() {
   // by your own camp you rest at it, anywhere else you PITCH one beside the car. Resting skips to the hour you pick
   // (or waits out the weather) behind a fade, and saves the journey (a checkpoint)
   const campHere = (): { name: string; own: boolean } | null => {
-    const p = car.pos
+    const p = ride.pos
     const site = world.places.find((l) => l.kind === 'camp' && (l.x - p.x) ** 2 + (l.z - p.z) ** 2 < 22 * 22)
     if (site) return { name: site.name, own: false }
     if (myCamp && (myCamp.x - p.x) ** 2 + (myCamp.z - p.z) ** 2 < 25 * 25) return { name: 'Your camp', own: true }
     return null
   }
-  const canCamp = () => driving && !!car.sim && car.speedKmh < 3 && car.grounded() && map.waterAt(car.pos.x, car.pos.z) === null
+  const canCamp = () => driving && !!ride.sim && ride.speedKmh < 3 && ride.grounded() && map.waterAt(ride.pos.x, ride.pos.z) === null
   const closeMenu = () => {
     pause?.close()
     pause = null
@@ -395,7 +480,7 @@ async function boot() {
     let here = campHere()
     if (!here) {
       // pitch it beside the car (its right, else its left), facing the car
-      const h = car.sim!.heading, p = car.pos
+      const h = ride.heading, p = ride.pos
       const spot = [4.6, -4.6].map((side) => [p.x + Math.cos(h) * side, p.z - Math.sin(h) * side]).find(([x, z]) => map.waterAt(x, z) === null) ?? [p.x, p.z]
       myCamp = { x: spot[0], y: map.height(spot[0], spot[1]), z: spot[1], rot: h + Math.PI / 2 }
       world.props.pitch(myCamp)
@@ -422,7 +507,7 @@ async function boot() {
   readouts.onCamp(openCamp)
   // the SIGNPOST you've stopped by (≤ 15 m): its boards — the nearest places, which way (from where you look) and how far
   const signHud = () => {
-    const s = driving ? world.props.signNear(car.pos.x, car.pos.z, 15) : null
+    const s = driving ? world.props.signNear(ride.pos.x, ride.pos.z, 15) : null
     if (!s) { readouts.sign(null); return }
     camera.getWorldDirection(signDir)
     const head = Math.atan2(signDir.x, -signDir.z)
@@ -454,19 +539,21 @@ async function boot() {
     const dt = Math.min(clock.getDelta(), 0.1)
     car.wet = dust.wet = atmos.uniforms.uWet.value
     // the crossing first: a swap moves the car before this frame's physics, pose and cameras
-    crossing.update(dt, car.sim ? car.pos : null, camera.position)
-    physics.pw.advance(dt, (fdt) => { car.fixed(fdt); winch.fixed(fdt) })
+    bike.wet = car.wet
+    crossing.update(dt, ride.sim ? ride.pos : null, camera.position)
+    physics.pw.advance(dt, (fdt) => { car.fixed(fdt); bike.fixed(fdt); winch.fixed(fdt) })
     car.update(physics.pw.alpha)
-    guide.update(dt, car.pos.x, car.pos.z)
+    bike.update(physics.pw.alpha, dt)
+    guide.update(dt, ride.pos.x, ride.pos.z)
     // the journey: distance driven (not the jumps of a reset / a car change), the last safe spot, the autosave
     playSeconds += dt
-    const moved = Math.hypot(car.pos.x - lastPos.x, car.pos.z - lastPos.z)
+    const moved = Math.hypot(ride.pos.x - lastPos.x, ride.pos.z - lastPos.z)
     if (moved < 5) travelled += moved
-    lastPos.copy(car.pos)
-    if (car.sim && car.grounded() && map.waterAt(car.pos.x, car.pos.z) === null) { safe.x = car.pos.x; safe.z = car.pos.z; safe.heading = car.sim.heading }
+    lastPos.copy(ride.pos)
+    if (ride.sim && ride.grounded() && map.waterAt(ride.pos.x, ride.pos.z) === null) { safe.x = ride.pos.x; safe.z = ride.pos.z; safe.heading = ride.heading }
     if ((saveT += dt) > 20) { saveT = 0; save() }
     // the supply crates the car reaches
-    const got = world.props.pickUp(dt, car.pos.x, car.pos.y, car.pos.z)
+    const got = world.props.pickUp(dt, ride.pos.x, ride.pos.y, ride.pos.z)
     if (got.length) {
       for (const id of got) journal.crates.push(id)
       journal.coins += REWARD.crate * got.length
@@ -480,6 +567,11 @@ async function boot() {
     if ((hudTick += dt) > 0.25) { hudTick = 0; signHud(); const c = canCamp() ? campHere() : null; readouts.camp(canCamp() ? (c ? `Rest at ${c.name}` : 'Pitch camp') : null) }
     dust.update(dt, car)
     tyreTracks.update(car, clock.elapsedTime)
+    if (riding && bike.sim) {
+      const sb = bike.sim, wheels = [sb.front, sb.rear]
+      dust.bikeTyres(dt, wheels, sb.body.linvel())
+      tyreTracks.bikeMarks(wheels, clock.elapsedTime)
+    }
     car.lights(atmos, dt)
     car.weather(atmos, dt)
     if (driving) chase.update(dt)
@@ -491,15 +583,16 @@ async function boot() {
     rain.update()
     sand.update()
     mapView.update(dt)
-    radar?.update(dt, radarOn && driving && !mapView.isOpen, car.speedKmh)
+    radar?.update(dt, radarOn && driving && !mapView.isOpen, ride.speedKmh)
     winch.update(camera)
     shadow.update(atmos.uniforms.uSunDir.value)
     const t0 = performance.now()
-    world.update(camera, dt, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, car.pos.x, car.pos.z)
+    world.update(camera, dt, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, ride.pos.x, ride.pos.z)
     // (what's out of view or behind the hills isn't drawn: 2026-11-02)
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     view.setFromProjectionMatrix(viewPV, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     car.cull(view, world.horizon)
+    bike.cull(view, world.horizon)
     dust.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
     renderer.prepare(scene, camera)
@@ -517,6 +610,10 @@ async function boot() {
     get props() { return world.props },
     get birds() { return world.birds },
     get world() { return world },
+    bike,
+    /** On / off the bike (B). */
+    ride: () => toggleRide(),
+    get riding() { return riding },
     /** (the harness's probes: offscreen bakes re-run, targets read back) */
     renderer,
     /** The drawn parts, each with `visible` (scripts/harness/ablate.mjs: the GPU's frame, system by system). */
@@ -542,7 +639,8 @@ async function boot() {
       old.dispose(keep)
       const sp = w.map.meta.spawn
       physics.follow(sp.x, sp.z)
-      car.sim?.place(sp.x, w.map.height(sp.x, sp.z) + 0.6, sp.z, sp.yaw)
+      if (riding) { bike.mount(sp.x, sp.z, sp.yaw); bringCar(false) } // (the bike at the spawn, the car parked beside it)
+      else car.sim?.place(sp.x, w.map.height(sp.x, sp.z) + 0.6, sp.z, sp.yaw)
       return w.timings
     },
     crossing,
@@ -771,38 +869,48 @@ function fullscreenButton(): void {
 }
 
 /** The driving HUD (speed, gear, keys) and, on touch screens, the pedals and steering buttons. */
-function driveUi(car: Vehicle): { update: (driving: boolean, time: string) => void } {
+function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear: string; readonly sim: unknown }, bike: Bike): { update: (driving: boolean, time: string) => void } {
   const box = document.createElement('div')
   box.id = 'drive'
-  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · X Z gears · E winch · C camp · R reset · N minimap · Tab map (click: waypoint) · G time · Shift+G weather · V free camera · Esc pause</div>'
+  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · X Z gears · E winch · B bike · C camp · R reset · N minimap · Tab map (click: waypoint) · G time · Shift+G weather · V free camera · Esc pause</div>'
   document.body.appendChild(box)
   const spd = box.querySelector('b')!, gear = box.querySelector('i')!, clk = box.querySelector('em')!, help = box.querySelector('.help') as HTMLElement
+  const CAR_HELP = help.textContent ?? '', BIKE_HELP = 'W pedal · S brake · A D steer · ↑ ↓ lean (wheelie, manual, flips) · Space hop (hold to load) · Shift sprint · R back on · B to the car · Tab map · V free camera · Esc pause'
+  let onBike = false, pad: HTMLElement | null = null
   const touch = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches
   if (touch) {
     // TOUCH: round thumb pads in the corners, the rest of the HUD small and out of the way (index.html, body.touch):
     // the game gets the screen
     document.body.classList.add('touch')
     help.style.display = 'none'
-    const pad = document.createElement('div')
+    pad = document.createElement('div')
     pad.className = 'oth-touch'
-    pad.innerHTML = '<button data-k="left">◀</button><button data-k="right">▶</button><button data-k="reset">⟲</button><button data-k="brake">BRAKE</button><button data-k="gas">GAS</button><button data-k="winch">WINCH</button>' +
+    pad.innerHTML = '<button data-k="left">◀</button><button data-k="right">▶</button><button data-k="reset">⟲</button><button data-k="brake">BRAKE</button><button data-k="gas">GAS</button><button data-k="winch">WINCH</button><button data-k="ride">BIKE</button><button data-k="hop" class="bk">HOP</button><button data-k="leanF" class="bk">▲</button><button data-k="leanB" class="bk">▼</button>' +
       (car.driving.manual ? '<button data-k="up" data-key="KeyX">▲</button><button data-k="down" data-key="KeyZ">▼</button>' : '')
     document.body.appendChild(pad)
     // (one-shot pads — the winch, the manual gears — press the key they stand for)
     const tap = (code: string) => (e: Event) => { e.preventDefault(); window.dispatchEvent(new KeyboardEvent('keydown', { code })) }
     for (const b of pad.querySelectorAll('button')) {
       if (b.dataset.k === 'winch') { b.addEventListener('pointerdown', tap('KeyE')); continue }
+      if (b.dataset.k === 'ride') { b.addEventListener('pointerdown', tap('KeyB')); continue }
+      if (b.dataset.k === 'hop' || b.dataset.k === 'leanF' || b.dataset.k === 'leanB') {
+        const set = (v: number) => (e: Event) => { e.preventDefault(); if (b.dataset.k === 'hop') bike.touch.hop = v; else bike.touch.lean = b.dataset.k === 'leanF' ? v : -v }
+        b.addEventListener('pointerdown', set(1)); b.addEventListener('pointerup', set(0)); b.addEventListener('pointercancel', set(0)); b.addEventListener('pointerleave', set(0))
+        continue
+      }
       if (b.dataset.key) { b.addEventListener('pointerdown', tap(b.dataset.key)); continue }
-      const k = b.dataset.k as keyof Vehicle['touch'] | 'reset'
-      const on = (v: number) => (e: Event) => { e.preventDefault(); if (k === 'reset') { if (v) car.reset() } else car.touch[k] = v }
+      const k = b.dataset.k as 'gas' | 'brake' | 'left' | 'right' | 'reset'
+      const on = (v: number) => (e: Event) => { e.preventDefault(); if (k === 'reset') { if (v) { if (bike.sim) bike.reset(); else car.reset() } } else { car.touch[k] = v; bike.touch[k] = v } }
       b.addEventListener('pointerdown', on(1)); b.addEventListener('pointerup', on(0)); b.addEventListener('pointercancel', on(0)); b.addEventListener('pointerleave', on(0))
     }
   }
   return {
     update: (driving, time: string) => {
       box.style.display = driving ? 'block' : 'none'
-      spd.textContent = car.speedKmh.toFixed(0)
-      gear.textContent = car.gear
+      spd.textContent = ride.speedKmh.toFixed(0)
+      gear.textContent = ride.gear
+      const on = !!bike.sim
+      if (on !== onBike) { onBike = on; help.textContent = on ? BIKE_HELP : CAR_HELP; pad?.classList.toggle('bike', on) }
       clk.textContent = time
     },
   }

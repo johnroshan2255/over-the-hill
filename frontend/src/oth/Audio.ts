@@ -3,6 +3,7 @@ import type { Atmosphere } from './Atmosphere'
 import { ENGINE_WORKLET, VOICES } from './engineSynth'
 import type { MapData } from './MapData'
 import type { Vehicle } from './Vehicle'
+import type { Bike } from './Bike'
 
 /**
  * SOUND for Over the Hill (public/oth/audio — CC0 recordings, credits in ASSET_LIST.md). Starts on the first key /
@@ -115,6 +116,12 @@ export class OthAudio {
   private lastGear = ''
   private squeal: { src: AudioBufferSourceNode; gain: GainNode } | null = null
   private gravel: { src: AudioBufferSourceNode; gain: GainNode } | null = null
+  /** The bike's FREEWHEEL: a ratchet's clicks (made here, 36 a second at rate 1 — played at the rear wheel's turns a
+   *  second), heard while it coasts. */
+  private freewheel: { src: AudioBufferSourceNode; gain: GainNode } | null = null
+  /** The bike (main.ts): while it's ridden its tyres and freewheel are heard, the parked car's engine is off. */
+  bike: Bike | null = null
+  private parkedWas = false
   private sense = 0
   private near = { stream: 1e9, streamPan: 0, fall: 1e9, fallPan: 0, forest: 0, fire: 1e9, firePan: 0, pond: 1e9, pondPan: 0, pondIdx: -1, ridge: 0 }
   private readonly mk: [number, number, number, number] = [0, 0, 0, 0]
@@ -240,6 +247,21 @@ export class OthAudio {
     }
     void load('tyre_squeal.wav').then((b) => (this.squeal = loopOf(b, this.master)))
     void load('tyre_gravel.wav').then((b) => (this.gravel = loopOf(b, this.master)))
+    {
+      // the ratchet: 36 short bright clicks a second, each a few ms of decaying noise, a little uneven
+      const sr = ctx.sampleRate, buf = ctx.createBuffer(1, sr, sr), d = buf.getChannelData(0)
+      let seed = 7
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+      for (let k = 0; k < 36; k++) {
+        const at = Math.floor((k / 36) * sr), amp = 0.55 + 0.45 * rnd(), n = Math.floor(sr * 0.004)
+        for (let i = 0; i < n; i++) d[at + i] += (rnd() * 2 - 1) * amp * Math.exp(-i / (sr * 0.0007))
+      }
+      const hp = ctx.createBiquadFilter()
+      hp.type = 'highpass'
+      hp.frequency.value = 2200
+      hp.connect(this.master)
+      this.freewheel = loopOf(buf, hp)
+    }
   }
 
   /** Each frame (dt in s): the engine, the tyres and the beds follow the car, the light, the camera. */
@@ -247,12 +269,15 @@ export class OthAudio {
     const ctx = this.ctx
     if (!ctx || !this.beds) return
     const t = ctx.currentTime, sim = this.car.sim, D = sim?.real ?? null
-    const speed = sim ? Math.abs(sim.speed) : 0
+    const bk = this.bike?.sim ?? null
+    // (the car parked — the rider on the bike: its engine runs down; back in, it starts again)
+    if (this.engine && this.car.parked !== this.parkedWas) { this.parkedWas = this.car.parked; this.engine.port.postMessage({ event: this.car.parked ? 'stop' : 'start' }) }
+    const speed = bk ? Math.abs(bk.speed) : sim ? Math.abs(sim.speed) : 0
     // the car from the camera: the further, the quieter
-    const dCar = camera.position.distanceTo(this.car.pos), near = Math.min(1, Math.max(0.15, 9 / Math.max(dCar, 1)))
+    const dCar = camera.position.distanceTo(bk && this.bike ? this.bike.pos : this.car.pos), near = Math.min(1, Math.max(0.15, 9 / Math.max(dCar, 1)))
     // ENGINE: the sim's rpm, load and throttle to the synth (each car's own revs: idle … redline)
     const E = this.engine
-    if (E && sim) {
+    if (E && sim && !this.car.parked) {
       // a new car (or the first): its voice, and the key turns once it's loaded
       if (this.voiceOf !== this.car.id && this.car.id) {
         this.voiceOf = this.car.id
@@ -277,9 +302,11 @@ export class OthAudio {
       this.engineBus.gain.setTargetAtTime(0.8 * near, t, 0.2)
     }
     // TYRES: a squeal sliding on hard ground; on dirt and gravel a scrub when sliding, a soft roll when not
-    const n = sim?.tyreNoise() ?? null
-    const slide = n ? n.slide : sim?.drifting ? 0.8 : 0, spin = n ? n.spin : 0
-    const hard = n ? n.hard : 0.3, loose = n ? n.gravel + n.soft : 0.7
+    const n = bk ? null : sim?.tyreNoise() ?? null
+    // (the bike's: its tyres' slip, what the rear rolls on — the hard part of the ground (asphalt / rock / planks, w[0]) or loose; quieter, two thin tyres)
+    const bs = bk?.rear.surface ?? null, bHard = bs ? bs.w[0] : 0.2
+    const slide = bk ? Math.max(bk.front.slip, bk.rear.slip) : n ? n.slide : sim?.drifting ? 0.8 : 0, spin = n ? n.spin : 0
+    const hard = bk ? bHard : n ? n.hard : 0.3, loose = bk ? (1 - bHard) * 0.6 : n ? n.gravel + n.soft : 0.7
     const fast = Math.min(1, speed / 20)
     if (this.squeal) {
       this.squeal.gain.gain.setTargetAtTime(Math.min(1, slide * 1.2 + spin * 0.5) * hard * 0.5 * Math.min(1, speed / 6) * near, t, 0.06)
@@ -289,6 +316,12 @@ export class OthAudio {
       const scrub = Math.min(1, slide * 1.2 + spin * 0.8) * loose * 0.75, roll = fast * loose * 0.16
       this.gravel.gain.gain.setTargetAtTime(Math.max(scrub, roll) * Math.min(1, speed / 3) * near, t, 0.08)
       this.gravel.src.playbackRate.setTargetAtTime(0.55 + 0.3 * fast, t, 0.1)
+    }
+    // the FREEWHEEL: clicking while the bike rolls without being pedalled
+    if (this.freewheel) {
+      const coast = bk && !bk.crashed && !bk.pedalling && bk.rear.contact ? Math.min(1, Math.max(0, Math.abs(bk.speed) - 0.4)) : 0
+      this.freewheel.gain.gain.setTargetAtTime(coast * 0.22 * near, t, 0.05)
+      if (bk) this.freewheel.src.playbackRate.setTargetAtTime(Math.max(0.05, Math.abs(bk.rear.spinRate) / (2 * Math.PI)), t, 0.05)
     }
     // BEDS: what's round the camera (a few times a second)
     this.sense -= dt

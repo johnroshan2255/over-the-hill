@@ -25,7 +25,7 @@ export class Dust {
   private readonly aP: GFX.InstancedBufferAttribute // x y z size
   private readonly aC: GFX.InstancedBufferAttribute // r g b alpha
   private next = 0
-  private readonly acc = [0, 0, 0, 0, 0] // emission carried over per wheel + the exhaust
+  private readonly acc = [0, 0, 0, 0, 0, 0, 0] // emission carried over per wheel + the exhaust (4) + the bike's two tyres (5, 6)
   private readonly mk: [number, number, number, number] = [0, 0, 0, 0]
   private readonly v = new GFX.Vector3()
   private readonly d = new GFX.Vector3()
@@ -84,7 +84,7 @@ export class Dust {
   /** One frame: the car's tyres and tailpipes emit, every puff drifts, grows and fades. */
   update(dt: number, car: Vehicle): void {
     if (dt <= 0) return
-    if (car.sim && car.model) this.emit(dt, car)
+    if (car.sim && car.model && !car.parked) this.emit(dt, car)
     const st = this.st, P = this.aP.array as Float32Array, C = this.aC.array as Float32Array
     const drag = Math.exp(-dt * 1.6)
     let live = 0
@@ -141,63 +141,13 @@ export class Dust {
     const lv = sim.body.linvel()
     const speed = Math.hypot(lv.x, lv.z)
     const go = Math.max(0, Math.min(1, (speed - 1.5) / 12))
-    const hw = this.map.meta.trails.hw
     // TYRES: dust from each wheel on the ground, by what it rolls on
     for (let k = 0; k < 4; k++) {
       const wk = sim.wheels[k]
       if (!wk.contact) { this.acc[k] = 0; continue }
       const [hx, hy, hz] = model.wheelPos[k]
       const c = this.v.set(hx, hy + wk.lift - model.wheelRadius * 0.85, hz).applyQuaternion(q).add(p)
-      const deck = this.map.bridgeAt(c.x, c.z)
-      if (deck !== null && c.y > deck - 0.6) { this.acc[k] = 0; continue } // (planks: no dust)
-      // WATER (a ford, a pond's edge): SPLASHES — white spray thrown up and out, more with speed and depth; no dust
-      const lvl = this.map.waterAt(c.x, c.z), ground = this.map.height(c.x, c.z)
-      if (lvl !== null && lvl > ground + 0.05) {
-        const depth = Math.min(1, lvl - ground)
-        this.acc[k] += (go * 24 + 4 * Math.min(1, speed / 2)) * (0.4 + depth) * dt
-        while (this.acc[k] >= 1) {
-          this.acc[k] -= 1
-          const jx = (this.rnd() - 0.5) * 0.6, jz = (this.rnd() - 0.5) * 0.6
-          this.spawn(c.x + jx, lvl + 0.05, c.z + jz,
-            lv.x * 0.35 + jx * 5 + (this.rnd() - 0.5) * 2, 1.0 + this.rnd() * 1.8 * (0.5 + go), lv.z * 0.35 + jz * 5 + (this.rnd() - 0.5) * 2,
-            0.35 + this.rnd() * 0.4, 0.18 + 0.2 * go, (0.5 + this.rnd() * 0.7) * (0.6 + go),
-            0.86, 0.91, 0.95, Math.min(0.42, 0.2 + 0.22 * go))
-        }
-        continue
-      }
-      const m = this.map.maskAt(c.x, c.z, this.mk)
-      const track = Math.max(0, Math.min(1, (hw + 0.8 - this.map.trailDist(c.x, c.z)) / 1.2))
-      const bank = m[2] > 0.75 ? 1 - track : 0
-      const rock = Math.min(1, m[0] * 1.6) * (1 - track) * (1 - bank)
-      // (the desert: what isn't track, rock or bank is SAND — loose (its mask's G) throws big pale plumes; the valley's
-      //  is grass)
-      const rest = Math.max(0, 1 - track - bank - rock)
-      const desert = this.map.desert
-      const sand = desert ? rest : 0, grass = desert ? 0 : rest, loose = desert ? m[1] : 0
-      // MUD (mud.bin; and the tracks in the rain): dark wet clods, low and short — the wet lays the dust
-      const wet = this.wet
-      const mud = Math.max(this.map.mudAt(c.x, c.z), track * wet * 0.7)
-      const amt = (track * 1.0 + bank * 0.55 + rock * 0.3 + grass * 0.16 + sand * (0.45 + 0.85 * loose)) * (1 - 0.75 * wet) * (1 - mud) + mud * 1.3
-      const slip = sim.wheelSlip[k] ?? 0
-      this.acc[k] += amt * (go * 20 + slip * 42) * dt
-      if (this.acc[k] < 1) continue
-      // the colour: track dust (the dirt's orange-brown, paler), gravel, rock grey (the desert's: sandstone), dry
-      // grass-earth, the desert's pale orange sand — or the mud's
-      const dry = 1 - mud
-      const rr = desert ? 0.72 : 0.56, rg = desert ? 0.5 : 0.54, rb = desert ? 0.38 : 0.5
-      const r = (track * 0.68 + bank * 0.72 + rock * rr + grass * 0.5 + sand * 0.82) * dry + 0.2 * mud
-      const g = (track * 0.47 + bank * 0.67 + rock * rg + grass * 0.45 + sand * 0.63) * dry + 0.14 * mud
-      const b = (track * 0.32 + bank * 0.58 + rock * rb + grass * 0.32 + sand * 0.45) * dry + 0.09 * mud
-      const big = (0.7 + 0.6 * go + 0.5 * slip) * (1 - 0.5 * mud) * (1 + 0.35 * sand * loose)
-      while (this.acc[k] >= 1) {
-        this.acc[k] -= 1
-        const jx = (this.rnd() - 0.5) * 0.5, jz = (this.rnd() - 0.5) * 0.5
-        // thrown back and out from the tyre, carried a little with the car, lifting (mud: lower, shorter lived)
-        this.spawn(c.x + jx, c.y + 0.1 + this.rnd() * 0.2, c.z + jz,
-          lv.x * 0.25 + jx * 3 + (this.rnd() - 0.5) * 1.2, (0.4 + this.rnd() * 1.1 + slip * 0.8) * (1 - 0.5 * mud), lv.z * 0.25 + jz * 3 + (this.rnd() - 0.5) * 1.2,
-          (1.6 + this.rnd() * 1.8) * (1 - 0.55 * mud), (0.5 + this.rnd() * 0.4) * big, (2.2 + this.rnd() * 2.0) * big,
-          r, g, b, Math.min(0.55, 0.3 * amt + 0.12 * slip) + 0.25 * mud)
-      }
+      this.tyre(dt, k, c, lv, speed, go, sim.wheelSlip[k] ?? 0, 1)
     }
     // EXHAUST: a thin haze at idle, a grey puff on the gas, from every tip
     const thr = Math.min(1, Math.abs(sim.controls.throttle))
@@ -212,6 +162,71 @@ export class Dust {
         0.9 + this.rnd() * 0.9, 0.12, 0.8 + 0.9 * thr + this.rnd() * 0.3,
         sh, sh + 0.01, sh + 0.04, 0.1 + 0.22 * thr)
     }
+  }
+  /** One tyre on the ground at c (world): splashes in water, none on planks, else dust by what it rolls on — k its
+   *  emission carried over (acc), lv the vehicle's velocity, go 0 … 1 with speed, slip 0 … 1, size the tyre (1 a car's;
+   *  the bike's ~0.35: fewer, smaller puffs). */
+  private tyre(dt: number, k: number, c: GFX.Vector3, lv: { x: number; y: number; z: number }, speed: number, go: number, slip: number, size: number): void {
+    const hw = this.map.meta.trails.hw
+    const deck = this.map.bridgeAt(c.x, c.z)
+    if (deck !== null && c.y > deck - 0.6) { this.acc[k] = 0; return } // (planks: no dust)
+    // WATER (a ford, a pond's edge): SPLASHES — white spray thrown up and out, more with speed and depth; no dust
+    const lvl = this.map.waterAt(c.x, c.z), ground = this.map.height(c.x, c.z)
+    if (lvl !== null && lvl > ground + 0.05) {
+      const depth = Math.min(1, lvl - ground)
+      this.acc[k] += (go * 24 + 4 * Math.min(1, speed / 2)) * (0.4 + depth) * dt * size
+      while (this.acc[k] >= 1) {
+        this.acc[k] -= 1
+        const jx = (this.rnd() - 0.5) * 0.6, jz = (this.rnd() - 0.5) * 0.6
+        this.spawn(c.x + jx, lvl + 0.05, c.z + jz,
+          lv.x * 0.35 + jx * 5 + (this.rnd() - 0.5) * 2, 1.0 + this.rnd() * 1.8 * (0.5 + go), lv.z * 0.35 + jz * 5 + (this.rnd() - 0.5) * 2,
+          0.35 + this.rnd() * 0.4, 0.18 + 0.2 * go, (0.5 + this.rnd() * 0.7) * (0.6 + go),
+          0.86, 0.91, 0.95, Math.min(0.42, 0.2 + 0.22 * go))
+      }
+      return
+    }
+    const m = this.map.maskAt(c.x, c.z, this.mk)
+    const track = Math.max(0, Math.min(1, (hw + 0.8 - this.map.trailDist(c.x, c.z)) / 1.2))
+    const bank = m[2] > 0.75 ? 1 - track : 0
+    const rock = Math.min(1, m[0] * 1.6) * (1 - track) * (1 - bank)
+    // (the desert: what isn't track, rock or bank is SAND — loose (its mask's G) throws big pale plumes; the valley's
+    //  is grass)
+    const rest = Math.max(0, 1 - track - bank - rock)
+    const desert = this.map.desert
+    const sand = desert ? rest : 0, grass = desert ? 0 : rest, loose = desert ? m[1] : 0
+    // MUD (mud.bin; and the tracks in the rain): dark wet clods, low and short — the wet lays the dust
+    const wet = this.wet
+    const mud = Math.max(this.map.mudAt(c.x, c.z), track * wet * 0.7)
+    const amt = (track * 1.0 + bank * 0.55 + rock * 0.3 + grass * 0.16 + sand * (0.45 + 0.85 * loose)) * (1 - 0.75 * wet) * (1 - mud) + mud * 1.3
+    this.acc[k] += amt * (go * 20 + slip * 42) * dt * size
+    if (this.acc[k] < 1) return
+    // the colour: track dust (the dirt's orange-brown, paler), gravel, rock grey (the desert's: sandstone), dry
+    // grass-earth, the desert's pale orange sand — or the mud's
+    const dry = 1 - mud
+    const rr = desert ? 0.72 : 0.56, rg = desert ? 0.5 : 0.54, rb = desert ? 0.38 : 0.5
+    const r = (track * 0.68 + bank * 0.72 + rock * rr + grass * 0.5 + sand * 0.82) * dry + 0.2 * mud
+    const g = (track * 0.47 + bank * 0.67 + rock * rg + grass * 0.45 + sand * 0.63) * dry + 0.14 * mud
+    const b = (track * 0.32 + bank * 0.58 + rock * rb + grass * 0.32 + sand * 0.45) * dry + 0.09 * mud
+    const big = (0.7 + 0.6 * go + 0.5 * slip) * (1 - 0.5 * mud) * (1 + 0.35 * sand * loose) * (0.35 + 0.65 * size)
+    while (this.acc[k] >= 1) {
+      this.acc[k] -= 1
+      const jx = (this.rnd() - 0.5) * 0.5, jz = (this.rnd() - 0.5) * 0.5
+      // thrown back and out from the tyre, carried a little with the car, lifting (mud: lower, shorter lived)
+      this.spawn(c.x + jx, c.y + 0.1 + this.rnd() * 0.2, c.z + jz,
+        lv.x * 0.25 + jx * 3 + (this.rnd() - 0.5) * 1.2, (0.4 + this.rnd() * 1.1 + slip * 0.8) * (1 - 0.5 * mud), lv.z * 0.25 + jz * 3 + (this.rnd() - 0.5) * 1.2,
+        (1.6 + this.rnd() * 1.8) * (1 - 0.55 * mud), (0.5 + this.rnd() * 0.4) * big, (2.2 + this.rnd() * 2.0) * big,
+        r, g, b, Math.min(0.55, 0.3 * amt + 0.12 * slip) + 0.25 * mud)
+    }
+  }
+
+  /** The BIKE's two tyres (main.ts while riding): each contact point, how much it slides; lv its velocity. */
+  bikeTyres(dt: number, wheels: { contact: boolean; slip: number; ground: { x: number; y: number; z: number } }[], lv: { x: number; y: number; z: number }): void {
+    const speed = Math.hypot(lv.x, lv.z), go = Math.max(0, Math.min(1, (speed - 1.5) / 10))
+    wheels.forEach((w, i) => {
+      const k = 5 + i
+      if (!w.contact) { this.acc[k] = 0; return }
+      this.tyre(dt, k, this.v.set(w.ground.x, w.ground.y + 0.04, w.ground.z), lv, speed, go, w.slip, 0.35)
+    })
   }
 }
 

@@ -76,7 +76,7 @@ export class Vehicle {
     this.shadow.renderOrder = 2
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.code)
-      if (e.code === 'KeyR') this.reset()
+      if (e.code === 'KeyR' && !this.parked) this.reset()
       if (e.code === 'KeyL') this.lightMode = this.lightMode === 'auto' ? 'off' : this.lightMode === 'off' ? 'on' : 'auto'
       const n = ['Digit1', 'Digit2'].indexOf(e.code)
       if (n >= 0 && VEHICLES[n]) void this.setCar(VEHICLES[n].id)
@@ -87,6 +87,36 @@ export class Vehicle {
     window.addEventListener('keyup', (e) => this.keys.delete(e.code))
     window.addEventListener('blur', () => this.keys.clear())
   }
+
+  /** PARKED while the rider is on the bike (main.ts, B): the engine off, no keys, the body held where it stands — a
+   *  fixed obstacle the bike can ride into (kinematic: the physics streams its ground round the bike now, the car
+   *  must not fall through ground it unloaded). */
+  parked = false
+  park(): void {
+    if (!this.sim || this.parked) return
+    this.parked = true
+    this.keys.clear()
+    const b = this.sim.body
+    b.setLinvel({ x: 0, y: 0, z: 0 }, true); b.setAngvel({ x: 0, y: 0, z: 0 }, true)
+    b.setBodyType(this.physics.pw.R.RigidBodyType.KinematicPositionBased, true)
+  }
+  /** Back in: the body live again (placed at (x, z, heading) first, when given — the car brought to the rider). */
+  unpark(at?: { x: number; z: number; heading: number }): void {
+    if (!this.sim || !this.parked) return
+    this.parked = false
+    this.sim.body.setBodyType(this.physics.pw.R.RigidBodyType.Dynamic, true)
+    if (at) this.placeAt(at.x, at.z, at.heading)
+  }
+  /** Stood at (x, z), facing heading, on what's under it (parked or not). */
+  placeAt(x: number, z: number, heading: number): void {
+    if (!this.sim) return
+    this.physics.follow(x, z)
+    this.sim.place(x, this.physics.surface(x, z, this.map.height(x, z)) + 0.6, z, heading)
+    this.readPose(this.curP, this.curQ)
+    this.prevP.copy(this.curP); this.prevQ.copy(this.curQ)
+  }
+  /** Its half width and half length (m): where a bike can stand beside it. */
+  get half(): { x: number; z: number } { return this.model ? { x: this.model.half.x, z: this.model.half.z } : { x: 1, z: 2.2 } }
 
   /** Called when a car replaces the one driving (not the first): the sound stops one engine, starts the next. */
   onCarChange?: () => void
@@ -245,7 +275,7 @@ export class Vehicle {
 
   /** Fixed step (60 Hz), before world.step(). */
   fixed(dt: number): void {
-    if (!this.sim || this.loading) return
+    if (!this.sim || this.loading || this.parked) return
     const k = this.keys
     const t = this.sim.body.translation()
     this.physics.follow(t.x, t.z)
@@ -483,6 +513,8 @@ void main() {
 }
 `
 
+/** The car's surface shader (the bike uses it too — Bike.ts): this world's light, the paint, the sand coat. */
+export const VEHICLE_FRAG_SRC = () => FRAG
 const FRAG = /* glsl */ `
 ${FRAG_OUT}
 ${ATMOS_GLSL}

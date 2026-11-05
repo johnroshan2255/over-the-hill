@@ -1,6 +1,11 @@
 import * as GFX from './gfx'
 import type { MapData } from './MapData'
-import type { Vehicle } from './Vehicle'
+
+/** What the camera follows (main.ts: the car, or the bike while riding): its place, and its heading and speed when there. */
+export interface ChaseTarget {
+  readonly pos: GFX.Vector3
+  readonly sim: { readonly heading: number; readonly speed: number } | null | undefined
+}
 
 /**
  * The CHASE CAMERA: behind and above the car, swinging round after its heading with a little lag (so a slide shows),
@@ -30,8 +35,10 @@ export class ChaseCam {
   private room = 1e4
   /** 0 … 1: how far the camera has risen over the car (rock close behind it). */
   private lift = 0
+  /** How high over the vehicle it looks (m): the car's 1.6, the bike's lower. */
+  private lookH = 1.6
 
-  constructor(readonly camera: GFX.PerspectiveCamera, private readonly map: MapData, private readonly car: Vehicle, dom: HTMLElement) {
+  constructor(readonly camera: GFX.PerspectiveCamera, private readonly map: MapData, private readonly car: ChaseTarget, dom: HTMLElement) {
     dom.addEventListener('pointerdown', (e) => {
       if ((e.target as HTMLElement).closest?.('.oth-touch')) return
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
@@ -73,6 +80,12 @@ export class ChaseCam {
     this.distTo = GFX.MathUtils.clamp(this.distTo * k, 3.5, 40)
   }
 
+  /** Framed for another vehicle: its distance (m) and look height — eased there. */
+  frame(dist: number, lookH: number): void {
+    this.distTo = dist
+    this.lookH = lookH
+  }
+
   private spread(): number {
     const [a, b] = [...this.touches.values()]
     return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0
@@ -97,7 +110,7 @@ export class ChaseCam {
     const speed = Math.abs(this.car.sim.speed)
     const dist = this.dist * (1 + Math.min(speed, 30) / 90)
     const p = this.car.pos
-    this.look.set(p.x, p.y + 1.6, p.z)
+    this.look.set(p.x, p.y + this.lookH, p.z)
     // (rock close behind — the car backed against a wall: the camera rises over the car instead of coming in to it)
     const pe = this.pitch + Math.max(0, 1.15 - this.pitch) * this.lift
     const ux = Math.sin(a) * Math.cos(pe), uy = Math.sin(pe), uz = Math.cos(a) * Math.cos(pe)
@@ -105,7 +118,7 @@ export class ChaseCam {
     if (this.obstruct) {
       // (from the car's own middle, not the look point 1.6 m up: pressed under an overhang, the look point is in the
       //  rock and the camera stayed in it — a grey screen)
-      const oy = p.y + 0.9, hit0 = this.obstruct(p.x, oy, p.z, ux, uy, uz, dist + 0.6 + 0.7)
+      const oy = p.y + this.lookH * 0.56, hit0 = this.obstruct(p.x, oy, p.z, ux, uy, uz, dist + 0.6 + 0.7)
       const hit = hit0 === null ? null : Math.max(0, hit0 - 0.7)
       const free = hit === null ? 1e4 : Math.max(1.2, hit - 0.6) // (finite: Infinity − Infinity in the ease was NaN — a black screen)
       this.room = free < this.room ? free : this.room + (free - this.room) * Math.min(1, dt * 2.5)
@@ -115,8 +128,8 @@ export class ChaseCam {
     }
     const cx = p.x + ux * dd
     const cz = p.z + uz * dd
-    let cy = p.y + 1.6 + uy * dd
-    cy = Math.max(cy, this.map.height(cx, cz) + 1.2)
+    let cy = p.y + this.lookH + uy * dd
+    cy = Math.max(cy, this.map.height(cx, cz) + 0.75 * this.lookH)
     this.camera.position.set(cx, cy, cz)
     this.camera.lookAt(this.look)
     this.camera.updateMatrixWorld()

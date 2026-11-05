@@ -141,6 +141,22 @@ transition, on the ground, not in the air"; a waterfall standing in the open san
   depth seen at low angles; the ford's edges follow the road's carve (angular corners); the desert's new cliff face is
   bare heightfield (slab walls can't fit the clearances); `waterOwner` ~200 ms of the worker's load per world.
 
+## Done — round 6: THE MOUNTAIN BIKE (2026-11-05)
+
+The user: "a mountain bike like the stunt bike in GTA 5 … add each and every physics for the bike, the shock absorber
+and all". A full-suspension enduro bike and its rider, carried on the car: **B** takes it off (the car parked where it
+stands), B again gets back in — or brings the car to you from afar. Details: ARCHITECTURE.md, the mountain bike.
+- Our own model (`scripts/oth/mtb.py`, Blender headless, from `mtb.geometry.json` — one geometry for the model, the
+  physics and the drawing; a `.blend` in `scripts/oth/.cache/`), drawn in ONE draw with its rider posed by IK.
+- The physics (`MtbSim.ts`, 44 checks in `tests/mtb.test.ts`): fork and rear shock (progressive air springs, damping,
+  bumpers), tyres per surface, pedalling with 12 gears and a freewheel, discs (skids, stoppies, over the bars), the lean,
+  wheelies / manuals, bunny hops, flips and spins, landings, crashes with the rider thrown, a foot down at a stop.
+- Ridden by `scripts/harness/bikeride.mjs` in both worlds on WebGPU and WebGL2; WebGPU transpiles clean while riding.
+- Left: the chain and the derailleur are built in one gear (they don't move with a shift); the touch pads (HOP, LEAN,
+  BIKE) not tried on a phone, nor the bike's cost measured on one; its sounds (tyres, the freewheel's ratchet) not
+  listened to (headless); riding isn't saved (Continue puts you in the car, where you were); no stunt scoring (GTA's
+  trick points); the thrown rider doesn't meet vehicles; a bunny hop clears ~0.35 m at 15 km/h (a skilled rider ~0.45).
+
 ## Next, in order
 
 1. **Look**: the sky still short of their cyan-white (the light clouds grey it; try fewer clouds in the desert's clear

@@ -54,6 +54,15 @@
       .oth-touch [data-k=reset], .oth-touch [data-k=winch] { top: calc(10px + env(safe-area-inset-top)); width: 40px; height: 40px; }
       .oth-touch [data-k=reset] { right: calc(12px + env(safe-area-inset-right)); font-size: 20px; }
       .oth-touch [data-k=winch] { right: calc(60px + env(safe-area-inset-right)); font-size: 10px; letter-spacing: .04em; }
+      /* the BIKE (B): its button beside the winch; on the bike HOP and LEAN ▲ ▼ over the pedals, no winch */
+      .oth-touch [data-k=ride] { top: calc(10px + env(safe-area-inset-top)); right: calc(108px + env(safe-area-inset-right)); width: 40px; height: 40px; font-size: 10px; letter-spacing: .04em; }
+      .oth-touch .bk { display: none; }
+      .oth-touch.bike .bk { display: grid; }
+      .oth-touch.bike [data-k=winch] { display: none; }
+      .oth-touch [data-k=hop] { right: calc(22px + env(safe-area-inset-right)); bottom: calc(132px + env(safe-area-inset-bottom)); width: 66px; height: 66px; font-size: 13px; }
+      .oth-touch [data-k=leanF], .oth-touch [data-k=leanB] { left: calc(196px + env(safe-area-inset-left)); width: 50px; height: 50px; font-size: 16px; }
+      .oth-touch [data-k=leanF] { bottom: calc(76px + env(safe-area-inset-bottom)); }
+      .oth-touch [data-k=leanB] { bottom: calc(18px + env(safe-area-inset-bottom)); }
       /* PHONES: more of the screen for the game — the small buttons in one row top left, no + / − (pinch to zoom),
          the speed a slim read-out between the thumbs */
       body.touch .oth-zoom { display: none; }

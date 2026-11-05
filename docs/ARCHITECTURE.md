@@ -201,6 +201,37 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   slip; exhaust from the catalogue's tailpipes (haze at idle, grey puffs on the gas). ≈ 0.03 ms CPU.
 - **Camera zoom** (the user): the chase camera's distance 3.5–40 m, eased — mouse wheel, two-finger PINCH, + / − keys,
   on-screen + / − buttons (held: keeps zooming); in the free camera the buttons change the field of view.
+- **The MOUNTAIN BIKE** (2026-11-05, the user: "a mountain bike like the stunt bike in GTA 5 … each and every physics
+  for the bike, the shock absorber and all"): a full-suspension enduro bike (27.5", 150 mm fork, 142 mm rear on a single
+  pivot) and its rider, carried on the car — **B** takes it off (the car PARKED: kinematic, engine off, no keys, no
+  winch — the physics streams round the bike now), B again gets back in, or brings the car to you from > 15 m (GTA).
+  - **One geometry** (`gameplay/vehicle/mtb.geometry.json`): every dimension and pivot, its rotation convention, for
+    the model, the physics and the drawing alike; the API the game reads is `mtbTypes.ts`.
+  - **The model** (`scripts/oth/mtb.py`, Blender headless, reads the JSON → `assets/models/vehicles/mtb.glb`; a
+    `.blend` in `scripts/oth/.cache/`): 24 flat parts at their pivots — frame, steer, fork lowers, both wheels, swingarm,
+    the shock's body and shaft, cranks, pedals, chain, 12 rider segments built straight from their joints; flat colours
+    by name (`Paint` tinted). Bike ≈ 15.4 k tris, rider ≈ 7.2 k.
+  - **The physics** (`MtbSim.ts`, `tests/mtb.test.ts`): one Rapier body, the wheels, springs, tyres and rider solved
+    each step from 6 rays at real gravity — the fork along the steering axis, progressive air springs (27 / 30 % sag),
+    separate compression / rebound damping, bumpers and hard stops, the rear's swingarm angle and shock length from the
+    geometry; knobbly tyres per surface (grip, rolling resistance), kerb rays; human pedalling (375 W, a sprint), a
+    12-speed cassette shifted for 70–95 rpm, a freewheel; front-biased discs (0.8 g, a rear skid, over the bars, a
+    stoppie); balance as a hard roll constraint (lean into turns, a foot at a stop); the rider's weight moving the COM
+    (wheelies, manuals, reflexes on climbs / brakes / drops); a bunny hop (hold to load); flips and spins in the air;
+    landings judged, crashes (impacts, bad landings, loop-outs, wash-outs) throw the rider off as their own body.
+    ~21 µs a step.
+  - **The drawing** (`src/oth/Bike.ts`): ONE draw for the bike and the rider — every part's vertices carry its index,
+    the parts' poses (3 × 4, bike space) go up as one uniform array (`uParts[0]`, both backends), the car's surface
+    shader. Bars and fork about the steering axis, lowers + front wheel up it, swingarm R(a) about the pivot, the shock's
+    halves aimed at each other, the chain aimed and stretched BB → rear axle, cranks with the cadence, pedals level;
+    the rider by two-bone IK (hips on the saddle or up out of it, the torso leant till the hands reach the grips, feet
+    on the pedals with the heel dropping, knees forward, elbows out, a foot down at a stop; thrown off: the bail body).
+  - Around it: the chase camera framed for it (5.2 m, look 1.25 m — `ChaseCam.frame`, a `ChaseTarget` either vehicle),
+    the map / GPS / crossing / pickups / camp / saved spot follow what's ridden (main.ts `ride`), thin tyre tracks and
+    small dust (`TyreTracks.bikeMarks`, `Dust.bikeTyres`), its tyres' sound and a freewheel ratchet (Audio.ts), the
+    touch pads HOP / LEAN ▲ ▼ / BIKE. Keys: W pedal, S brake, A D steer, ↑ ↓ lean, Space hop, Shift sprint, R back on.
+    Harness: `scripts/harness/bikeride.mjs` (a scripted ride, state logged), `bikeshot.mjs` (still views);
+    `?ride=bike` starts on it, `?bikedraw=0` hides it (cost A/B).
 - **A fuller map** (2026-10-26 round 7, the user: "more bumps and hills, bigger and smaller, some with rocks, some just
   rock on the ground; proper cliffs; random ponds and lakes with tracks, trees and hills near them; bridges like
   OTH; make it fuller, all explorable"): terrain.py adds a HILL FIELD (~240 hills: small 18–45 m / 3–12 m, medium
