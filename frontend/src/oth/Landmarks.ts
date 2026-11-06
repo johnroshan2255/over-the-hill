@@ -5,6 +5,12 @@ import type { Horizon } from './Horizon'
 import type { Landmark, MapData } from './MapData'
 import type { Tier } from './quality'
 import type { TerrainShadow } from './TerrainShadow'
+import { tentA as kitTentA } from './Kit'
+import {
+  type CaveStyle, cavern, type Ctx, cabin, cabinYard, camp as campOf, type CampStyle, FIRE_AT, fishingHut, garage, ghostHouse, hamlet,
+  houseRuin, mineSite, PAINTS, pondDock, rangerStation, researchCamp, riverShelter, tunnel, wreck,
+} from './Locations'
+import { C as KC } from './Kit'
 
 /**
  * LANDMARKS (2026-10-27, the user: "add those" — OTH's Canada: fire-watch towers above the forests, remote cabins,
@@ -33,16 +39,36 @@ export class Landmarks {
   private checkT = 0
   private parts: CullPart[] = []
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, footprint?: GFX.DataTexture) {
     this.list = map.meta.landmarks ?? []
     try { for (const id of JSON.parse(localStorage.getItem(KEY(map.meta.id)) ?? '[]') as number[]) this.found.add(id) } catch { /* (private window: nothing kept) */ }
     if (!this.list.length) return
     const b = new Builder(0x51a3c7), ranges: [number, number][] = []
+    const fp = footprint?.image.data as Uint8Array | undefined, gi = map.inner
+    this.reach = tier.rockReach + 100
     for (const l of this.list) {
       const from = b.count, cols: [GFX.Vector3, GFX.Vector3, boolean][] = []
       const col = (cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ground = false) => cols.push([new GFX.Vector3(cx, cy, cz), new GFX.Vector3(hx, hy, hz), ground])
-      KINDS[l.kind]?.(b, l, col, map) // (the desert's kinds: their shapes are Blender's — formations.glb)
-      const S = SCALE[l.kind] ?? 1
+      const S = SCALE[l.kind] ?? 1, cr = Math.cos(l.rot), sr = Math.sin(l.rot)
+      const wx = (lx: number, lz: number) => l.x + (lx * cr + lz * sr) * S, wz = (lx: number, lz: number) => l.z + (-lx * sr + lz * cr) * S
+      // THE GROUND under a local point (2026-11-06: what stands round a place reaches the real ground — Kit.ts)
+      const g = (lx: number, lz: number) => (map.height(wx(lx, lz), wz(lx, lz)) - l.y) / S
+      // the grass kept off a local box (floors, decks, yards): stamped into the rocks' footprint (Grass.ts reads it)
+      const clear = (cx: number, cz: number, hx: number, hz: number, rot = 0) => {
+        if (!fp) return
+        const x0 = wx(cx, cz), z0 = wz(cx, cz), a = l.rot + rot, ca = Math.cos(a), sa = Math.sin(a), R = Math.hypot(hx, hz) * S + 1
+        const i0 = Math.max(0, Math.floor((x0 - R - gi.origin) / gi.step)), i1 = Math.min(gi.n - 1, Math.ceil((x0 + R - gi.origin) / gi.step))
+        const j0 = Math.max(0, Math.floor((z0 - R - gi.origin) / gi.step)), j1 = Math.min(gi.n - 1, Math.ceil((z0 + R - gi.origin) / gi.step))
+        for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+          const dx = gi.origin + i * gi.step - x0, dz = gi.origin + j * gi.step - z0
+          const u = Math.abs(dx * ca - dz * sa) / S - hx, v = Math.abs(dx * sa + dz * ca) / S - hz
+          const v8 = Math.round(255 * Math.min(1, Math.max(0, 1 - Math.max(u, v) / 0.8)))
+          if (v8 > fp[j * gi.n + i]) fp[j * gi.n + i] = v8
+        }
+      }
+      const ctx: Ctx = { b, g, col, clear, seed: (l.id * 7919 + 13) >>> 0 }
+      if (PLACES[l.kind]) PLACES[l.kind]!(ctx, l, map)
+      else KINDS[l.kind]?.(b, l, col, map) // (the desert's kinds: their shapes are Blender's — formations.glb)
       const m = new GFX.Matrix4().compose(new GFX.Vector3(l.x, l.y, l.z), new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), l.rot), new GFX.Vector3(S, S, S))
       b.transform(from, m)
       const q = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), l.rot)
@@ -50,10 +76,24 @@ export class Landmarks {
       ranges.push([from, b.count])
     }
     this.parts = splitMeshes(b, ranges, woodMaterial(atmos, shadow, tier, farGrid), this.group)
+    if (footprint) footprint.needsUpdate = true
   }
 
-  /** Skip the landmarks the hills hide (once a frame; the view culls the rest). */
-  cull(): void { cullHidden(this.parts, this.horizon) }
+  /** Skip the landmarks the hills hide and (2026-11-06) the places past the tier's reach — the rocks' (900 m ULTRA …
+   *  600 LOW): a cabin's shingles 1 km off are a few pixels; the fire lookouts and their red roofs are seen from
+   *  anywhere (once a frame; the view culls the rest). */
+  cull(cam?: GFX.Vector3): void {
+    cullHidden(this.parts, this.horizon)
+    if (!cam) return
+    const R2 = this.reach * this.reach
+    for (let i = 0; i < this.parts.length; i++) {
+      const p = this.parts[i], l = this.list[i]
+      if (!p.obj.visible || l?.kind === 'tower') continue
+      const dx = (p.box.min.x + p.box.max.x) / 2 - cam.x, dz = (p.box.min.z + p.box.max.z) / 2 - cam.z
+      if (dx * dx + dz * dz > R2) p.obj.visible = false
+    }
+  }
+  private reach = 900
 
   /** Discover what the car (x, z) has reached (checked twice a second). */
   update(dt: number, x: number, z: number): void {
@@ -181,7 +221,7 @@ type RGB = [number, number, number]
  *  ~15 × 7.5 m — the kit's cabin (5.2 × 4.2, walls 2.4) and shed (12 × 6) drawn ×1.3 / ×1.25 (they still fit their
  *  levelled pads). The lookout (13 m), the shack (its dock sits at the lake's level), the mine's adit and the camps
  *  are real as built. */
-const SCALE: Partial<Record<Landmark['kind'], number>> = { cabin: 1.3, sawmill: 1.25 }
+const SCALE: Partial<Record<Landmark['kind'], number>> = { sawmill: 1.25 } // (the cabins: real size in Locations.ts since 2026-11-06)
 const V = (x: number, y: number, z: number) => new GFX.Vector3(x, y, z)
 const X = V(1, 0, 0), Y = V(0, 1, 0), Z = V(0, 0, 1)
 const ROOF: RGB = [0.13, 0.095, 0.075], RED_ROOF: RGB = [0.46, 0.13, 0.08], TIN: RGB = [0.4, 0.27, 0.18]
@@ -207,15 +247,6 @@ function gable(b: Builder, w: number, d: number, y0: number, h: number, over: nu
 function hip(b: Builder, s: number, y0: number, h: number, c: RGB) {
   const ap = V(0, y0 + h, 0), cs = [V(-s, y0, -s), V(s, y0, -s), V(s, y0, s), V(-s, y0, s)]
   for (let i = 0; i < 4; i++) { const p = cs[i], q = cs[(i + 1) % 4]; b.tri(q, p, ap, shade(c, 0.85 + 0.15 * (i % 2))); b.tri(p, q, ap, shade(c, 0.6)) }
-}
-/** A LOG CABIN wall course: logs stacked along x (at z) or along z (at x), crossing at the corners. */
-function logWalls(b: Builder, w: number, d: number, hgt: number, r: number) {
-  const n = Math.round(hgt / (r * 2))
-  for (let i = 0; i < n; i++) {
-    const y = r + i * r * 2
-    for (const sz of [-1, 1]) b.log(V(-w / 2 - 0.3, y, (sz * d) / 2), V(w / 2 + 0.3, y, (sz * d) / 2), r, b.wood(0.95))
-    for (const sx of [-1, 1]) b.log(V((sx * w) / 2, y + r, -d / 2 - 0.3), V((sx * w) / 2, y + r, d / 2 + 0.3), r, b.wood(0.9))
-  }
 }
 /** A window: a dark frame proud of the wall, glass that glows at night (normal along `out`). */
 function windowAt(b: Builder, c: GFX.Vector3, out: GFX.Vector3, along: GFX.Vector3, hw: number, hh: number) {
@@ -280,52 +311,6 @@ const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col
     col(0, 0.5, 2.6, 3.0, 0.5, 0.15)
   },
 
-  /** LOG CABIN: notched log walls, a door and lit windows, a shingle gable roof, a stone chimney, a porch and a woodpile. */
-  cabin(b, _l, col) {
-    const w = 5.2, d = 4.2, hgt = 2.4
-    logWalls(b, w, d, hgt, 0.15)
-    box(b, 0.9, 1.0, d / 2 + 0.17, 0.45, 1.0, 0.05, shade(DARK, 3))
-    windowAt(b, V(-1.2, 1.35, d / 2 + 0.17), Z, X, 0.42, 0.35)
-    windowAt(b, V(w / 2 + 0.17, 1.35, 0), X, Z, 0.4, 0.35)
-    gable(b, w + 0.6, d + 0.6, hgt + 0.15, 1.7, 0.35, ROOF, b.wood(0.85), hgt + 0.15)
-    box(b, -w / 2 - 0.1, 2.3, -0.8, 0.45, 2.3, 0.45, STONE)
-    col(0, 1.4, 0, w / 2 + 0.3, 1.4, d / 2 + 0.3)
-    col(-w / 2 - 0.1, 2.3, -0.8, 0.5, 2.3, 0.5)
-    // the porch: planks, two posts
-    box(b, 0, 0.12, d / 2 + 1.0, w / 2 + 0.2, 0.08, 0.8, b.wood(1.05))
-    for (const sx of [-w / 2, w / 2]) b.log(V(sx, 0, d / 2 + 1.7), V(sx, hgt + 0.4, d / 2 + 1.7), 0.09, b.wood(0.8))
-    // the woodpile against the far wall
-    for (let r = 0; r < 3; r++) for (let i = 0; i < 4 - r; i++) b.log(V(w / 2 + 0.6, 0.18 + r * 0.32, -1.6 + i * 0.36 + r * 0.18), V(w / 2 + 1.6, 0.18 + r * 0.32, -1.6 + i * 0.36 + r * 0.18), 0.16, b.wood(1.1))
-    col(w / 2 + 1.1, 0.5, -1.0, 0.55, 0.5, 0.8)
-  },
-
-  /** FISHING SHACK: a plank shed with a lean-to roof and a lit window, a DOCK out over the lake on posts (drivable), a
-   *  rowboat tied alongside. */
-  shack(b, l, col, map) {
-    const w = 3.0, d = 2.6
-    for (let i = 0; i < 9; i++) {
-      const x = -w / 2 + (i + 0.5) * (w / 9)
-      for (const sz of [-1, 1]) box(b, x, 1.1, (sz * d) / 2, w / 18 - 0.01, 1.1 + (sz > 0 ? 0.25 : -0.05), 0.04, b.wood())
-    }
-    for (let i = 0; i < 8; i++) { const z = -d / 2 + (i + 0.5) * (d / 8); for (const sx of [-1, 1]) box(b, (sx * w) / 2, 1.15, z, 0.04, 1.15, d / 16 - 0.01, b.wood()) }
-    box(b, 0.7, 0.95, d / 2 + 0.06, 0.4, 0.95, 0.04, shade(DARK, 3))
-    windowAt(b, V(w / 2 + 0.06, 1.4, 0), X, Z, 0.35, 0.3)
-    b.box(V(0, 2.5, 0), X, V(0, 1, -0.25).normalize(), V(0, 0.25, 1).normalize(), w / 2 + 0.4, 0.06, d / 2 + 0.45, ROOF)
-    col(0, 1.2, 0, w / 2 + 0.1, 1.2, d / 2 + 0.1)
-    // the dock: from the shack's front out over the water, 1.8 m wide, at the lake's level + 0.45
-    const lake = map.meta.water.lake.level, top = lake + 0.45 - l.y, len = 12
-    for (let i = 0; i < Math.round(len / 0.3); i++) box(b, 0, top - 0.04, d / 2 + 1.2 + i * 0.3, 0.9 + (b.rnd() - 0.5) * 0.1, 0.04, 0.13, b.wood())
-    for (let i = 0; i <= 4; i++) for (const sx of [-0.85, 0.85]) b.log(V(sx, top - 2.5, d / 2 + 1.2 + i * 2.9), V(sx, top + 0.15, d / 2 + 1.2 + i * 2.9), 0.09, b.wood(0.75))
-    col(0, top - 0.15, d / 2 + 1.1 + len / 2, 1.0, 0.15, len / 2, true)
-    // the rowboat: a little hull of planks beside the dock's end
-    const bz = d / 2 + len - 1.5, by = lake + 0.12 - l.y
-    box(b, 1.75, by, bz, 0.5, 0.08, 1.4, shade([0.3, 0.42, 0.45], 1))
-    for (const sx of [-1, 1]) {
-      const v = V(sx * 0.5, 1, 0).normalize(), w = new GFX.Vector3().crossVectors(Z, v)
-      b.box(V(1.75 + sx * 0.5, by + 0.18, bz), Z, v, w, 1.4, 0.2, 0.04, [0.32, 0.46, 0.5])
-    }
-  },
-
   /** SAWMILL: an open shed on posts under a long rusty-tin gable roof, the saw bench in it, stacked LOG PILES in the
    *  yard, a sawdust heap and a little office hut. */
   sawmill(b, _l, col) {
@@ -361,37 +346,6 @@ const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col
     col(-W / 2 - 3.2, 1.2, -2.8, 1.5, 1.2, 1.3)
   },
 
-  /** MINE: a timber portal set into the rock's face, the black mouth of the tunnel behind it, a lantern, ore-cart
-   *  RAILS out of it and a cart on them. */
-  mine(b, _l, col) {
-    const hw = 1.6, hh = 2.8
-    // the ADIT: timber-lined walls and a plank roof running back into the rock, the frame at its mouth, the dark
-    // beyond it a black face just behind the frame (the hill closes round the rest)
-    for (const sx of [-1, 1]) for (let i = 0; i < 6; i++) box(b, sx * (hw - 0.05), 0.25 + i * 0.47, -1.6, 0.05, 0.22, 1.8, b.wood(0.7))
-    box(b, 0, hh + 0.05, -1.6, hw + 0.15, 0.08, 1.8, b.wood(0.6))
-    b.quad(V(-hw + 0.1, 0, 0.05), V(hw - 0.1, 0, 0.05), V(hw - 0.1, hh, 0.05), V(-hw + 0.1, hh, 0.05), DARK)
-    for (const sx of [-1, 1]) { b.log(V(sx * hw, -0.3, 0.3), V(sx * hw, hh, 0.3), 0.2, b.wood(0.75)); col(sx * hw, hh / 2, 0.3, 0.25, hh / 2, 0.25) }
-    b.log(V(-hw - 0.5, hh + 0.1, 0.3), V(hw + 0.5, hh + 0.1, 0.3), 0.22, b.wood(0.7))
-    col(0, hh / 2, -0.5, hw, hh / 2, 0.5)
-    b.setGlow(1)
-    box(b, hw - 0.4, hh - 0.5, 0.6, 0.1, 0.14, 0.1, [0.5, 0.35, 0.15])
-    b.setGlow(0)
-    // rails and sleepers out to the yard
-    for (let i = 0; i < 14; i++) box(b, 0, 0.05, 0.6 + i * 0.6, 0.75, 0.05, 0.1, b.wood(0.6))
-    for (const sx of [-0.45, 0.45]) box(b, sx, 0.13, 0.6 + 4.2, 0.03, 0.04, 4.2, [0.22, 0.2, 0.19])
-    // the ore cart
-    box(b, 0, 0.75, 5.0, 0.6, 0.4, 0.85, [0.28, 0.2, 0.15])
-    box(b, 0, 1.1, 5.0, 0.5, 0.1, 0.75, [0.2, 0.17, 0.15])
-    for (const sx of [-0.45, 0.45]) for (const sz of [-0.5, 0.5]) b.box(V(sx, 0.32, 5.0 + sz), Z, Y, X, 0.2, 0.2, 0.05, DARK)
-    col(0, 0.75, 5.0, 0.65, 0.6, 0.9)
-  },
-
-  /** CAMPSITE (Places.ts — the scenic flat spots): `campKit` — the player's own camp is the same. */
-  camp(b, _l, col) {
-    campKit(b, col)
-    baseCamp(b, col)
-  },
-
   /** METEORITE: a dark scorched boulder in its crater, cracks glowing ember-orange at night, chips scattered round. */
   /** The HIDDEN PLACES (terrain.py builds them — the basin, its fall and pool, the flowers): nothing to add. */
   falls() {},
@@ -418,27 +372,69 @@ const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col
   },
 }
 
-/** Where a camp's fire burns (local: the flames and the fire's light — Props.ts). */
-export const FIRE_LOCAL = { x: 1.4, y: 0.32, z: 1.0 } as const
-const CANVAS: RGB = [0.62, 0.22, 0.05], CANVAS_DARK: RGB = [0.36, 0.11, 0.03]
+/** Where a camp's fire burns (local: the flames and the fire's light — Props.ts): Locations' FIRE_AT. */
+export const FIRE_LOCAL = FIRE_AT
+
+/** THE PLACES COMPOSED (Locations.ts — 2026-11-06): the cabins each their own story, the mine's whole site, the fishing
+ *  hut, the camps in their styles, and the new places (Sites.ts). Each sets what lights up at night and where a fire
+ *  burns (Props.ts reads them). */
+const LIT = 2.25 // (a window's centre: floor 0.5 + 1.75)
+const PLACES: Partial<Record<Landmark['kind'], (c: Ctx, l: Landmark, map: MapData) => void>> = {
+  cabin(c, l) {
+    const story = l.style ?? (l.name.startsWith('Trapper') ? 'trapper' : l.name.startsWith('Pond') ? 'pond' : l.name.startsWith('Birch') ? 'birch' : l.name.startsWith('Old') ? 'ruin' : ['trapper', 'pond', 'birch', 'ruin'][l.id % 4])
+    if (story === 'trapper') cabin(c, { walls: 'log', roof: KC.shingle, state: 'lived', chimney: 'stone' })
+    else if (story === 'pond') cabin(c, { walls: 'clap', paint: PAINTS.red, trim: KC.trim, roof: KC.shingleGrey, state: 'lived', shutters: PAINTS.green, chimney: 'pipe' })
+    else if (story === 'birch') cabin(c, { walls: 'batten', paint: PAINTS.slate, trim: PAINTS.white, roof: KC.greenRoof, tin: true, state: 'lived', chimney: 'stone', shutters: PAINTS.mustard })
+    else cabin(c, { walls: 'clap', paint: PAINTS.mustard, trim: KC.trim, roof: KC.shingleGrey, state: 'ruin', chimney: 'stone' })
+    cabinYard(c, story as 'trapper' | 'pond' | 'birch' | 'ruin')
+    if (story !== 'ruin') l.lights = [[-2.2, LIT, 3.6], [4.6, LIT, -0.6], [-4.6, LIT, -0.6]]
+    // (their chimneys smoke: the stone one's top, the pond cabin's stovepipe)
+    if (story === 'trapper' || story === 'birch') l.smoke = [-4.7, 7.3, -0.8]
+    if (story === 'pond') l.smoke = [-1.8, 6.5, -1.0]
+  },
+  shack(c, l, map) { fishingHut(c, map.meta.water.lake.level - l.y); l.lights = [[-1.1, 1.9, 2.1]]; l.smoke = [-1.4, 4.7, -0.8] },
+  mine(c) { mineSite(c) },
+  camp(c, l) {
+    const water = /Lake|Loon|Driftwood|River|Gravel|Alder|Still|Reed|Lily/.test(l.name)
+    const st = (l.style as CampStyle | undefined) ?? (['expedition', 'hikers', 'fishers', 'abandoned'] as const)[l.id % 4]
+    const style: CampStyle = st === 'fishers' && !water ? 'hikers' : st === 'expedition' && water && l.id % 8 < 4 ? 'fishers' : st
+    l.style = style
+    if (style === 'expedition') { campKit(c.b, c.col); baseCamp(c.b, c.col); c.clear(0, -2, 8, 6) } else campOf(c, style)
+    if (style !== 'abandoned') { l.fire = [FIRE_AT.x, FIRE_AT.z]; l.lights = [[FIRE_AT.x - 3.6, 1.72, FIRE_AT.z + 0.4]] }
+    if (style === 'hikers' || style === 'expedition') l.smoke = [FIRE_AT.x, 0.6, FIRE_AT.z]
+  },
+  tunnel(c, l, map) {
+    // (the hill's turf takes the land's own dryness and forest floor where it stands)
+    const cr = Math.cos(l.rot), sr = Math.sin(l.rot), mk: [number, number, number, number] = [0, 0, 0, 0]
+    tunnel(c, l.dark ? l.dark.z1 - l.dark.z0 - 2 : 30, (x, z) => { const m = map.maskAt(l.x + x * cr + z * sr, l.z - x * sr + z * cr, mk); return [m[1], m[3]] })
+    l.fire = [3.9, 3]
+  },
+  grotto(c, l, map) {
+    // (a one-way cave in its own hill — Locations.cavern: its style the place's; the turf the land's own paint)
+    const cr = Math.cos(l.rot), sr = Math.sin(l.rot), mk: [number, number, number, number] = [0, 0, 0, 0]
+    const fire = cavern(c, (l.style ?? 'hall') as CaveStyle, (x, z) => { const m = map.maskAt(l.x + x * cr + z * sr, l.z - x * sr + z * cr, mk); return [m[1], m[3]] })
+    if (fire) l.fire = fire
+  },
+  ghost(c) { ghostHouse(c) },
+  ruin(c, l) { houseRuin(c, l.id % 2 === 0) },
+  ranger(c, l) { rangerStation(c); l.lights = [[-2.2, LIT, 3.6]] },
+  garage(c) { garage(c) },
+  shelter(c, l) { riverShelter(c); l.fire = [0, 3.6]; if (l.id % 2) l.smoke = [0, 0.6, 3.6] },
+  hamlet(c) { hamlet(c) },
+  research(c, l) { researchCamp(c); l.lights = [[0.2, 0.9, -0.3]] },
+  dock(c, l) { pondDock(c, Number(l.style ?? 0) - l.y, l.id) },
+  wreck(c, l) { wreck(c, Number(l.style ?? 0) - l.y) },
+}
+const CANVAS: RGB = [0.62, 0.22, 0.05]
 
 /** A CAMP: an orange A-frame canvas tent (its door open, dark inside), a ring of stones round crossed logs (the
  *  embers glow from dusk), two log seats, a lantern on a pole, a red cooler. ~1.4 k vertices. Local frame: the camp
  *  faces +z (the view); `col` takes its colliders (the player's camp: none). */
 export function campKit(b: Builder, col?: Col): void {
-  // the tent: ridge along z, 2.6 m long, 2.2 m wide, 1.6 m tall, both sides of each panel drawn
-  const tx = -2.1, tz = -0.6, L = 1.3, W = 1.1, H = 1.6
-  const panel = (sx: number, c: RGB) => {
-    const r0 = V(tx, H, tz - L), r1 = V(tx, H, tz + L), b0 = V(tx + sx * W, 0, tz - L), b1 = V(tx + sx * W, 0, tz + L)
-    b.quad(r0, r1, b1, b0, c); b.quad(b0, b1, r1, r0, c)
-  }
-  panel(1, CANVAS); panel(-1, shade(CANVAS, 0.85))
-  b.tri(V(tx - W, 0, tz - L), V(tx, H, tz - L), V(tx + W, 0, tz - L), CANVAS_DARK) // (the back, both ways)
-  b.tri(V(tx + W, 0, tz - L), V(tx, H, tz - L), V(tx - W, 0, tz - L), CANVAS_DARK)
-  b.tri(V(tx - W * 0.55, 0, tz + L - 0.05), V(tx + W * 0.55, 0, tz + L - 0.05), V(tx, H * 0.9, tz + L - 0.05), shade(DARK, 1.6)) // the open door
-  b.tri(V(tx - W, 0, tz + L), V(tx - W * 0.55, 0, tz + L), V(tx, H, tz + L), CANVAS)
-  b.tri(V(tx + W * 0.55, 0, tz + L), V(tx + W, 0, tz + L), V(tx, H, tz + L), CANVAS)
-  b.log(V(tx, H + 0.02, tz - L - 0.15), V(tx, H + 0.02, tz + L + 0.15), 0.035, b.wood(0.7))
+  // the tent (2026-11-06: a big canvas wall tent — the user: "tents too small beside our vehicles and people"): Kit's
+  // A-frame, its ridge sagging between the poles, guy lines, the door's flaps tied back
+  const tx = -2.6, tz = -0.8, L = 1.8, W = 1.5, H = 2.0
+  kitTentA(b, tx, tz, 0, () => 0, CANVAS, L, W, H)
   col?.(tx, H / 2, tz, W, H / 2, L)
   // the fire ring, its logs and embers
   const f = FIRE_LOCAL
@@ -458,9 +454,9 @@ export function campKit(b: Builder, col?: Col): void {
   col?.(f.x, 0.2, f.z + 1.4, 1.0, 0.2, 0.22)
   col?.(f.x + 1.47, 0.2, f.z, 0.22, 0.2, 0.9)
   // a lantern on a pole by the tent's door
-  b.log(V(tx + 1.5, 0, tz + 1.9), V(tx + 1.5, 1.9, tz + 1.9), 0.04, b.wood(0.7))
+  b.log(V(-0.6, 0, 1.3), V(-0.6, 1.9, 1.3), 0.04, b.wood(0.7))
   b.setGlow(1)
-  box(b, tx + 1.5, 1.72, tz + 2.02, 0.09, 0.12, 0.09, [0.5, 0.35, 0.15])
+  box(b, -0.6, 1.72, 1.42, 0.09, 0.12, 0.09, [0.5, 0.35, 0.15])
   b.setGlow(0)
   // a red cooler by the tent
   box(b, tx + 1.4, 0.22, tz - 0.9, 0.36, 0.22, 0.24, [0.42, 0.06, 0.04])

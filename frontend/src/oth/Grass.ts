@@ -3,7 +3,7 @@ import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import { PAINT_GLSL } from './paint'
 import type { Tier } from './quality'
-import { HEIGHT_GLSL, type Terrain } from './Terrain'
+import { HEIGHT_GLSL, SHAPE_GLSL, shapeDefines, type Terrain } from './Terrain'
 import { SHADOW_GLSL } from './TerrainShadow'
 
 /**
@@ -94,7 +94,7 @@ export class Grass {
       const mat = new GFX.ShaderMaterial({
         glslVersion: GFX.GLSL3,
         uniforms: { ...uniforms, uBuild: { value: density }, uRin: { value: bounds[r] }, uRout: { value: bounds[r + 1] }, uFan: { value: blades[r] } },
-        defines: { ...map.biomeDefines, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}) }, // (no specular: on blades of roughness 0.85 it never showed)
+        defines: { ...map.biomeDefines, ...shapeDefines(), ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}) }, // (no specular: on blades of roughness 0.85 it never showed)
         vertexShader: VERT,
         fragmentShader: FRAG,
         side: GFX.DoubleSide,
@@ -216,6 +216,7 @@ ${HEIGHT_GLSL}
 #define PAINT_TEX(uv) textureLod(uNoise, uv, 0.0)
 ${PAINT_GLSL}
 ${SHADOW_GLSL}
+${SHAPE_GLSL}
 uniform sampler2D uMask;
 uniform sampler2D uMud;
 uniform sampler2D uNIn;
@@ -262,7 +263,15 @@ void main() {
   }
   // THE GROUND HERE: its height and soft normal; what the root reads off the map, from the field
   float h = terrainHeight(root);
+#ifdef OTH_SHAPE
+  // (the ground's normal a mip up — ~4 m: the field's bumps light the blades; it was 2.5 mips, ~11 m: every bump under
+  //  that lit as flat ground — 2026-11-06) and the hill's (~45 m) the small slopes' light is measured against
+  vec2 nUv = ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x;
+  vec3 N = unpackN(textureLod(uNIn, nUv, 1.0).rg);
+  vec3 Nb = unpackN(textureLod(uNIn, nUv, 4.5).rg);
+#else
   vec3 N = unpackN(textureLod(uNIn, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 2.5).rg);
+#endif
   // the root's paint and growth: the FIELD's two texels (GrassField — baked from the map as the camera moves)
   vec4 FA = textureLod(uFieldA, root * uField.z, 0.0), FB = textureLod(uFieldB, root * uField.z, 0.0);
   vec3 col0 = FA.rgb * FA.rgb;
@@ -272,6 +281,11 @@ void main() {
   float tall = mix(0.95, 1.45, smoothstep(0.2, 0.8, FB.g)) * aBlade.z;
   float edge = 1.0 - smoothstep(uRadius * 0.8, uRadius, d);
   float height = tall * grow * edge * keep * mix(0.1, 1.0, approach) * (1.0 + 0.12 * flower);
+#ifdef OTH_SHAPE
+  // (the carpet follows the shapes: a little taller in the hollows, shorter on the crests — the field's B.a: its relief)
+  float rel = (FB.a - 0.5) * 4.0;
+  height *= clamp(1.0 - 0.14 * rel, 0.82, 1.22);
+#endif
 #ifndef NO_CARFLAT
   // UNDER THE CAR: pressed flat in its footprint (its local x = (cos h, −sin h), z = (sin h, cos h) in the world)
   vec2 rc = root - uCarBox.xy;
@@ -312,6 +326,9 @@ void main() {
   vec3 Vv = normalize(uCamPos - p);
   float ao = mix(0.8, 1.0, smoothstep(0.0, 0.85, t));
   vec3 albedo = vColor * mix(0.9, 1.08, t);
+#ifdef OTH_SHAPE
+  albedo *= shapeLight(rel, N, Nb, vSun);
+#endif
   vec3 c = shade(albedo, vN, Vv, 0.85, 0.03, ao, vSun, 0.62);
   c += headlight(albedo, vN, p);
   float back = pow(max(dot(-Vv, uSunDir), 0.0), 3.0);
@@ -494,6 +511,6 @@ void main() {
   //  edge (paint.ts) — as the valley's do; they had a colour of their own over a red ground)
   vec3 col0 = g.col;
   oA = vec4(sqrt(max(col0, vec3(0.0))), clamp(grow, 0.0, 1.0));
-  oB = vec4(clamp(approach / 1.15, 0.0, 1.0), m.g, mudB.g, 0.0);
+  oB = vec4(clamp(approach / 1.15, 0.0, 1.0), m.g, mudB.g, clamp(groundRelief(root) * 0.25 + 0.5, 0.0, 1.0)); // (A: the small shapes, ±2 m)
 }
 `

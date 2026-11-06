@@ -53,6 +53,12 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   ground (moving at 30 m/s: +0.02 ms). The terrain reads the level whose texel ≈ the pixel (or the finest that reaches
   it), two blended: 4–8 fetches. Live: the steep walls within the cache's reach (paint + relief — a top-down texel
   smears down a wall), the light, the weather, the haze. `?gcache=0` paints live everywhere (the A/B).
+  **THE SMALL SHAPES' LIGHT** (2026-11-06, the user: "the grass fields look a plane — bumps, dips, hollows we can't
+  tell"; the soft wrapped + S-curved light moved a 10° bump's brightness ~1 % at noon, and the grass lit itself from
+  a normal blurred over ~11 m): `OTH_SHAPE` (`Terrain.ts` `shapeDefines` / `SHAPE_GLSL`) — the hollows darker, the
+  crests lighter (`groundRelief`: the height against rings at 6 and 12 m, baked into the cache and the grass field),
+  the small slopes lit against the hill's broad normal (~30 m), the grass's normal 1 mip up (~4 m, was ~11 m) and its
+  blades a little taller in the hollows. +0.05–0.2 ms. `?shape=0` off; `?shapeao=` (0.09 / m) and `?shapesun=` (1.1).
 - **Grass** (`Grass.ts`): the Over-the-Hill CARPET — low-poly tufts of thick pointed blades (6 per tuft, 20 cm wide,
   quad + tip; the far ring 3-blade triangles), even heights. THE GRASS IS THE GROUND GROWN UP: each blade takes
   `groundPaint` at its root (green ground → green grass) and the ground's soft normal, so a hill shades as one surface;
@@ -543,6 +549,29 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   on tracks through the forest): ULTRA 1.02 → 1.01 ms, HIGH 0.91 → 0.95, LOW on the phone viewport 0.56 → 0.58 (the
   run-to-run spread ±0.08). Most views are flat or cheaper; standing in a dense stand is ~+0.25 ms on ULTRA / HIGH
   (the near crowns' fill, not their count). `?woods=0`: the old scatter and the old ranges.
+- **Fuller valley (2026-11-06, the user: "why does our world feel empty, especially the valley" — the painted rock
+  stays as it is)**: measured first — within 25 m of a track stood ~3.4 trees, 3.6 bushes, 1.8 rocks, 1.4 props; a
+  meadow past the grass's reach was one flat colour; a hill's sunny and shaded sides were nearly one value.
+  - THE VERGES (`?verge=0` off): along both edges of every track (each spot its own `cellSeed`, after everything
+    else) — stones in ones to threes 0.9–3 m and now and then a 3–5.5 m boulder (`Rocks.place`, the last pass: the
+    grass is ~1 m, a smaller stone is lost in it), bush groups (`placeBushes`'s last pass: 1–2.5 m, thick on the green
+    and at the forest's edge, sparse on the gold), FALLEN LOGS and STUMPS (Places.ts's last pass, new prop kinds `log`
+    / `stump`: by the trees mostly; a collider each). The verges' stones are held back (`Rocks.settleVerge`, World.build
+    after the places): placed with the rest they moved every tree and a log pile — and with it every supply crate's id
+    (the journal keeps them); now the trees, the field's bushes and every prop and id are as before (checked), the
+    verges' stones keep clear of the trees and props. +1.8k rocks (8.8k → 10.7k), +3.3k bushes, 107 logs, 118 stumps.
+    (The stone PROP scaled up read as a block: none in the verges.)
+  - THE FIELD'S CLUMPS (`paint.ts` groundPaint, `?fieldpaint=0` off): patches a few metres across a step darker or
+    lighter and TUSSOCKS (dark clumps ~1.5 m round in a 4 m cell, `dotsAt`) on the open grass; the blades take their
+    root's colour, so near and far show the same clumps — no seam at the grass's edge; fading to their mean toward a
+    pixel; mean brightness kept.
+  - THE LIGHT (`Atmosphere`, `?light=0` off; the valley by day only, fading out by dusk): the haze a third longer and
+    clear for 260 m (was 130); the sky fill and bounce −22 %, the sun +8 %, and `uWrapCut` 0.6 — the wrapped diffuse's
+    wrap (0.62 on the ground: a face square to the sun took 38 % of it) cut in `shade()`; the fill alone moved the frame
+    ~1 %. Shaded ground ~5–7 / 255 darker, the lit faces as they were.
+  - Cost (`scripts/harness/abverge.mjs`, uncapped, interleaved ×4, 6 views + 6 track spots at the chase camera's
+    height): ULTRA 1080p 0.770 → 0.778 ms (CPU 0.268 → 0.280), LOW phone viewport 0.577 → 0.590 ms (CPU 0.21 both);
+    +2 draws (log, stump), triangles +2–8 % (LOW +3–15 %). Load: +4 ms (settleVerge), +7 ms bushes.
 - **Not yet**: planar reflections; grass flattened by the tyres; photo mode / co-op.
 
 
@@ -637,6 +666,95 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   valley. Main thread: the camera's surroundings 4× a second (a few height samples). Sources and processing:
   `docs/ASSETS.md`. No CC0 hawk / eagle cry was found (the birds of prey are silent for now).
 
+## Make the Valley great — stage 2: places worth stopping for (2026-11-06)
+
+The user: *"improve the existing world so players enjoy exploring it — recognizable points of interest, not random
+objects; lakesides worth stopping at; tents and camps that look lived in; broken houses, hidden places, caves big
+enough to drive through, with lights on the walls; a terror feel at the ghost house; houses lit at night; colour and
+realistic stylized textures at no cost; cabins and tents too small beside our vehicles and people; 500+ fps on ULTRA
+after all of it"*.
+
+- **The kit** (`oth/Kit.ts`): the parts every place is built from, on the bridges' `Builder` (one geometry a place, one
+  material) — clapboard / board-and-batten / log walls, gable roofs with real thickness, shingle rows (or tin), fascia,
+  barge boards, rafter tails, a ridge cap; framed windows (lit / dark / broken / boarded / eerie, shutters), plank doors
+  ajar or shut, steps, porches with rails, stone chimneys, stovepipes, STONE FOUNDATIONS that reach the real ground at
+  every point; woodpiles, chopping blocks, mailboxes, barrels, crates, camp chairs and tables, lanterns, packs,
+  clotheslines; an old PICKUP (rust, flat tyres, a door open, a wheel gone); A-frame wall TENTS with sagging ridges and
+  panels, guy lines and stakes, DOME tents on crossed poles, tarp shelters, fire rings (lit / cold); DOCKS on piles to
+  the bed with cross-bracing, cleats and a ladder, ROWBOATS and canoes lofted from sections; rails, ore carts, spoil
+  heaps, warning signs, a headframe, a radio mast, split-rail fences. Every part takes a `Ground` (the height under a
+  local point): nothing floats, nothing is set on a flat patch.
+- **Surfaces** (`Builder.setSurf`, `SURF`): wood (the grain), STONE (blotches at two scales, lichen on what faces up),
+  painted METAL (rust bleeding in by a slow noise), FABRIC (a weave, sun-bleached tops, the light wrapping through),
+  plain; LAMP (crystals, cave lanterns: their own light day and night) and EERIE (the ghost house's window: a cold light
+  that gutters, dusk to dawn). Packed with the glow in the one existing attribute (glow + 2 × surface): no new vertex
+  data, no textures, a few ALU in the props' / landmarks' shader.
+- **Sizes** against the 1.8 m character and the 2.3 m truck: cabins ~8.5 × 6.5 m with 3.3 m walls, 2.3 m doors, a
+  ~6 m ridge (SCALE 1 now — they were the kit's ×1.3); wall tents 2 m tall, 3.6 m long; dome tents 1.6–2.0 m.
+- **The places composed** (`oth/Locations.ts`, built by `Landmarks.ts`' PLACES with a context: the ground, colliders,
+  the grass kept off floors and yards — stamped into the rocks' footprint):
+  - CABINS each their own story: Trapper's (logs, lit, a hide frame, a woodpile, his truck), Pond Cabin (barn-red
+    clapboard, white trim, green shutters, porch chairs, a mailbox, a clothesline, a boat pulled up), Birch Hollow
+    (slate-blue board-and-batten, green tin roof, a garden behind a fence, the outhouse), Old Hut (mustard paint gone,
+    the roof sagging and holed, windows broken / boarded, the porch fallen in, a rusted truck on flat tyres, junk).
+  - THE MINE: the adit in a heavy timber portal with the hill's rock built up round it, rails out to an ore bin on
+    stilts, carts (one tipped), spoil heaps down the slope, a headframe over a fenced shaft, a tool shed, a stone
+    powder house with its warning sign, barrels, crates, lantern posts.
+  - THE FISHING HUT on the lake: board-and-batten, tin roof, stovepipe, a net on its rack, a 14 m dock, the rowboat
+    tied to it, a canoe upturned on the bank.
+  - CAMPS in four styles (by place: water camps fish): EXPEDITION (the camper), HIKERS (three tents round the fire,
+    chairs, a table, packs, a clothesline, their truck), FISHERS (a wall tent, a tarp shelter, a canoe, rods out, a
+    drying rack), ABANDONED (a tent fallen in, the fire cold, a pack spilled, a chair over — no fire, no light).
+- **New places** (`oth/Sites.ts` picks where — deterministic, from the map — clear of the old places, the props and
+  each other; `?sites=0` without them): the LANTERN TUNNEL (a drive-through cave over a straight 30 m of track: rock
+  walls 5.4 m out each side, a vault ~7 m up, moss and grass on top, vines at the mouths; crystals glowing on the
+  walls, lanterns on old timbers, the miners' broken scaffolding, a fire in an alcove), the CRYSTAL GROTTO (an overhang
+  at a slope's foot, deep enough to drive into, its back closed: crystals, a camp with a fire, timbers propping the
+  roof, a lip of blocks over the mouth), THE HOLLOW HOUSE (a two-storey house gone grey deep in the forest, its roof
+  sagging, one upstairs window holding a light that gutters from dusk, dead trees, a swing, a graveyard, the gate
+  hanging), two STONE RUINS (walls standing to different heights, a gable end, a lone chimney, rubble), RANGER STATION
+  7 (painted cabin, green tin roof, a 16 m radio mast with its red light, a flag, a notice board, a water tank), HANK'S
+  GARAGE (barn-red workshop, doors open, a car on blocks, a fuel pump, tyres), two RIVER SHELTERS (log lean-tos, a fire
+  burning), ASHFORD (an abandoned hamlet: a ruin, a cabin falling in, a barn with its roof half gone, a well, a cart),
+  the SURVEY CAMP (dome tents, a weather mast, a solar panel, a generator, survey stakes — left in a hurry), four pond
+  DOCKS (with a boat or a canoe, a rod, a bank shelter, a cold fire), THE DROWNED TRUCK at a river crossing.
+  Each takes its ground: the trees, bushes, stones and small props in its disc are taken out (World.build) — the
+  trees' places as before for Places.ts, so every crate's id is unchanged.
+- **The pads grown back** (`Sites.regrowPads`): scenery.mjs had painted every landmark's levelled pad as TRACK (a bald
+  sand disc); the trail texture there is the real tracks' distance again, plus a worn yard at the door and a 2 m path to
+  the nearest track — the rest grass.
+- **Caves' dark** (`Atmosphere.caveK`, uniforms `uCaveA0..2` / `uCaveB0..2` — single vec4s: the renderer's layer sets no
+  uniform arrays): within a cave's radius of its line and under its roof the sun and the sky's light fall to ~15 %,
+  fading in over the mouth's first 9 m (a grotto's back closed) — the ground, the rocks and the places' shaders; the
+  crystals, the fire (its light: `uFire`) and the headlights are what you see by.
+- **Fires, lights, smoke** (Landmark `fire` / `lights` / `smoke`, Props.ts): any place can burn a fire (the camps but
+  the abandoned, the tunnel's alcove, the grotto, the shelters), glow at its windows from dusk (the lived-in cabins, the
+  ranger station, the fishing hut), and send up a SMOKE COLUMN (chimneys, camps): 10 big soft puffs rising ~40 m,
+  leaning with the wind, seen out to ~1.4 km — one draw for all, while one is within 1.5 km. What pulls you off the road.
+- **Notes** (Landmark `note`, `Sites.NOTES`; main.ts `noteHud`): stopped within 11 m of a place with one, its card
+  (`.oth-note`); the first read pays 15 ◆ and is kept (`oth.notes.<map>`). Eleven notes, one story between them — the
+  survey team, the lights on the ridge, the Hollow family, the tapping below the mine.
+- **Cost** (`scripts/harness/absites.mjs`, `?sites=0` vs on, interleaved; and everything of this round off vs on, 4
+  views ×3): ULTRA 1080p 0.778 → 0.796 ms (≈ 1250 fps); see docs/PERF.md for the per-place numbers. Load: sites
+  ~80 ms, the landmarks' build ~125 ms (the tunnel's and grotto's rocks), pads 6 ms.
+- **Not yet**: trails cut to the hidden places (they're reached off-road); interiors; the grotto deeper than its
+  overhang (the heightfield has no overhangs: caves are built over it); chimney smoke by night.
+
+### The caves, as land (2026-11-06, later)
+
+The user: caves must be real land with grass above, rock that looks like the terrain's (no piles of boulders, inside
+or out), different shapes, one way in, big ones with pines under a hole in the roof. `Locations.ts` THE CAVES:
+- every cave is a HILL of turf (`SURF.turf`: the field's own `grassPaint`, the land's dryness per vertex, grass tufts)
+  over one continuous rock shell in `SURF.cliff` (the terrain's slab paint, its beds, `rockFill`), smooth surfaces with
+  their own normals (`Builder.raw`, `smoothMesh`) — no blocks;
+- the Lantern Tunnel: the track through a hill, cliff faces over the arches, the road's cut walled in leaning rock;
+- three one-way caves (`grotto`, `Landmark.style`): `sky` (a big dome, a shaft through the hill to a hole in the turf,
+  a lit column — `caveK`'s B.w — young pines and bushes growing in it), `hall` (a long gallery, crystals, the survey's
+  camp), `den` (small and low, a nest); each mouth a cliff face leaning back, its line, the walls' bulge and the sizes
+  varied by the seed (`cavernLand`, shared with `Sites.dressHills`, which lifts the trees and bushes onto the hills);
+- the dark: the three caves nearest the camera each frame (`caveUniforms`).
+Cost (`scripts/harness/cavecost.mjs`): ≤ 0.14 ms at a cave ULTRA (worst 1.34 ms ≈ 745 fps, the forest's), ≤ 0.18 LOW.
+
 ## Worlds, the desert (2026-11-02 — the to-do list: docs/NEXT.md)
 
 - **World.ts**: everything built from one map under one group, built a step a frame while playing, disposed whole
@@ -699,3 +817,27 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   the cross-world waypoint before / after a swap, pictures of the radar, the map, the desert tab), `gpsdrive.mjs` (a
   steering bot that follows the guide's route until the arrival — `START=world:x,z DEST=world:name|gate|x,z`).
 
+
+## Every track drivable (2026-11-06 — the user: "travel in the valley and check all routes are actually possible to drive … lot of routes are impossible to drive")
+
+- **Measured first**: `scripts/oth/trackscan.py` (every line every 2 m off the baked ground: the grade over 6 m, the lean
+  across the car, the 2 m step, the paint's offset) and `scripts/harness/trackdrive.mjs` — a careful STEERING BOT on the
+  game's own physics (TruckSim + Rapier: ground tiles, rocks, trunks, props, bridges, landmarks), run faster than real
+  time in batches of fixed steps, driving EVERY track BOTH WAYS; where it stalls, flips, leaves the line or is thrown it
+  logs the spot — the grade, the lean, what solid thing it brushed in the last 4 s — and goes on 14 m further
+  (`TRACKS=0,3,7`, `TRACE=i0-i1`, `SHOTS=dir`). Before: ~5 of 33 km over the limits; the bot clean on 46 of 152 runs,
+  465 problems — the rock-crawl routes up to 200 % (walls of stepped blocks), ordinary tracks to 60 % with 50 % side
+  leans, 257 hairpins of 2–6 m radius (A*'s 8 m grid: the car turns on ~7 m), out-and-back spikes in the lines, three
+  tracks running through bridge rails, 30 house-sized outcrop blocks and 4 stream-road boulders inside tracks.
+- **The fix** (`scripts/oth/trackgrade.py`, a post-process after valley_cliff.py, from `.cache/valley-pregrade`): the
+  lines cleaned (spikes cut, bridge crossings snapped onto the deck, every line re-traced by a car that can't turn under
+  7.5 m, 10 redundant duplicates dropped), then each track's ground GRADED — a grade-limited profile (≤ 22 % ordinary,
+  ≤ 28 % rock-crawl) as close to the ground as cut-and-fill allows, level across the bed, the hillside beside it only
+  shifted by the cut; junctions take the bed already graded; water, bridges and the cliff's road untouched; trail.bin
+  repainted from the new lines. 24 ha of ground moved, mostly < 3 m; the deepest cut ~21 m (a rock-crawl route into a
+  formation: a cutting through the rock). `Rocks.ts`: an outcrop's block whose bulk reaches into a track's bed is taken
+  out after the draws (no other stone moves; the desert's crawl-past stones kept) — ~1 ms at load.
+- **After**: 121 of 134 runs clean, 21 problems — the rock-crawl routes 1. Left: the cliff's ledge-road hairpins (the
+  bot cuts them; `climbtest.mjs` is that road's own check), a short ford beside the bridge at (55, 605), one junction
+  step at (−146, −543), and the COPPER MINE site's pieces on track 0 at (−138, 238) / (−139, 248) (Locations.ts — the
+  places' own layout, not the ground).

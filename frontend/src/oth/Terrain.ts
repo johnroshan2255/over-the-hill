@@ -113,7 +113,7 @@ export class Terrain {
       uGrassR: { value: tier.grassRadius },
       uBushR: { value: tier.bushReach },
     }
-    const defines: Record<string, string> = { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines }
+    const defines: Record<string, string> = { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...shapeDefines() }
     if (tier.groundCache > 0 && gameParams().get('gcache') !== '0') {
       this.cache = new GroundCache(renderer, tier.groundCache, 2 * map.farHalf, this.uniforms, defines, HEIGHT_GLSL, SURF_GLSL)
       Object.assign(this.uniforms, this.cache.uniforms)
@@ -238,6 +238,38 @@ bool inBox(vec2 xz) {
 float terrainHeight(vec2 xz) {
   return inBox(xz) ? gridHeight(uHIn, uInGrid, uInScale, xz) : gridHeight(uHFar, uFarGrid, uFarScale, xz);
 }
+// THE GROUND'S SMALL SHAPES (2026-11-06, the user: "in the grass fields it all looks a plane, but there are bumps and
+// dips and shallow hollows we can't tell"): how far xz lies above (+) or below (−) the ground round it (m) — rings at
+// 6 m and 12 m; a plane, however steep, is 0 — only the bumps, dips, hollows and crests. Baked (GroundCache, the
+// grass field), never per pixel: 9 height reads
+float groundRelief(vec2 xz) {
+  float a = terrainHeight(xz + vec2(6.0, 0.0)) + terrainHeight(xz - vec2(6.0, 0.0)) + terrainHeight(xz + vec2(0.0, 6.0)) + terrainHeight(xz - vec2(0.0, 6.0));
+  float b = terrainHeight(xz + vec2(8.5, 8.5)) + terrainHeight(xz - vec2(8.5, 8.5)) + terrainHeight(xz + vec2(8.5, -8.5)) + terrainHeight(xz + vec2(-8.5, 8.5));
+  return terrainHeight(xz) - (a + b) * 0.125;
+}
+`
+
+/** THE SHAPES' LIGHT (2026-11-06 — the fields read flat: their light is wrapped and S-curved for the soft look, so a
+ *  10° bump at noon moved its brightness ~1 %): OTH_SHAPE — on the ground and the grass, the hollows a little darker and
+ *  the crests lighter (groundRelief, baked), and the SMALL slopes' light against the hill's broad one (the light the
+ *  local normal gets minus what the hill's normal ~30 m across gets) — the hills keep their soft light, the bumps on
+ *  them come back. `?shape=0` off; `?shapeao=` (per m of hollow), `?shapesun=` the strengths. */
+export function shapeDefines(): Record<string, string> {
+  const q = gameParams()
+  if (q.get('shape') === '0') return {}
+  const num = (k: string, d: number) => { const v = Number(q.get(k)); return q.get(k) !== null && Number.isFinite(v) ? v : d }
+  return { OTH_SHAPE: '', SHAPE_AO: num('shapeao', 0.09).toFixed(3), SHAPE_SUN: num('shapesun', 1.1).toFixed(3) }
+}
+/** The same light in GLSL (needs ATMOS_GLSL): the hollow's darkening (rel = groundRelief, m) and the small slope's
+ *  light (N the local normal, Nb the hill's), × the albedo. */
+export const SHAPE_GLSL = /* glsl */ `
+#ifdef OTH_SHAPE
+float shapeLight(float rel, vec3 N, vec3 Nb, float sun) {
+  float hollow = clamp(1.0 + SHAPE_AO * rel, 0.8, 1.08);
+  float slope = clamp(1.0 + SHAPE_SUN * (dot(N, uSunDir) - dot(Nb, uSunDir)) * sun, 0.72, 1.22);
+  return hollow * slope;
+}
+#endif
 `
 
 const VERT = /* glsl */ `
@@ -302,7 +334,8 @@ bool inTheBox(vec2 xz) { float e = uBoxHalf - uInGrid.y; return abs(xz.x) < e &&
 // the smooth normal: the box's 2 m grid a few mips up (rolling shapes), the world's 16 m one outside
 vec3 groundNormal(vec2 xz, bool box) { return box ? unpackN(texture(uNIn, gridUv(uInGrid, xz), 0.8).rg) : unpackN(texture(uNFar, gridUv(uFarGrid, xz), 0.0).rg); }
 
-struct Surf { vec3 col; float rock; float rough; float aoB; float grassy; float under; float relief; float trail; float bog; float pudN; float dots; float flower; vec2 rip; };
+// (shape: the ground's small relief, groundRelief — from the cache; 0 painted live: the walls)
+struct Surf { vec3 col; float rock; float rough; float aoB; float grassy; float under; float relief; float trail; float bog; float pudN; float dots; float flower; vec2 rip; float shape; };
 
 // xz, h: the point; Ns: its smooth normal; nfY: the flat facet's up (the ledges' moss); foot: the pixel's (or texel's)
 // footprint on the ground (m); farG: the far ground's cheap paint; farDots / beyond: the shrub dots' / the flowers'
@@ -444,6 +477,7 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   s.bog = smoothstep(0.8, 0.92, mud + (texture(uNoise, xz * 0.05).g - 0.5) * 0.3);
   s.pudN = pud && g.trail > 0.2 ? texture(uNoise, xz * 0.085).g + texture(uNoise, xz * 0.31).r * 0.16 : 0.0;
   s.dots = g.dots;
+  s.shape = 0.0;
   return s;
 }
 `
@@ -496,7 +530,7 @@ Surf gcSurface(vec2 xz, float Lf) {
   Surf s;
   s.col = a.rgb * a.rgb; s.rock = a.a;
   s.rough = b.r; s.aoB = b.g; s.grassy = b.b; s.under = b.a;
-  s.relief = c.r; s.trail = c.g; s.bog = c.b; s.pudN = c.a * 1.2;
+  s.relief = 0.0; s.shape = (c.r - 0.5) * 4.0; s.trail = c.g; s.bog = c.b; s.pudN = c.a * 1.2; // (the relief: live only — the walls)
   s.rip = (d.rg - 0.5) * 2.0; s.dots = d.b; s.flower = d.a * 0.3; // (rip: the normal's bend — relief + ripples)
   return s;
 }
@@ -515,6 +549,7 @@ uniform float uWater;
 ${SURF_GLSL}
 ${GC_READ_GLSL}
 ${SHADOW_GLSL}
+${SHAPE_GLSL}
 in vec3 vWorld;
 
 uniform float uGrassR;
@@ -590,12 +625,21 @@ void main() {
   // grass's edge, where the ground alone must look like the field from afar
   float under = s.under * (1.0 - smoothstep(uGrassR * 0.3, uGrassR * 0.95, length(vWorld - uCamPos)));
   vec3 lit = col * (1.0 - 0.14 * under);
+#ifdef OTH_SHAPE
+  // the small shapes' light: the hollows, and the bumps' slopes against the hill's (its normal ~30 m across)
+  vec3 Nb = box ? unpackN(texture(uNIn, gridUv(uInGrid, xz), 4.0).rg) : Ns;
+  lit *= shapeLight(s.shape, Ns, Nb, sun);
+#endif
 #ifdef TC_SHADE
   vec3 c = lit * (0.4 + 0.6 * max(dot(N, uSunDir), 0.0));
 #else
-  vec3 c = shade(lit, N, V, s.rough, 0.04, ao, sun, wrap);
+  float ck = caveK(vWorld); // (the caves' dark: Sites.ts)
+  vec3 c = shade(lit, N, V, s.rough, 0.04, ao, sun * (1.0 - ck), wrap);
 #endif
   c += rockFill(lit, N) * s.rock * ao;
+#ifndef TC_SHADE
+  c *= 1.0 - 0.75 * ck;
+#endif
   c += headlight(lit, N, vWorld);
   // PUDDLES (the rain): pools in the tracks' ruts and dips, a still dark mirror of the sky, spreading as it gets wetter
 #ifdef TC_PUD

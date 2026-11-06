@@ -4,6 +4,7 @@ import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
+import { gameParams } from '../settings'
 import { ROCK_RELIEF_GLSL } from './rockRelief'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 
@@ -55,6 +56,8 @@ export class Rocks {
   /** The desert's sculpted stones' far LOD (≈ 60 triangles, not 256): one mesh per block variant (stones.glb). */
   private readonly stoneFar: GFX.InstancedMesh[] = []
   count = 0
+  /** The verges' stones, held back till settleVerge. */
+  private verge: Inst[] = []
   /** Every rock (the physics builds colliders for the ones near the car) and each shape's vertices (unit size). */
   readonly all: Inst[]
   readonly shapes: Float32Array[] = []
@@ -148,7 +151,7 @@ export class Rocks {
       const geo = sculpted ? sculpted[0] : v < VARIANTS ? boulder(0x51ed + v * 977) : roundBoulder(0x7a3 + v * 131)
       // (the physics' hull: the sculpted stone's far shape — its hull is the near one's, near enough, from 32 points)
       this.shapes.push((sculpted ? sculpted[1] : geo).attributes.position.array as Float32Array)
-      const n = all.filter((r) => r.v === v).length
+      const n = all.filter((r) => r.v === v).length + this.verge.filter((r) => r.v === v).length // (+ the verges', settled later)
       const mesh = new GFX.InstancedMesh(geo, mat, Math.max(1, n))
       mesh.count = 0
       mesh.frustumCulled = false
@@ -186,15 +189,7 @@ export class Rocks {
       }
     }
     const g = map.inner, fp = new Uint8Array(g.n * g.n)
-    for (const r of all) {
-      const rad = r.s * 0.5, i0 = Math.max(0, Math.floor((r.x - rad - g.origin) / g.step)), i1 = Math.min(g.n - 1, Math.ceil((r.x + rad - g.origin) / g.step))
-      const j0 = Math.max(0, Math.floor((r.z - rad - g.origin) / g.step)), j1 = Math.min(g.n - 1, Math.ceil((r.z + rad - g.origin) / g.step))
-      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-        const d = Math.hypot(g.origin + i * g.step - r.x, g.origin + j * g.step - r.z) / rad
-        const v = Math.round(255 * Math.min(1, Math.max(0, (1.15 - d) / 0.3)))
-        if (v > fp[j * g.n + i]) fp[j * g.n + i] = v
-      }
-    }
+    for (const r of all) this.stampRock(fp, r)
     this.footprint = new GFX.DataTexture(fp, g.n, g.n, GFX.RedFormat, GFX.UnsignedByteType)
     // (mipmapped: the grass reads it blurred too, shortening round a boulder — Grass.ts)
     this.footprint.minFilter = GFX.LinearMipmapLinearFilter
@@ -202,15 +197,76 @@ export class Rocks {
     this.footprint.generateMipmaps = true
     this.footprint.unpackAlignment = 1
     this.footprint.needsUpdate = true
-    for (const r of all) {
-      const k = this.key(Math.floor(r.x / CELL), Math.floor(r.z / CELL))
-      let list = this.grid.get(k)
-      if (!list) this.grid.set(k, (list = []))
-      list.push(r)
+    for (const r of all) this.toGrid(r)
+  }
+
+  private toGrid(r: Inst): void {
+    const k = this.key(Math.floor(r.x / CELL), Math.floor(r.z / CELL))
+    let list = this.grid.get(k)
+    if (!list) this.grid.set(k, (list = []))
+    list.push(r)
+  }
+
+  /** A rock's footprint (the grass keeps out of it; the trees and bushes are placed off it): a soft disc, its size. */
+  private stampRock(fp: Uint8Array, r: Inst): void {
+    const g = this.map.inner
+    const rad = r.s * 0.5, i0 = Math.max(0, Math.floor((r.x - rad - g.origin) / g.step)), i1 = Math.min(g.n - 1, Math.ceil((r.x + rad - g.origin) / g.step))
+    const j0 = Math.max(0, Math.floor((r.z - rad - g.origin) / g.step)), j1 = Math.min(g.n - 1, Math.ceil((r.z + rad - g.origin) / g.step))
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const d = Math.hypot(g.origin + i * g.step - r.x, g.origin + j * g.step - r.z) / rad
+      const v = Math.round(255 * Math.min(1, Math.max(0, (1.15 - d) / 0.3)))
+      if (v > fp[j * g.n + i]) fp[j * g.n + i] = v
     }
   }
 
+  /** THE VERGES' STONES (place: picked, held back) join the rocks once the trees and the small things stand (World.build):
+   *  placed with the rest, they moved every tree and log pile after them — and with a log pile every supply crate's id
+   *  (the journal keeps them). Each keeps clear of the trees (`treeData`, `stride` numbers a tree: x, y, z first) and of
+   *  the props (x, z); the kept ones join `all`, the grid and the footprint. */
+  settleVerge(treeData: Float32Array, stride: number, props: { x: number; z: number }[], keep: [number, number, number][] = []): void {
+    this.verge = this.verge.filter((r) => keep.every(([x, z, rr]) => (r.x - x) ** 2 + (r.z - z) ** 2 > (rr + r.s * 0.5) ** 2))
+    if (!this.verge.length) return
+    const H = new Map<number, number[]>(), C = 8
+    const put = (x: number, z: number, i: number) => { const k = this.key(Math.floor(x / C), Math.floor(z / C)); const l = H.get(k); if (l) l.push(i); else H.set(k, [i]) }
+    const n = treeData.length / stride
+    for (let i = 0; i < n; i++) put(treeData[i * stride], treeData[i * stride + 2], i)
+    for (let i = 0; i < props.length; i++) put(props[i].x, props[i].z, n + i)
+    const near = (x: number, z: number, r: number) => {
+      for (let j = Math.floor((z - r - 3) / C); j <= Math.floor((z + r + 3) / C); j++) for (let i = Math.floor((x - r - 3) / C); i <= Math.floor((x + r + 3) / C); i++) {
+        for (const q of H.get(this.key(i, j)) ?? []) {
+          const [px, pz, clear] = q < n ? [treeData[q * stride], treeData[q * stride + 2], 1.0] : [props[q - n].x, props[q - n].z, 2.0]
+          if ((px - x) ** 2 + (pz - z) ** 2 < (r + clear) ** 2) return true
+        }
+      }
+      return false
+    }
+    const fp = this.footprint.image.data as Uint8Array
+    for (const r of this.verge) {
+      if (near(r.x, r.z, r.s * 0.55)) continue
+      this.all.push(r)
+      this.toGrid(r)
+      this.stampRock(fp, r)
+    }
+    this.verge = []
+    this.cellBox.clear()
+    this.footprint.needsUpdate = true
+  }
+
   private key(i: number, j: number): number { return (i + 512) * 1024 + (j + 512) }
+
+  /** Take out the stones standing in these discs (x, z, r — the new places' ground, Sites.ts): from `all` and the grid
+   *  (the footprint keeps their mark: the grass there is short anyway). After the places are placed — nothing moves. */
+  removeWithin(keep: [number, number, number][]): void {
+    if (!keep.length) return
+    const out = (r: Inst) => keep.some(([x, z, rr]) => (r.x - x) ** 2 + (r.z - z) ** 2 < (rr + r.s * 0.4) ** 2) && r.v < STACK0
+    const gone = new Set(this.all.filter(out))
+    if (!gone.size) return
+    const kept = this.all.filter((r) => !gone.has(r))
+    this.all.length = 0
+    this.all.push(...kept)
+    for (const [k, list] of this.grid) this.grid.set(k, list.filter((r) => !gone.has(r)))
+    this.cellBox.clear()
+  }
 
   /** Each stack's slabs in the world (lazily, for solidTop): per slab its outline (the convex hull of its corners, x z
    *  pairs, counter-clockwise), its underside and its top (m). */
@@ -359,6 +415,37 @@ export class Rocks {
         }
       }
     }
+    // (2026-11-06, the user: "lot of routes are impossible to drive" — a bot on every track, scripts/harness/
+    //  trackdrive.mjs: an outcrop's block is kept off the track by its CENTRE only, and a big one (5–14 m) reached into
+    //  the bed — 30 in the valley, the car stopped dead against them. Those taken out after the draws: no other stone
+    //  moves. The desert's are small stones a car crawls past: kept)
+    if (!map.desert) {
+      // (the lines' segments bucketed by 32 m cell: each block checks the few near it — ~1 ms at load, not ~170)
+      const hw = map.meta.trails.hw, C = 32, segs = new Map<number, number[]>()
+      const ck = (i: number, j: number) => (i + 512) * 1024 + (j + 512)
+      for (const P of map.meta.trails.lines) for (let k = 0; k + 1 < P.length; k++) {
+        const i = Math.floor((P[k][0] + P[k + 1][0]) / 2 / C), j = Math.floor((P[k][1] + P[k + 1][1]) / 2 / C)
+        let l = segs.get(ck(i, j)); if (!l) segs.set(ck(i, j), (l = []))
+        l.push(P[k][0], P[k][1], P[k + 1][0], P[k + 1][1])
+      }
+      const fromTrack = (x: number, z: number) => {
+        let best = 1e9
+        const i0 = Math.floor(x / C), j0 = Math.floor(z / C)
+        for (let i = i0 - 1; i <= i0 + 1; i++) for (let j = j0 - 1; j <= j0 + 1; j++) {
+          const l = segs.get(ck(i, j))
+          if (l) for (let k = 0; k < l.length; k += 4) {
+            const ax = l[k], az = l[k + 1], dx = l[k + 2] - ax, dz = l[k + 3] - az
+            const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)))
+            best = Math.min(best, Math.hypot(x - ax - t * dx, z - az - t * dz))
+          }
+        }
+        return best
+      }
+      for (let i = out.length - 1; i >= 0; i--) {
+        const r = out[i], rad = 0.5 * r.s * Math.max(r.ax ?? 1, r.az ?? 0.9)
+        if (map.trackDist(r.x, r.z) < rad + hw + 4 && fromTrack(r.x, r.z) - rad < hw) out.splice(i, 1)
+      }
+    }
     // round the SPAWN and along the TRACKS: a few boulders close by (the player's first view is never empty)
     const sp = map.meta.spawn
     for (let k = 0; k < 26; k++) {
@@ -484,6 +571,41 @@ export class Rocks {
       const inst: Inst = { x, y: base + 0.5 * sy, z, s: D, sy, rot, tilt: 0, v: STACK0 + k, ax: 1, az: 1 }
       out.push(inst); this.stackList.push(inst)
     }
+    // THE VERGES (2026-11-06, the user: "why does our world feel empty, especially the valley"): within 25 m of a track
+    // stood ~1.8 rocks — the ring the chase camera looks at most. Stones in ones, twos and threes along both edges, now
+    // and then a boulder set further back; each spot draws from its own seed (cellSeed), after everything else: no
+    // stone above moves. ?verge=0: without them (the A/B)
+    const v0 = out.length
+    if (!map.desert && gameParams().get('verge') !== '0') {
+      const hw = map.meta.trails.hw
+      for (const L of map.meta.trails.lines) {
+        let t = 0
+        for (let i = 1; i < L.length; i++) {
+          const [x0, z0] = L[i - 1], dx = L[i][0] - x0, dz = L[i][1] - z0, l = Math.hypot(dx, dz)
+          if (l < 1e-3) continue
+          const ux = dx / l, uz = dz / l
+          for (; t < l; t += 9) {
+            const cx = x0 + ux * t, cz = z0 + uz * t
+            for (const side of [-1, 1]) {
+              s = cellSeed(Math.round(cx), Math.round(cz), side > 0 ? 41 : 42)
+              // (the grass stands ~1 m: a stone under that is lost in it — the verge's stones are 0.9–3 m, a boulder 3–5.5)
+              if (rnd() > 0.32) continue
+              const big = rnd() < 0.24
+              const off = big ? hw + 6 + rnd() * 12 : hw + 2.8 + Math.pow(rnd(), 1.5) * 9, slide = (rnd() - 0.5) * 6
+              const x = cx - uz * off * side + ux * slide, z = cz + ux * off * side + uz * slide
+              if (!dry(x, z)) continue
+              if (big) { add(x, z, 3 + rnd() * 2.5, 0.3); continue }
+              for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+                const px = x + (rnd() - 0.5) * 3.5, pz = z + (rnd() - 0.5) * 3.5
+                if (dry(px, pz)) add(px, pz, (k === 0 ? 1.5 : 0.9) + rnd() * (k === 0 ? 1.5 : 1.0), 0.3)
+              }
+            }
+          }
+          t -= l
+        }
+      }
+    }
+    this.verge = out.splice(v0)
     return out
   }
 
@@ -725,8 +847,10 @@ void main() {
 #else
   float sun = sunVisibility(vWorld.xz);
 #endif
-  vec3 c = shade(albedo, N, V, 0.75, 0.04, ao * cav, sun, 0.05);
+  float ck = caveK(vWorld);
+  vec3 c = shade(albedo, N, V, 0.75, 0.04, ao * cav, sun * (1.0 - ck), 0.05);
   c += rockFill(albedo, N) * ao;
+  c *= 1.0 - 0.75 * ck;
   c += headlight(albedo, N, vWorld);
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
   #include <tonemapping_fragment>

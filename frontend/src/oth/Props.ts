@@ -216,6 +216,32 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
       box(b, 0, 0.03, 0.8, 1.5, 0.02, 1.6, [0.42, 0.12, 0.08]) // (a rug inside)
     },
   },
+  log: {
+    // a FALLEN TRUNK (the verges, 2026-11-06): ~5.4 m, its bark weathered grey-brown, its root plate torn up at one end,
+    // a splintered top at the other, three snapped branches; a little sunk into the ground
+    reach: 300, size: 0.6, col: [0.28, 2.65, 0.28, 0.32],
+    build(b) {
+      const BARK: RGB = [0.125, 0.098, 0.074], ROOT: RGB = [0.095, 0.07, 0.048]
+      b.log(V(-2.55, 0.27, 0), V(2.35, 0.22, 0.08), 0.29, BARK)
+      b.log(V(2.3, 0.22, 0.08), V(2.8, 0.3, 0.14), 0.15, [BARK[0] * 1.2, BARK[1] * 1.2, BARK[2] * 1.15])
+      b.log(V(-2.85, 0.36, 0), V(-2.6, 0.36, 0), 0.66, ROOT)
+      b.log(V(-0.8, 0.4, 0.18), V(-1.35, 0.95, 0.72), 0.06, BARK)
+      b.log(V(0.9, 0.33, -0.22), V(1.65, 0.45, -0.92), 0.05, BARK)
+      b.log(V(-1.85, 0.46, -0.12), V(-2.05, 1.0, -0.38), 0.05, BARK)
+    },
+  },
+  stump: {
+    // a STUMP (the verges): a cut trunk's foot, its pale cut face up, four roots running into the ground
+    reach: 220, size: 0.6, col: [0.3, 0.34, 0.3, 0.34],
+    build(b) {
+      const BARK: RGB = [0.12, 0.086, 0.06]
+      b.log(V(0, -0.2, 0), V(0, 0.52, 0), 0.33, BARK)
+      for (let k = 0; k < 4; k++) {
+        const a = k * 1.571 + 0.4 + 0.3 * b.rnd(), r = 0.8 + 0.3 * b.rnd()
+        b.log(V(Math.cos(a) * 0.18, 0.16, Math.sin(a) * 0.18), V(Math.cos(a) * r, -0.12, Math.sin(a) * r), 0.1, BARK)
+      }
+    },
+  },
   crate: {
     reach: 260, size: 0.7, col: null,
     build(b) {
@@ -230,7 +256,7 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
 
 const CELL = 128
 /** The grass cleared round each kind (m; a fence: three spots along it). */
-const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, crate: 1.8, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 5.5, well: 1.8, tent: 4.0 }
+const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, crate: 1.8, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 5.5, well: 1.8, tent: 4.0, log: 1.1, stump: 0.9 }
 
 export interface PropCollider { x: number; y: number; z: number; rot: number; hx: number; hy: number; hz: number }
 
@@ -260,6 +286,10 @@ export class Props {
   readonly fires: GFX.Vector3[] = []
   /** The fires' parts: flames, sparks, smoke (one draw each; the player's fire = each one's last `per` entries). */
   private readonly fireParts: { mesh: GFX.Mesh; attr: GFX.InstancedBufferAttribute; per: number }[] = []
+  /** The SMOKE COLUMNS (2026-11-06, the user: "a player notices smoke rising behind the trees"): one draw for all of
+   *  them, drawn while one is within 1.5 km; their sources (world). */
+  private column: GFX.Mesh | null = null
+  private readonly columnAt: GFX.Vector3[] = []
   private readonly camp: GFX.Mesh
   private readonly fp: GFX.DataTexture
   private readonly fpBase: Uint8Array
@@ -271,7 +301,9 @@ export class Props {
 
   constructor(readonly props: Prop[], landmarks: Landmark[], wild: [number, number, number][], atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, collected: number[],
     footprint: GFX.DataTexture, private readonly grid: { n: number; step: number; origin: number }, desert = false) {
-    const camps = landmarks.filter((l) => l.kind === 'camp'), cabins = landmarks.filter((l) => l.kind === 'cabin')
+    // (2026-11-06: any place with a FIRE burns one — the camps but the abandoned, the tunnel's alcove, the grotto, the
+    //  river shelters — and any with LIGHTS glows at its windows / lanterns from dusk: Landmarks.ts sets both)
+    const camps = landmarks.filter((l) => l.fire), lit = landmarks.filter((l) => l.lights?.length)
     for (const id of collected) this.collected.add(id)
     this.reachK = tier.rockReach / 900
     const mat = woodMaterial(atmos, shadow, tier, farGrid)
@@ -313,8 +345,8 @@ export class Props {
     })
     // the camps' fires, then a slot for the player's
     for (const c of camps) {
-      const cs = Math.cos(c.rot), sn = Math.sin(c.rot)
-      this.fires.push(V(c.x + FIRE_LOCAL.x * cs + FIRE_LOCAL.z * sn, c.y + FIRE_LOCAL.y, c.z - FIRE_LOCAL.x * sn + FIRE_LOCAL.z * cs))
+      const cs = Math.cos(c.rot), sn = Math.sin(c.rot), [fx, fz] = c.fire!
+      this.fires.push(V(c.x + fx * cs + fz * sn, c.y + FIRE_LOCAL.y, c.z - fx * sn + fz * cs))
     }
     this.fires.push(V(0, -1e5, 0))
     for (const [per, mat] of [[3, fireMaterial(atmos, FLAME_GLSL, FLAME_FRAG, true)], [14, glowMaterial(atmos, SPARK_GLSL)], [7, fireMaterial(atmos, SMOKE_GLSL, SMOKE_FRAG, false)]] as [number, GFX.ShaderMaterial][]) {
@@ -334,9 +366,10 @@ export class Props {
     this.group.add(this.camp)
     // the CLEARINGS: short grass round the camps and the props (the rocks' footprint; the base kept for the player's camp)
     this.fp = footprint
-    const spots: [number, number, number][] = camps.map((c) => [c.x, c.z, 7.5])
+    const spots: [number, number, number][] = landmarks.filter((l) => l.kind === 'camp').map((c) => [c.x, c.z, 7.5])
     for (const p of props) {
       if (p.kind === 'fence') for (const t of [-1.8, 0, 1.8]) spots.push([p.x + Math.cos(p.rot) * t, p.z - Math.sin(p.rot) * t, CLEAR.fence])
+      else if (p.kind === 'log') for (const t of [-2.3, -0.8, 0.8, 2.2]) spots.push([p.x + Math.cos(p.rot) * t, p.z - Math.sin(p.rot) * t, CLEAR.log])
       else spots.push([p.x, p.z, CLEAR[p.kind] * (p.s ?? 1)])
     }
     for (const [x, z, r] of spots) this.stamp(footprint.image.data as Uint8Array, x, z, r)
@@ -351,15 +384,28 @@ export class Props {
     const halos: number[] = [], flies: number[] = []
     const swarm = (x: number, y: number, z: number, seed: number) => { for (let k = 0; k < FLIES; k++) flies.push(x, y, z, seed * 0.618 + k * 0.1319) }
     camps.forEach((c, i) => {
-      halos.push(...at(c, LANTERN.x, LANTERN.y, LANTERN.z), 1.0)
-      halos.push(...at(c, FIRE_LOCAL.x, FIRE_HALO_Y, FIRE_LOCAL.z), -1.7) // (the fire's own glow: w < 0)
-      swarm(...at(c, FIRE_LOCAL.x, 0, FIRE_LOCAL.z), i + 1)
+      halos.push(...at(c, c.fire![0], FIRE_HALO_Y, c.fire![1]), -1.7) // (the fire's own glow: w < 0)
+      if (c.kind === 'camp') swarm(...at(c, c.fire![0], 0, c.fire![1]), i + 1)
     })
-    cabins.forEach((c, i) => {
-      for (const [lx, lz] of [[-1.2, 2.27], [2.77, 0]]) halos.push(...at(c, lx, 1.35, lz, 1.3), 1.6)
-      swarm(...at(c, 0, 0, 5.5, 1.3), 50 + i)
+    lit.forEach((c, i) => {
+      for (const [lx, ly, lz] of c.lights!) halos.push(...at(c, lx, ly, lz), c.kind === 'camp' ? 1.0 : 1.6)
+      if (c.kind === 'cabin') swarm(...at(c, 0, 0, 7), 50 + i)
     })
     wild.forEach(([x, y, z], i) => swarm(x, y, z, 200 + i)) // (the wild ones: by the trees, the water, the meadows)
+    // the SMOKE COLUMNS: 10 big soft puffs a source, rising ~40 m and leaning with the wind, faded out near (the fire's
+    // own smoke is there) and past ~1.4 km — what draws the eye off the road
+    const smokes = landmarks.filter((l) => l.smoke)
+    if (smokes.length) {
+      const PER = 10, a = new Float32Array(smokes.length * PER * 4)
+      smokes.forEach((l, i) => {
+        const p = at(l, ...l.smoke!)
+        this.columnAt.push(V(...p))
+        for (let k = 0; k < PER; k++) a.set([p[0], p[1], p[2], i * 3.17 + k * 0.1013], (i * PER + k) * 4)
+      })
+      this.column = quads(new GFX.InstancedBufferAttribute(a, 4), 'aFire', fireMaterial(atmos, COLUMN_GLSL, SMOKE_FRAG, false))
+      this.column.renderOrder = 10
+      this.group.add(this.column)
+    }
     halos.push(0, -1e5, 0, 1.0, 0, -1e5, 0, -1.7) // (the player's camp: its lantern, its fire)
     swarm(0, -1e5, 0, 99)
     this.haloAttr = new GFX.InstancedBufferAttribute(new Float32Array(halos), 4)
@@ -503,6 +549,7 @@ export class Props {
     let near = Infinity
     for (const f of this.fires) near = Math.min(near, (f.x - cam.x) ** 2 + (f.z - cam.z) ** 2)
     for (const part of this.fireParts) part.mesh.visible = near < 160 * 160
+    if (this.column) { let cn = Infinity; for (const c of this.columnAt) cn = Math.min(cn, (c.x - cam.x) ** 2 + (c.z - cam.z) ** 2); this.column.visible = cn < 1500 * 1500 }
     if (best < 0) { out.w = 0; return }
     const f = this.fires[best], flick = 1 + 0.16 * Math.sin(t * 13.1) + 0.09 * Math.sin(t * 29.7 + 1.3) + 0.05 * Math.sin(t * 51.3)
     out.set(f.x, f.y + 0.4, f.z, 1.6 * night * flick)
@@ -698,6 +745,24 @@ void main() {
   vQ = position.xy;
   vS = s;
   vA = smoothstep(0.0, 0.15, t) * (1.0 - smoothstep(0.35, 1.0, t)) * 0.3 * (1.0 - 0.8 * uNight) * (1.0 - smoothstep(90.0, 150.0, length(c - uCamPos))) * (1.0 - fogAmount(c));
+  gl_Position = projectionMatrix * viewMatrix * vec4(c + (right * position.x + up * position.y) * size, 1.0);
+}`
+/** A SMOKE COLUMN's puff: rising slowly ~40 m from its source, swelling, leaning with the wind, a slow wobble; faded
+ *  in from 40–90 m off (the fire's own smoke is near) and out past 1.1–1.5 km and into the haze; thin at night. */
+const COLUMN_GLSL = /* glsl */ `
+void main() {
+  float s = aFire.w;
+  float t = fract(uTime * 0.016 + fract(s * 7.7));
+  vec3 c = aFire.xyz + vec3(sin(s * 9.0 + uTime * 0.11) * 1.2 * t, 1.5 + t * 40.0, cos(s * 5.0 + uTime * 0.09) * 1.2 * t);
+  c.xz += uWind * (t * t * 26.0);
+  float size = 1.4 + t * 8.5;
+  vec3 toCam = normalize(uCamPos - c);
+  vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam));
+  vec3 up = cross(toCam, right);
+  vQ = position.xy;
+  vS = s;
+  float d = length(c - uCamPos);
+  vA = smoothstep(0.0, 0.12, t) * (1.0 - smoothstep(0.35, 1.0, t)) * 0.26 * (1.0 - 0.85 * uNight) * smoothstep(40.0, 90.0, d) * (1.0 - smoothstep(1100.0, 1500.0, d)) * (1.0 - 0.8 * fogAmount(c));
   gl_Position = projectionMatrix * viewMatrix * vec4(c + (right * position.x + up * position.y) * size, 1.0);
 }`
 const SMOKE_FRAG = /* glsl */ `

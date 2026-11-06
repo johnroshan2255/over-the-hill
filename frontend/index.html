@@ -150,6 +150,11 @@
       /* the signpost's boards (GTA-like plate, bottom left) */
       .oth-sign { position: fixed; left: 16px; bottom: 40px; min-width: 250px; padding: 8px 12px 9px; background: rgba(8, 8, 10, .66); border-left: 4px solid #f2a93b; color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-transform: uppercase; pointer-events: none; z-index: 4; opacity: 0; transform: translateY(8px); transition: opacity .25s, transform .25s; }
       .oth-sign.on { opacity: 1; transform: none; }
+      /* a NOTE found at a place (Sites.ts): the sign's panel, wider, the text in sentence case */
+      .oth-note { left: 50%; bottom: 120px; width: min(520px, calc(100vw - 32px)); min-width: 0; transform: translate(-50%, 8px); text-transform: none; letter-spacing: .02em; font: 500 17px/1.4 'Barlow Condensed', system-ui; }
+      .oth-note.on { transform: translate(-50%, 0); }
+      .oth-note small { display: block; margin-bottom: 2px; color: #f2a93b; font: 700 12px 'Barlow Condensed', system-ui; letter-spacing: .14em; text-transform: uppercase; }
+      body.touch .oth-note { left: 50%; top: auto; bottom: calc(150px + env(safe-area-inset-bottom)); font-size: 15px; }
       .oth-sign b { display: block; margin-bottom: 4px; color: #f2a93b; font: 400 18px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .06em; }
       .oth-sign div { display: flex; gap: 8px; align-items: baseline; line-height: 1.5; }
       .oth-sign i { width: 18px; font-style: normal; color: #f2a93b; }

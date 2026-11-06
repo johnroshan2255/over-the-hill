@@ -26,7 +26,7 @@ export const GC_LEVELS = 8
  * atlas per output (3 × 3 tiles of N + 4 texels: a 2-texel gutter round each holds the wrap's neighbours, so the
  * hardware's bilinear filter never reads across the wrap or into the next tile). Four RGBA8 outputs (Terrain.ts
  * gcSurface): colour (√, for the dark greens' steps) + rock; roughness, AO, the sheen's share, the grass's shade;
- * relief, track, bog, the puddles' noise; the normal's bend (the rock relief + the desert's ripples, a NORMAL MAP),
+ * the ground's small shapes (hollows, crests), track, bog, the puddles' noise; the normal's bend (the rock relief + the desert's ripples, a NORMAL MAP),
  * the shrub dots, the flowers.
  *
  * The bake's texture reads take their mip from the bake's own texel spacing (implicit derivatives): the window's start
@@ -161,7 +161,7 @@ void main() {
   N = normalize(N + vec3(s.rip.x, 0.0, s.rip.y));
   o0 = vec4(sqrt(max(s.col, vec3(0.0))), s.rock);
   o1 = vec4(s.rough, s.aoB * cav, s.grassy, s.under);
-  o2 = vec4(s.relief, s.trail, s.bog, s.pudN / 1.2);
+  o2 = vec4(clamp(groundRelief(xz) * 0.25 + 0.5, 0.0, 1.0), s.trail, s.bog, s.pudN / 1.2); // (the small shapes, ±2 m)
   o3 = vec4(clamp((N.xz - Ns.xz) * 0.5 + 0.5, 0.0, 1.0), s.dots, s.flower / 0.3);
 }
 `

@@ -16,7 +16,7 @@ import { broadleafGeometry, palmGeometry, CROWN, spruceGeometry } from './treeGe
  * trees on the meadows. Placed once at load, deterministic, from
  * the map's forest mask (a jittered ~6.5 m grid), never on a track, in water, on rock or a boulder.
  *
- * Drawn in 5 instanced draws: per shape family a near LOD (`tier.treeNear`; conifer ~2 000 vertices, broadleaf ~750) and
+ * Drawn in 5 instanced draws: per shape family a near LOD (`tier.treeNear`; conifer ~2 000 vertices, broadleaf ~1 150) and
  * a mid LOD (to `treeMid`), and for every species together
  * beyond, IMPOSTORS to `treeReach`: at load each species is rendered (its near LOD) from 12 directions × 3 heights
  * into an image atlas — albedo × AO and the tree-space normal (two render targets at once) — and a far tree is one
@@ -58,6 +58,14 @@ export class Trees {
   private readonly ranges: number[]
   drawn = [0, 0, 0, 0, 0]
   private readonly impMat: GFX.ShaderMaterial
+  /** ?treemid=geo: the conifers' mid LOD mesh (A/B) — else their impostors start at the near ring. */
+  private readonly midGeo = gameParams().get('treemid') === 'geo'
+  /** THE SEE-THROUGH (seeThrough): what the camera follows (x, y, z) and its radius (m); 0: off. */
+  private readonly see = { value: new GFX.Vector4() }
+  /** (its cone from the camera, per frame — update: the unit direction to it + its distance L; the cone's slope, where the
+   *  cut ends and where its fade starts along it) */
+  private readonly seeD = { value: new GFX.Vector4() }
+  private readonly seeK = { value: new GFX.Vector4() }
   private readonly noiseU: GFX.IUniform
   private readonly leafU: GFX.IUniform
   private readonly frondU: GFX.IUniform
@@ -95,7 +103,7 @@ export class Trees {
     const pre = gameParams().get('treepre') !== '0'
     const leafMat = (pass: 'one' | 'depth' | 'shade') => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
-      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU },
+      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU, uSee: this.see, uSeeD: this.seeD, uSeeK: this.seeK },
       vertexColors: true,
       defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines, ...(pass === 'depth' ? { TREE_DEPTH: '' } : pass === 'shade' ? { TREE_SHADE: '' } : {}) },
       vertexShader: VERT,
@@ -157,6 +165,19 @@ export class Trees {
   private key(i: number, j: number): number { return (i + 512) * 1024 + (j + 512) }
 
 
+  /**
+   * THE SEE-THROUGH (2026-11-06, the user: "from above the trees block our camera to see the car" — Over the Hill's
+   * way): the leaves between the camera and the car cut away in a circle round the car — a CONE from the camera to it,
+   * so on screen a disc ~1.6 × the car's own size wherever along the way a crown stands; only in front of the car
+   * (the trees behind it and beside it stay), only the foliage (the trunks stay: a thin line, and the tree still
+   * stands there), its rim dithered (MSAA: alpha-to-coverage; LOW: a screen-space dither). It is part of the leaves'
+   * own cut-out — the depth pre-pass drops those pixels and the shading pass never sees them: nothing drawn twice, a
+   * hidden car's leaves not shaded at all. r = 0: off (first person, the map, the free camera).
+   */
+  seeThrough(p: GFX.Vector3, r: number): void { this.see.value.set(p.x, p.y + 0.25 * r, p.z, this.seeOff ? 0 : r) }
+  /** ?see=0: never (A/B). */
+  private readonly seeOff = gameParams().get('see') === '0'
+
   /** The nearest tree of `species` (−1 any) to (x, z) within r — the shot harness frames trees with it. */
   nearest(x: number, z: number, r: number, species = -1, minH = 0): { x: number; y: number; z: number; h: number } | null {
     let best = -1, bd = r * r
@@ -215,6 +236,13 @@ export class Trees {
   occluded = 0
 
   update(camera: GFX.PerspectiveCamera): void {
+    // the see-through's cone, every frame (before the lists' early out: the car moves when the camera doesn't)
+    const se = this.see.value
+    if (se.w > 0) {
+      const dx = se.x - camera.position.x, dy = se.y - camera.position.y, dz = se.z - camera.position.z, L = Math.max(0.01, Math.hypot(dx, dy, dz))
+      this.seeD.value.set(dx / L, dy / L, dz / L, L)
+      this.seeK.value.set((1.6 * se.w) / L, L - 0.35 * se.w, L - 0.9 * se.w, 0)
+    }
     const dir = camera.getWorldDirection(new GFX.Vector3())
     if (camera.position.distanceToSquared(this.lastPos) < 16 && dir.dot(this.lastDir) > 0.9985) return
     this.lastPos.copy(camera.position)
@@ -242,7 +270,10 @@ export class Trees {
         const o = t * TREE_STRIDE
         const dx = d[o] - cx, dz = d[o + 2] - cz, dist = Math.sqrt(dx * dx + dz * dz)
         if (dist > reach) continue
-        const lod = dist < R[0] ? 0 : dist < R[1] ? 1 : 2
+        // (a spruce / larch past the near ring: its IMPOSTOR, not the mid LOD — 2026-11-06, the user: "the far image is far
+        //  better than the LOD, a fuller tree" — the impostor is the near LOD's own picture; the mid LOD's one ring of
+        //  fronds read thin. 2 triangles, not ~480. ?treemid=geo: the mid LOD as before. A snag keeps its mesh.)
+        const sp = d[o + 5], lod = dist < R[0] ? 0 : dist < R[1] && (sp >= 2 || this.midGeo) ? 1 : 2
         let grow = 1
         const slot = lod === 2 ? 4 : family(d[o + 5]) * 2 + lod
         if (lod === 2) {
@@ -389,9 +420,27 @@ vec3 frondTone(vec3 albedo, vec4 ft, float s, float tint, float species) {
 // a leaf CARD's tint (0…1 per card): a little lighter / darker, one card in eight of a birch still yellow-green
 vec3 leafTone(vec3 albedo, float tint, float species) {
   if (species < 2.5) return albedo;
-  albedo *= 0.82 + 0.3 * fract(tint * 7.13);
+  albedo *= 0.9 + 0.18 * fract(tint * 7.13);
   return tint > 0.88 && species < 3.5 ? mix(albedo, vec3(0.42, 0.5, 0.08) * PLANT_VALUE, 0.6) : albedo;
 }
+// a broadleaf LEAF's light (lt: the leaf texture — each leaf's tone, its depth in the cluster; N: the crown's normal)
+// (2026-11-06, the user: the broadleaf "doesn't match our valley" — every leaf its own random brightness, 0.34 … 1.15,
+//  drowned the crown's light and shade: the leaves keep their own tones, the dots, but over a third of the range, and
+//  the crown's underside darker — a lit top, a shaded underside, the spruce's volume)
+vec3 leafLight(vec3 albedo, vec4 lt, vec3 N) {
+  return albedo * (0.8 + 0.28 * lt.r) * (0.8 + 0.2 * lt.g) * mix(0.84, 1.04, smoothstep(-0.5, 0.8, N.y));
+}
+// a birch / aspen TRUNK (h01: up the tree; n: the bark's normal): grey and dark at its foot, white above, the birch's
+// dark marks across it in short dashes (2026-11-06: one flat bright white glowed — a stick, not a trunk)
+vec3 barkLight(vec3 albedo, float h01, vec3 n) {
+  float row = floor(h01 * 46.0), side = floor((atan(n.z, n.x) + 3.1416) * 0.95);
+  float k = fract(sin(row * 12.9898 + side * 78.233) * 43758.547), band = fract(h01 * 46.0);
+  float mark = step(0.66, k) * smoothstep(0.05, 0.2, band) * smoothstep(0.6, 0.45, band);
+  return albedo * mix(0.42, 1.0, smoothstep(0.0, 0.2, h01)) * (1.0 - 0.62 * mark);
+}
+// the darkest a tree gets inside (its AO's floor): a spruce's dense needles darkest; a larch's thin needles and a
+// broadleaf's leaves let the light in
+float aoFloor(float species) { return species > 2.5 ? 0.4 : species > 0.5 ? 0.36 : 0.22; }
 vec3 treeAlbedo(float species, float fol, float j) {
 #ifdef OTH_DESERT
   // (the desert's palms: a warm grey-brown trunk, deep green fronds lighter at their tips)
@@ -400,7 +449,7 @@ vec3 treeAlbedo(float species, float fol, float j) {
   return mix(vec3(0.03, 0.1, 0.03), vec3(0.09, 0.2, 0.05), 0.5 + j * 0.6) * PLANT_VALUE * 1.25;
 #endif
   if (fol < 0.5) {
-    if (species > 2.5) return vec3(0.7, 0.68, 0.62);          // birch / aspen: white bark
+    if (species > 2.5) return vec3(0.62, 0.61, 0.57);         // birch / aspen: white bark (a little grey: barkLight)
     return species > 1.5 ? vec3(0.36, 0.33, 0.29) : vec3(0.1, 0.055, 0.03); // (a snag's weathered silver-grey · the spruce's dark brown)
   }
   // (the spruce: the user's OTH reference — a clear deep green; a gold larch; ss2's aspens: gold, orange, red, a few
@@ -408,8 +457,10 @@ vec3 treeAlbedo(float species, float fol, float j) {
   //  (× PLANT_VALUE, paint.ts: the leaves and needles a touch darker; the bark above keeps its own)
   if (species < 0.5) return mix(vec3(0.03, 0.085, 0.04), vec3(0.11, 0.3, 0.12), 0.5 + j * 0.35) * PLANT_VALUE;
   if (species < 1.5) return mix(vec3(0.6, 0.33, 0.04), vec3(0.95, 0.66, 0.12), 0.55 + j * 0.4) * PLANT_VALUE;
-  if (species < 3.5) return mix(vec3(0.62, 0.32, 0.02), vec3(0.9, 0.62, 0.06), 0.5 + j * 0.8) * PLANT_VALUE;
-  if (species < 4.5) return mix(vec3(0.42, 0.025, 0.02), vec3(0.85, 0.2, 0.025), 0.5 + j * 0.9) * PLANT_VALUE;
+  // (2026-11-06, in the valley's colours: the aspen ORANGE to gold, a deep red-orange only at one end of its range —
+  //  the near-pure red was the strongest colour in the valley; the birch a clean gold, not a mustard)
+  if (species < 3.5) return mix(vec3(0.7, 0.42, 0.05), vec3(0.92, 0.67, 0.11), 0.5 + j * 0.8) * PLANT_VALUE;
+  if (species < 4.5) return mix(vec3(0.62, 0.15, 0.03), vec3(0.9, 0.5, 0.08), 0.5 + j * 0.9) * PLANT_VALUE;
   return mix(vec3(0.08, 0.2, 0.04), vec3(0.2, 0.34, 0.06), 0.5 + j * 0.8) * PLANT_VALUE;
 }
 `
@@ -422,6 +473,9 @@ ${SHADOW_GLSL}
 in vec4 aT0; // x, y, z, height
 in vec4 aT1; // rotation, species, seed, grow
 in vec3 leaf; // a broadleaf leaf's disc coordinates + its tint (0 0 0 elsewhere)
+uniform vec4 uSee;
+uniform vec4 uSeeD;
+uniform vec4 uSeeK;
 out vec3 vLeaf;
 out float vFol;
 out vec3 vWorld;
@@ -440,13 +494,22 @@ void main() {
   // a snag: the trunk alone, thick and BROKEN OFF under half the height (not a needle up to the sky), the foliage
   // collapsed away
   if (species > 1.5 && species < 2.5) { p = fol > 0.5 ? vec3(0.0) : vec3(p.x * 2.2, min(p.y, 0.42) * 0.9, p.z * 2.2); }
-  // a broadleaf's own crown: its base raised a little (0.31 → up to 0.4 of the height, the top kept) and its width
-  // ×0.85–1.15, from the tree's seed (one geometry, every tree a different outline)
-  if (species > 2.5 && leaf.z > 0.5) {
-    float lift = 0.09 * fract(aT1.z * 5.31), wide = 0.85 + 0.3 * fract(aT1.z * 13.7);
-    p.y = 0.97 - (0.97 - p.y) * (0.66 - lift) / 0.66;
-    p.xz *= wide;
+  // a broadleaf's own crown, from the tree's seed (one geometry, every tree a different outline): its base raised a
+  // little (the top kept), its width ×0.8–1.2 — each way its own, an oval from above, not a ball — and its depth
+  // ×0.88–1.12 about its middle; and the whole tree LEANS a little (up to ~4°, the foot kept) — 2026-11-06: the one
+  // upright egg on a stick, every tree alike, read as a toy beside the spruce
+#ifndef OTH_DESERT
+  if (species > 2.5) {
+    if (leaf.z > 0.5) {
+      float lift = 0.05 * fract(aT1.z * 5.31), tall = 0.88 + 0.24 * fract(aT1.z * 9.13);
+      p.y = 0.97 - (0.97 - p.y) * (0.66 - lift) / 0.66;
+      p.y = 0.64 + (p.y - 0.64) * tall;
+      p.xz *= vec2(0.8 + 0.4 * fract(aT1.z * 13.7), 0.8 + 0.4 * fract(aT1.z * 3.97));
+    }
+    float la = fract(aT1.z * 21.7) * 6.2832;
+    p.xz += vec2(cos(la), sin(la)) * (0.07 * fract(aT1.z * 17.3)) * smoothstep(0.1, 1.0, p.y);
   }
+#endif
   float c = cos(aT1.x), s = sin(aT1.x);
   vec3 q = vec3(p.x * c - p.z * s, p.y, p.x * s + p.z * c) * H;
   vec3 n = normal;
@@ -459,6 +522,13 @@ void main() {
   vN = n;
   vLeaf = leaf;
   vFol = fol;
+  // THE SEE-THROUGH, per tree: a crown that reaches into the cone (Trees.seeThrough) marks its foliage 2 — only its
+  // leaves run the cut, per pixel; every other tree's skip it
+  if (fol > 0.5 && uSee.w > 0.0) {
+    vec3 qc = aT0.xyz + vec3(0.0, 0.62 * H, 0.0) - uCamPos;
+    float rho = 0.5 * H, tc = dot(qc, uSeeD.xyz), pc = sqrt(max(dot(qc, qc) - tc * tc, 0.0));
+    if (tc > -rho && tc < uSeeK.y + rho && pc < uSeeK.x * max(tc + rho, 0.0) + rho) vFol = 2.0;
+  }
   vAo = color.r;
   vH = h01;
   vSpecies = species;
@@ -466,7 +536,9 @@ void main() {
   vAlb = treeAlbedo(species, fol, fract(aT1.z * 7.31) - 0.5);
   // the light where it stands: terrain + tree shadow at the root for the lower crown, open sky toward the top
   float rootSun = sunVisibility(aT0.xz);
-  vSun = mix(rootSun, sunVisibilityTerrain(aT0.xz), smoothstep(0.25, 0.85, h01));
+  // (a broadleaf's crown starts low — a third of the way up: the shade at the root only for its lowest leaves, or the
+  //  whole lower half of every crown sat in its own shadow, a hard dark band under a bright top)
+  vSun = mix(rootSun, sunVisibilityTerrain(aT0.xz), species > 2.5 ? smoothstep(0.2, 0.5, h01) : smoothstep(0.25, 0.85, h01));
   gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
 }
 `
@@ -486,16 +558,30 @@ in float vAo;
 in float vSun;
 in float vSpecies;
 in float vH;
+uniform vec4 uSeeD;
+uniform vec4 uSeeK;
+
+// THE SEE-THROUGH (Trees.seeThrough): 1 kept … 0 cut — p inside the cone from the camera to what it follows, in front of
+// it (fading out over its last metre or so: the leaves beside the car stay)
+float seeKeep(vec3 p) {
+  vec3 q = p - uCamPos;
+  float t = dot(q, uSeeD.xyz);
+  if (t <= 0.0 || t > uSeeK.y) return 1.0;
+  float R = uSeeK.x * t;
+  float r = sqrt(max(dot(q, q) - t * t, 0.0) / (R * R));
+  return clamp(max(r, smoothstep(uSeeK.z, uSeeK.y, t)) * 4.0 - 3.0, 0.0, 1.0);
+}
 
 void main() {
   vec3 N = normalize(vN);
-  float under = gl_FrontFacing ? 1.0 : 0.62; // a frond's underside
-  if (!gl_FrontFacing) N.y = -abs(N.y) * 0.4;
+  // a frond's underside (a broadleaf's LEAF CARD has none: lit as the crown's volume, whichever way the card faces —
+  // its back half darkened at random was most of the crown's speckle)
+  bool card = vLeaf.z > 0.5;
+  float under = gl_FrontFacing || card ? 1.0 : 0.62;
+  if (!gl_FrontFacing && !card) N.y = -abs(N.y) * 0.4;
   vec3 V = normalize(uCamPos - vWorld);
   // tips light, the inside of the crown dark; the top of the tree a touch lighter
-  // (a larch's needles are thin and let light through: its inside is less dark than a spruce's)
-  float aoMin = vSpecies > 2.5 ? 0.3 : vSpecies > 0.5 ? 0.42 : 0.22; // (larch: thin needles let the light in)
-  vec3 albedo = vAlb * mix(aoMin, 1.15, vAo) * under * (0.9 + 0.18 * vH);
+  vec3 albedo = vAlb * mix(aoFloor(vSpecies), 1.15, vAo) * under * (0.9 + 0.18 * vH);
   // broadleaf: each LEAF a round disc, its own tone, one in ten still yellow-green
   // a broadleaf LEAF CARD: tiny separate leaves, the gaps between them cut out (the sky shows through); a conifer
   // BRANCH FROND: needle-covered sprigs, the gaps between them cut out (feathery edges, fingered ends)
@@ -503,23 +589,29 @@ void main() {
   //  discards — its EQUAL depth test already keeps only what the pre-pass kept)
   float alpha = 1.0;
   vec4 lt = vec4(1.0), ft = vec4(1.0);
-  if (vLeaf.z > 0.5) lt = leafCard(vLeaf.xy, vLeaf.z);
+  if (card) lt = leafCard(vLeaf.xy, vLeaf.z);
   if (vLeaf.z < -0.5) ft = frondCard(vLeaf.x, vLeaf.y, -vLeaf.z);
 #ifndef TREE_SHADE
-  float cut = vLeaf.z > 0.5 ? lt.a : vLeaf.z < -0.5 ? ft.a : 1.0;
+  float cut = card ? lt.a : vLeaf.z < -0.5 ? ft.a : 1.0;
+  float keep = vFol > 1.5 ? seeKeep(vWorld) : 1.0; // (the see-through: the foliage of the trees in its cone)
 #ifdef A2C
-  alpha = clamp((cut - 0.35) / 0.3, 0.0, 1.0);
+  alpha = clamp((cut - 0.35) / 0.3, 0.0, 1.0) * keep;
   if (alpha < 0.02) discard;
 #else
-  if (cut < 0.5) discard;
+  // (the rim dithered: interleaved gradient noise)
+  if (cut < 0.5 || keep < fract(52.9829 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))) discard;
 #endif
 #endif
 #ifdef TREE_DEPTH
+  // (the depth pre-pass: the cut-out alone — no early return before the shading below: WebGPU's first shader
+  //  compiler rejected the unreachable code and fell back to the slow one)
   gl_FragColor = vec4(0.0, 0.0, 0.0, alpha);
-  return;
-#endif
-  if (vLeaf.z > 0.5) albedo = leafTone(albedo, fract(vLeaf.z) / 0.9, vSpecies) * (0.55 + 0.6 * lt.r) * (0.62 + 0.38 * lt.g);
+#else
+  if (card) albedo = leafLight(leafTone(albedo, fract(vLeaf.z) / 0.9, vSpecies), lt, N);
   if (vLeaf.z < -0.5) albedo = frondTone(albedo, ft, vLeaf.x, fract(-vLeaf.z) / 0.9, vSpecies);
+#ifndef OTH_DESERT
+  if (vFol < 0.5 && vSpecies > 2.5) albedo = barkLight(albedo, vH, N);
+#endif
 #ifdef TREE_SHADE
   alpha = 1.0;
 #endif
@@ -531,6 +623,7 @@ void main() {
   gl_FragColor = vec4(applyAtmos(c, vWorld), alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+#endif
 }
 `
 
@@ -575,14 +668,23 @@ in float vAo;
 in float vH;
 void main() {
   vec3 N = normalize(vN);
-  float under = gl_FrontFacing ? 1.0 : 0.62;
-  if (!gl_FrontFacing) N.y = -abs(N.y) * 0.4;
-  vec3 albedo = vAlb * mix(uSpecies > 0.5 ? 0.42 : 0.22, 1.15, vAo) * under * (0.9 + 0.18 * vH);
-  if (vLeaf.z > 0.5) {
+  // (as the tree's own shader: a leaf card has no underside)
+  bool card = vLeaf.z > 0.5;
+  float under = gl_FrontFacing || card ? 1.0 : 0.62;
+  if (!gl_FrontFacing && !card) N.y = -abs(N.y) * 0.4;
+#ifdef OTH_DESERT
+  vec3 albedo = vAlb * mix(uSpecies > 0.5 ? 0.42 : 0.22, 1.15, vAo) * under * (0.9 + 0.18 * vH); // (the palms' bake, as it was)
+#else
+  vec3 albedo = vAlb * mix(aoFloor(uSpecies), 1.15, vAo) * under * (0.9 + 0.18 * vH);
+#endif
+  if (card) {
     vec4 lt = leafCard(vLeaf.xy, vLeaf.z);
     if (lt.a < 0.5) discard;
-    albedo = leafTone(albedo, fract(vLeaf.z) / 0.9, uSpecies) * (0.55 + 0.6 * lt.r) * (0.62 + 0.38 * lt.g);
+    albedo = leafLight(leafTone(albedo, fract(vLeaf.z) / 0.9, uSpecies), lt, N);
   }
+#ifndef OTH_DESERT
+  if (vFol < 0.5 && uSpecies > 2.5) albedo = barkLight(albedo, vH, N);
+#endif
   if (vLeaf.z < -0.5) {
     vec4 ft = frondCard(vLeaf.x, vLeaf.y, -vLeaf.z);
     if (ft.a < 0.5) discard;
@@ -804,7 +906,8 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       const other = vn(x / 60 - 23, z / 60 + 41) + (hash01(x + 0.37, z + 0.11) - 0.5) * 0.3 > 0.7
       if (!other) species = 0
       else if (species === 0) species = 1
-      let H = family(species) === 1 ? (7 + 8 * Math.pow(rnd(), 0.8)) * (0.85 + 0.15 * forest) : (6 + 15 * Math.pow(rnd(), 0.8)) * (0.75 + 0.25 * forest)
+      // (a broadleaf 8–16.5 m — 2026-11-06: at 7–15 m beside the spruce, up to 36 m, the groves read as toys)
+      let H = family(species) === 1 ? (8 + 8.5 * Math.pow(rnd(), 0.8)) * (0.85 + 0.15 * forest) : (6 + 15 * Math.pow(rnd(), 0.8)) * (0.75 + 0.25 * forest)
       // BIG PINES (a size, not a tree more — the vertices are the same): a stand's spruce a little taller toward its
       // core (no more: the cost is fill — a dense stand's near crowns), and one spruce in ~9 an old giant of 26–36 m — the
       // scale the hills are read by

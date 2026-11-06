@@ -1,3 +1,4 @@
+import { gameParams } from '../settings'
 import type { Landmark, MapData } from './MapData'
 import type { Rocks } from './Rocks'
 import { TREE_STRIDE, type Trees } from './Trees'
@@ -21,6 +22,8 @@ import { TREE_STRIDE, type Trees } from './Trees'
  *           river banks — and out in the open meadows, away from the tracks (they pull you off them)
  *   camps   CAMPSITES (Landmarks.ts kind 'camp': a tent, a fire ring, log seats, a lantern) at the scenic flat spots —
  *           the hidden basins, the Flower Hollow, the lake shore, the river's bends, the larger ponds
+ *   log     FALLEN TRUNKS and stump  STUMPS along the tracks' verges (the forest's edge the most) — the ring the chase
+ *           camera looks at (2026-11-06: ~10 things stood within 25 m of a track; the verges' stones: Rocks.ts)
  *   swarms  wild FIREFLIES at night (2026-11-02, the user: "near some trees and random places"): by trees at a
  *           grove's edge, round the ponds, along the streams, in the Flower Hollow and the open meadows (~40)
  *
@@ -33,8 +36,8 @@ import { TREE_STRIDE, type Trees } from './Trees'
  * Every spot is checked against the water, the tracks, the slope, the rocks and the trees (spatial hashes: ~10 ms for
  * the whole valley).
  */
-export type PropKind = 'sign' | 'table' | 'fence' | 'logs' | 'cairn' | 'truck' | 'crate' | 'stones' | 'shed' | 'outhouse' | 'ruin' | 'well' | 'tent'
-export const PROP_KINDS: PropKind[] = ['sign', 'table', 'fence', 'logs', 'cairn', 'truck', 'crate', 'stones', 'shed', 'outhouse', 'ruin', 'well', 'tent']
+export type PropKind = 'sign' | 'table' | 'fence' | 'logs' | 'cairn' | 'truck' | 'crate' | 'stones' | 'shed' | 'outhouse' | 'ruin' | 'well' | 'tent' | 'log' | 'stump'
+export const PROP_KINDS: PropKind[] = ['sign', 'table', 'fence', 'logs', 'cairn', 'truck', 'crate', 'stones', 'shed', 'outhouse', 'ruin', 'well', 'tent', 'log', 'stump']
 /** The desert's things' ids start here (a crate's id is kept in the journal: the two worlds' never meet). */
 export const DESERT_IDS = 100000
 
@@ -417,6 +420,35 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
     const x = (rnd() * 2 - 1) * (half - 150), z = (rnd() * 2 - 1) * (half - 150)
     map.maskAt(x, z, mk)
     if (mk[1] < 0.5 && mk[0] < 0.2 && slope(x, z) < 0.2) sw(x, z) // (the green meadows)
+  }
+  // ---- THE VERGES (2026-11-06, the user: "why does our world feel empty, especially the valley"): fallen trunks and
+  // stumps along both edges of every track, by the trees mostly (the stones there are the rocks': Rocks.ts). LAST,
+  // from their own seed: every crate's id and every thing above stays where it was. ?verge=0: without them (the A/B)
+  if (!desert && gameParams().get('verge') !== '0') {
+    const vr = rng(0x7e46e5)
+    for (const L of lines) {
+      let run = 0
+      for (let i = 1; i < L.length; i++) {
+        run += Math.hypot(L[i][0] - L[i - 1][0], L[i][1] - L[i - 1][1])
+        if (run < 16) continue
+        run = 0
+        const a = along(L, i)
+        for (const side of [-1, 1]) {
+          if (vr() > 0.45) continue
+          const off = hw + 2.2 + Math.pow(vr(), 1.3) * 9, x = L[i][0] + Math.cos(a) * off * side, z = L[i][1] - Math.sin(a) * off * side
+          map.maskAt(x, z, mk)
+          const woody = mk[3] > 0.15 || treeHash.some(x, z, 14, (j) => (td[j * TREE_STRIDE] - x) ** 2 + (td[j * TREE_STRIDE + 2] - z) ** 2 < 196)
+          const r = vr(), rot = vr() * 6.283
+          if (r < (woody ? 0.38 : 0.1)) {
+            // (lying roughly along the track, as one felled or blown down beside a road would)
+            const lr = a + Math.PI / 2 + (vr() - 0.5) * 1.2
+            if (free(x, z, { clear: 1.4, maxSlope: 0.3, offTrack: hw + 1.8, spacing: 16, kind: 'log' })) add('log', x, z, lr)
+          } else if (r < (woody ? 0.68 : 0.18)) {
+            if (free(x, z, { clear: 0.7, maxSlope: 0.35, offTrack: hw + 1.5, spacing: 9, kind: 'stump' })) add('stump', x, z, rot)
+          } // (no stone props: the two-box stone read as a block beside the rocks — the verges' stones are the rocks', Rocks.ts)
+        }
+      }
+    }
   }
   return { props, camps, swarms, ms: performance.now() - t0 }
 }

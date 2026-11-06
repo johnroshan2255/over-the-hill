@@ -10,13 +10,15 @@ import { Grass } from './Grass'
 import { Horizon } from './Horizon'
 import { Landmarks } from './Landmarks'
 import { type Landmark, MapData } from './MapData'
+import { gameParams } from '../settings'
 import { placeThings } from './Places'
+import { dressHills, NOTES, planSites, regrowPads } from './Sites'
 import { Props } from './Props'
 import type { Tier } from './quality'
 import { Rocks } from './Rocks'
 import { Terrain } from './Terrain'
 import type { TerrainShadow } from './TerrainShadow'
-import { placeTrees, Trees } from './Trees'
+import { placeTrees, Trees, TREE_STRIDE } from './Trees'
 import { Water } from './Water'
 
 /**
@@ -125,11 +127,25 @@ export class World {
     const falls = await step('falls', () => new Falls(map, atmos))
     const treeData: number[] = []
     await sliced('placing trees', placeTrees(map, rocks, treeData))
-    const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks, !background, new Float32Array(treeData)))
-    await step('impostors', () => trees.bakeImpostors(env.renderer))
     const bushData: number[] = []
     await sliced('placing bushes', placeBushes(map, rocks, bushData))
-    const bushes = await step('bushes', () => new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture, new Float32Array(bushData)))
+    // THE SMALL THINGS (Places.ts picks where, seeded) — from the trees' places alone (the same as ever: every crate's id
+    // kept), then THE NEW PLACES (Sites.ts — 2026-11-06) clear of all of it; the trees, bushes and stones on the new
+    // places' ground taken out before the trees and bushes are built
+    const treeAll = new Float32Array(treeData)
+    const placed = await step('places', () => placeThings(map, rocks, { data: treeAll, count: treeAll.length / TREE_STRIDE } as unknown as Trees))
+    // (?sites=0: without the new places — the cost A/B)
+    const plan = gameParams().get('sites') === '0' ? { sites: [], keep: [] } : await step('sites', () => planSites(map, rocks, placed.props, [...(map.meta.landmarks ?? []), ...placed.camps]))
+    const open = (x: number, z: number) => plan.keep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r)
+    const keepEvery = (a: ArrayLike<number>, stride: number) => { const o: number[] = []; for (let i = 0; i < a.length; i += stride) if (open(a[i], a[i + 2])) for (let k = 0; k < stride; k++) o.push(a[i + k]); return new Float32Array(o) }
+    rocks.removeWithin(plan.keep)
+    // (and the small things on it: pebbles, logs, stumps — never a crate, a sign, a camp's)
+    placed.props = placed.props.filter((p) => !['stones', 'log', 'stump', 'logs'].includes(p.kind) || open(p.x, p.z))
+    // (the tunnel's hill: the trees and bushes where it stands lifted onto it, a few more on its crest — Sites.dressHills)
+    const dressed = dressHills(map, plan.sites, keepEvery(treeAll, TREE_STRIDE), TREE_STRIDE, keepEvery(bushData, 7), 7)
+    const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks, !background, dressed.trees))
+    await step('impostors', () => trees.bakeImpostors(env.renderer))
+    const bushes = await step('bushes', () => new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture, dressed.bushes))
     // OCCLUSION CULLING: what the hills hide (trees, rocks, bushes behind them are skipped)
     const horizon = await step('horizon', () => new Horizon(map, Math.max(tier.treeReach, tier.rockReach)))
     horizon.enabled = env.occlusion
@@ -138,11 +154,14 @@ export class World {
     // without the post pass: the bloom and the god rays painted forward (Glow.ts)
     const glow = tier.bloom ? null : await step('glow', () => new Glow(map, atmos))
     atmos.uniforms.uGlow.value = glow ? 1 : 0
-    // THE SMALL THINGS (Places.ts picks where, seeded): the CAMPS join the landmarks (built, found, on the map like
-    // them); the signposts, tables, fences, log piles, cairns, trucks, supply crates and fireflies are Props.ts
-    const placed = await step('places', () => placeThings(map, rocks, trees))
-    const places = (map.meta.landmarks = [...(map.meta.landmarks ?? []), ...placed.camps])
-    const landmarks = await step('landmarks', () => new Landmarks(map, atmos, shadow, tier, env.farGrid))
+    // (the verges' stones join the rocks now, clear of the trees, the things and the new places: Rocks.settleVerge)
+    await step('verge', () => rocks.settleVerge(trees.data, TREE_STRIDE, placed.props, plan.keep))
+    // the old landmarks' pads grown back to grass (a yard, a path to the road): Sites.regrowPads
+    await step('pads', () => regrowPads(map, map.meta.landmarks ?? []))
+    // the CAMPS and the NEW PLACES join the landmarks (built, found, on the map like them); the notes left at them
+    const places = (map.meta.landmarks = [...(map.meta.landmarks ?? []), ...placed.camps, ...plan.sites])
+    for (const l of places) if (!l.note && NOTES[l.name]) l.note = NOTES[l.name]
+    const landmarks = await step('landmarks', () => new Landmarks(map, atmos, shadow, tier, env.farGrid, rocks.footprint))
     const props = await step('props', () => new Props(placed.props, places, placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner, map.desert))
     landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
     const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
@@ -198,7 +217,7 @@ export class World {
     this.bushes.update(camera)
     this.props.update(camera)
     this.formations?.update(camera)
-    this.landmarks.cull()
+    this.landmarks.cull(camera.position)
     this.bridges.cull()
     this.falls.cull()
   }

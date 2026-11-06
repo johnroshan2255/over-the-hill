@@ -19,7 +19,11 @@ export const PLANT_VALUE_GLSL = /* glsl */ `const float PLANT_VALUE = ${PLANT_VA
  *  it is OTH's deeper honey-orange (≈ 15 % darker on screen, like the greens). */
 const GOLD_VALUE = 0.66
 
+/** `?fieldpaint=0`: the meadows without their painted clumps (the A/B — groundPaint). */
+const NO_FIELDPAINT = typeof location !== 'undefined' && new URLSearchParams(location.search).get('fieldpaint') === '0'
+
 export const PAINT_GLSL = /* glsl */ `
+${NO_FIELDPAINT ? '#define NO_FIELDPAINT' : ''}
 ${PLANT_VALUE_GLSL}
 const float GOLD_VALUE = ${GOLD_VALUE.toFixed(3)};
 const vec3 STRAW      = vec3(0.68, 0.4, 0.115) * PLANT_VALUE * GOLD_VALUE;
@@ -265,6 +269,21 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
     g.scree = smoothstep(0.66, 0.7, sc) * (1.0 - smoothstep(0.5, 0.8, wet)) * smoothstep(0.06, 0.14, steep);
     g.screeNear = smoothstep(0.56, 0.665, sc) * (1.0 - smoothstep(0.5, 0.8, wet)) * smoothstep(0.06, 0.14, steep);
     col = mix(col, SCREE * mix(1.0, 0.9 + 0.14 * p.fine.g + 0.08 * p.grain.r, paintK), g.scree);
+    // THE FIELD'S CLUMPS (2026-11-06, the user: "why does our world feel empty, especially the valley"): past the blades
+    // (ULTRA's 72 m, LOW's 38) a meadow was one flat colour. PATCHES a few metres across a step darker or lighter, and
+    // TUSSOCKS — dark clumps of taller grass ~1.5 m round, one in about a third of 4 m cells. Every blade takes its root's
+    // colour (Grass.ts), so the carpet near and the paint beyond it show the same clumps: no seam at the grass's edge. A
+    // tussock melts into its average as it shrinks toward a pixel (no shimmer); the mean brightness stays as it was.
+    // ?fieldpaint=0: without (the A/B)
+#ifndef NO_FIELDPAINT
+    float lawnK = (1.0 - earth) * (1.0 - g.scree);
+    if (lawnK > 0.01) {
+      float patchV = smoothstep(0.25, 0.75, p.fine.b + (p.mid.g - 0.5) * 0.4);
+      float tuss = dotsAt(xz + vec2(1.7, 0.6), 4.0, 0.34, 1.5 * (0.75 + 0.5 * p.fine.r), max(0.25, foot * 0.45));
+      tuss = mix(tuss, 0.2, smoothstep(1.0, 3.0, foot));
+      col *= mix(1.0, (0.9 + 0.24 * patchV) * (1.0 - 0.2 * tuss) / 0.98, lawnK);
+    }
+#endif
     // SHRUB DOTS: small dark-green bushes scattered over the open slopes (thicker on the green, sparse on gold)
     // (only on open grass ground: not on the water's earth / gravel, rock or forest floor)
     float open = (1.0 - g.scree) * (1.0 - smoothstep(0.8, 0.86, m.b)) * (1.0 - smoothstep(0.3, 0.5, m.r)) * (1.0 - smoothstep(0.3, 0.6, m.a));

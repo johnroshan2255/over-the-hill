@@ -59,11 +59,19 @@ export class Atmosphere {
     uFogRange: { value: new GFX.Vector2(130, 2600) },
     uFogColor: { value: new GFX.Color() },
     uTime: { value: 0 },
+    /** THE CAVES' DARK (2026-11-06, Sites.ts — the drive-through tunnel, the grotto): per cave a segment (x0, z0, x1, z1)
+     *  and (radius, the roof's height, closed at its far end 0 / 1, 0); radius 0 = none. caveK() in ATMOS_GLSL. */
+    //  (three single vec4 pairs, not arrays: the renderer's layer sets no uniform arrays)
+    uCaveA0: { value: new GFX.Vector4() }, uCaveB0: { value: new GFX.Vector4() },
+    uCaveA1: { value: new GFX.Vector4() }, uCaveB1: { value: new GFX.Vector4() },
+    uCaveA2: { value: new GFX.Vector4() }, uCaveB2: { value: new GFX.Vector4() },
     uNoise: { value: null as GFX.Texture | null },
     /** 0 day … 1 full night (stars, the moon's disc, headlights). */
     uNight: { value: 0 },
     /** The rock's extra sky fill (rockFill), × this: 1 in the valley; the desert's less — most at dusk and night. */
     uRockFill: { value: 1 },
+    /** How much of the wrapped light's wrap is cut (shade): 0 as painted; the valley by day a share (VALLEY_LIGHT). */
+    uWrapCut: { value: 0 },
     /** Headlights (Vehicle.lights): the left lamp (xyz) and on (w), the right lamp, the car's forward and up axes;
      *  the tail lamps' middle (xyz) and the brake light (w, 0 … 1). */
     uHeadL: { value: new GFX.Vector4() },
@@ -233,9 +241,12 @@ export class Atmosphere {
     // (the desert's air clearer still: its aerial views were pale and washed out — frame 221 196 170 vs their 213 175 158)
     // (2026-11-04: the desert's air THICK and warm — far layers fading to a peach-white, one behind another; it was
     //  clearer than the valley's)
-    u.uFogRange.value.y = this.hazeLen * (1 - 0.1 * dk) * (1 - 0.45 * u.uRain.value)
+    // (2026-11-06, the user: "the valley feels empty": its middle distance went pale — the valley's air a third longer
+    //  and clear for its first 260 m, not 130; VALLEY_LIGHT below. ?light=0: as before)
+    const vk = (1 - dk) * VALLEY_LIGHT
+    u.uFogRange.value.y = this.hazeLen * (1 - 0.1 * dk + 0.3 * vk) * (1 - 0.45 * u.uRain.value)
     // (…and the first 400 m clear: near and middle ground keep their colour, only the far layers melt into the haze)
-    u.uFogRange.value.x = 130 + 270 * dk
+    u.uFogRange.value.x = 130 + 270 * dk + 130 * vk
     const amb = a.amb + (b.amb - a.amb) * f
     const night = GFX.MathUtils.smoothstep(-s, 0.06, 0.2)
     u.uNight.value = night
@@ -273,6 +284,16 @@ export class Atmosphere {
     const fill = 1 + 0.15 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)
     u.uAmbSky.value.multiplyScalar(fill)
     u.uAmbGround.value.multiplyScalar(fill)
+    // THE VALLEY'S SHADE (2026-11-06, the user: "the valley feels empty"): a hill's sunny and shaded sides were nearly
+    // one value — the land read flat. By day the sky's fill and the bounce 16 % less, the sun 6 % more: the lit faces
+    // keep their brightness (and the calibrated colours), the faces turned away fall a step darker
+    const vday = (1 - dk) * VALLEY_LIGHT * GFX.MathUtils.smoothstep(s, 0.05, 0.3)
+    // (the fill alone moved the frame ~1 %: the WRAP is what lights a slope turned away — 0.62 on the ground, so a face
+    //  at right angles to the sun took 38 % of it. A third of the wrap cut: the hills' far sides a clear step darker)
+    u.uAmbSky.value.multiplyScalar(1 - 0.22 * vday)
+    u.uAmbGround.value.multiplyScalar(1 - 0.22 * vday)
+    u.uSunColor.value.multiplyScalar(1 + 0.08 * vday)
+    u.uWrapCut.value = 0.6 * vday
     // (2026-11-04 — the user: "at evening and night the rocks' reddish colour is bright, even in the shadows": the
     //  coral rock is twice the old albedo, so the desert's shade DIMS as the sun goes down — the fill and the bounce
     //  ×0.55 at dusk, the rock's extra fill (rockFill) half by day and a quarter from dusk on; the night's purple fill
@@ -296,6 +317,9 @@ export class Atmosphere {
     keepTint(u.uMistColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.2), 0.18).multiplyScalar(0.92)
   }
 }
+
+/** The valley's clearer air and deeper shade (2026-11-06): 1 on; `?light=0` 0 — as before (the A/B). */
+const VALLEY_LIGHT = typeof location !== 'undefined' && new URLSearchParams(location.search).get('light') === '0' ? 0 : 1
 
 /** The desert's grade (Atmosphere.desert): colours of unit luminance-ish, scaled to the keyframe's brightness. */
 // (2026-11-04: the stylised warm grade — was round 1's deep photographic blue)
@@ -328,9 +352,28 @@ uniform vec3 uAmbGround;
 uniform vec2 uFogRange;
 uniform vec3 uFogColor;
 uniform float uTime;
+uniform vec4 uCaveA0;
+uniform vec4 uCaveB0;
+uniform vec4 uCaveA1;
+uniform vec4 uCaveB1;
+uniform vec4 uCaveA2;
+uniform vec4 uCaveB2;
+// HOW DEEP IN A CAVE p is (0 out in the open … ~0.85 deep under the roof): within its radius of the cave's line, under
+// its roof, fading out toward an open mouth over its first metres (a grotto's far end closed: dark to the back)
+float caveOne(vec3 p, vec4 A, vec4 B) {
+  if (B.x <= 0.0) return 0.0;
+  vec2 a = A.xy, ab = A.zw - A.xy;
+  float L2 = max(dot(ab, ab), 1e-3), t = clamp(dot(p.xz - a, ab) / L2, 0.0, 1.0), L = sqrt(L2);
+  float d = length(p.xz - (a + ab * t));
+  float mouth = smoothstep(0.0, 9.0, t * L) * (B.z > 0.5 ? 1.0 : smoothstep(0.0, 9.0, (1.0 - t) * L));
+  float sky = B.w > 0.0 ? smoothstep(B.w * 0.6, B.w * 1.7, length(p.xz - A.zw)) : 1.0; // (a skylight: lit under it)
+  return 0.86 * (1.0 - smoothstep(B.x * 0.75, B.x, d)) * (1.0 - smoothstep(B.y - 1.2, B.y, p.y)) * mouth * sky;
+}
+float caveK(vec3 p) { return max(caveOne(p, uCaveA0, uCaveB0), max(caveOne(p, uCaveA1, uCaveB1), caveOne(p, uCaveA2, uCaveB2))); }
 uniform sampler2D uNoise;
 uniform float uNight;
 uniform float uRockFill;
+uniform float uWrapCut;
 uniform vec4 uHeadL;
 uniform vec3 uHeadR;
 uniform vec3 uHeadDir;
@@ -477,6 +520,7 @@ vec3 shade(vec3 albedo, vec3 N, vec3 V, float rough, float f0, float ao, float s
   rough = mix(rough, 0.2, wet * 0.85);
   f0 = mix(f0, 0.05, wet);
   float NoL = dot(N, uSunDir);
+  wrap *= 1.0 - uWrapCut;
   float diff = clamp((NoL + wrap) / (1.0 + wrap), 0.0, 1.0);
   diff *= diff * (3.0 - 2.0 * diff) * 0.35 + 0.65; // a gentle S: fuller light faces, softer shade
   vec3 col = albedo * (uSunColor * diff * sunVis + ambient(N) * ao);

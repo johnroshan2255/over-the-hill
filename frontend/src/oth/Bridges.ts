@@ -1,5 +1,6 @@
 import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
+import { PAINT_GLSL } from './paint'
 import type { Horizon } from './Horizon'
 import { type Bridge, deckY, type MapData } from './MapData'
 import type { Tier } from './quality'
@@ -47,6 +48,9 @@ export function woodMaterial(atmos: Atmosphere, shadow: TerrainShadow, tier: Tie
 }
 
 /** Collects boxes, logs, quads and triangles (flat normals, a colour each, a night glow) into one geometry. */
+/** The surfaces a Builder's pieces can take (setSurf): the props' / landmarks' one material shades each its own way. */
+export const SURF = { wood: 0, stone: 1, metal: 2, fabric: 3, plain: 4, lamp: 5, eerie: 6, turf: 7, cliff: 8 } as const
+
 export class Builder {
   private readonly pos: number[] = []
   private readonly nor: number[] = []
@@ -54,10 +58,18 @@ export class Builder {
   private readonly glw: number[] = []
   private readonly idx: number[] = []
   private glowNow = 0
+  private surfNow = 0
   /** The glow of what's added from now on (0: none; 1: a lit window at night). */
   setGlow(v: number): void {
-    while (this.glw.length < this.count) this.glw.push(this.glowNow)
+    while (this.glw.length < this.count) this.glw.push(this.glowNow + 2 * this.surfNow)
     this.glowNow = v
+  }
+  /** THE SURFACE of what's added from now on (2026-11-06, the user: "materials … not flat colours"): SURF.wood (the
+   *  default: the grain), stone, metal (painted, rusting at its edges), fabric (a soft weave), plain (paint, glass,
+   *  rubber: no grain). Packed with the glow in one attribute (glow + 2 × surface): no new vertex data. */
+  setSurf(k: number): void {
+    this.setGlow(this.glowNow)
+    this.surfNow = k
   }
   private s: number
 
@@ -241,6 +253,14 @@ export class Builder {
     this.idx.push(base, base + 1, base + 2)
   }
 
+  /** Vertices as given (their own normals — a smooth surface: the tunnel's hill, Locations.ts): positions, normals,
+   *  colours (xyz each), triangles indexing into these. */
+  raw(pos: number[], nor: number[], col: number[], idx: number[]): void {
+    const base = this.pos.length / 3
+    for (let i = 0; i < pos.length; i++) { this.pos.push(pos[i]); this.nor.push(nor[i]); this.col.push(col[i]) }
+    for (const i of idx) this.idx.push(base + i)
+  }
+
   /** Vertices added so far (a landmark transforms its own range into place). */
   get count(): number { return this.pos.length / 3 }
 
@@ -255,6 +275,7 @@ export class Builder {
 
   /** The geometry of vertices [from, to) — everything by default; a range is one bridge / landmark (its own mesh). */
   geometry(from = 0, to = this.count): GFX.BufferGeometry {
+    this.setSurf(0)
     this.setGlow(0)
     const idx: number[] = []
     for (let i = 0; i < this.idx.length; i += 3) {
@@ -317,6 +338,7 @@ ${FRAG_OUT}
 ${ATMOS_GLSL}
 uniform vec4 uFarGrid;
 ${SHADOW_GLSL}
+${PAINT_GLSL}
 in vec3 vWorld;
 in vec3 vN;
 in vec3 vCol;
@@ -324,14 +346,83 @@ in float vGlow;
 void main() {
   vec3 N = normalize(vN);
   vec3 V = normalize(uCamPos - vWorld);
-  // the grain: soft streaks along the wood (the paint noise, stretched)
-  float grain = texture(uNoise, vec2(dot(vWorld.xz, vec2(0.7, 0.7)) * 0.9, vWorld.y * 0.6 + dot(vWorld.xz, vec2(-0.7, 0.7)) * 0.08)).b;
-  vec3 albedo = vCol * (0.7 + 0.6 * grain); // (the grain strong: it reads as wood)
-  float sun = sunVisibility(vWorld.xz);
-  vec3 c = shade(albedo, N, V, 0.85, 0.03, 1.0, sun, 0.2);
+  // THE SURFACE (Builder.setSurf, packed with the glow: glow + 2 × surface) — 0 wood, 1 stone, 2 metal, 3 fabric, 4 plain
+  float surf = floor(vGlow * 0.5 + 0.01), glow = vGlow - surf * 2.0;
+  vec3 albedo = vCol;
+  float rough = 0.85, wrap = 0.2, fillK = 0.0;
+  if (surf < 0.5) {
+    // the grain: soft streaks along the wood (the paint noise, stretched)
+    float grain = texture(uNoise, vec2(dot(vWorld.xz, vec2(0.7, 0.7)) * 0.9, vWorld.y * 0.6 + dot(vWorld.xz, vec2(-0.7, 0.7)) * 0.08)).b;
+    albedo *= 0.7 + 0.6 * grain; // (the grain strong: it reads as wood)
+  } else if (surf < 1.5) {
+    // STONE: blotches at two scales (no streaks), a cooler grey in the hollows, lichen on what faces up
+    vec2 q = vWorld.xz + vWorld.y * vec2(0.61, -0.43);
+    float b1 = texture(uNoise, q * 0.31).g, b2 = texture(uNoise, q * 1.7 + 0.3).r;
+    albedo *= 0.74 + 0.36 * b1 + 0.16 * (b2 - 0.5);
+    albedo = mix(albedo, vec3(0.2, 0.23, 0.12) * 0.55, smoothstep(0.62, 0.8, b2) * smoothstep(0.55, 0.95, N.y) * 0.6);
+    rough = 0.92; wrap = 0.3;
+  } else if (surf < 2.5) {
+    // PAINTED METAL: smooth, a little sheen, RUST bleeding in where a slow noise says (its edges and low down most)
+    vec2 q = vWorld.xz * 0.9 + vWorld.y * vec2(0.37, 0.71);
+    float r = texture(uNoise, q * 0.55).g * 0.7 + texture(uNoise, q * 2.3).b * 0.3;
+    float rust = smoothstep(0.5, 0.75, r + (0.6 - fract(vWorld.y * 0.13)) * 0.05);
+    albedo = mix(albedo, vec3(0.2, 0.075, 0.03) * (0.8 + 0.4 * r), rust * 0.85);
+    rough = mix(0.5, 0.9, rust);
+  } else if (surf < 3.5) {
+    // FABRIC: a fine weave and soft fading where the sun has bleached it; the light wraps through it a little
+    float wv = texture(uNoise, vWorld.xz * 2.1 + vWorld.y * 1.3).b;
+    albedo *= 0.88 + 0.2 * wv;
+    albedo = mix(albedo, albedo * 1.25 + 0.03, smoothstep(0.5, 0.95, N.y) * 0.25);
+    rough = 0.95; wrap = 0.5;
+  } else if (surf > 7.5) {
+    // CLIFF (a cave's walls, the hill's faces — 2026-11-06, the user: "inside it looks like lots of rocks: the rock
+    // texture the terrain uses"): the valley's slab paint (paint.ts: SLAB, its tones, streaks down the faces, darker
+    // hollows, faint cracks) read on the wall (its plane: across + up), and the cliffs' BEDS — bands by height, uneven
+    // thickness (Terrain's strata); vCol a tint
+    // (on a wall: across it and up; on a roof or a ledge — no 'across' there — plain from above: no smearing)
+    vec2 q = mix(vWorld.xz, vec2(dot(vWorld.xz, normalize(vec2(-N.z, N.x) + 1e-4)), vWorld.y) + vWorld.xz * 0.15, smoothstep(0.35, 0.75, 1.0 - abs(N.y)));
+    Paint p = paintNoise(q);
+    float steep = 1.0 - abs(N.y);
+    vec3 slab = mix(SLAB_DEEP, SLAB, 0.78 + (p.fine.g - 0.5) * 0.25 + (p.grain.r - 0.5) * 0.12 - steep * 0.25);
+    slab = mix(slab, slab * vec3(0.92, 1.0, 0.86), smoothstep(0.62, 0.8, p.mid.b) * 0.5);
+    slab *= (1.0 - 0.14 * smoothstep(0.66, 0.8, p.grain.a)) * (0.86 + 0.24 * p.fine.a);
+    float yb = vWorld.y + (p.fine.r - 0.5) * 1.6;
+    float bed = fract(yb / 1.35), band = texture(uNoise, vec2(floor(yb / 1.35) * 0.137, 0.31)).g;
+    slab *= 0.82 + 0.3 * band;                                        // each bed its own tone
+    slab *= 1.0 - 0.32 * smoothstep(0.86, 0.97, bed) * steep;         // the dark seam under each bed's lip
+    slab *= 1.0 + 0.12 * (1.0 - smoothstep(0.0, 0.1, bed)) * steep;   // its lit top edge
+    albedo = slab * vCol * 1.8;
+    rough = 0.92; wrap = 0.45; fillK = 1.0;
+  } else if (surf > 6.5) {
+    // TURF (the tunnel's hill, its grass): the field's own paint (grassPaint — the terrain's and the grass's), from the
+    // vertex: x the dryness (the mask's, where it stands), y the forest floor, z bare earth / rock (its steep faces)
+    Paint p = paintNoise(vWorld.xz);
+    vec3 gcol = grassPaint(vCol.x, p) * (0.9 + 0.2 * p.fine.g + (p.mid.r - 0.5) * 0.12 + (p.grain.r - 0.5) * 0.1);
+    gcol = mix(gcol, FOREST * (0.8 + 0.4 * p.grain.g), vCol.y * 0.8);
+    float b1 = texture(uNoise, vWorld.xz * 0.31 + vWorld.y * 0.17).g;
+    vec3 rk = mix(SLAB_DEEP, SLAB, 0.45 + 0.55 * b1) * (0.85 + 0.3 * p.grain.b); // (the cliffs' slab grey)
+    fillK = smoothstep(0.45, 0.55, vCol.z + (p.fine.g - 0.5) * 0.5);
+    albedo = mix(gcol, rk, fillK);
+    albedo *= 1.0 + 0.45 * clamp(-vCol.z, 0.0, 1.0); // (the grass tufts' blades: lighter to their tips)
+    rough = 0.95; wrap = 0.35;
+  }
+  float sun = sunVisibility(vWorld.xz), ck = caveK(vWorld);
+  vec3 c = shade(albedo, N, V, rough, 0.03, 1.0, sun * (1.0 - ck), wrap);
+  c += rockFill(albedo, N) * fillK * (1.0 - 0.6 * ck); // (the rock's sky fill: as the terrain's rock reads)
+  c *= 1.0 - 0.75 * ck; // (in a cave: Sites.ts)
+  c += albedo * uAmbSky * 0.35 * ck * fillK; // (a cave's walls: dim, never pitch black)
+  // LAMPS that burn day and night (a cave's crystals and lanterns): their own colour, bright, a slow breath
+  if (surf > 4.5 && surf < 5.5) c = vCol * (2.2 + 0.4 * sin(uTime * 1.3 + dot(vWorld, vec3(0.7, 0.3, 0.5))));
+  // the GHOST HOUSE's window (dusk to dawn): a cold pale light that gutters — out, back, a stutter — never steady
+  if (surf > 5.5 && surf < 6.5) {
+    // (its flicker from the paint noise scrolled by the clock — a sin() hash of a large argument came out ~0 on the GPU)
+    float n1 = texture(uNoise, vec2(uTime * 0.031, vWorld.x * 0.013)).r, n2 = texture(uNoise, vec2(uTime * 0.23 + 0.5, vWorld.z * 0.011)).g;
+    float f = smoothstep(0.3, 0.45, n1) * (0.55 + 0.45 * smoothstep(0.25, 0.75, n2));
+    c = mix(c, vec3(0.45, 0.75, 0.7) * 1.8 * f, uLamps);
+  }
   c += headlight(albedo, N, vWorld);
   // a lit window / a lantern / embers: OFF by day, on from dusk (uLamps), above white at night (the bloom takes it)
-  c += vec3(1.0, 0.62, 0.28) * vGlow * 2.6 * uLamps;
+  c += vec3(1.0, 0.62, 0.28) * glow * 2.6 * uLamps;
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

@@ -3,6 +3,7 @@ import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
+import { gameParams } from '../settings'
 import { cellSeed, type Rocks } from './Rocks'
 import { LEAF_GLSL } from './leafTexture'
 import { PLANT_VALUE_GLSL } from './paint'
@@ -314,5 +315,40 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
       if (map.stillDepth(x, z) > -0.2) continue
       out.push(x, map.height(x, z) - 0.12 * size, z, size, rot, kind, tint)
     }
+  }
+  // THE VERGES (2026-11-06, the user: "the valley feels empty"): ~3.6 bushes stood within 25 m of a track — groups of
+  // one to three along both edges, thick on the green and at the forest's edge, sparse on the gold; each spot its own
+  // seed, after the field: no bush above moves. ?verge=0: without them (the A/B)
+  if (map.desert || gameParams().get('verge') === '0') return
+  for (const L of map.meta.trails.lines) {
+    let t = 0
+    for (let i = 1; i < L.length; i++) {
+      const [x0, z0] = L[i - 1], dx = L[i][0] - x0, dz = L[i][1] - z0, l = Math.hypot(dx, dz)
+      if (l < 1e-3) continue
+      const ux = dx / l, uz = dz / l
+      for (; t < l; t += 7) {
+        const cx = x0 + ux * t, cz = z0 + uz * t
+        for (const side of [-1, 1]) {
+          s = cellSeed(Math.round(cx), Math.round(cz), side > 0 ? 51 : 52)
+          const off = hw + 1.8 + Math.pow(rnd(), 1.4) * 10, slide = (rnd() - 0.5) * 5
+          const gx = cx - uz * off * side + ux * slide, gz = cz + ux * off * side + uz * slide
+          map.maskAt(gx, gz, mk)
+          const edge = Math.max(0, 1 - Math.abs(mk[3] - 0.3) / 0.25), green = 1 - Math.min(1, mk[1] / 0.6)
+          if (rnd() > 0.2 + 0.32 * green + 0.3 * edge) continue
+          for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+            const x = gx + (rnd() - 0.5) * 4.4, z = gz + (rnd() - 0.5) * 4.4
+            // (over the ~1 m grass: the field's 0.7–2.1 m hid in it)
+            const size = 1.0 + 1.5 * Math.pow(rnd(), 1.3), r = rnd(), kind = r < 0.06 ? 2 : r < 0.3 ? 1 : 0, rot = rnd() * Math.PI * 2, tint = rnd()
+            map.maskAt(x, z, mk)
+            if (mk[2] > 0.8 || mk[0] > 0.4 || map.trailDist(x, z) < hw + 1.2 || map.stillDepth(x, z) > -0.2) continue
+            const gi = Math.round((x - g.origin) / g.step), gj = Math.round((z - g.origin) / g.step)
+            if (gi < 0 || gj < 0 || gi >= g.n || gj >= g.n || fp[gj * g.n + gi] > 60) continue
+            out.push(x, map.height(x, z) - 0.12 * size, z, size, rot, kind, tint)
+          }
+        }
+      }
+      t -= l
+    }
+    yield
   }
 }

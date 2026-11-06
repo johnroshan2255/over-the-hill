@@ -155,10 +155,14 @@ export function spruceGeometry(lod: number, seed = 7): GFX.BufferGeometry {
  * the lower ones hanging), a few bigger, darker cards through the middle so the crown has a core. Many small leaves,
  * the sky between them, a ragged leafy outline — under 1 000 vertices.
  * Attributes as the spruce's + `leaf`: (u, v ∈ −1…1 on a card, 1 + texture tile + tint × 0.9); (0, 0, 0) on the bark.
- * LOD 0 = 13 clumps × 10 cards + 4 core cards (~600 vertices); LOD 1 = 6 clumps × 5 bigger cards (~140). The crown
+ * LOD 0 = 13 clumps × 10 cards + 5 core cards (~1 150 vertices: each card an octagon); LOD 1 = 7 clumps × 5 bigger
+ * cards (~300). The crown
  * starts at HALF the height; per tree the vertex shader raises its base a little more (up to 0.62) and widens or
  * narrows it (×0.85–1.15) — every tree its own outline.
  */
+/** A leaf card's octagon: its corners' radius (its edges at 0.96 of the card's half-width). */
+const OCT_R = 0.96 / Math.cos(Math.PI / 8)
+
 export function broadleafGeometry(lod: number, seed = 11): GFX.BufferGeometry {
   const rnd = rng(seed + lod * 53)
   const pos: number[] = [], nor: number[] = [], col: number[] = [], leaf: number[] = [], idx: number[] = []
@@ -186,11 +190,13 @@ export function broadleafGeometry(lod: number, seed = 11): GFX.BufferGeometry {
   const sides = lod === 0 ? 5 : 3
   const forkY = 0.3 + 0.06 * rnd() // (low: the crown fills the top 70 % of the tree, the bare trunk 30 % — the user)
   const top = new GFX.Vector3(0, forkY, 0)
-  limb(new GFX.Vector3(0, -0.02, 0), top, 0.02, 0.013, sides)
+  // (2026-11-06, the user: "it doesn't match our valley" — a thin white stick read as a lollipop: a trunk with some
+  //  weight, its limbs too)
+  limb(new GFX.Vector3(0, -0.02, 0), top, 0.026, 0.016, sides)
   const nb = 2 + (rnd() < 0.5 ? 1 : 0)
   for (let b = 0; b < nb; b++) {
     const a = (b / nb) * Math.PI * 2 + rnd() * 0.8, lean = 0.07 + 0.05 * rnd()
-    limb(top, new GFX.Vector3(Math.cos(a) * lean, 0.9 + 0.06 * rnd(), Math.sin(a) * lean), 0.011, 0.004, Math.max(3, sides - 1))
+    limb(top, new GFX.Vector3(Math.cos(a) * lean, 0.9 + 0.06 * rnd(), Math.sin(a) * lean), 0.014, 0.005, Math.max(3, sides - 1))
   }
   if (lod === 0) for (let b = 0; b < 5; b++) {
     const a = rnd() * Math.PI * 2, y = 0.33 + 0.11 * b + 0.04 * rnd(), l = 0.1 + 0.05 * rnd()
@@ -220,14 +226,24 @@ export function broadleafGeometry(lod: number, seed = 11): GFX.BufferGeometry {
     const cu = Math.cos(spin), su = Math.sin(spin)
     const a1 = uu.clone().multiplyScalar(cu).addScaledVector(vv, su), a2 = uu.clone().multiplyScalar(-su).addScaledVector(vv, cu)
     out.subVectors(c, centre).normalize()
-    const sn = out.clone().multiplyScalar(0.75).addScaledVector(n, 0.25).normalize() // (lit as the crown's volume)
+    // (lit as the crown's VOLUME — a lit side and a shaded side, as the spruce's tiers: mostly the crown's outward
+    //  normal; the card's own facing a little, or every card its own random light and the crown reads flat)
+    //  (tilted UP: the crown's side faces the high sun too, only its very bottom faces down — from the true centre half
+    //  the crown faced away from it, a dark brown lower half under a gold top)
+    out.y += 0.45
+    const sn = out.normalize().multiplyScalar(0.9).addScaledVector(n, 0.1).normalize()
     const lz = 1 + Math.floor(rnd() * 4) + rnd() * 0.9
+    // an OCTAGON round the leaf cluster, not the square (2026-11-06, docs/PERF.md): the cluster reaches ~0.95 of the
+    // card's half-width (leafTexture.ts: its outline 0.44 × ≤ 1.02 of the tile, + half a leaf), so its edges at 0.96
+    // cut off only the empty corners — a quarter of the card's pixels, each a texture read and a discard in the depth
+    // pre-pass (and a shaded pixel, one pass, on LOW) — what paid for the bigger crowns
     const base = pos.length / 3
-    for (const [ua, vb] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    for (let k = 0; k < 8; k++) {
+      const an = (k + 0.5) * (Math.PI / 4), ua = Math.cos(an) * OCT_R, vb = Math.sin(an) * OCT_R
       tmp.copy(c).addScaledVector(a1, ua * h).addScaledVector(a2, vb * h)
       vert(tmp, sn, ao, 1, ua, vb, lz)
     }
-    idx.push(base, base + 1, base + 2, base, base + 2, base + 3)
+    for (let k = 1; k < 7; k++) idx.push(base, base + k, base + k + 1)
   }
   const perClump = lod === 0 ? 10 : 5 // (fewer: gaps between the leaves — the user)
   for (const cl of clumps) {

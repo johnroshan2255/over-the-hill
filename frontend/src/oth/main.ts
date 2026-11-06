@@ -35,6 +35,7 @@ import { Vehicle } from './Vehicle'
 import { Winch } from './Winch'
 import { ActionWheel, ICONS } from './Wheel'
 import { liveMap, World, type WorldEnv, type WorldId, WORLDS } from './World'
+import { caveUniforms } from './Sites'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -135,6 +136,7 @@ async function boot() {
   // what lasts across worlds reads the current one's map through this
   const map = liveMap(() => world.map)
   const enterWorld = (w: World) => {
+    caveUniforms(atmos, w.places) // (the caves' dark: Sites.ts)
     w.landmarks.onDiscover = (l, n, total) => {
       const pay = l.kind === 'camp' ? REWARD.camp : REWARD.place
       journal.coins += pay
@@ -914,6 +916,23 @@ async function boot() {
   }
   const signDir = new GFX.Vector3()
   let hudTick = 0
+  // the NOTES (Sites.ts): stopped (or on foot) within 11 m of a place that has one — its card; the first read pays and
+  // is kept (localStorage `oth.notes.<map>`)
+  const notesRead = (id: string) => { try { return new Set(JSON.parse(localStorage.getItem(`oth.notes.${id}`) ?? '[]') as number[]) } catch { return new Set<number>() } }
+  const noteHud = () => {
+    const p = ride.pos, slow = onFoot || Math.abs(ride.speedKmh) < 12
+    const l = slow ? world.places.find((q) => q.note && (q.x - p.x) ** 2 + (q.z - p.z) ** 2 < 11 * 11) : undefined
+    readouts.note(l?.note ? { place: l.name, ...l.note } : null)
+    if (!l) return
+    const read = notesRead(world.map.meta.id)
+    if (read.has(l.id)) return
+    read.add(l.id)
+    try { localStorage.setItem(`oth.notes.${world.map.meta.id}`, JSON.stringify([...read])) } catch { /* (not kept) */ }
+    journal.coins += 15
+    keepJournal()
+    readouts.coins(journal.coins, 15)
+    toast(`Note found · ${read.size} / ${world.places.filter((q) => q.note).length}`, 2800)
+  }
 
   const frame = () => {
     renderer.drawing = !pause
@@ -972,7 +991,7 @@ async function boot() {
     }
     // the HUD's slow parts (4× a second): the signpost, the camp prompt
     if ((hudTick += dt) > 0.25) {
-      hudTick = 0; signHud()
+      hudTick = 0; signHud(); noteHud()
       const c = canCamp() ? campHere() : null, act = actionNow()
       // (on foot by a vehicle: "F Get in" — GTA's; else the camp's)
       readouts.prompt(onFoot && act ? ['F', act] : canCamp() ? ['C', c ? `Rest at ${c.name}` : 'Pitch camp'] : null)
@@ -1022,11 +1041,15 @@ async function boot() {
     radar?.update(dt, radarOn && driving && !mapView.isOpen, ride.speedKmh)
     winch.update(camera)
     shadow.update(atmos.uniforms.uSunDir.value)
+    // (the trees' see-through round what the camera follows — Trees.seeThrough: the car, the bike, the walker; off in
+    //  first person, on the map, in the free camera)
+    world.trees.seeThrough(ride.pos, driving && !inFpp && !mapView.isOpen ? (onFoot ? 1.1 : riding ? 1.5 : 2.8) : 0)
     const t0 = performance.now()
     world.update(camera, dt, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, ride.pos.x, ride.pos.z)
     // (what's out of view or behind the hills isn't drawn: 2026-11-02)
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     view.setFromProjectionMatrix(viewPV, GFX.WebGLCoordinateSystem, camera.reversedDepth)
+    caveUniforms(atmos, world.places, camera.position) // (the three nearest caves' dark: Sites.ts)
     car.cull(view, world.horizon)
     moto.cull(view, world.horizon)
     hero.cull(view, world.horizon)
@@ -1168,13 +1191,15 @@ function gameHud(coins0: number) {
   coins.textContent = `${coins0} ◆`
   const sign = document.createElement('div')
   sign.className = 'oth-sign'
+  const note = document.createElement('div')
+  note.className = 'oth-sign oth-note'
   const prompt = document.createElement('div')
   prompt.className = 'oth-prompt'
   const campBtn = document.createElement('button')
   campBtn.className = 'oth-campbtn'
   campBtn.textContent = 'CAMP'
-  document.body.append(coins, sign, prompt, campBtn)
-  let signKey = '', promptText: string | null = 'x'
+  document.body.append(coins, sign, note, prompt, campBtn)
+  let signKey = '', promptText: string | null = 'x', noteKey = ''
   const ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
   return {
     coins(n: number, delta: number) {
@@ -1193,6 +1218,14 @@ function gameHud(coins0: number) {
       signKey = html
       sign.innerHTML = html
       sign.classList.toggle('on', !!rows)
+    },
+    /** A NOTE left at a place (Sites.ts), while you're stopped by it. */
+    note(n: { place: string; title: string; text: string } | null) {
+      const html = n ? `<small>${n.place} · ${n.title}</small>${n.text}` : ''
+      if (html === noteKey) return
+      noteKey = html
+      if (n) note.innerHTML = html
+      note.classList.toggle('on', !!n)
     },
     prompt(p: [string, string] | null) {
       const text = p ? p.join(' ') : null
