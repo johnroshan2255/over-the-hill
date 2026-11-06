@@ -86,17 +86,29 @@ export class Trees {
     if (shade) shadow.setTrees(sh, CROWN)
     this.leafU = { value: createLeafTexture() }
     this.frondU = { value: createFrondTexture() }
-    const mat = new GFX.ShaderMaterial({
+    // THE LEAVES' DEPTH PRE-PASS (2026-11-06, docs/PERF.md — the near trees were 0.85 ms of the spawn's frame): a leaf
+    // card's cut-out needs a discard, and a shader that may discard turns the early depth test off — every card in a
+    // crown was shaded, the hidden ones too. Now a first pass writes only the depth, the cut-out and nothing else (one
+    // texture read; MSAA: its alpha-to-coverage, so the edges keep their soft coverage per sample); then the shading
+    // pass, depth test EQUAL, no discard: only the leaf the pre-pass kept, at each sample, is shaded — once. The two
+    // passes run the same vertex shader (the same depth, bit for bit). ?treepre=0: the one pass, as before.
+    const pre = gameParams().get('treepre') !== '0'
+    const leafMat = (pass: 'one' | 'depth' | 'shade') => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU },
       vertexColors: true,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines, ...(pass === 'depth' ? { TREE_DEPTH: '' } : pass === 'shade' ? { TREE_SHADE: '' } : {}) },
       vertexShader: VERT,
       fragmentShader: FRAG,
       side: GFX.DoubleSide,
-      // MSAA tiers: the leaf cards' gaps resolve to soft coverage (no hard, shimmering cut-out)
-      alphaToCoverage: tier.msaa,
+      // MSAA tiers: the leaf cards' gaps resolve to soft coverage (no hard, shimmering cut-out) — in the pass that cuts
+      alphaToCoverage: tier.msaa && pass !== 'shade',
+      colorWrite: pass !== 'depth',
+      depthWrite: pass !== 'shade',
+      depthEqual: pass === 'shade',
     })
+    const mat = leafMat(pre ? 'shade' : 'one')
+    const depthMat = pre ? leafMat('depth') : null
     this.impMat = new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms: {
@@ -131,6 +143,14 @@ export class Trees {
       if (l === 4) mesh.visible = false // (until the atlas is baked)
       this.group.add(mesh)
       this.lods.push({ geo, a0, a1, max, n: 0 })
+    }
+    // the pre-pass: the same instances, first of all the opaque things (children 5–8; the impostors stay child 4)
+    if (depthMat) for (let l = 0; l < 4; l++) {
+      const m = new GFX.Mesh(this.lods[l].geo, depthMat)
+      m.frustumCulled = false
+      m.matrixAutoUpdate = false
+      m.renderOrder = -40
+      this.group.add(m)
     }
   }
 
@@ -477,29 +497,32 @@ void main() {
   float aoMin = vSpecies > 2.5 ? 0.3 : vSpecies > 0.5 ? 0.42 : 0.22; // (larch: thin needles let the light in)
   vec3 albedo = vAlb * mix(aoMin, 1.15, vAo) * under * (0.9 + 0.18 * vH);
   // broadleaf: each LEAF a round disc, its own tone, one in ten still yellow-green
-  // a broadleaf LEAF CARD: tiny separate leaves, the gaps between them cut out (the sky shows through)
+  // a broadleaf LEAF CARD: tiny separate leaves, the gaps between them cut out (the sky shows through); a conifer
+  // BRANCH FROND: needle-covered sprigs, the gaps between them cut out (feathery edges, fingered ends)
+  // (the cut-out: by the depth pre-pass, or here when there's one pass; the shading pass after the pre-pass never
+  //  discards — its EQUAL depth test already keeps only what the pre-pass kept)
   float alpha = 1.0;
-  if (vLeaf.z > 0.5) {
-    vec4 lt = leafCard(vLeaf.xy, vLeaf.z);
+  vec4 lt = vec4(1.0), ft = vec4(1.0);
+  if (vLeaf.z > 0.5) lt = leafCard(vLeaf.xy, vLeaf.z);
+  if (vLeaf.z < -0.5) ft = frondCard(vLeaf.x, vLeaf.y, -vLeaf.z);
+#ifndef TREE_SHADE
+  float cut = vLeaf.z > 0.5 ? lt.a : vLeaf.z < -0.5 ? ft.a : 1.0;
 #ifdef A2C
-    alpha = clamp((lt.a - 0.35) / 0.3, 0.0, 1.0);
-    if (alpha < 0.02) discard;
+  alpha = clamp((cut - 0.35) / 0.3, 0.0, 1.0);
+  if (alpha < 0.02) discard;
 #else
-    if (lt.a < 0.5) discard;
+  if (cut < 0.5) discard;
 #endif
-    albedo = leafTone(albedo, fract(vLeaf.z) / 0.9, vSpecies) * (0.55 + 0.6 * lt.r) * (0.62 + 0.38 * lt.g);
-  }
-  if (vLeaf.z < -0.5) {
-    // a conifer BRANCH FROND: needle-covered sprigs, the gaps between them cut out (feathery edges, fingered ends)
-    vec4 ft = frondCard(vLeaf.x, vLeaf.y, -vLeaf.z);
-#ifdef A2C
-    alpha = clamp((ft.a - 0.35) / 0.3, 0.0, 1.0);
-    if (alpha < 0.02) discard;
-#else
-    if (ft.a < 0.5) discard;
 #endif
-    albedo = frondTone(albedo, ft, vLeaf.x, fract(-vLeaf.z) / 0.9, vSpecies);
-  }
+#ifdef TREE_DEPTH
+  gl_FragColor = vec4(0.0, 0.0, 0.0, alpha);
+  return;
+#endif
+  if (vLeaf.z > 0.5) albedo = leafTone(albedo, fract(vLeaf.z) / 0.9, vSpecies) * (0.55 + 0.6 * lt.r) * (0.62 + 0.38 * lt.g);
+  if (vLeaf.z < -0.5) albedo = frondTone(albedo, ft, vLeaf.x, fract(-vLeaf.z) / 0.9, vSpecies);
+#ifdef TREE_SHADE
+  alpha = 1.0;
+#endif
   vec3 c = shade(albedo, N, V, 0.85, 0.03, mix(0.55, 1.0, vAo), vSun, 0.3);
   c += headlight(albedo, N, vWorld);
   // back-lit by a low sun the needles glow (the larch most)

@@ -288,6 +288,9 @@ export class Material {
   polygonOffsetFactor = 0
   polygonOffsetUnits = 0
   colorWrite = true
+  /** Depth test EQUAL, not LESS-EQUAL (the shading pass after a depth pre-pass — Trees.ts: only the surface the pre-pass
+   *  kept is shaded, once, with no discard to stop the early depth test). */
+  depthEqual = false
   toneMapped = true
   visible = true
   vertexColors = false
@@ -306,7 +309,7 @@ export class Material {
 
   /** The state signature (scene.ts re-applies the state when it changes). */
   stateKey(): string {
-    return `${this.transparent}|${this.blending}|${this.blendSrc}|${this.blendDst}|${this.blendEquation}|${this.blendSrcAlpha}|${this.blendDstAlpha}|${this.premultipliedAlpha}|${this.depthTest}|${this.depthWrite}|${this.side}|${this.alphaToCoverage}|${this.polygonOffset}|${this.polygonOffsetFactor}|${this.polygonOffsetUnits}|${this.colorWrite}`
+    return `${this.transparent}|${this.blending}|${this.blendSrc}|${this.blendDst}|${this.blendEquation}|${this.blendSrcAlpha}|${this.blendDstAlpha}|${this.premultipliedAlpha}|${this.depthTest}|${this.depthWrite}|${this.side}|${this.alphaToCoverage}|${this.polygonOffset}|${this.polygonOffsetFactor}|${this.polygonOffsetUnits}|${this.colorWrite}|${this.depthEqual}`
   }
 
   /** Blend / depth / cull / coverage onto a PlayCanvas material (three's rules — WebGLState.setBlending). */
@@ -324,7 +327,7 @@ export class Material {
     else bs = new B(true, EQUATION[this.blendEquation], FACTOR[this.blendSrc], FACTOR[this.blendDst], EQUATION[this.blendEquationAlpha ?? this.blendEquation], FACTOR[this.blendSrcAlpha ?? this.blendSrc], FACTOR[this.blendDstAlpha ?? this.blendDst])
     if (!this.colorWrite) { bs = bs.clone(); bs.setColorWrite(false, false, false, false) }
     m.blendState = bs
-    m.depthState = new pc.DepthState(this.depthTest ? pc.FUNC_LESSEQUAL : pc.FUNC_ALWAYS, this.depthTest && this.depthWrite)
+    m.depthState = new pc.DepthState(this.depthTest ? (this.depthEqual ? pc.FUNC_EQUAL : pc.FUNC_LESSEQUAL) : pc.FUNC_ALWAYS, this.depthTest && this.depthWrite)
     m.cull = this.side === DoubleSide ? pc.CULLFACE_NONE : this.side === BackSide ? pc.CULLFACE_FRONT : pc.CULLFACE_BACK
     m.alphaToCoverage = this.alphaToCoverage
     m.depthBias = this.polygonOffset ? this.polygonOffsetUnits : 0
@@ -339,7 +342,7 @@ export class ShaderMaterial extends Material {
   vertexShader: string
   fragmentShader: string
   glslVersion: string | null = null
-  constructor(p: Partial<{ uniforms: Record<string, IUniform<unknown>>; defines: Record<string, unknown>; vertexShader: string; fragmentShader: string; glslVersion: string; vertexColors: boolean; transparent: boolean; depthWrite: boolean; depthTest: boolean; side: number; blending: number; alphaToCoverage: boolean; premultipliedAlpha: boolean; toneMapped: boolean; polygonOffset: boolean; polygonOffsetFactor: number; polygonOffsetUnits: number; blendSrc: number; blendDst: number; blendEquation: number; blendSrcAlpha: number; blendDstAlpha: number; colorWrite: boolean; name: string }> = {}) {
+  constructor(p: Partial<{ uniforms: Record<string, IUniform<unknown>>; defines: Record<string, unknown>; vertexShader: string; fragmentShader: string; glslVersion: string; vertexColors: boolean; transparent: boolean; depthWrite: boolean; depthTest: boolean; side: number; blending: number; alphaToCoverage: boolean; premultipliedAlpha: boolean; toneMapped: boolean; polygonOffset: boolean; polygonOffsetFactor: number; polygonOffsetUnits: number; blendSrc: number; blendDst: number; blendEquation: number; blendSrcAlpha: number; blendDstAlpha: number; colorWrite: boolean; depthEqual: boolean; name: string }> = {}) {
     super()
     this.uniforms = p.uniforms ?? {}
     this.defines = p.defines ?? {}

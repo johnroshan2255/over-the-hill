@@ -6,6 +6,7 @@ import { fallLip } from './Falls'
 import type { Tier } from './quality'
 import { HEIGHT_GLSL, type Terrain } from './Terrain'
 import { SHADOW_GLSL } from './TerrainShadow'
+import { gameParams } from '../settings'
 
 /**
  * WATER — the lake and the ponds (a disc each at its level: calm, see-through turquoise → deep teal, the sky by
@@ -18,6 +19,13 @@ import { SHADOW_GLSL } from './TerrainShadow'
  * metres across — the streaks bend with the river) scrolling at the water's speed (faster where its surface drops
  * more), a slow churn, whiter in the shallows, along the banks and round the boulders (their footprint, blurred).
  */
+/** COST TESTS (docs/PERF.md, abq.mjs): ?wcut=sky,sun,atmos,depth,flat — a part of the water's shader cut. */
+function wcut(): Record<string, string> {
+  const o: Record<string, string> = {}
+  for (const k of (gameParams().get('wcut') ?? '').split(',')) if (k) o[`WC_${k.toUpperCase()}`] = ''
+  return o
+}
+
 export class Water {
   readonly group = new GFX.Group()
 
@@ -34,7 +42,7 @@ export class Water {
     const material = (rapids: boolean) => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}), ...map.biomeDefines },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}), ...map.biomeDefines, ...wcut() },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
@@ -285,11 +293,15 @@ const vec3 G_WALL = vec3(0.44, 0.19, 0.11);
 // drift with the current)
 vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK, float shoreM) {
   // ripples: two noise layers drifting
-  vec2 drift = vFlow * uTime * flowK;
-  vec2 n1 = texture(uNoise, xz / 9.0 - drift / 9.0 + uTime * vec2(0.012, 0.007)).rg - 0.5;
-  vec2 n2 = texture(uNoise, xz / 3.1 - drift / 3.1 - uTime * vec2(0.02, -0.015)).gr - 0.5;
-  // (ripples fade with distance: far water is calm — and no moiré)
-  vec2 slope = (n1 * 0.16 + n2 * 0.08) * (1.0 - smoothstep(25.0, 160.0, dcam));
+  // (ripples fade with distance: far water is calm — and no moiré; past 160 m, where they're gone, not read at all)
+  vec2 slope = vec2(0.0);
+  float rk = 1.0 - smoothstep(25.0, 160.0, dcam);
+  if (rk > 0.0) {
+    vec2 drift = vFlow * uTime * flowK;
+    vec2 n1 = texture(uNoise, xz / 9.0 - drift / 9.0 + uTime * vec2(0.012, 0.007)).rg - 0.5;
+    vec2 n2 = texture(uNoise, xz / 3.1 - drift / 3.1 - uTime * vec2(0.02, -0.015)).gr - 0.5;
+    slope = (n1 * 0.16 + n2 * 0.08) * rk;
+  }
   vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
   // body colour: see-through shallows → deep teal
   float k = 1.0 - exp(-depth * 0.55);
@@ -304,7 +316,11 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
   // (art-directed: the reflection never quite whites out the water, and takes its colour)
   float F = 0.02 + 0.42 * pow(1.0 - max(dot(N, V), 0.0), 4.0);
   vec3 R = reflect(-V, N);
+#ifdef WC_SKY
+  vec3 refl = uSkyHorizon;
+#else
   vec3 refl = skyColor(normalize(vec3(R.x, max(R.y, 0.02), R.z))) * vec3(0.72, 0.9, 0.95);
+#endif
 #ifdef OTH_DESERT
   // (in a canyon the low half of the reflection is its walls — warm sandstone in the light — not the sky)
   refl = mix(G_WALL * (ambient(vec3(0.0, 1.0, 0.0)) * 0.7 + uSunColor * 0.45), refl, smoothstep(0.04, 0.28, R.y));
@@ -316,7 +332,8 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
   // the shore line: a soft bright edge where it's a few cm deep
   // (a band in METRES from the waterline — shoreM — and a few cm deep at most: by depth alone a wide flat shallow was a
   //  white pane metres across — the lagoon over the ford in the user's screenshot)
-  float foam = (1.0 - smoothstep(0.02, 0.14, depth)) * (1.0 - smoothstep(0.4, 1.6, shoreM)) * (0.55 + 0.45 * texture(uNoise, xz / 1.7 + uTime * 0.05).b);
+  float foam = (1.0 - smoothstep(0.02, 0.14, depth)) * (1.0 - smoothstep(0.4, 1.6, shoreM));
+  if (foam > 0.0) foam *= 0.55 + 0.45 * texture(uNoise, xz / 1.7 + uTime * 0.05).b; // (its read only on the band)
   c = mix(c, vec3(0.9, 0.93, 0.95) * (ambient(vec3(0.0, 1.0, 0.0)) * 1.4 + uSunColor * 0.5 * sun), foam * 0.75);
   float alpha = clamp(smoothstep(0.0, 0.08, depth) * mix(0.55, 0.97, k) + F * 0.5 + foam * 0.5, 0.0, 1.0);
   return vec4(c, alpha);
@@ -324,7 +341,15 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
 
 void main() {
   vec2 xz = vWorld.xz;
+#ifdef WC_FLAT
+  gl_FragColor = vec4(0.1, 0.4, 0.44, 0.9);
+  return;
+#endif
+#ifdef WC_DEPTH
+  float depth = 2.0;
+#else
   float depth = vWorld.y - terrainHeight(xz);
+#endif
   if (depth < 0.0) discard;
   // the ground the still water owns (mapPrep.ts waterOwner): the lake and the ponds draw only there, the ribbons only
   // off it — and a ribbon's outer edge fades out (where its bank is under the water: never a straight cut)
@@ -341,13 +366,18 @@ void main() {
 #endif
   if (keep < 0.004) discard;
   vec3 V = normalize(uCamPos - vWorld);
+#ifdef WC_SUN
+  float sun = 1.0;
+#else
   float sun = sunVisibility(xz);
+#endif
   vec3 light = ambient(vec3(0.0, 1.0, 0.0)) + uSunColor * 0.45 * sun;
   float dcam = length(uCamPos - vWorld);
   // how far (m) to the waterline: the depth over its slope (its change per pixel over the pixel's size, from screen-space
   // derivatives — taken here, in uniform control flow)
   float px = max(length(vec2(dFdx(xz.x), dFdy(xz.x))), length(vec2(dFdx(xz.y), dFdy(xz.y))));
   float shoreM = depth / max(length(vec2(dFdx(depth), dFdy(depth))) / max(px, 1e-4), 0.02);
+
 #ifdef RAPIDS
   // RAPIDS: streaks stretched along the current (u = metres downstream, v = metres across), racing downstream
   float spd = length(vFlow);
@@ -397,7 +427,11 @@ void main() {
   vec3 c = st.rgb;
   float alpha = st.a;
 #endif
+#ifdef WC_ATMOS
+  gl_FragColor = vec4(c, alpha * keep);
+#else
   gl_FragColor = vec4(applyAtmos(c, vWorld), alpha * keep);
+#endif
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }

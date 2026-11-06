@@ -44,6 +44,15 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   from R16UI textures (4 texelFetch, exact), per-vertex geomorph through up to 3 levels (no pops, no cracks), CPU
   selection with a min/max pyramid + frustum. Fragment: the mask (procedural outside the box) painted by
   `groundPaint` (`paint.ts`: palette + world-space paint noise from `noiseTex.ts`, generated at boot).
+  **THE GROUND CACHE** (`GroundCache.ts`, 2026-11-06, docs/PERF.md — the paint was ~70 % of the frame): the ground's
+  surface (colour, rock, roughness, AO, sheen share, grass shade, track, puddle inputs, shrub dots, flowers, and the
+  rock relief + desert ripples as a NORMAL MAP — `SURF_GLSL`, one code path for bake and live) baked into a CLIPMAP
+  round the camera: 8 toroidal levels (ULTRA 3.1 cm … 4 m texels, 1024² each; phones 512², 6.25 cm … 8 m) + a FAR level
+  (the whole 16 km, baked once), one 3 × 3 atlas per output (4 × RGBA8; ULTRA ~152 MB, phones ~38 MB). Each level is
+  baked with its texel as the footprint (the live paint's own mip chain); re-baked only where a 16-texel step uncovers
+  ground (moving at 30 m/s: +0.02 ms). The terrain reads the level whose texel ≈ the pixel (or the finest that reaches
+  it), two blended: 4–8 fetches. Live: the steep walls within the cache's reach (paint + relief — a top-down texel
+  smears down a wall), the light, the weather, the haze. `?gcache=0` paints live everywhere (the A/B).
 - **Grass** (`Grass.ts`): the Over-the-Hill CARPET — low-poly tufts of thick pointed blades (6 per tuft, 20 cm wide,
   quad + tip; the far ring 3-blade triangles), even heights. THE GRASS IS THE GROUND GROWN UP: each blade takes
   `groundPaint` at its root (green ground → green grass) and the ground's soft normal, so a hill shades as one surface;
@@ -134,6 +143,9 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   turns. SHADOWS AS AN IMAGE: every tree stamps a soft ellipse (away from the sun) into a 2 m R8 texture
   (`TerrainShadow.treeTex`, re-baked when the sun moves 1°) — the ground, grass, water, rocks, bushes, the car and the
   trees' own lower crowns read it (`sunVisibility`); no shadow-map pass. Trunks near the car are physics cylinders.
+  **The leaves' DEPTH PRE-PASS** (2026-11-06, docs/PERF.md — a cut-out's discard turns the early depth test off, so every
+  card in a crown was shaded): the 4 leaf / frond LODs drawn first depth-only (the cut-out, alpha-to-coverage on MSAA),
+  then shaded with depth EQUAL and no discard — each visible leaf sample shaded once (`?treepre=0`: one pass).
 - **Mixed woods** (2026-10-26, the user: "fewer pines, other trees like OTH"): a BROADLEAF family too
   (`broadleafGeometry`: white trunk + a tall loose oval of 34 jittered leaf clusters, ~320 vertices; leaf speckle in
   the shader) — gold birch, red / orange aspen, a few green — in DENSE GROVES (a slow noise picks grove vs conifer

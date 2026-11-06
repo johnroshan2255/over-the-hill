@@ -5,6 +5,8 @@ import { PAINT_GLSL } from './paint'
 import { ROCK_RELIEF_GLSL } from './rockRelief'
 import type { Tier } from './quality'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
+import { gameParams } from '../settings'
+import { GroundCache } from './GroundCache'
 
 /**
  * THE GROUND — continuous distance-dependent LOD (CDLOD) on the GPU, the whole 16 km world in ONE instanced draw.
@@ -51,8 +53,10 @@ export class Terrain {
   /** Patches skipped behind the hills this frame (the HUD). */
   occluded = 0
   readonly uniforms: Record<string, GFX.IUniform>
+  /** The ground's surface baked round the camera (GroundCache.ts; `tier.groundCache`, `?gcache=0` off). */
+  readonly cache: GroundCache | null = null
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, tier: Tier, shadow: TerrainShadow) {
+  constructor(private readonly map: MapData, atmos: Atmosphere, tier: Tier, shadow: TerrainShadow, renderer: GFX.WebGLRenderer) {
     const G = tier.terrainGrid
     this.leaf = tier.terrainLeaf
     this.near = tier.terrainNear
@@ -109,10 +113,15 @@ export class Terrain {
       uGrassR: { value: tier.grassRadius },
       uBushR: { value: tier.bushReach },
     }
+    const defines: Record<string, string> = { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines }
+    if (tier.groundCache > 0 && gameParams().get('gcache') !== '0') {
+      this.cache = new GroundCache(renderer, tier.groundCache, 2 * map.farHalf, this.uniforms, defines, HEIGHT_GLSL, SURF_GLSL)
+      Object.assign(this.uniforms, this.cache.uniforms)
+    }
     const mat = new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms: this.uniforms,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines },
+      defines: { ...defines, ...(this.cache?.defines ?? {}), ...tcut() },
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
@@ -157,7 +166,11 @@ export class Terrain {
     this.geo.instanceCount = this.count
     this.nodes.addUpdateRange(0, this.count * 4)
     this.nodes.needsUpdate = true
+    this.cache?.update(this.cx, this.cz)
   }
+
+  /** (the world goes: the cache's atlas with it) */
+  dispose(): void { this.cache?.dispose() }
 
   private select(i: number, j: number, level: number): void {
     const size = this.leaf * 2 ** level
@@ -187,6 +200,14 @@ export class Terrain {
   }
 
   get patches(): number { return this.count }
+}
+
+/** COST TESTS (docs/PERF.md, scripts/harness/abq.mjs): ?tcut=flat,relief,atmos — a part of the ground's fragment
+ *  shader cut (TC_FLAT: a plain colour, hazed — the floor any paint can reach); nothing is cut without it. */
+function tcut(): Record<string, string> {
+  const o: Record<string, string> = {}
+  for (const k of (gameParams().get('tcut') ?? '').split(',')) if (k) o[`TC_${k.toUpperCase()}`] = ''
+  return o
 }
 
 /** Height lookup shared by the terrain and the grass vertex shaders (needs uHIn/uHFar, uInGrid/uFarGrid, scales). */
@@ -253,26 +274,22 @@ void main() {
 }
 `
 
-const FRAG = /* glsl */ `
-${FRAG_OUT}
-${ATMOS_GLSL}
-${ROCK_RELIEF_GLSL}
-${PAINT_GLSL}
+/**
+ * THE GROUND'S SURFACE at a point — everything about it that doesn't depend on the light, the weather or where the
+ * camera is: its colour (the paint, the cliffs' beds and streaks, mud), rock, roughness, the forest / bed shade, the
+ * grass's shade under it and the sheen's share, the rock relief's strength, the track, the puddles' inputs, the shrub
+ * dots' and wildflowers' amounts (their distance fades applied by the caller), the desert's ripples (a normal offset).
+ * Run per pixel (the live path: the walls, the far ground, `?gcache=0`) and per texel by GroundCache's bake — ONE
+ * code path, so the cached ground and the live ground are the same paint. The includer declares uInGrid, uFarGrid,
+ * uBoxHalf (and, for the far ground, the noise: ATMOS_GLSL), then PAINT_GLSL, then this.
+ */
+export const SURF_GLSL = /* glsl */ `
 uniform sampler2D uNIn;
 uniform sampler2D uNFar;
 uniform sampler2D uMask;
 uniform sampler2D uMud;
-uniform vec4 uInGrid;
-uniform vec4 uFarGrid;
-uniform vec4 uMaskGrid;
-uniform float uBoxHalf;
-uniform float uWater;
-${SHADOW_GLSL}
-in vec3 vWorld;
-
-uniform float uGrassR;
-uniform float uBushR;
 uniform sampler2D uTrail;
+uniform vec4 uMaskGrid;
 uniform float uTrailHW;
 // where the grass stands (the grass shader's rule: not on rock, not in water, thinner in the forest)
 float grassy0(vec4 m, float rk, float fo) { return (1.0 - smoothstep(0.02, 0.1, rk)) * (1.0 - smoothstep(0.9, 0.97, m.b)) * (1.0 - 0.55 * fo); }
@@ -281,22 +298,19 @@ vec2 gridUv(vec4 g, vec2 xz) { return ((xz - g.z) / g.y + 0.5) / g.x; }
 float strataH(float i) { return fract(sin(i * 12.9898 + 4.1) * 43758.5453); }
 float strataN(float x) { float i = floor(x), f = x - i; return mix(strataH(i), strataH(i + 1.0), f * f * (3.0 - 2.0 * f)); }
 vec3 unpackN(vec2 e) { vec2 n = e * 2.0 - 1.0; return vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y); }
+bool inTheBox(vec2 xz) { float e = uBoxHalf - uInGrid.y; return abs(xz.x) < e && abs(xz.y) < e; }
+// the smooth normal: the box's 2 m grid a few mips up (rolling shapes), the world's 16 m one outside
+vec3 groundNormal(vec2 xz, bool box) { return box ? unpackN(texture(uNIn, gridUv(uInGrid, xz), 0.8).rg) : unpackN(texture(uNFar, gridUv(uFarGrid, xz), 0.0).rg); }
 
-void main() {
-  vec2 xz = vWorld.xz;
-  float e = uBoxHalf - uInGrid.y;
-  bool box = abs(xz.x) < e && abs(xz.y) < e;
-  // LOW-POLY LIGHT: the triangle's own flat normal (its facet), blended over a SOFT normal (the normal grid read a
-  // few mips up: rolling shapes without the 2 m detail) — full facets on rock, gentle ones on the grassy hills
-  vec3 Ns = box ? unpackN(texture(uNIn, gridUv(uInGrid, xz), 0.8).rg) : unpackN(texture(uNFar, gridUv(uFarGrid, xz), 0.0).rg);
-  vec3 Nf = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
-  if (Nf.y < 0.0) Nf = -Nf;
+struct Surf { vec3 col; float rock; float rough; float aoB; float grassy; float under; float relief; float trail; float bog; float pudN; float dots; float flower; vec2 rip; };
+
+// xz, h: the point; Ns: its smooth normal; nfY: the flat facet's up (the ledges' moss); foot: the pixel's (or texel's)
+// footprint on the ground (m); farG: the far ground's cheap paint; farDots / beyond: the shrub dots' / the flowers'
+// distance fades (1 in the bake: applied when it's read); pud: the puddles' noise wanted (rain, or the bake)
+Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool box, float farDots, float beyond, bool pud) {
+  Surf s;
   // THE FAR GROUND, CHEAP (2026-10-27, phones at full resolution): past 2 km the haze has taken half and the fine marks
   // are under a pixel — only the paint's two broad octaves are read there (2 fetches, not 5) and no shrub dots
-  float dcam = length(vWorld.xz - uCamPos.xz);
-  bool farG = dcam > 2000.0;
-  // the pixel's footprint on the ground (m): the paint's small marks fade before they'd shimmer
-  float foot = max(length(fwidth(xz)), 0.001);
   Paint p;
   if (farG) {
     p.mid = texture(uNoise, xz * (1.0 / 71.0));
@@ -310,7 +324,6 @@ void main() {
     p.fine = foot > 8.0 ? vec4(0.5) : texture(uNoise, xz * (1.0 / 13.0) + vec2(0.71, 0.13));
     p.grain = p.micro = vec4(0.5);
   } else p = paintNoise(xz);
-  float h = vWorld.y;
   float steep = 1.0 - Ns.y; // 0 flat … 0.3 ≈ 45°
 
   // the mask: baked inside the box; outside it, painted from slope, height and noise (the far ranges)
@@ -329,30 +342,18 @@ void main() {
 #endif
   }
   float trail = box ? texture(uTrail, gridUv(uInGrid, xz)).r * 8.0 : 8.0;
-  Ground g = groundPaint(xz, m, h, steep, p, foot, trail, uTrailHW, farG ? 0.0 : smoothstep(uBushR * 0.7, uBushR, dcam)); // (painted shrub dots only beyond the real bushes)
+  Ground g = groundPaint(xz, m, h, steep, p, foot, trail, uTrailHW, farG ? 0.0 : farDots); // (painted shrub dots only beyond the real bushes)
   vec3 col = g.col;
-  // (2026-11-04 — the user: "I can see lots of triangles instead of a smooth surface … even in the valley the rocky
-  //  places are sharp; I want smoothness": the low-poly facets are gone — the smooth normal everywhere, no per-triangle
-  //  tone; the light rolls over the land in soft gradients)
-  float facet = 0.0;
-  // (2026-11-04 — the user: "in a big wall … a repeated line, then the next, then the next": on a steep face the 2 m
-  //  grid's triangles are tall slivers, row on row — their flat normals and per-facet tones drew a line at every row.
-  //  A steep wall takes the smooth normal; the relief and the paint are its detail)
-  facet *= 1.0 - 0.8 * smoothstep(0.2, 0.45, steep);
-  vec3 N = normalize(mix(Ns, Nf, facet));
-  // HIGH / ULTRA on PCs: the rock's (and the scree's) crumpled 3D relief — the light only, the colour stays
-  float cav = 1.0;
-#ifdef OTH_ROCK_RELIEF
-  // (the desert too, 2026-11-04 — the user: "the way we put rock texture on the valley": the crumpled relief on its
-  //  bare rock — warped, never a repeating tile)
+  // (2026-11-04 — the user: "I can see lots of triangles instead of a smooth surface": no low-poly facets — the smooth
+  //  normal everywhere, no per-triangle tone; the light rolls over the land in soft gradients)
+  // HIGH / ULTRA on PCs: the rock's (and the scree's) crumpled 3D relief — the light only (the terrain applies it)
 #ifdef OTH_DESERT
   // (round 2: the desert's walls clean planes like its slabs — the relief crumpled them into melted wax)
-  N = rockRelief(vWorld, N, g.rock * (1.0 - g.trail) * (1.0 - 0.75 * smoothstep(0.25, 0.55, steep)), dFdx(vWorld), dFdy(vWorld), cav);
+  s.relief = g.rock * (1.0 - g.trail) * (1.0 - 0.75 * smoothstep(0.25, 0.55, steep));
 #else
-  N = rockRelief(vWorld, N, max(g.rock, g.scree * 0.6) * (1.0 - g.trail), dFdx(vWorld), dFdy(vWorld), cav); // (never on a track)
+  s.relief = max(g.rock, g.scree * 0.6) * (1.0 - g.trail); // (never on a track)
 #endif
-#endif
-  col *= 1.0 + (facetRand(Nf) - 0.5) * 0.1 * facet;
+  s.rip = vec2(0.0);
 #ifdef OTH_DESERT
   // WIND RIPPLES in the loose sand: fine ridges across the wind (~0.35 m), the light only — on the LOOSE sand only
   // (2026-11-04: not the gravel, rock, tracks or the damp), in PATCHES (a slow no-repeat noise: some sand lies smooth),
@@ -376,24 +377,19 @@ void main() {
     float ph = dot(xz, wd) * (wk > 0.5 ? 13.5 : 17.0) + warp;
     float rip = cos(ph) * 0.5 + 0.5 * cos(ph * 2.03 + 1.1) * 0.35;
 #endif
-    N = normalize(N + vec3(wd.x, 0.0, wd.y) * rip * 0.1 * loose);
+    s.rip = wd * rip * 0.1 * loose;
   }
 #endif
-  // CLIFF FACES (2026-10-27, "cliffs … the colour is the key"): a steep rock face reads as LAYERED stone — horizontal
-  // strata ~3.4 m apart (their lines wandering), each band its own tone between a warm sandy grey and a cool blue
-  // grey, a dark seam where two meet; darker water streaks running down from the ledges; moss and grass on the ledges
-  // (the facets that face up). Rock only, large marks (every tier: no texture, one noise fetch).
+  // CLIFF FACES (2026-10-27, "cliffs … the colour is the key"): a steep rock face reads as LAYERED stone — beds of
+  // UNEVEN thickness (two smooth 1D noises sharing no period), soft tones, no seams; darker streaks running down from
+  // the ledges at two scales with no common period; moss and grass on the ledges (the facets that face up). The small
+  // beds and the streaks fade into the plain colour as they shrink toward a pixel. Rock only.
 #ifdef OTH_DESERT
   float cliffK = 0.0; // (the desert's beds are its own paint: groundPaint)
 #else
   float cliffK = g.rock * smoothstep(0.22, 0.5, steep) * (1.0 - g.trail);
 #endif
   if (cliffK > 0.01) {
-    // (2026-11-04 — the user: "a repeated line … first 2 m, then the next line, then the next … use shaders, not
-    //  repeated textures; from a distance just colour": the strata were EVEN 3.4 m bands with a dark seam at each, the
-    //  streaks a texture repeating every 4.5 m. Now beds of UNEVEN thickness — two smooth 1D noises sharing no period —
-    //  soft tones, no seams; the streaks on the face's own axis at two scales with no common period; the small beds and
-    //  the streaks fade into the plain colour as they shrink toward a pixel)
     float nearK = 1.0 - smoothstep(0.8, 3.5, foot);
     float q = h + (p.mid.g - 0.5) * 6.0 + (p.big.r - 0.5) * 9.0;
     float bh = strataN(q / 13.0);
@@ -409,24 +405,23 @@ void main() {
 #endif
     }
     col *= mix(vec3(1.0), band * (1.0 - 0.16 * streak), cliffK);
-    col = mix(col, mix(GREEN, GREEN_DEEP, p.fine.g) * 1.1, cliffK * smoothstep(0.8, 0.95, Nf.y) * 0.75);
+    col = mix(col, mix(GREEN, GREEN_DEEP, p.fine.g) * 1.1, cliffK * smoothstep(0.8, 0.95, nfY) * 0.75);
   }
 
   float rough = mix(0.92, 0.62, g.rock);
   rough = mix(rough, 0.45, g.snow);
   // MUD (the marsh, the tracks' mud holes, the slow banks — mud.bin): dark wet earth in soft painted patches, glossy,
-  // dragged into streaks; the thickest of it holds standing water (below, with the rain's puddles)
+  // dragged into streaks; the thickest of it holds standing water (the terrain, with the rain's puddles)
   vec2 mudB = box ? texture(uMud, gridUv(uMaskGrid, xz)).rg : vec2(0.0);
   float mud = mudB.r;
   // WILDFLOWERS seen from beyond the grass (the blades draw them near): the field speckled with its drift's colour,
-  // the speckle melting into a tint where it would shimmer
+  // the speckle melting into a tint where it would shimmer — its amount here, the drift's colour mixed by the terrain
+  // (LOW's grass ends at 38 m, ULTRA's at 72: past that the paint carries the same band — a sprinkle over the field's
+  //  own colour, as the blades show it: only a flower's top is in bloom)
+  s.flower = 0.0;
   if (mudB.g > 0.02) {
-    float beyond = smoothstep(uGrassR * 0.55, uGrassR * 0.9, dcam) * (1.0 - g.trail) * (1.0 - g.rock);
-    // (LOW's grass ends at 38 m, ULTRA's at 72: past that the paint carries the same band — a sprinkle over the field's
-    //  own colour, as the blades show it: only a flower's top is in bloom (2026-11-02, was 0.8: the drift read as a
-    //  flower-coloured field))
     float spk = mix(dotsAt(xz, 1.6, 0.42, 0.42, max(0.12, foot * 0.45)), 0.62, smoothstep(0.4, 1.6, foot));
-    col = mix(col, flowerColor(xz, 0.5), min(1.0, mudB.g * 1.15) * beyond * min(1.0, spk * 1.6) * 0.3);
+    s.flower = min(1.0, mudB.g * 1.15) * beyond * (1.0 - g.trail) * (1.0 - g.rock) * min(1.0, spk * 1.6) * 0.3;
   }
   float mudA = 0.0;
   if (mud > 0.01) {
@@ -434,16 +429,158 @@ void main() {
     vec3 MUDC = mix(vec3(0.075, 0.056, 0.038), vec3(0.135, 0.1, 0.066), texture(uNoise, xz * vec2(0.31, 0.11)).b);
     col = mix(col, MUDC, mudA);
     rough = mix(rough, 0.3, mudA);
+    s.flower *= 1.0 - mudA;
   }
-  float wrap = mix(0.62, 0.45, g.rock); // (rock's light softer at its edge too)
-  float ao = mix(1.0, 0.7, g.forest) * mix(1.0, 0.85, g.bed) * cav;
+  s.col = col;
+  s.rock = g.rock;
+  s.rough = rough;
+  s.aoB = mix(1.0, 0.7, g.forest) * mix(1.0, 0.85, g.bed);
+  // under the grass the ground lies in the blades' shade (the terrain fades it toward the grass's edge)
+  s.under = grassy0(m, g.rock, g.forest) * (1.0 - smoothstep(0.02, 0.1, g.scree)) * (1.0 - g.trail);
+  // the fields' sheen's share: open grass (a low back-lit sun glows on it)
+  s.grassy = (1.0 - g.rock) * (1.0 - g.forest) * (1.0 - g.snow) * (1.0 - g.bed);
+  s.trail = g.trail;
+  // the puddles' inputs: the bog (thick mud: water at any weather) and the ruts' pools' noise (filled by the rain)
+  s.bog = smoothstep(0.8, 0.92, mud + (texture(uNoise, xz * 0.05).g - 0.5) * 0.3);
+  s.pudN = pud && g.trail > 0.2 ? texture(uNoise, xz * 0.085).g + texture(uNoise, xz * 0.31).r * 0.16 : 0.0;
+  s.dots = g.dots;
+  return s;
+}
+`
+
+/**
+ * The CACHE's read side (GroundCache.ts): the surface from the baked levels round the camera — the level by the pixel's
+ * footprint (a texel ≈ a pixel) or, farther than the finer levels reach, by the distance; two levels blended; past
+ * the coarsest, the FAR level (the whole world). uGC = (texels a level's side N, the finest texel (m), 1 / the atlas's
+ * side, the far level's texel (m)).
+ */
+export const GC_READ_GLSL = /* glsl */ `
+#ifdef GC_ON
+uniform sampler2D uGC0;
+uniform sampler2D uGC1;
+uniform sampler2D uGC2;
+uniform sampler2D uGC3;
+uniform vec4 uGC;
+// the level for a pixel at xz with footprint foot, as L + w (w: the blend toward L + 1): L the level whose texel
+// matches the pixel — or, nearer the edge of the finer levels' reach, the FINEST whose window holds xz (centred on the
+// camera within 16 texels, 2 more for the filter), blended into the next over the last quarter of its reach (a
+// hillside facing the camera across a valley is reach-bound: the texel no coarser than it must be)
+float gcLevel(vec2 xz, float foot) {
+  vec2 d = abs(xz - uCamPos.xz);
+  float r = max(max(d.x, d.y), 1e-3) / ((uGC.x * 0.5 - 20.0) * uGC.y); // (the distance in level-0 reaches)
+  float lf = max(log2(foot * GC_BIAS / uGC.y), 0.0);
+  float L = max(floor(lf), ceil(log2(r)));
+  float w = max(floor(lf) >= L ? fract(lf) : 0.0, smoothstep(0.75, 1.0, r * exp2(-L)));
+  return L + min(w, 0.999);
+}
+// level L (GC_LEVELS: the far one) at xz — its tile in the 3 × 3 atlas, the texel wrapped into its window
+void gcTap(vec2 xz, float L, out vec4 a, out vec4 b, out vec4 c, out vec4 d) {
+  float t = L >= GC_LEVELS ? uGC.w : uGC.y * exp2(L), S = uGC.x + 4.0;
+  vec2 cf = mod(xz / t - 0.5, uGC.x);
+  vec2 uv = (vec2(mod(L, 3.0), floor(L / 3.0)) * S + 2.5 + cf) * uGC.z;
+  a = textureLod(uGC0, uv, 0.0); b = textureLod(uGC1, uv, 0.0); c = textureLod(uGC2, uv, 0.0); d = textureLod(uGC3, uv, 0.0);
+}
+Surf gcSurface(vec2 xz, float Lf) {
+  float L = min(floor(Lf), GC_LEVELS), w = L >= GC_LEVELS ? 0.0 : Lf - L;
+  vec4 a, b, c, d;
+  gcTap(xz, L, a, b, c, d);
+#ifdef GC_NOBLEND
+  if (w > 0.5) {
+#else
+  if (w > 0.004) {
+#endif
+    vec4 a2, b2, c2, d2;
+    gcTap(xz, L + 1.0, a2, b2, c2, d2);
+    a = mix(a, a2, w); b = mix(b, b2, w); c = mix(c, c2, w); d = mix(d, d2, w);
+  }
+  Surf s;
+  s.col = a.rgb * a.rgb; s.rock = a.a;
+  s.rough = b.r; s.aoB = b.g; s.grassy = b.b; s.under = b.a;
+  s.relief = c.r; s.trail = c.g; s.bog = c.b; s.pudN = c.a * 1.2;
+  s.rip = (d.rg - 0.5) * 2.0; s.dots = d.b; s.flower = d.a * 0.3; // (rip: the normal's bend — relief + ripples)
+  return s;
+}
+#endif
+`
+
+const FRAG = /* glsl */ `
+${FRAG_OUT}
+${ATMOS_GLSL}
+${ROCK_RELIEF_GLSL}
+${PAINT_GLSL}
+uniform vec4 uInGrid;
+uniform vec4 uFarGrid;
+uniform float uBoxHalf;
+uniform float uWater;
+${SURF_GLSL}
+${GC_READ_GLSL}
+${SHADOW_GLSL}
+in vec3 vWorld;
+
+uniform float uGrassR;
+uniform float uBushR;
+
+void main() {
+#ifdef TC_FLAT
+  gl_FragColor = vec4(applyAtmos(vec3(0.12, 0.13, 0.06), vWorld), 1.0);
+#else
+  vec2 xz = vWorld.xz;
+  bool box = inTheBox(xz);
+  vec3 Ns = groundNormal(xz, box);
+  vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld);
+  float dcam = length(vWorld.xz - uCamPos.xz);
+  bool farG = dcam > 2000.0;
+  // the pixel's footprint on the ground (m): the paint's small marks fade before they'd shimmer
+  float foot = max(length(fwidth(xz)), 0.001);
+  float steep = 1.0 - Ns.y;
+  float farDots = farG ? 0.0 : smoothstep(uBushR * 0.7, uBushR, dcam);
+  float beyond = smoothstep(uGrassR * 0.55, uGrassR * 0.9, dcam);
+  // THE GROUND CACHE (GroundCache.ts, docs/PERF.md): the surface baked round the camera, read in 4–8 fetches instead of
+  // painting it again on every pixel every frame — not on the steep walls (a top-down texel stretches down a wall: the
+  // live paint there), nor past the cache's reach (the far ground's cheap live paint)
+  // (the STEEP walls within its reach are painted live: a top-down texel stretches down a wall — its beds smeared, its
+  //  creases lost; past the reach, the far level holds them too: there a texel is under a pixel's worth of haze)
+  Surf s;
+  bool cached = false;
+#ifdef GC_ON
+  float Lf = farG ? GC_LEVELS : gcLevel(xz, foot);
+  if (steep < GC_STEEP || Lf >= GC_LEVELS) { s = gcSurface(xz, Lf); cached = true; s.dots *= farDots; s.flower *= beyond; }
+  else
+#endif
+  {
+    vec3 Nf = normalize(cross(dpx, dpy));
+    s = surfaceAt(xz, vWorld.y, Ns, abs(Nf.y), foot, farG, box, farDots, beyond, uWet > 0.05);
+  }
+  vec3 col = s.col;
+  col = mix(col, SHRUB, s.dots);
+  if (s.flower > 0.002) col = mix(col, flowerColor(xz, 0.5), s.flower);
+  vec3 N = Ns;
+  float cav = 1.0;
+  if (cached) {
+    // (the cache's normal map: the relief and the ripples, baked — its bend added to this pixel's smooth normal)
+    vec2 nxz = Ns.xz + s.rip;
+    N = vec3(nxz.x, sqrt(max(1.0 - dot(nxz, nxz), 0.0)), nxz.y);
+  } else {
+#if defined(OTH_ROCK_RELIEF) && !defined(TC_RELIEF)
+    N = rockRelief(vWorld, N, s.relief, dpx, dpy, cav);
+#endif
+#ifdef OTH_DESERT
+    N = normalize(N + vec3(s.rip.x, 0.0, s.rip.y));
+#endif
+  }
+
+  float wrap = mix(0.62, 0.45, s.rock); // (rock's light softer at its edge too)
+  float ao = s.aoB * cav;
   vec3 V = normalize(uCamPos - vWorld);
   // (the 4 m shadow bake on a near-vertical face: a stripe at every texel row. A steep face reads its shade a few
-  //  metres out in front of it instead — the open ground there, in the wall's shadow or not; its facing does the rest.
-  //  Both worlds, 2026-11-04 — the desert lit its walls fully before; the valley's walls kept the stripes)
+  //  metres out in front of it instead — the open ground there, in the wall's shadow or not; its facing does the rest)
   float wallK = smoothstep(0.3, 0.6, steep);
   vec2 outward = Ns.xz / max(length(Ns.xz), 1e-3);
+#ifdef TC_SUN
+  float sun = 1.0;
+#else
   float sun = sunVisibility(xz + outward * 6.0 * wallK);
+#endif
 #ifdef OTH_DESERT
   // (2026-11-04, round 2: the desert's bare walls — a road's cut, a cliff no slab covers — went to a stair of dark
   //  4 m texels where the bake's outward read flipped cell by cell: a steep face lit by its facing alone)
@@ -451,28 +588,37 @@ void main() {
 #endif
   // under the grass the ground lies in the blades' shade (it shows between them); the shade lifts toward the
   // grass's edge, where the ground alone must look like the field from afar
-  float under = grassy0(m, g.rock, g.forest) * (1.0 - smoothstep(0.02, 0.1, g.scree)) * (1.0 - g.trail) * (1.0 - smoothstep(uGrassR * 0.3, uGrassR * 0.95, length(vWorld - uCamPos)));
-  col *= 1.0 - 0.14 * under;
-  vec3 c = shade(col, N, V, rough, 0.04, ao, sun, wrap);
-  c += rockFill(col, N) * g.rock * ao;
-  c += headlight(col, N, vWorld);
+  float under = s.under * (1.0 - smoothstep(uGrassR * 0.3, uGrassR * 0.95, length(vWorld - uCamPos)));
+  vec3 lit = col * (1.0 - 0.14 * under);
+#ifdef TC_SHADE
+  vec3 c = lit * (0.4 + 0.6 * max(dot(N, uSunDir), 0.0));
+#else
+  vec3 c = shade(lit, N, V, s.rough, 0.04, ao, sun, wrap);
+#endif
+  c += rockFill(lit, N) * s.rock * ao;
+  c += headlight(lit, N, vWorld);
   // PUDDLES (the rain): pools in the tracks' ruts and dips, a still dark mirror of the sky, spreading as it gets wetter
-  float bog = smoothstep(0.8, 0.92, mud + (texture(uNoise, xz * 0.05).g - 0.5) * 0.3);
-  if ((uWet > 0.05 && g.trail > 0.2) || bog > 0.0) {
-    float pud = smoothstep(0.71, 0.76, texture(uNoise, xz * 0.085).g + texture(uNoise, xz * 0.31).r * 0.16 + (uWet - 1.0) * 0.35) * g.trail * step(0.05, uWet);
-    pud = max(pud, bog * 0.85);
+#ifdef TC_PUD
+  if (false) {
+#else
+  if ((uWet > 0.05 && s.trail > 0.2) || s.bog > 0.0) {
+#endif
+    float pud = smoothstep(0.71, 0.76, s.pudN + (uWet - 1.0) * 0.35) * s.trail * step(0.05, uWet);
+    pud = max(pud, s.bog * 0.85);
     float fr = 0.12 + 0.6 * pow(1.0 - max(V.y, 0.0), 4.0);
-    // (dark muddy water: the bed shows through, the sky in it at a glance — a bright mirror read as snow; the bed LIT
-    //  (c, ~0.14 of the lit ground ≈ the 0.32 of its albedo by day) — 2026-11-02, the user: "at evening and night the
-    //  water on the ground still bright like a light": the unlit albedo stayed day-bright as the land went dark)
+    // (dark muddy water: the bed shows through, the sky in it at a glance; the bed LIT — at night the water dark too)
     vec3 mirror = c * 0.14 + skyColor(reflect(-V, vec3(0.0, 1.0, 0.0))) * fr * 0.55 + headlight(vec3(0.5), vec3(0.0, 1.0, 0.0), vWorld) * 0.6;
     c = mix(c, mirror, pud * 0.9);
   }
   // the fields' sheen: grass back-lit by a low sun glows warm
-  float grassy = (1.0 - g.rock) * (1.0 - g.forest) * (1.0 - g.snow) * (1.0 - g.bed);
   float back = pow(max(dot(-V, uSunDir), 0.0), 3.0);
-  c += g.col * uSunColor * back * 0.11 * grassy * smoothstep(-0.1, 0.4, dot(N, uSunDir)) * sun;
+  c += col * uSunColor * back * 0.11 * s.grassy * smoothstep(-0.1, 0.4, dot(N, uSunDir)) * sun;
+#ifdef TC_ATMOS
+  gl_FragColor = vec4(c, 1.0);
+#else
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
+#endif
+#endif
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }

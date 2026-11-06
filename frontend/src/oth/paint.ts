@@ -99,7 +99,9 @@ float trackMask(vec2 xz, float trail, float hw) { return 1.0 - smoothstep(hw - 0
 // foot = the pixel's footprint (m; 0 in the vertex shaders) — fades the small marks out before they'd shimmer.
 // rockNear / screeNear: the same fields read EARLIER — already 1 where the rock / scree starts, rising over the few
 // metres before it (the grass shortens toward them)
-struct Ground { vec3 col; float rock; float forest; float snow; float bed; float scree; float trail; float rockNear; float screeNear; float loose; float ripK; float lawn; };
+// dots = the SHRUB DOTS' amount, not painted in (the terrain mixes SHRUB over the finished colour by it — its distance
+// fade applied there, live, whether the ground came from the cache or not; GroundCache.ts); already × what covers them
+struct Ground { vec3 col; float rock; float forest; float snow; float bed; float scree; float trail; float rockNear; float screeNear; float loose; float ripK; float lawn; float dots; };
 // trail = distance (m) to the nearest dirt track's centre line, hw its half width
 // far = 0 within the grass's reach … 1 beyond it: the shrub dots are a far-hillside breakup only (near, a bush is a
 // real bush, not a disc painted on the ground)
@@ -148,7 +150,7 @@ float bedNoise(float x) { float i = floor(x), f = x - i; return mix(bedHash(i), 
 float bedTone(float h, Paint p) { float q = h + (p.big.g - 0.5) * 6.0; return clamp(0.72 * bedNoise(q / 19.0) + 0.28 * bedNoise(q / 5.5 + 7.3), 0.0, 1.0); }
 Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
   Ground g;
-  g.snow = 0.0; g.scree = 0.0; g.screeNear = 0.0;
+  g.snow = 0.0; g.scree = 0.0; g.screeNear = 0.0; g.dots = 0.0;
   bool frag = foot > 0.0; // (the grass's vertex shader passes 0: it only needs the colour, no marks)
   float near = frag ? 1.0 - smoothstep(0.35, 1.2, foot) : 0.0;
   // broad blotches (≈ 12 m) and small ones (≈ 3 m), with no period (the small gone where they'd be under a pixel or two)
@@ -229,49 +231,55 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
 Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
   Ground g;
   g.loose = 0.0; g.ripK = 0.5; g.lawn = 1.0;
-  vec3 col = grassPaint(m.g, p);
+  g.scree = 0.0; g.screeNear = 0.0; g.dots = 0.0;
   float near = 1.0 - smoothstep(0.35, 1.2, foot); // (small marks only while they're bigger than a pixel or two)
-  // painterly mottling: soft light / dark patches a few metres across, a faint grain
-  col *= 0.9 + 0.2 * p.fine.g + (p.mid.r - 0.5) * 0.12 + (p.grain.r - 0.5) * 0.1 * near;
-  // wet hollows and stream sides: deeper green; earth on the water's very edge
-  float wet = min(m.b / 0.85, 1.0);
   float grain = mix(1.0, (0.68 + 0.64 * p.micro.g) * (0.9 + 0.2 * p.micro.b), near);
-  col = mix(col, mix(GREEN_DEEP, GREEN, p.mid.r), smoothstep(0.35, 0.85, wet) * 0.55);
-  // (a ragged, painted edge; the earth itself mottled)
-  float earth = smoothstep(0.86, 0.9, m.b + (p.grain.b - 0.5) * 0.06 + (p.fine.r - 0.5) * 0.04);
-  // (earth: soft blotches, brushed streaks and a fine sandy grain — the grain only while it's bigger than a pixel)
-  col = mix(col, DIRT * (0.8 + 0.18 * p.grain.g + 0.12 * p.fine.g + 0.12 * p.grain.b) * grain, earth * 0.88);
-  // blue-grey SCREE patches on the steeper open slopes (the hillsides' grey breakup, seen from afar; no grass on them)
-  float sc = p.mid.b + (p.fine.r - 0.5) * 0.35 + (p.grain.b - 0.5) * 0.1 * near + smoothstep(0.08, 0.3, steep) * 0.5 - 0.25;
-  g.scree = smoothstep(0.66, 0.7, sc) * (1.0 - smoothstep(0.5, 0.8, wet)) * smoothstep(0.06, 0.14, steep);
-  g.screeNear = smoothstep(0.56, 0.665, sc) * (1.0 - smoothstep(0.5, 0.8, wet)) * smoothstep(0.06, 0.14, steep);
   // (where the rock relief shows — HIGH / ULTRA on PCs, rockRelief.ts — the rock, slabs and scree are plain: the relief
-  //  is their detail now; the painted breakup below is for where it doesn't, far away and on the other tiers)
+  //  is their detail now; the painted breakup is for where it doesn't, far away and on the other tiers)
   float paintK = 1.0;
 #ifdef OTH_ROCK_RELIEF
   paintK = 1.0 - reliefShow(foot);
 #endif
-  col = mix(col, SCREE * mix(1.0, 0.9 + 0.14 * p.fine.g + 0.08 * p.grain.r, paintK), g.scree);
-  // SHRUB DOTS: small dark-green bushes scattered over the open slopes (thicker on the green, sparse on gold)
-  // (only on open grass ground: not on the water's earth / gravel, rock or forest floor)
-  float open = (1.0 - g.scree) * (1.0 - smoothstep(0.8, 0.86, m.b)) * (1.0 - smoothstep(0.3, 0.5, m.r)) * (1.0 - smoothstep(0.3, 0.6, m.a));
-  float fill = mix(0.16, 0.08, smoothstep(0.3, 0.7, m.g)) * open * far;
-  // (two fixed layers: single bushes near, clumps of them far — a hillside of dots, never sub-pixel shimmer)
-  float fade = smoothstep(2.0, 5.0, foot);
-  float dots = 0.0;
-  if (fill > 0.001) {
-    float rv = 0.7 + 0.6 * p.fine.b; // (irregular sizes)
-    if (fade < 1.0) dots = dotsAt(xz, 7.0, fill, 1.4 * rv, max(0.15, foot * 0.45)) * (1.0 - fade);
-    if (fade > 0.0) dots = max(dots, dotsAt(xz + 3.1, 19.0, fill * 1.4, 3.2 * rv, max(0.3, foot * 0.45)) * fade);
-  }
-  col = mix(col, SHRUB * (0.8 + 0.4 * p.grain.r), dots * 0.85 * (1.0 - smoothstep(14.0, 30.0, foot)));
-  // forest floor (the pines will stand here)
-  g.forest = smoothstep(0.25, 0.75, m.a + (p.mid.b - 0.5) * 0.3);
-  col = mix(col, mix(FOREST, GREEN_DEEP, 0.5), g.forest * 0.2); // (the pines will cover it; until then only a hint)
-  // rock: neutral blue-grey in broad tones (the facets do the rest)
+  // rock: neutral blue-grey in broad tones (the facets do the rest) — decided FIRST: where it covers the ground whole
+  // (a wall, a cliff, a slab: g.rock exactly 1) the field under it — grass, earth, scree, shrub dots — isn't painted at
+  // all (2026-11-06, docs/PERF.md: exact, the rock is mixed over it at 1)
   float rv = m.r + (p.mid.b - 0.5) * 0.3 + (p.grain.b - 0.5) * 0.1;
   g.rock = smoothstep(0.42, 0.58, rv);
   g.rockNear = smoothstep(0.27, 0.433, rv); // (0.433: where g.rock reaches the grass's cut; ~2–6 m before it)
+  // forest floor (the pines will stand here)
+  g.forest = smoothstep(0.25, 0.75, m.a + (p.mid.b - 0.5) * 0.3);
+  vec3 col = vec3(0.0);
+  if (g.rock < 1.0) {
+    col = grassPaint(m.g, p);
+    // painterly mottling: soft light / dark patches a few metres across, a faint grain
+    col *= 0.9 + 0.2 * p.fine.g + (p.mid.r - 0.5) * 0.12 + (p.grain.r - 0.5) * 0.1 * near;
+    // wet hollows and stream sides: deeper green; earth on the water's very edge
+    float wet = min(m.b / 0.85, 1.0);
+    col = mix(col, mix(GREEN_DEEP, GREEN, p.mid.r), smoothstep(0.35, 0.85, wet) * 0.55);
+    // (a ragged, painted edge; the earth itself mottled)
+    float earth = smoothstep(0.86, 0.9, m.b + (p.grain.b - 0.5) * 0.06 + (p.fine.r - 0.5) * 0.04);
+    // (earth: soft blotches, brushed streaks and a fine sandy grain — the grain only while it's bigger than a pixel)
+    col = mix(col, DIRT * (0.8 + 0.18 * p.grain.g + 0.12 * p.fine.g + 0.12 * p.grain.b) * grain, earth * 0.88);
+    // blue-grey SCREE patches on the steeper open slopes (the hillsides' grey breakup, seen from afar; no grass on them)
+    float sc = p.mid.b + (p.fine.r - 0.5) * 0.35 + (p.grain.b - 0.5) * 0.1 * near + smoothstep(0.08, 0.3, steep) * 0.5 - 0.25;
+    g.scree = smoothstep(0.66, 0.7, sc) * (1.0 - smoothstep(0.5, 0.8, wet)) * smoothstep(0.06, 0.14, steep);
+    g.screeNear = smoothstep(0.56, 0.665, sc) * (1.0 - smoothstep(0.5, 0.8, wet)) * smoothstep(0.06, 0.14, steep);
+    col = mix(col, SCREE * mix(1.0, 0.9 + 0.14 * p.fine.g + 0.08 * p.grain.r, paintK), g.scree);
+    // SHRUB DOTS: small dark-green bushes scattered over the open slopes (thicker on the green, sparse on gold)
+    // (only on open grass ground: not on the water's earth / gravel, rock or forest floor)
+    float open = (1.0 - g.scree) * (1.0 - smoothstep(0.8, 0.86, m.b)) * (1.0 - smoothstep(0.3, 0.5, m.r)) * (1.0 - smoothstep(0.3, 0.6, m.a));
+    float fill = mix(0.16, 0.08, smoothstep(0.3, 0.7, m.g)) * open * far;
+    // (two fixed layers: single bushes near, clumps of them far — a hillside of dots, never sub-pixel shimmer)
+    float fade = smoothstep(2.0, 5.0, foot);
+    float dots = 0.0;
+    if (fill > 0.001) {
+      float rv = 0.7 + 0.6 * p.fine.b; // (irregular sizes)
+      if (fade < 1.0) dots = dotsAt(xz, 7.0, fill, 1.4 * rv, max(0.15, foot * 0.45)) * (1.0 - fade);
+      if (fade > 0.0) dots = max(dots, dotsAt(xz + 3.1, 19.0, fill * 1.4, 3.2 * rv, max(0.3, foot * 0.45)) * fade);
+    }
+    g.dots = dots * 0.85 * (1.0 - smoothstep(14.0, 30.0, foot)); // (mixed in by the terrain: SHRUB over the finished colour)
+    col = mix(col, mix(FOREST, GREEN_DEEP, 0.5), g.forest * 0.2); // (the pines will cover it; until then only a hint)
+  }
   vec3 rock = mix(ROCK_DEEP, ROCK, 0.7 + (p.mid.r - 0.5) * 0.4 + (p.fine.g - 0.5) * 0.2 * paintK);
   // the valley's slabs: light blue-grey, soft streaks down the faces, a little lichen; the far ranges stay warm
   vec3 slab = mix(SLAB_DEEP, SLAB, 0.78 + ((p.fine.g - 0.5) * 0.25 + (p.grain.r - 0.5) * 0.12 * near) * paintK - steep * 0.35);
@@ -302,6 +310,8 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   track *= 0.9 + 0.1 * smoothstep(hw, hw * 0.5, trail);
   col = mix(col, track, g.trail);
   g.col = col;
+  // (the dots under what was painted over them since)
+  g.dots *= (1.0 - 0.2 * g.forest) * (1.0 - g.rock) * (1.0 - g.snow) * (1.0 - g.bed) * (1.0 - g.trail);
   return g;
 }
 

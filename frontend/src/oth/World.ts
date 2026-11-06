@@ -106,7 +106,7 @@ export class World {
     await step('shadow', () => (background ? shadow.prepare(map) : shadow.setMap(map)))
     let farGrid = new GFX.Vector4()
     const terrain = await step('terrain', () => {
-      const t = new Terrain(map, atmos, tier, shadow)
+      const t = new Terrain(map, atmos, tier, shadow, env.renderer)
       // (the far grid the car's material holds: this world's values in the same Vector4 — at once, or at the swap)
       farGrid = t.uniforms.uFarGrid.value.clone()
       if (!background) env.farGrid.copy(farGrid)
@@ -225,6 +225,7 @@ export class World {
     for (const t of textures) t.dispose()
     this.trees.atlas?.dispose()
     this.grass.dispose()
+    this.terrain.dispose()
     this.glow?.dispose()
   }
 }

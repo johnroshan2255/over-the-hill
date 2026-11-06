@@ -57,13 +57,16 @@ export interface Tier {
   rayDiv: number
   /** The rocks' crumpled 3D surface relief from noise (rockRelief.ts): HIGH / ULTRA, and only on PCs / laptops (pickTier). */
   rockRelief: boolean
+  /** THE GROUND CACHE (GroundCache.ts): texels a level's side (a multiple of 16; 0: off — the ground painted live on
+   *  every pixel). The finest texel is 1/32 m × 1024 / this; phones 512 (34 MB, 1/16 m: their pixels are bigger). */
+  groundCache: number
 }
 
 export const TIERS: Record<TierName, Tier> = {
-  low: { name: 'low', dpr: 1, msaa: false, terrainGrid: 16, terrainLeaf: 32, terrainNear: 70, grassRadius: 38, grassDensity: 9, grassFan: 6, rockReach: 600, rockNear: 45, treeNear: 35, treeMid: 70, treeFar: 250, treeReach: 600, bushNear: 30, bushReach: 140, grassSegments: 1, spec: false, far: 4500, fogNear: 100, haze: 2600, rain: 1600, bloom: 0, samples: 0, bloomStart: 1, rayDiv: 4, rockRelief: false },
-  medium: { name: 'medium', dpr: 1.25, msaa: true, terrainGrid: 24, terrainLeaf: 48, terrainNear: 110, grassRadius: 50, grassDensity: 14, grassFan: 8, rockReach: 720, rockNear: 60, treeNear: 45, treeMid: 80, treeFar: 300, treeReach: 720, bushNear: 40, bushReach: 190, grassSegments: 1, spec: true, far: 6000, fogNear: 110, haze: 2900, rain: 2400, bloom: 4, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: false },
-  high: { name: 'high', dpr: 1.5, msaa: true, terrainGrid: 32, terrainLeaf: 64, terrainNear: 140, grassRadius: 62, grassDensity: 22, grassFan: 11, rockReach: 820, rockNear: 75, treeNear: 50, treeMid: 95, treeFar: 330, treeReach: 820, bushNear: 50, bushReach: 230, grassSegments: 1, spec: true, far: 7500, fogNear: 120, haze: 3100, rain: 3200, bloom: 5, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: true },
-  ultra: { name: 'ultra', dpr: 2, msaa: true, terrainGrid: 32, terrainLeaf: 64, terrainNear: 180, grassRadius: 72, grassDensity: 26, grassFan: 9, rockReach: 900, rockNear: 90, treeNear: 50, treeMid: 95, treeFar: 380, treeReach: 900, bushNear: 60, bushReach: 260, grassSegments: 2, spec: true, far: 9000, fogNear: 130, haze: 3300, rain: 4000, bloom: 6, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: true },
+  low: { name: 'low', dpr: 1, msaa: false, terrainGrid: 16, terrainLeaf: 32, terrainNear: 70, grassRadius: 38, grassDensity: 9, grassFan: 6, rockReach: 600, rockNear: 45, treeNear: 35, treeMid: 70, treeFar: 250, treeReach: 600, bushNear: 30, bushReach: 140, grassSegments: 1, spec: false, far: 4500, fogNear: 100, haze: 2600, rain: 1600, bloom: 0, samples: 0, bloomStart: 1, rayDiv: 4, rockRelief: false, groundCache: 512 },
+  medium: { name: 'medium', dpr: 1.25, msaa: true, terrainGrid: 24, terrainLeaf: 48, terrainNear: 110, grassRadius: 50, grassDensity: 14, grassFan: 8, rockReach: 720, rockNear: 60, treeNear: 45, treeMid: 80, treeFar: 300, treeReach: 720, bushNear: 40, bushReach: 190, grassSegments: 1, spec: true, far: 6000, fogNear: 110, haze: 2900, rain: 2400, bloom: 4, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: false, groundCache: 768 },
+  high: { name: 'high', dpr: 1.5, msaa: true, terrainGrid: 32, terrainLeaf: 64, terrainNear: 140, grassRadius: 62, grassDensity: 22, grassFan: 11, rockReach: 820, rockNear: 75, treeNear: 50, treeMid: 95, treeFar: 330, treeReach: 820, bushNear: 50, bushReach: 230, grassSegments: 1, spec: true, far: 7500, fogNear: 120, haze: 3100, rain: 3200, bloom: 5, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: true, groundCache: 1024 },
+  ultra: { name: 'ultra', dpr: 2, msaa: true, terrainGrid: 32, terrainLeaf: 64, terrainNear: 180, grassRadius: 72, grassDensity: 26, grassFan: 9, rockReach: 900, rockNear: 90, treeNear: 50, treeMid: 95, treeFar: 380, treeReach: 900, bushNear: 60, bushReach: 260, grassSegments: 2, spec: true, far: 9000, fogNear: 130, haze: 3300, rain: 4000, bloom: 6, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: true, groundCache: 1024 },
 }
 
 /** `?tier=`, else ULTRA on every device (2026-10-26: the user plays it in ULTRA; `?tier=low` etc. to compare). The
@@ -95,5 +98,9 @@ export function pickTier(): Tier {
   // stair-step is under half a CSS pixel: no MSAA (the leaf cards alpha-test), the bloom from a quarter of the screen,
   // the god rays at an eighth — the same look, the frame ~2.5× cheaper. `?mobile=1` / `0` forces it either way.
   if (mobile && out.bloom) Object.assign(out, { msaa: false, samples: 0, bloomStart: 2, bloom: Math.min(out.bloom, 5), rayDiv: 8 })
+  // PHONES WITHOUT THE POST PASS (2026-11-06, docs/PERF.md — the line above only ran with the post pass, and since it
+  // went (bloom 0) phones drew ULTRA with MSAA 4× on WebGL2, +1.2–1.4 ms even on the M4): no MSAA (the leaf cards
+  // alpha-test; at 2× density a stair-step is under half a CSS pixel), the ground cache's smaller atlas
+  if (mobile) Object.assign(out, { msaa: p.get('aa') === '1', groundCache: Math.min(out.groundCache, 512) })
   return out
 }
