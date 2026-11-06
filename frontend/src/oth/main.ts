@@ -5,9 +5,12 @@ import { type Camp, continueRequested, loadProgress, requestContinue, saveProgre
 import { gameParams } from '../settings'
 import { Menu } from '../ui/Menu'
 import { Atmosphere } from './Atmosphere'
-import { Bike } from './Bike'
-import mtbUrl from '../assets/models/vehicles/mtb.glb?url'
-import { MtbSim } from '../gameplay/vehicle/MtbSim'
+import { Bike, MotoBike } from './Bike'
+import motoUrl from '../assets/models/vehicles/moto.glb?url'
+import riderUrl from '../assets/models/human/rider.glb?url'
+import { MotoSim } from '../gameplay/vehicle/MotoSim'
+import { Character, type ClipName } from './Character'
+import charUrl from '../assets/models/human/character.glb?url'
 import { OthAudio } from './Audio'
 import { Dust } from './Dust'
 import { ChaseCam } from './ChaseCam'
@@ -30,6 +33,7 @@ import { TREE_STRIDE } from './Trees'
 import { TyreTracks } from './TyreTracks'
 import { Vehicle } from './Vehicle'
 import { Winch } from './Winch'
+import { ActionWheel, ICONS } from './Wheel'
 import { liveMap, World, type WorldEnv, type WorldId, WORLDS } from './World'
 
 /**
@@ -173,22 +177,149 @@ async function boot() {
   await car.setCar(q.get('car') ?? 'gwagen')
   scene.add(car.root, car.shadowMesh)
   // THE MOUNTAIN BIKE (Bike.ts): carried on the car, taken out with B
-  const bike = new Bike(map, physics, atmos, shadow, env.farGrid)
-  bike.makeSim = (ph) => new MtbSim(ph.pw)
-  await bike.load(mtbUrl)
-  scene.add(bike.root, bike.shadowMesh)
-  /** On the bike (B) — the car parked where it was left. */
+  // THE MOTORBIKE (MotoSim.ts, the same Bike drawing): taken out with F (GTA's key) — 2026-11-05
+  const moto = new MotoBike(map, physics, atmos, shadow, env.farGrid)
+  moto.makeSim = (ph) => new MotoSim(ph.pw)
+  await moto.load(motoUrl, riderUrl)
+  scene.add(moto.root, moto.shadowMesh)
+  // (the two-wheeler: the MOTORBIKE — the bicycle taken out of the game, 2026-11-05, the user: "remove the cycle, we
+  //  only need cars and the bike")
+  const twos = [moto]
+  /** On a two-wheeler (B the bicycle, H the motorbike) — the car parked where it was left; `two` the one ridden. */
   let riding = false
+  let two: Bike = moto
+  /** (the thrown rider's body, for the camera) */
+  const bailAt = new GFX.Vector3()
+  // THE CHARACTER ON FOOT (Character.ts — 2026-11-05): F gets out of the car (the driver's door opens) or off a bike,
+  // and back in / on
+  const hero = new Character(map, physics, atmos, shadow, env.farGrid)
+  await hero.load(charUrl)
+  // (its feet on what's solid under them: the terrain or a slab's top)
+  // (from the terrain's own height: the slab's top if one stands there, else the terrain — asked from above, it
+  //  answered with the height it was asked from)
+  hero.ground = (x, z) => physics.surface(x, z, map.height(x, z))
+  scene.add(hero.root, hero.shadowMesh)
+  let onFoot = false
+  /** (?chardraw=0: the character never drawn — the cost A/B) */
+  const charHidden = q.get('chardraw') === '0'
+  /** A scripted moment (getting in or out of the car): run each frame until it clears itself. */
+  let cut: ((dt: number) => void) | null = null
+  /** Where the driver's door is going (0 shut, 1 open) — eased each frame. */
+  let doorTo = 0
+  /** The CAMERA while getting in or out (GTA's): outside the driver's door, a little behind it, looking at the door —
+   *  the chase camera, following the character in the seat, was stopped by the car's body and sat inside it. */
+  let doorCam = 0
+  const doorCamFrom = new GFX.Vector3(), doorCamLook = new GFX.Vector3()
+  // FIRST PERSON (V): the eye in the head — the driver's in the car (his hands on the wheel in view), the rider's on a
+  // bike, the character's on foot; dragging looks round (in a vehicle it eases back ahead a moment after)
+  let fpp = false
+  const look = { yaw: 0, pitch: 0, idle: 9, footYaw: 0 }
+  {
+    let dragId = -1, lx = 0, ly = 0
+    renderer.domElement.addEventListener('pointerdown', (e) => { if ((e.target as HTMLElement).closest?.('.oth-touch')) return; dragId = e.pointerId; lx = e.clientX; ly = e.clientY })
+    window.addEventListener('pointerup', (e) => { if (e.pointerId === dragId) dragId = -1 })
+    window.addEventListener('pointermove', (e) => {
+      if (!fpp || e.pointerId !== dragId) return
+      const k = 0.0045
+      if (onFoot) look.footYaw -= (e.clientX - lx) * k; else look.yaw -= (e.clientX - lx) * k
+      look.pitch = Math.max(-1.2, Math.min(1.1, look.pitch - (e.clientY - ly) * k))
+      look.idle = 0
+      lx = e.clientX; ly = e.clientY
+    })
+  }
+  const qYaw = new GFX.Quaternion(), qPitch = new GFX.Quaternion(), UP = new GFX.Vector3(0, 1, 0), RIGHT = new GFX.Vector3(1, 0, 0), eye = new GFX.Vector3()
+  const eyeOff = new GFX.Vector3(), eyeAvg = new GFX.Vector3()
+  let eyeAvgOn = false
+  const placeFpp = (dt: number) => {
+    if (!onFoot) eyeAvgOn = false
+    look.idle += dt
+    if (!onFoot && look.idle > 1.2) { const k = Math.min(1, dt * 3); look.yaw -= look.yaw * k; look.pitch -= look.pitch * k }
+    qPitch.setFromAxisAngle(RIGHT, look.pitch)
+    if (onFoot) {
+      // (his eyes — with the stride's bob and sway steadied as GTA's: 25 % of the head's swing round its 0.6 s
+      //  average; a run's head bobs 16 cm)
+      hero.headWorld(eye)
+      eyeOff.copy(eye).sub(hero.pos)
+      if (!eyeAvgOn) { eyeAvg.copy(eyeOff); eyeAvgOn = true }
+      eyeAvg.lerp(eyeOff, Math.min(1, dt / 0.6))
+      eye.copy(hero.pos).add(eyeAvg).addScaledVector(eyeOff.sub(eyeAvg), 0.25)
+      qYaw.setFromAxisAngle(UP, look.footYaw)
+      hero.camYaw = look.footYaw
+      camera.quaternion.copy(qYaw).multiply(qPitch)
+    } else if (riding) {
+      // (the rider's own eyes — the skinned character's head, leant with him; the view tipped down, as a rider looks
+      // over the bars to the trail: the bars and his hands in the bottom of the frame)
+      // (he sits up in first person — Character's FPP_SIT_UP — his eye behind the bars; with the 70° lens the view is
+      //  tipped down to put the grips three-quarters of the way to its bottom edge: ~22° on the motorbike, more on the
+      //  bicycle, whose bars sit lower under the eye)
+      let tilt = 0.38
+      if (hero.ridingOn(two.root) && !two.sim?.crashed) {
+        hero.headWorld(eye)
+        const lo = eye.clone().sub(two.root.position).applyQuaternion(two.root.quaternion.clone().invert()), g = two.riderT.grips[0]
+        tilt = Math.max(0.3, Math.min(0.6, Math.atan2(lo.y - g[1], Math.max(0.05, lo.z - g[2])) - 0.75 * (35 * Math.PI) / 180))
+      } else two.headWorld(eye)
+      qYaw.setFromAxisAngle(UP, two.heading + look.yaw)
+      qPitch.setFromAxisAngle(RIGHT, look.pitch - tilt)
+      camera.quaternion.copy(qYaw).multiply(qPitch)
+    } else {
+      if (hero.seated) hero.headWorld(eye)
+      else { const d = car.driverDoor; eye.copy(d ? d.seat : new GFX.Vector3(-0.4, 1.5, 0)).setY((d ? d.seat.y : 1.5) + 0.62).applyQuaternion(car.root.quaternion).add(car.root.position) }
+      // (the eye kept under the roof lining: car space, clamped, back)
+      const inv = car.root.quaternion.clone().invert(), lo = eye.clone().sub(car.root.position).applyQuaternion(inv)
+      lo.y = Math.min(lo.y, car.roofY - 0.2)
+      eye.copy(lo).applyQuaternion(car.root.quaternion).add(car.root.position)
+      qYaw.setFromAxisAngle(UP, look.yaw)
+      camera.quaternion.copy(car.root.quaternion).multiply(qYaw).multiply(qPitch)
+    }
+    camera.position.copy(eye)
+    camera.updateMatrixWorld()
+  }
+  /** The driver in his seat (the character seen through the windows — and his hands on the wheel in first person): his
+   *  hips set from the steering wheel (behind and under its hub), his hands at ten to two on its rim, turning with it. */
+  let seatedIn = ''
+  const seatDriver = () => {
+    const rim = car.wheelRim, d = car.driverDoor
+    // (under the roof: a low car — the E30 — sits the driver lower, his head clear of it)
+    const hips = rim ? new GFX.Vector3(rim.hub.x, Math.min(rim.hub.y - 0.36, car.roofY - 0.92), rim.hub.z + 0.5) : d ? d.seat.clone() : null
+    if (!hips) return
+    hero.sitIn(car.root, hips, () => {
+      const r = car.wheelRim
+      if (!r) return null
+      const a = r.axis, up = new GFX.Vector3(0, 1, 0).addScaledVector(a, -a.y).normalize(), right = new GFX.Vector3().crossVectors(a, up).normalize()
+      const turn = Math.max(-1.4, Math.min(1.4, car.steerWheel))
+      return [150, 30].map((deg) => {
+        const t = (deg * Math.PI) / 180 - turn
+        return r.hub.clone().addScaledVector(right, Math.cos(t) * r.r).addScaledVector(up, Math.sin(t) * r.r)
+      }) as [GFX.Vector3, GFX.Vector3]
+    })
+    seatedIn = car.id
+  }
+  const placeDoorCam = (dt: number) => {
+    const d = car.driverDoor
+    if (!d) return false
+    const at = new GFX.Vector3(d.hinge.x, d.hinge.y + 0.2, d.hinge.z + d.length * 0.6).applyQuaternion(car.root.quaternion).add(car.root.position)
+    const out = new GFX.Vector3(-1, 0, 0).applyQuaternion(car.root.quaternion), back = new GFX.Vector3(0, 0, 1).applyQuaternion(car.root.quaternion)
+    const want = at.clone().addScaledVector(out, 3.6).addScaledVector(back, 2.2)
+    want.y = Math.max(want.y + 0.6, map.height(want.x, want.z) + 1.4)
+    doorCam = Math.min(1, doorCam + dt / 0.5)
+    const k = doorCam * doorCam * (3 - 2 * doorCam)
+    camera.position.lerpVectors(doorCamFrom, want, k)
+    doorCamLook.copy(at); doorCamLook.y -= 0.2
+    camera.lookAt(doorCamLook)
+    camera.updateMatrixWorld()
+    return true
+  }
   /** WHAT THE PLAYER IS ON — the car, or the bike while riding: the cameras, the crossing, the map and the GPS, the
    *  pickups, the camp, the saved spot follow it. */
   const ride = {
-    get pos(): GFX.Vector3 { return riding ? bike.pos : car.pos },
-    get sim() { return riding ? bike.sim : car.sim },
-    get heading(): number { return riding ? bike.heading : car.sim?.heading ?? 0 },
-    get speedKmh(): number { return riding ? bike.speedKmh : car.speedKmh },
-    get gear(): string { return riding ? bike.gear : car.gear },
-    get body() { return riding ? bike.sim?.body : car.sim?.body },
-    grounded: (): boolean => (riding ? bike.grounded() : car.grounded()),
+    // (thrown off the bike: the camera follows the rider's body, not the bike — GTA's)
+    get pos(): GFX.Vector3 { const bl = riding ? two.sim?.bail : null; return onFoot ? hero.pos : bl ? bailAt.set(bl.x, bl.y - 0.9, bl.z) : riding ? two.pos : car.pos },
+    get sim() { return onFoot ? hero.sim : riding ? two.sim : car.sim },
+    get heading(): number { return onFoot ? hero.heading : riding ? two.heading : car.sim?.heading ?? 0 },
+    get speedKmh(): number { return onFoot ? hero.speed * 3.6 : riding ? two.speedKmh : car.speedKmh },
+    get gear(): string { return onFoot ? '' : riding ? two.gear : car.gear },
+    get body() { return onFoot ? (hero.rigid as typeof car.sim.body | undefined) : riding ? two.sim?.body : car.sim?.body },
+    grounded: (): boolean => (onFoot ? hero.isGrounded() : riding ? two.grounded() : car.grounded()),
   }
   // the tyres' dust and the exhaust smoke
   const dust = new Dust(map, atmos, tier)
@@ -226,17 +357,15 @@ async function boot() {
   const toggleRadar = () => {
     if (!radar) { mapView.toggle(); return }
     radarOn = !radarOn
-    mapBtn.classList.toggle('on', radarOn)
   }
-  const mapBtn = mapButton(toggleRadar)
-  mapBtn.classList.toggle('on', radarOn)
   window.addEventListener('keydown', (e) => { if (e.code === 'KeyN' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) toggleRadar() })
   const chase = new ChaseCam(camera, map, ride, renderer.domElement)
   // (the chase camera stops in front of the rock: a ray from the car out to it, against the slab stacks, formations,
   //  ramps and bridges — StaticMesh — never the car itself)
   {
     let ray: InstanceType<typeof physics.pw.R.Ray> | null = null
-    const camGroups = group(0xffff, Groups.StaticMesh)
+    // (and the cars: on foot the camera stops in front of the 4×4 too — its own body is left out while driving)
+    const camGroups = group(0xffff, Groups.StaticMesh | Groups.VehicleMesh)
     chase.obstruct = (ox, oy, oz, dx, dy, dz, len) => {
       ray ??= new physics.pw.R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 1, z: 0 })
       ray.origin.x = ox; ray.origin.y = oy; ray.origin.z = oz
@@ -268,71 +397,308 @@ async function boot() {
     return null
   }
   /** The car brought beside the bike (parked: keep — false while riding on; true: taken at once). */
-  const bringCar = (unpark: boolean) => {
-    const h = bike.heading, p = bike.pos, half = car.half
+  const bringCar = (unpark: boolean) => bringCarTo(two.pos.x, two.pos.z, two.heading, unpark)
+  const bringCarTo = (px: number, pz: number, h: number, unpark: boolean) => {
+    const p = { x: px, z: pz }, half = car.half
     const at = besides(p.x, p.z, h, [[half.x + 1.6, 0], [-(half.x + 1.6), 0], [0, half.z + 2], [0, -(half.z + 2)]], half.x + 0.4) ?? { x: p.x + Math.cos(h) * 4, z: p.z - Math.sin(h) * 4 }
     if (unpark) car.unpark({ x: at.x, z: at.z, heading: h })
     else car.placeAt(at.x, at.z, h)
   }
-  const toggleRide = () => {
-    if (!car.sim || !bike.makeSim) return
+  const NAME = (_b: Bike) => 'motorbike'
+  /** Onto `which` from the car (it parks), straight across from the other two-wheeler (left where it stood), or back
+   *  in the car from it (the car brought to you from > 15 m away). */
+  const toggleRide = (which: Bike = moto) => {
+    if (!car.sim || !which.makeSim || cut) return
+    if (onFoot) {
+      // on foot: onto it where it's parked (near), or off the car beside you (it's carried on it)
+      const pk = which.parkedAt
+      const near = pk && Math.hypot(pk.x - hero.pos.x, pk.z - hero.pos.z) < 2.6
+      const carNear = Math.hypot(car.pos.x - hero.pos.x, car.pos.z - hero.pos.z) < 14
+      if (!near && !carNear) { toast(`The ${NAME(which)} is ${pk ? 'parked where you left it' : 'on the car'}`); return }
+      const at = near ? pk! : besides(hero.pos.x, hero.pos.z, hero.heading, [[1.0, 0], [-1.0, 0], [0, -1.4]], 0.7) ?? { x: hero.pos.x, z: hero.pos.z, heading: hero.heading }
+      hero.hide(); onFoot = false; winch.keysOn = false
+      which.mount(at.x, at.z, near ? pk!.heading : hero.heading)
+      two = which
+      riding = true
+      chase.frame(which === moto ? 6.2 : 5.2, which === moto ? 1.4 : 1.25)
+      chase.snap()
+      return
+    }
+    if (riding && two !== which) {
+      if (two.speedKmh > 8) { toast(`Stop to change to the ${NAME(which)}`); return }
+      const h = two.heading, p = two.pos
+      const at = besides(p.x, p.z, h, [[1.2, 0], [-1.2, 0], [0, 1.6]], 0.7) ?? { x: p.x, z: p.z }
+      two.dismount()
+      which.mount(at.x, at.z, h)
+      two = which
+      chase.frame(which === moto ? 6.2 : 5.2, which === moto ? 1.4 : 1.25)
+      chase.snap()
+      return
+    }
     if (!riding) {
-      if (car.speedKmh > 8) { toast('Stop the car to take the bike'); return }
+      if (car.speedKmh > 8) { toast(`Stop the car to take the ${NAME(which)}`); return }
       const h = car.sim.heading, p = car.pos, half = car.half
-      const at = besides(p.x, p.z, h, [[half.x + 1.0, 0], [-(half.x + 1.0), 0], [0, half.z + 1.4], [0, -(half.z + 1.4)]], 0.8)
-      if (!at) { toast('No room here to take the bike off'); return }
+      const at = besides(p.x, p.z, h, [[half.x + 1.1, 0], [-(half.x + 1.1), 0], [0, half.z + 1.6], [0, -(half.z + 1.6)]], 0.9)
+      if (!at) { toast(`No room here for the ${NAME(which)}`); return }
       if (winch.attached) winch.toggle() // (the line lets go)
       car.park()
-      bike.mount(at.x, at.z, h)
+      hero.hide() // (out of the driver's seat: the bike has its own rider)
+      which.mount(at.x, at.z, h)
+      two = which
       riding = true
-      chase.frame(5.2, 1.25)
+      chase.frame(which === moto ? 6.2 : 5.2, which === moto ? 1.4 : 1.25)
       chase.snap()
-      toast('On the bike · B back to the car')
     } else {
-      const far = Math.hypot(bike.pos.x - car.pos.x, bike.pos.z - car.pos.z) > 15
+      const far = Math.hypot(two.pos.x - car.pos.x, two.pos.z - car.pos.z) > 15
       if (far) bringCar(true)
       else car.unpark()
-      bike.dismount()
+      two.dismount()
       riding = false
       chase.frame(9, 1.6)
       chase.snap()
+      winch.keysOn = true
       toast(far ? 'Your 4×4 is brought to you' : 'Back in the 4×4')
     }
   }
+  const smooth = (x: number) => { const k = Math.max(0, Math.min(1, x)); return k * k * (3 - 2 * k) }
+  const toWorld = (v: GFX.Vector3) => v.clone().applyQuaternion(car.root.quaternion).add(car.root.position)
+  /** Model space (heading h) → world offset along the ground. */
+  const rot = (x: number, z: number, h: number): [number, number] => [x * Math.cos(h) + z * Math.sin(h), -x * Math.sin(h) + z * Math.cos(h)]
+  const footCam = () => { chase.frame(4.2, 1.45); chase.snap(); look.footYaw = hero.heading }
+  /** F: OUT of the car (stopped — the driver's door opens, the character climbs out) or off the bike (parked there). */
+  const getOut = () => {
+    if (cut || onFoot || !car.sim) return
+    if (riding) {
+      if (two.speedKmh > 8) { toast('Slow down to get off'); return }
+      const h = two.heading, p = two.pos.clone()
+      two.park()
+      riding = false
+      const at = besides(p.x, p.z, h, [[-0.85, 0], [0.85, 0], [0, 1.2]], 0.35) ?? { x: p.x - Math.cos(h) * 0.85, z: p.z + Math.sin(h) * 0.85 }
+      hero.appear(at.x, at.z, h)
+      onFoot = true
+      footCam()
+      return
+    }
+    if (car.speedKmh > 5) { toast('Stop the car to get out'); return }
+    if (winch.attached) winch.toggle()
+    car.park()
+    winch.keysOn = false
+    const d = car.driverDoor, h = car.sim.heading
+    if (!d || !hero.has('car_exit')) {
+      const p = car.pos, half = car.half
+      const at = besides(p.x, p.z, h, [[-(half.x + 0.8), 0], [half.x + 0.8, 0]], 0.4) ?? { x: p.x - Math.cos(h) * (half.x + 0.8), z: p.z + Math.sin(h) * (half.x + 0.8) }
+      hero.appear(at.x, at.z, h); onFoot = true; footCam(); return
+    }
+    // the clip starts seated: its hips put on the driver's seat; it climbs out to the left (out of the door)
+    const seat = toWorld(d.seat), [hx, hy, hz] = hero.hipsAt('car_exit', 0)
+    const [ox, oz] = rot(hx, hz, h), x0 = seat.x - ox, z0 = seat.z - oz, y0 = seat.y - hy
+    const e = hero.hipsAt('car_exit', 1), [ex, ez] = rot(e[0], e[2], h)
+    const gy = physics.surface(x0 + ex, z0 + ez, map.height(x0 + ex, z0 + ez))
+    hero.stage(x0, y0, z0, h)
+    onFoot = true
+    chase.frame(4.8, 1.4)
+    hero.play('car_exit', { fade: 0, rate: 1.3, then: () => {
+      const tr = hero.travel(), [tx, tz] = rot(tr.dx, tr.dz, h)
+      hero.appear(x0 + tx, z0 + tz, h + tr.yaw)
+      doorTo = car.doorOpen = 0
+      // (then he turns to face along the car — GTA's: the camera comes round behind him down its flank, never into it)
+      cut = (dt) => {
+        let dh = h - hero.heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh))
+        hero.heading += Math.max(-dt * 7, Math.min(dt * 7, dh))
+        if (Math.abs(dh) < 0.02) cut = null
+      }
+    } })
+    // IN STEP WITH THE CLIP (the left hand's path in it — 2026-11-05, the user: "the door and the animation aren't
+    // synced"): the hand pushes the door open over 7–27 % of it, the body leaves the seat over 34–55 % (the clip's car
+    // is lower than the 4×4: the step down to the ground there), the hand pushes it shut from outside over 62–74 %
+    cut = () => {
+      const p = hero.progress
+      doorTo = car.doorOpen = smooth((p - 0.07) / 0.2) * (1 - smooth((p - 0.62) / 0.12))
+      hero.pos.y = y0 + (gy - y0) * smooth((p - 0.34) / 0.21)
+    }
+  }
+  /** F on foot: onto a parked bike close by, else INTO the car from its driver's door (walk up to it). */
+  const getIn = () => {
+    if (cut || !onFoot || hero.state !== 'move' || !car.sim) return
+    const fb = fallenNear()
+    if (fb) { pickUp(fb); return }
+    for (const b of twos) if (b.parkedAt && Math.hypot(b.parkedAt.x - hero.pos.x, b.parkedAt.z - hero.pos.z) < 2.3) { clearFallen(); toggleRide(b); return }
+    const d = car.driverDoor, h = car.sim.heading
+    const doorAt = d ? toWorld(new GFX.Vector3(d.hinge.x - 0.4, d.hinge.y, d.hinge.z + d.length * 0.5)) : car.pos
+    if (Math.hypot(doorAt.x - hero.pos.x, doorAt.z - hero.pos.z) > (d ? 3.2 : 4.5)) return
+    clearFallen()
+    if (!d || !hero.has('car_enter')) { hero.hide(); onFoot = false; car.unpark(); winch.keysOn = true; chase.frame(9, 1.6); chase.snap(); return }
+    // the clip starts facing the car's side and ends seated: its end put on the driver's seat
+    const hs = h - Math.PI / 2, seat = toWorld(d.seat), e = hero.hipsAt('car_enter', 1)
+    const [ex, ez] = rot(e[0], e[2], hs), x0 = seat.x - ex, z0 = seat.z - ez
+    const gy = physics.surface(x0, z0, map.height(x0, z0)), y1 = seat.y - e[1]
+    // a few steps to the start, then the clip
+    const fx = hero.pos.x, fz = hero.pos.z, fh = hero.heading
+    hero.stage(fx, hero.pos.y, fz, fh)
+    hero.play('walk', { fade: 0.15 })
+    let t = 0
+    const walkT = Math.max(0.25, Math.hypot(x0 - fx, z0 - fz) / 1.7)
+    // (walking there facing the way it goes, turned to the car on the last steps)
+    const go = Math.atan2(-(x0 - fx), -(z0 - fz))
+    cut = (dt) => {
+      t += dt
+      const k = smooth(t / walkT), q = smooth((t / walkT - 0.6) / 0.4)
+      const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a))
+      hero.pos.set(fx + (x0 - fx) * k, gy, fz + (z0 - fz) * k)
+      const h1 = Math.hypot(x0 - fx, z0 - fz) > 0.3 ? go : fh
+      hero.heading = fh + wrap(h1 - fh) * Math.min(1, t / 0.25) + wrap(hs - h1) * q
+      if (t < walkT) return
+      hero.heading = hs
+      hero.play('car_enter', { fade: 0.2, rate: 1.3, then: () => {
+        onFoot = false; doorTo = car.doorOpen = 0; cut = null
+        seatDriver()
+        car.unpark(); winch.keysOn = true
+        chase.frame(9, 1.6); chase.snap()
+      } })
+      // in step with the clip: the hand pulls the door open over 12–30 %, the body climbs up and sits over 36–55 %,
+      // the hand pulls it shut over 60–75 %
+      cut = () => {
+        const p = hero.progress
+        doorTo = car.doorOpen = smooth((p - 0.12) / 0.18) * (1 - smooth((p - 0.6) / 0.15))
+        hero.pos.y = gy + (y1 - gy) * smooth((p - 0.36) / 0.19)
+      }
+    }
+  }
+  /** THE BAIL (2026-11-05, GTA's): thrown off, the rider tumbles with the crash's body (Character follows it); come to
+   *  rest, he GETS UP — off his back or his front, as he lies (Mixamo's get-ups: the lying start laid where the body
+   *  lies, his head where its head is) — and you're on foot, the bike lying where it fell (F by it: back on). */
+  let bailT = 0, bailSlow = 0, rising = false
+  const bailPrev = new GFX.Vector3()
+  const watchBail = (dt: number) => {
+    const bl = riding && !cut ? two.sim?.bail : null
+    if (!bl) { bailT = bailSlow = 0; return }
+    const v = bailT > 0 ? Math.hypot(bl.x - bailPrev.x, bl.y - bailPrev.y, bl.z - bailPrev.z) / Math.max(1e-3, dt) : 9
+    bailPrev.set(bl.x, bl.y, bl.z)
+    bailT += dt
+    bailSlow = v < 0.8 ? bailSlow + dt : 0
+    if ((bailT > 0.9 && bailSlow > 0.35) || bailT > 4) getUp(bl)
+  }
+  const getUp = (bl: { x: number; y: number; z: number; qx: number; qy: number; qz: number; qw: number }) => {
+    const q = new GFX.Quaternion(bl.qx, bl.qy, bl.qz, bl.qw)
+    const face = new GFX.Vector3(0, 0, -1).applyQuaternion(q), head = new GFX.Vector3(0, 1, 0).applyQuaternion(q)
+    const name: ClipName = face.y > 0 ? 'getup_back' : 'getup_front'
+    if (!hero.has(name)) { two.reset(); return }
+    // (the clips' lying still before they move, and their standing after: the middle of each, played quicker)
+    const t0 = name === 'getup_back' ? 1.9 : 1.25, t1 = 6.3
+    const lie = hero.lieOf(name, t0)
+    const h = Math.hypot(head.x, head.z) > 0.25 ? Math.atan2(-head.x, -head.z) - lie.headYaw : two.heading
+    const [ox, oz] = rot(lie.hips[0], lie.hips[2], h)
+    const x0 = bl.x - ox, z0 = bl.z - oz, y0 = physics.surface(x0, z0, map.height(x0, z0))
+    riding = false
+    onFoot = true
+    rising = true
+    winch.keysOn = false
+    hero.stage(x0, y0, z0, h)
+    const done = () => {
+      if (!rising) return
+      rising = false
+      cut = null
+      const tr = hero.travel(), [tx, tz] = rot(tr.dx, tr.dz, h)
+      hero.appear(x0 + tx, z0 + tz, h + tr.yaw)
+      look.footYaw = hero.heading
+      chase.frame(4.2, 1.45)
+    }
+    hero.play(name, { fade: 0, at: t0, rate: 1.8, then: done })
+    const endP = t1 / Math.max(1e-3, hero.clipLength(name))
+    cut = () => { if (hero.progress >= endP) done() }
+  }
+  /** Back on a bike lying where it fell (F by it, on foot): stood up, ridden off. */
+  const pickUp = (b: Bike) => {
+    const p = b.pos.clone(), h = b.heading
+    hero.hide(); onFoot = false; winch.keysOn = false
+    b.mount(p.x, p.z, h)
+    two = b; riding = true
+    chase.frame(b === moto ? 6.2 : 5.2, b === moto ? 1.4 : 1.25); chase.snap()
+  }
+  const fallenNear = (): Bike | null => twos.find((b) => !!b.sim?.crashed && Math.hypot(b.pos.x - hero.pos.x, b.pos.z - hero.pos.z) < 2.6) ?? null
+  /** A bike left lying (you went off in something else): stood where it lies, parked. */
+  const clearFallen = (keep?: Bike) => { for (const b of twos) if (b !== keep && b.sim?.crashed && !(riding && two === b)) b.park() }
+  /** THE GARAGE's pick taken where you are (2026-11-05, the user: "car to bike must be chosen where we choose the jeep
+   *  and the BMW"): the car (another model swapped in; you're put in it — it's brought to you if it's far), or a
+   *  two-wheeler (taken off the car beside you — on foot, beside you; the car parked where it is). */
+  const applyRide = async (r: 'car' | 'moto', carId: string) => {
+    if (cut || !car.sim) return
+    clearFallen(r === 'moto' ? moto : undefined)
+    if (r === 'car') {
+      if (car.id !== carId) await car.setCar(carId)
+      if (riding) { toggleRide(two); return }
+      if (onFoot) {
+        const p = hero.pos.clone(), h = hero.heading
+        hero.hide(); onFoot = false
+        if (Math.hypot(car.pos.x - p.x, car.pos.z - p.z) > 15) bringCarTo(p.x, p.z, h, true)
+        else car.unpark()
+        winch.keysOn = true
+        chase.frame(9, 1.6); chase.snap()
+      }
+      return
+    }
+    const which = moto
+    if (riding && two === which) return
+    if (onFoot) {
+      const at = besides(hero.pos.x, hero.pos.z, hero.heading, [[1.0, 0], [-1.0, 0], [0, -1.4]], 0.7) ?? { x: hero.pos.x, z: hero.pos.z }
+      hero.hide(); onFoot = false; winch.keysOn = false
+      which.mount(at.x, at.z, hero.heading)
+      two = which; riding = true
+      chase.frame(which === moto ? 6.2 : 5.2, which === moto ? 1.4 : 1.25); chase.snap()
+      return
+    }
+    toggleRide(which)
+  }
+  /** What F would do now (null: nothing) — the touch screen's DOOR button and, on foot, the prompt. */
+  const actionNow = (): string | null => {
+    if (cut || !car.sim || !driving) return null
+    if (onFoot) {
+      if (hero.state !== 'move') return null
+      if (fallenNear()) return 'Get on'
+      for (const b of twos) if (b.parkedAt && Math.hypot(b.parkedAt.x - hero.pos.x, b.parkedAt.z - hero.pos.z) < 2.3) return 'Get on'
+      const d = car.driverDoor
+      const at = d ? toWorld(new GFX.Vector3(d.hinge.x - 0.4, d.hinge.y, d.hinge.z + d.length * 0.5)) : car.pos
+      return Math.hypot(at.x - hero.pos.x, at.z - hero.pos.z) < (d ? 3.2 : 4.5) ? 'Get in' : null
+    }
+    if (riding) return two.speedKmh < 8 ? 'Get off' : null
+    return car.speedKmh < 5 ? 'Get out' : null
+  }
   window.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || !driving || pause) return
-    if (e.code === 'KeyB') toggleRide()
-    if (e.code === 'KeyR' && riding) bike.reset()
+    // (F — GTA's: out of / into what's nearest. Which vehicle you have is chosen in the GARAGE — 2026-11-05, the user)
+    if (e.code === 'KeyF') { if (onFoot) getIn(); else getOut() }
+    if (e.code === 'KeyR' && riding) two.reset()
   })
-  // (?ride=bike: start on the bike — the harnesses; ?bikedraw=0: the bike not drawn — the cost A/B)
-  bike.hidden = q.get('bikedraw') === '0'
-  if (q.get('ride') === 'bike' && driving) toggleRide()
+  // (?ride=moto | foot with ?save=0: start on it / out of the car — the harnesses; ?bikedraw=0: the two-wheelers not drawn — the cost A/B)
+  moto.hidden = q.get('bikedraw') === '0'
+  // (… once the car has stood on the ground for a moment: at this point it has no physics yet, and on its first frames
+  //  it isn't at its spot — the flag did nothing)
+  // (only in a TEST session — ?save=0, the harnesses' — never in play: every game starts IN THE CAR and the motorbike is
+  //  taken from the GARAGE only — 2026-11-05, the user: "he must stay in his car; the bike only if you select it in the
+  //  garage" — an old link with ?ride= kept starting him on a bike)
+  let rideAsk = q.get('save') === '0' ? q.get('ride') : null, rideWait = 0
 
   const fly = new FlyCam(camera, map, renderer.domElement)
   const sp = map.meta.spawn
   fly.place(num('x', sp.x), num('z', sp.z), num('h', 1.7), num('yaw', sp.yaw), num('pitch', -0.04))
-  // V: the free camera (from where the chase camera is) ⇄ back in the car
+  // V (2026-11-05, the user): FIRST PERSON ⇄ third (third the default); SHIFT + V the free camera (from where the
+  // camera is) ⇄ back
   window.addEventListener('keydown', (e) => {
-    if (e.code !== 'KeyV') return
+    if (e.code !== 'KeyV' || e.repeat || pause) return
+    if (!e.shiftKey) { if (driving) { fpp = !fpp; look.yaw = look.pitch = 0; look.footYaw = hero.heading; if (!fpp) chase.snap() } return }
     driving = !driving
     if (!driving) {
       const d = camera.getWorldDirection(new GFX.Vector3())
       fly.place(camera.position.x, camera.position.z, camera.position.y - map.height(camera.position.x, camera.position.z), Math.atan2(-d.x, -d.z), Math.asin(d.y))
     } else chase.snap()
   })
-  const ui = driveUi(car, ride, bike)
+  const ui = driveUi(car, ride, twos, hero, () => onFoot, () => (onFoot ? getIn() : getOut()))
   // SOUND: the engine, the tyres, the music and the valley's ambience (starts on the first key / tap — Audio.ts)
   const audio = new OthAudio(map, car, atmos)
-  audio.bike = bike
+  audio.moto = moto
   audio.fires = world.props.fires
   const readouts = gameHud(journal.coins)
   if (q.get('sound') === '0') audio.muted = true
-  fullscreenButton()
-  // ZOOM buttons (+ / −): the chase camera's distance while driving, the field of view in the free camera
-  zoomButtons((k) => {
-    if (driving) chase.zoom(k)
-    else { camera.fov = GFX.MathUtils.clamp(camera.fov * k, 18, 80); camera.updateProjectionMatrix() }
-  })
 
   // ANOTHER WORLD (the crossing — Crossing.ts — or ?world / the harness): built a step a frame while this one plays
   // (in the background: what lasts is left alone until the swap), then everything that lasts is pointed at it; the
@@ -371,7 +737,8 @@ async function boot() {
     build: buildWorld,
     enter: (w) => { enter(w) },
     move: (dx, dy, dz) => {
-      if (riding) bike.shift(dx, dy, dz)
+      if (onFoot) hero.shift(dx, dy, dz)
+      else if (riding) two.shift(dx, dy, dz)
       else car.shift(dx, dy, dz)
       dust.shift(dx, dy, dz)
       tyreTracks.clear()
@@ -439,6 +806,7 @@ async function boot() {
         onResume: () => setPaused(false),
         onRestart: () => { save(); requestContinue(true); location.reload() },
         onQuit: () => { save(); requestContinue(false); location.href = location.pathname },
+        onVehicle: (r, carId) => { void applyRide(r, carId) },
       })
     } else {
       pause?.close()
@@ -452,7 +820,37 @@ async function boot() {
     e.preventDefault()
     setPaused(true)
   })
-  pauseButton(() => setPaused(true))
+  // THE ACTION WHEEL (Wheel.ts): top right beside full screen, Q on a keyboard — everything that isn't driving
+  {
+    // (a key the game already listens for, pressed and let go — the keys' held sets see it come and go)
+    const press = (code: string, shiftKey = false) => () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code, shiftKey }))
+      window.dispatchEvent(new KeyboardEvent('keyup', { code, shiftKey }))
+    }
+    const keyboard = !document.body.classList.contains('touch')
+    new ActionWheel([
+      { id: 'pause', label: 'Pause', icon: ICONS.pause, key: 'Esc', run: () => setPaused(true) },
+      { id: 'map', label: 'Map', icon: ICONS.map, key: 'Tab', run: () => mapView.toggle() },
+      ...(radar ? [{ id: 'radar', label: 'Minimap', icon: ICONS.radar, key: 'N', run: toggleRadar, on: () => radarOn }] : []),
+
+      { id: 'winch', label: 'Winch', icon: ICONS.winch, key: 'E', run: press('KeyE'), show: () => driving && !riding && !onFoot },
+      { id: 'reset', label: 'Reset', icon: ICONS.reset, key: 'R', run: () => { if (riding) two.reset(); else car.reset() }, show: () => driving && !onFoot },
+      { id: 'lights', label: 'Lights', icon: ICONS.lights, key: 'L', run: press('KeyL'), show: () => !riding && !onFoot },
+      { id: 'time', label: 'Time', icon: ICONS.time, key: 'G', run: press('KeyG') },
+      { id: 'weather', label: 'Weather', icon: ICONS.weather, key: 'Shift G', run: press('KeyG', true) },
+      { id: 'sound', label: () => (audio.muted ? 'Sound off' : 'Sound'), icon: () => (audio.muted ? ICONS.mute : ICONS.sound), key: 'M', run: press('KeyM') },
+      // (the views — on every device: a phone has no V — 2026-11-05, the user)
+      { id: 'view', label: () => (fpp ? 'Third person' : 'First person'), icon: () => (fpp ? ICONS.tpp : ICONS.eye), key: 'V', run: press('KeyV'), show: () => driving },
+      { id: 'freecam', label: () => (driving ? 'Free camera' : 'Back to play'), icon: ICONS.camera, key: 'Shift V', run: press('KeyV', true), on: () => !driving },
+    ], keyboard)
+  }  // THE API BADGE (2026-11-05, the user: "a small icon in the top-right corner for WebGPU or WebGL"): a tag on the
+  // menu button's corner — amber GPU, grey GL2
+  {
+    const gpu = renderer.backend === 'webgpu'
+    const mb = document.querySelector('.oth-menubtn') as HTMLElement | null
+    if (mb) { mb.dataset.api = gpu ? 'GPU' : 'GL2'; mb.classList.toggle('gl2', !gpu); mb.title += gpu ? ' · WebGPU' : ' · WebGL2' }
+  }
+
 
   // CAMPING (C, or the CAMP button): stopped on your wheels, on dry ground — at a campsite (≤ 22 m) you rest there,
   // by your own camp you rest at it, anywhere else you PITCH one beside the car. Resting skips to the hour you pick
@@ -539,11 +937,20 @@ async function boot() {
     const dt = Math.min(clock.getDelta(), 0.1)
     car.wet = dust.wet = atmos.uniforms.uWet.value
     // the crossing first: a swap moves the car before this frame's physics, pose and cameras
-    bike.wet = car.wet
+    moto.wet = car.wet
+    cut?.(dt)
+    car.doorOpen += Math.max(-dt * 1.8, Math.min(dt * 1.8, doorTo - car.doorOpen))
+    if (rideAsk && car.sim && driving && (rideWait += dt) > 0.8) { if (rideAsk === 'foot') getOut(); else toggleRide(moto); rideAsk = null }
     crossing.update(dt, ride.sim ? ride.pos : null, camera.position)
-    physics.pw.advance(dt, (fdt) => { car.fixed(fdt); bike.fixed(fdt); winch.fixed(fdt) })
+    {
+      // (on foot, W walks away from the camera)
+      const cd = camera.getWorldDirection(new GFX.Vector3())
+      hero.camYaw = Math.atan2(-cd.x, -cd.z)
+    }
+    physics.pw.advance(dt, (fdt) => { car.fixed(fdt); moto.fixed(fdt); hero.fixed(fdt); winch.fixed(fdt) })
     car.update(physics.pw.alpha)
-    bike.update(physics.pw.alpha, dt)
+    moto.update(physics.pw.alpha, dt)
+    hero.update(dt)
     guide.update(dt, ride.pos.x, ride.pos.z)
     // the journey: distance driven (not the jumps of a reset / a car change), the last safe spot, the autosave
     playSeconds += dt
@@ -564,18 +971,47 @@ async function boot() {
       audio.chime('crate')
     }
     // the HUD's slow parts (4× a second): the signpost, the camp prompt
-    if ((hudTick += dt) > 0.25) { hudTick = 0; signHud(); const c = canCamp() ? campHere() : null; readouts.camp(canCamp() ? (c ? `Rest at ${c.name}` : 'Pitch camp') : null) }
+    if ((hudTick += dt) > 0.25) {
+      hudTick = 0; signHud()
+      const c = canCamp() ? campHere() : null, act = actionNow()
+      // (on foot by a vehicle: "F Get in" — GTA's; else the camp's)
+      readouts.prompt(onFoot && act ? ['F', act] : canCamp() ? ['C', c ? `Rest at ${c.name}` : 'Pitch camp'] : null)
+      ui.action(act)
+    }
     dust.update(dt, car)
+    // (the meadow pressed flat under the car — its blades grew up through the floor and the dash)
+    if (car.sim && car.root.visible) world.grass.car(car.root.position.x, car.root.position.z, car.sim.heading, car.half.x + 0.1, car.half.z + 0.1)
+    else world.grass.car(0, 0, 0, 0, 0)
     tyreTracks.update(car, clock.elapsedTime)
-    if (riding && bike.sim) {
-      const sb = bike.sim, wheels = [sb.front, sb.rear]
+    if (riding && two.sim) {
+      const sb = two.sim, wheels = [sb.front, sb.rear]
       dust.bikeTyres(dt, wheels, sb.body.linvel())
       tyreTracks.bikeMarks(wheels, clock.elapsedTime)
     }
     car.lights(atmos, dt)
     car.weather(atmos, dt)
-    if (driving) chase.update(dt)
-    else fly.update(dt)
+    // (the driver in his seat whenever you're in the car — a new car, sat in again)
+    if (!onFoot && !riding && !cut && car.sim && (!hero.seated || seatedIn !== car.id)) seatDriver()
+    // (on a bike the skinned character rides it — the bike's own segment rider not drawn)
+    for (const b of twos) b.skinned = hero.loaded
+    if (riding && !cut && two.sim && hero.loaded && !hero.ridingOn(two.root)) hero.rideOn(two)
+    watchBail(dt)
+    if (driving) {
+      // (getting in or out: the door's camera; back to the chase camera after, from where it is)
+      if (!rising && (cut || (onFoot && hero.state === 'action'))) { if (doorCam === 0) doorCamFrom.copy(camera.position); if (!placeDoorCam(dt)) chase.update(dt) }
+      // (no snap after it: from the door's camera — outside, by the car's flank — the chase camera eases round behind)
+      else if (fpp) { if (doorCam > 0) doorCam = 0; placeFpp(dt) }
+      else { if (doorCam > 0) doorCam = 0; chase.update(dt) }
+    } else fly.update(dt)
+    // (first person: the head out of the way, the near plane close — the cabin's insides at arm's length)
+    const inFpp = fpp && driving && !cut
+    hero.hideHead = inFpp && (onFoot || hero.seated || riding)
+    car.inside = inFpp && !onFoot && !riding
+    car.near = car.inside || camera.position.distanceTo(car.pos) < 14
+    const nearWant = inFpp ? 0.05 : 0.3
+    // (on a bike in first person, a wider lens — 70° — as games give it: the bars and the hands in the bottom of the view)
+    const fovWant = inFpp && riding ? 70 : 55
+    if (camera.near !== nearWant || camera.fov !== fovWant) { camera.near = nearWant; camera.fov = fovWant; camera.updateProjectionMatrix() }
     ui.update(driving, atmos.clock)
     audio.update(dt, camera)
     atmos.tick(dt)
@@ -592,7 +1028,9 @@ async function boot() {
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     view.setFromProjectionMatrix(viewPV, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     car.cull(view, world.horizon)
-    bike.cull(view, world.horizon)
+    moto.cull(view, world.horizon)
+    hero.cull(view, world.horizon)
+    if (charHidden) hero.root.visible = hero.shadowMesh.visible = false
     dust.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
     renderer.prepare(scene, camera)
@@ -610,9 +1048,13 @@ async function boot() {
     get props() { return world.props },
     get birds() { return world.birds },
     get world() { return world },
-    bike,
-    /** On / off the bike (B). */
-    ride: () => toggleRide(),
+    moto,
+    /** On / off the motorbike. */
+    ride: () => toggleRide(moto),
+    hero,
+    /** F: out of the vehicle / back in. */
+    foot: () => (onFoot ? getIn() : getOut()),
+    get onFoot() { return onFoot },
     get riding() { return riding },
     /** (the harness's probes: offscreen bakes re-run, targets read back) */
     renderer,
@@ -639,7 +1081,7 @@ async function boot() {
       old.dispose(keep)
       const sp = w.map.meta.spawn
       physics.follow(sp.x, sp.z)
-      if (riding) { bike.mount(sp.x, sp.z, sp.yaw); bringCar(false) } // (the bike at the spawn, the car parked beside it)
+      if (riding) { two.mount(sp.x, sp.z, sp.yaw); bringCar(false) } // (the bike at the spawn, the car parked beside it)
       else car.sim?.place(sp.x, w.map.height(sp.x, sp.z) + 0.6, sp.z, sp.yaw)
       return w.timings
     },
@@ -718,35 +1160,6 @@ async function boot() {
   }
 }
 
-/**
- * FULL SCREEN (top-left ⛶, on phones and desktop): the Fullscreen API on the page, then landscape locked where the
- * browser allows it (Android Chrome). iPhone Safari has no Fullscreen API for pages — there the button explains
- * "Share → Add to Home Screen", which opens the game full screen (oth.html is web-app capable).
- */
-/** + / − (top left, under the full-screen button): zoom in / out; held down, it keeps zooming. */
-function zoomButtons(zoom: (k: number) => void): void {
-  const box = document.createElement('div')
-  box.className = 'oth-zoom'
-  for (const [label, k, title] of [['+', 0.86, 'Zoom in'], ['−', 1.16, 'Zoom out']] as const) {
-    const b = document.createElement('button')
-    b.textContent = label
-    b.title = title
-    let timer = 0
-    const stop = () => { clearInterval(timer); timer = 0 }
-    b.addEventListener('pointerdown', (e) => {
-      e.preventDefault(); e.stopPropagation()
-      zoom(k)
-      stop()
-      timer = window.setInterval(() => zoom(Math.pow(k, 0.5)), 90)
-    })
-    b.addEventListener('pointerup', stop)
-    b.addEventListener('pointerleave', stop)
-    b.addEventListener('pointercancel', stop)
-    box.appendChild(b)
-  }
-  document.body.appendChild(box)
-}
-
 /** The game's HUD readouts: COINS (top right — they pop when they change), the SIGNPOST's boards, the CAMP prompt (and
  *  on touch screens its round button). DOM written only when something changes (4× a second at most). */
 function gameHud(coins0: number) {
@@ -781,12 +1194,13 @@ function gameHud(coins0: number) {
       sign.innerHTML = html
       sign.classList.toggle('on', !!rows)
     },
-    camp(text: string | null) {
+    prompt(p: [string, string] | null) {
+      const text = p ? p.join(' ') : null
       if (text === promptText) return
       promptText = text
-      prompt.innerHTML = text ? `<kbd>C</kbd>${text}` : ''
-      prompt.classList.toggle('on', !!text)
-      campBtn.classList.toggle('on', !!text)
+      prompt.innerHTML = p ? `<kbd>${p[0]}</kbd>${p[1]}` : ''
+      prompt.classList.toggle('on', !!p)
+      campBtn.classList.toggle('on', !!p && p[0] === 'C')
     },
     onCamp(f: () => void) {
       campBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); f() })
@@ -815,68 +1229,17 @@ function fadeThrough(mid: () => void): void {
   setTimeout(() => { mid(); f.classList.remove('on'); setTimeout(() => f.remove(), 700) }, 900)
 }
 
-/** The pause button (touch screens have no Esc): top right, under the reset pad's column. */
-function pauseButton(pause: () => void): void {
-  const b = document.createElement('button')
-  b.className = 'oth-pausebtn'
-  b.title = 'Pause (Esc)'
-  b.textContent = 'II'
-  b.addEventListener('click', (e) => { e.stopPropagation(); pause() })
-  document.body.appendChild(b)
-}
-
-/** The round MAP button (top left, under + / −): a folded map; amber while the minimap shows. */
-function mapButton(press: () => void): HTMLButtonElement {
-  const b = document.createElement('button')
-  b.className = 'oth-mapbtn'
-  b.title = 'Minimap (N)'
-  b.setAttribute('aria-label', 'Minimap')
-  b.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z"/><path d="M9 4v13.5M15 6.5V20"/></svg>'
-  b.addEventListener('pointerdown', (e) => { e.stopPropagation(); press() })
-  document.body.appendChild(b)
-  return b
-}
-
-function fullscreenButton(): void {
-  const b = document.createElement('button')
-  b.className = 'oth-fs'
-  b.title = 'Full screen'
-  b.textContent = '⛶'
-  document.body.appendChild(b)
-  const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void }
-  const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void }
-  const can = !!(el.requestFullscreen || el.webkitRequestFullscreen)
-  const standalone = matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone
-  if (standalone) { b.remove(); return }
-  b.addEventListener('click', async (e) => {
-    e.stopPropagation()
-    if (!can) {
-      alert('On iPhone: tap Share → "Add to Home Screen", then open it from the home screen — it runs full screen.')
-      return
-    }
-    if (document.fullscreenElement || doc.webkitFullscreenElement) {
-      if (document.exitFullscreen) await document.exitFullscreen()
-      else doc.webkitExitFullscreen?.()
-      return
-    }
-    try {
-      if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' })
-      else el.webkitRequestFullscreen?.()
-      const o = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }
-      await o?.lock?.('landscape').catch(() => {})
-    } catch { /* (the browser refused: nothing to do) */ }
-  })
-}
-
 /** The driving HUD (speed, gear, keys) and, on touch screens, the pedals and steering buttons. */
-function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear: string; readonly sim: unknown }, bike: Bike): { update: (driving: boolean, time: string) => void } {
+function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear: string; readonly sim: unknown }, twos: Bike[], hero: Character, onFoot: () => boolean, doAct: () => void): { update: (driving: boolean, time: string) => void; action: (label: string | null) => void } {
   const box = document.createElement('div')
   box.id = 'drive'
-  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · X Z gears · E winch · B bike · C camp · R reset · N minimap · Tab map (click: waypoint) · G time · Shift+G weather · V free camera · Esc pause</div>'
+  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · E winch · F get out · C camp · R reset · Tab map · Q menu · Esc pause</div>'
   document.body.appendChild(box)
   const spd = box.querySelector('b')!, gear = box.querySelector('i')!, clk = box.querySelector('em')!, help = box.querySelector('.help') as HTMLElement
-  const CAR_HELP = help.textContent ?? '', BIKE_HELP = 'W pedal · S brake · A D steer · ↑ ↓ lean (wheelie, manual, flips) · Space hop (hold to load) · Shift sprint · R back on · B to the car · Tab map · V free camera · Esc pause'
-  let onBike = false, pad: HTMLElement | null = null
+  const CAR_HELP = help.textContent ?? ''
+  const MOTO_HELP = 'W throttle · S brake · A D steer · ↓ wheelie · ↑ stoppie · ↑ ↓ flips · Space jump · R back on · F off · Q menu · Esc pause'
+  const FOOT_HELP = 'W A S D move · Shift sprint · Ctrl walk · Space jump · F get in · Q menu · Esc pause'
+  let onBike = -1, pad: HTMLElement | null = null, door: HTMLButtonElement | null = null
   const touch = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches
   if (touch) {
     // TOUCH: round thumb pads in the corners, the rest of the HUD small and out of the way (index.html, body.touch):
@@ -885,32 +1248,79 @@ function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear:
     help.style.display = 'none'
     pad = document.createElement('div')
     pad.className = 'oth-touch'
-    pad.innerHTML = '<button data-k="left">◀</button><button data-k="right">▶</button><button data-k="reset">⟲</button><button data-k="brake">BRAKE</button><button data-k="gas">GAS</button><button data-k="winch">WINCH</button><button data-k="ride">BIKE</button><button data-k="hop" class="bk">HOP</button><button data-k="leanF" class="bk">▲</button><button data-k="leanB" class="bk">▼</button>' +
+    // (only what you drive with: the rest — winch, bike, reset, map, pause … — is in the action wheel, Wheel.ts)
+    pad.innerHTML = '<button data-k="left">◀</button><button data-k="right">▶</button><button data-k="brake">BRAKE</button><button data-k="gas">GAS</button><button data-k="hop" class="bk">HOP</button><button data-k="leanF" class="bk">▲</button><button data-k="leanB" class="bk">▼</button>' +
       (car.driving.manual ? '<button data-k="up" data-key="KeyX">▲</button><button data-k="down" data-key="KeyZ">▼</button>' : '')
     document.body.appendChild(pad)
-    // (one-shot pads — the winch, the manual gears — press the key they stand for)
+    // THE STICK (on foot — 2026-11-05: "think as a game developer"): the left thumb steers the walk from the camera's
+    // view; a little = walk, most = run, to the rim = sprint. It lives where the steering pads are (hidden on foot).
+    const stick = document.createElement('div')
+    stick.className = 'oth-stick'
+    stick.innerHTML = '<i></i>'
+    pad.appendChild(stick)
+    const knob = stick.querySelector('i') as HTMLElement
+    let sid = -1
+    const move = (e: PointerEvent) => {
+      const r = stick.getBoundingClientRect(), R = r.width / 2
+      let dx = (e.clientX - (r.left + R)) / R, dy = (e.clientY - (r.top + R)) / R
+      const m = Math.hypot(dx, dy)
+      if (m > 1) { dx /= m; dy /= m }
+      hero.touch.mx = dx; hero.touch.my = -dy
+      knob.style.transform = `translate(${dx * R * 0.55}px, ${dy * R * 0.55}px)`
+    }
+    const end = () => { sid = -1; hero.touch.mx = hero.touch.my = 0; knob.style.transform = '' }
+    stick.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); sid = e.pointerId; stick.setPointerCapture(e.pointerId); move(e) })
+    stick.addEventListener('pointermove', (e) => { if (e.pointerId === sid) move(e) })
+    stick.addEventListener('pointerup', end); stick.addEventListener('pointercancel', end)
+    // SPRINT (held, beside JUMP — on foot)
+    const spr = document.createElement('button')
+    spr.className = 'oth-sprint'
+    spr.textContent = 'SPRINT'
+    const sset = (v: number) => (e: Event) => { e.preventDefault(); e.stopPropagation(); hero.touch.sprint = v }
+    spr.addEventListener('pointerdown', sset(1)); spr.addEventListener('pointerup', sset(0)); spr.addEventListener('pointercancel', sset(0)); spr.addEventListener('pointerleave', sset(0))
+    pad.appendChild(spr)
+    // THE DOOR (GTA's car-door button): out of / into what's nearest, shown only when there's something to do
+    door = document.createElement('button')
+    door.className = 'oth-door'
+    door.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5l9-2v18 M13 4h5v17 M10 12h.01 M2 21h20"/></svg><span></span>'
+    door.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); doAct() })
+    document.body.appendChild(door)
+    // (one-shot pads — the manual gears — press the key they stand for)
     const tap = (code: string) => (e: Event) => { e.preventDefault(); window.dispatchEvent(new KeyboardEvent('keydown', { code })) }
     for (const b of pad.querySelectorAll('button')) {
-      if (b.dataset.k === 'winch') { b.addEventListener('pointerdown', tap('KeyE')); continue }
-      if (b.dataset.k === 'ride') { b.addEventListener('pointerdown', tap('KeyB')); continue }
       if (b.dataset.k === 'hop' || b.dataset.k === 'leanF' || b.dataset.k === 'leanB') {
-        const set = (v: number) => (e: Event) => { e.preventDefault(); if (b.dataset.k === 'hop') bike.touch.hop = v; else bike.touch.lean = b.dataset.k === 'leanF' ? v : -v }
+        const set = (v: number) => (e: Event) => { e.preventDefault(); if (b.dataset.k === 'hop') hero.touch.hop = v; for (const bk of twos) { if (b.dataset.k === 'hop') bk.touch.hop = v; else bk.touch.lean = b.dataset.k === 'leanF' ? v : -v } }
         b.addEventListener('pointerdown', set(1)); b.addEventListener('pointerup', set(0)); b.addEventListener('pointercancel', set(0)); b.addEventListener('pointerleave', set(0))
         continue
       }
       if (b.dataset.key) { b.addEventListener('pointerdown', tap(b.dataset.key)); continue }
-      const k = b.dataset.k as 'gas' | 'brake' | 'left' | 'right' | 'reset'
-      const on = (v: number) => (e: Event) => { e.preventDefault(); if (k === 'reset') { if (v) { if (bike.sim) bike.reset(); else car.reset() } } else { car.touch[k] = v; bike.touch[k] = v } }
+      const k = b.dataset.k as 'gas' | 'brake' | 'left' | 'right'
+      const on = (v: number) => (e: Event) => { e.preventDefault(); car.touch[k] = v; hero.touch[k] = v; for (const bk of twos) bk.touch[k] = v }
       b.addEventListener('pointerdown', on(1)); b.addEventListener('pointerup', on(0)); b.addEventListener('pointercancel', on(0)); b.addEventListener('pointerleave', on(0))
     }
   }
+  let actLabel: string | null = ''
   return {
+    action: (label) => {
+      if (!door || label === actLabel) return
+      actLabel = label
+      door.classList.toggle('on', !!label)
+      ;(door.querySelector('span') as HTMLElement).textContent = label ?? ''
+    },
     update: (driving, time: string) => {
       box.style.display = driving ? 'block' : 'none'
+      document.body.classList.toggle('oth-free', !driving) // (the free camera: no pads — its own touch: one finger looks, two fly)
       spd.textContent = ride.speedKmh.toFixed(0)
       gear.textContent = ride.gear
-      const on = !!bike.sim
-      if (on !== onBike) { onBike = on; help.textContent = on ? BIKE_HELP : CAR_HELP; pad?.classList.toggle('bike', on) }
+      const on = onFoot() ? 2 : twos.some((b) => !!b.sim) ? 1 : -1 // (1 the motorbike, 2 on foot, −1 the car)
+      if (on !== onBike) {
+        onBike = on
+        help.textContent = on === 1 ? MOTO_HELP : on === 2 ? FOOT_HELP : CAR_HELP
+        pad?.classList.toggle('bike', on === 1)
+        pad?.classList.toggle('foot', on === 2)
+      }
+      // (on foot: no speedometer)
+      ;(box.querySelector('.spd') as HTMLElement).style.display = onFoot() ? 'none' : ''
       clk.textContent = time
     },
   }

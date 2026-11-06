@@ -3,7 +3,7 @@ import keyArtSmall from '../assets/ui/key-art-sm.jpg'
 import { PAINTS, VEHICLES, type VehicleDef } from '../gameplay/vehicle/catalogue'
 import { loadJournal, paintOwned, paintPrice, saveJournal, type Journal } from '../journal'
 import { loadProgress, type Progress } from '../save'
-import { DEFAULTS, loadSettings, saveSettings, type Settings } from '../settings'
+import { DEFAULTS, loadSettings, saveSettings, type CarId, type RideId, type Settings } from '../settings'
 import './menu.css'
 
 /**
@@ -24,6 +24,8 @@ export interface MenuHandlers {
   onRestart?: () => void
   /** Pause: save and go back to the title screen. */
   onQuit?: () => void
+  /** Pause: the GARAGE's pick taken at once (the car, or a two-wheeler) — the game swaps you onto it. */
+  onVehicle?: (ride: RideId, car: CarId) => void
   /** Camp: its name and what you can do there. */
   heading?: string
   items?: MenuItem[]
@@ -56,11 +58,19 @@ const AUDIO: Choice[] = [
 ] as Choice[]
 
 const KEYS: [string, string][] = [
-  ['W A S D', 'Drive and steer'], ['Space', 'Handbrake'], ['Shift', 'Boost'], ['X / Z', 'Gear up / down (manual)'], ['E', 'Winch'], ['R', 'Reset the car'],
-  ['C', 'Camp: pitch / rest'], ['1 / 2', 'G500 4×4² / BMW E30'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Esc', 'Pause'],
+  ['W A S D', 'Drive and steer · on foot: move'], ['F', 'Get out / get in'], ['Space', 'Handbrake · on foot: jump'], ['Shift', 'Boost · on foot: sprint'], ['X / Z', 'Gear up / down (manual)'], ['E', 'Winch'], ['R', 'Reset the car'],
+  ['C', 'Camp: pitch / rest'], ['1 / 2', 'G500 4×4² / BMW E30'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Q', 'Action wheel'], ['Esc', 'Pause'],
 ]
 
-const TABS: Record<Exclude<Screen, 'main'>, string[]> = { garage: ['Car', 'Paint', 'Driving'], settings: ['Graphics', 'Audio', 'Controls'], journal: ['Journal'] }
+/** THE GARAGE's vehicles (2026-11-05, the user: "car to bike must be chosen where we choose the jeep and the BMW"):
+ *  the cars, and the two-wheelers they carry. */
+interface Ride { ride: RideId; car?: VehicleDef; name: string; line: string; blurb: string }
+const RIDES: Ride[] = [
+  ...VEHICLES.map((v): Ride => ({ ride: 'car', car: v, name: v.name, line: carLine(v), blurb: v.blurb })),
+  { ride: 'moto', name: 'Motorbike', line: '450 cm³ · ~80 hp · 5 gears', blurb: 'A motocross bike: 310 mm of travel, ~180 km/h, climbs faces to 70°. Wheelies (↓ + throttle), stoppies, jumps and flips. Your car waits where you take it out.' },
+]
+
+const TABS: Record<Exclude<Screen, 'main'>, string[]> = { garage: ['Vehicle', 'Paint', 'Driving'], settings: ['Graphics', 'Audio', 'Controls'], journal: ['Journal'] }
 
 export class Menu {
   readonly root = document.createElement('div')
@@ -92,6 +102,7 @@ export class Menu {
 
   close(): void {
     window.removeEventListener('keydown', this.onKey, true)
+    document.body.classList.remove('oh-panel-open')
     this.root.remove()
   }
 
@@ -104,6 +115,8 @@ export class Menu {
   private readonly view = document.createElement('div')
 
   private render(): void {
+    // (a panel fills the top right: the full-screen button steps aside — index.html)
+    document.body.classList.toggle('oh-panel-open', this.screen !== 'main')
     if (this.screen === 'main') this.view.replaceChildren(...(this.mode === 'title' ? [this.brand()] : this.mode === 'camp' ? [this.brand(this.h.heading ?? 'Camp', 'Camp')] : []), this.mainList(), this.hints(['Enter', 'Select'], ...(this.mode !== 'title' ? [['Esc', this.mode === 'camp' ? 'Leave' : 'Resume'] as [string, string]] : [])))
     else this.view.replaceChildren(this.panel(), this.hints(['↑ ↓', 'Choose'], ['← →', 'Change'], ['Q E', 'Tabs'], ['Esc', 'Back']))
   }
@@ -174,10 +187,10 @@ export class Menu {
   /** The tab's list and its side panel (what the selection means). */
   private body(): [HTMLElement, HTMLElement] {
     const t = TABS[this.screen as Exclude<Screen, 'main'>][this.tab]
-    if (t === 'Car') return this.cars()
+    if (t === 'Vehicle') return this.cars()
     if (t === 'Paint') return this.paints()
     if (t === 'Journal') return this.journal()
-    if (t === 'Controls') return [el('div', 'oh-list', [el('div', 'oh-side', [el('div', 'oh-keys', KEYS.flatMap(([k, d]) => [el('kbd', '', [k]), el('span', '', [d])]))])]), el('div', 'oh-side', [el('h4', '', ['Controls']), el('p', '', ['Keyboard, or the on-screen pads on a touch screen. A gamepad comes later.'])])]
+    if (t === 'Controls') return [el('div', 'oh-list', [el('div', 'oh-side', [el('div', 'oh-keys', KEYS.flatMap(([k, d]) => [el('kbd', '', [k]), el('span', '', [d])]))])]), el('div', 'oh-side', [el('h4', '', ['Controls']), el('p', '', ['Keyboard, or the on-screen pads on a touch screen. The round button top right (Q) opens the action wheel: pause, map, minimap, bike, winch, reset, lights, time, weather, sound. A gamepad comes later.'])])]
     const rows = t === 'Driving' ? DRIVING : t === 'Graphics' ? GRAPHICS : AUDIO
     this.sel = Math.min(this.sel, rows.length - 1)
     const list = el('div', 'oh-list', rows.map((c, i) => this.row(c, i)))
@@ -206,23 +219,30 @@ export class Menu {
     this.render()
   }
 
+  private chosen(r: Ride): boolean { return r.ride === (this.s.ride ?? 'car') && (r.ride !== 'car' || r.car!.id === this.s.car) }
+
   private cars(): [HTMLElement, HTMLElement] {
-    this.sel = Math.min(this.sel, VEHICLES.length - 1)
-    const tiles = VEHICLES.map((v, i) => {
-      const b = el('button', 'oh-car' + (i === this.sel ? ' sel' : '') + (v.id === this.s.car ? ' chosen' : ''), [
-        el('h3', '', [v.name]), el('p', '', [carLine(v)]), ...(v.id === this.s.car ? [el('span', 'oh-tag', ['Selected'])] : []),
+    this.sel = Math.min(this.sel, RIDES.length - 1)
+    const tiles = RIDES.map((r, i) => {
+      const on = this.chosen(r)
+      const b = el('button', 'oh-car' + (i === this.sel ? ' sel' : '') + (on ? ' chosen' : ''), [
+        el('h3', '', [r.name]), el('p', '', [r.line]), ...(on ? [el('span', 'oh-tag', ['Selected'])] : []),
       ])
       b.addEventListener('pointerenter', () => { if (this.sel !== i) { this.sel = i; this.render() } })
       b.addEventListener('click', () => { this.sel = i; this.pickCar(i) })
       return b
     })
-    const v = VEHICLES[this.sel]
-    return [el('div', 'oh-list', [el('div', 'oh-cars', tiles)]), el('div', 'oh-side', [el('h4', '', [v.name]), el('p', '', [v.blurb]), stats(v)])]
+    const r = RIDES[this.sel]
+    return [el('div', 'oh-list', [el('div', 'oh-cars', tiles)]), el('div', 'oh-side', [el('h4', '', [r.name]), el('p', '', [r.blurb]), ...(r.car ? [stats(r.car)] : [])])]
   }
 
   private pickCar(i: number): void {
-    this.s.car = VEHICLES[i].id as Settings['car']
+    const r = RIDES[i]
+    this.s.ride = r.ride
+    if (r.car) this.s.car = r.car.id as CarId
     saveSettings(this.s)
+    // (in the pause menu it's taken at once)
+    this.h.onVehicle?.(this.s.ride, this.s.car)
     this.render()
   }
 
@@ -305,14 +325,14 @@ export class Menu {
     const tabName = t[this.tab]
     if (c === 'Escape' || c === 'Backspace') { const back = this.screen === 'garage' ? 'Garage' : this.screen === 'journal' ? 'Journal' : 'Settings'; this.screen = 'main'; this.sel = Math.max(0, this.mainItems().findIndex((it) => it.label === back)); this.render(); e.preventDefault(); return }
     if (c === 'KeyQ' || c === 'KeyE') { this.tab = (this.tab + (c === 'KeyE' ? 1 : t.length - 1)) % t.length; this.sel = 0; this.render(); return }
-    const grid = tabName === 'Car' ? VEHICLES.length : tabName === 'Paint' ? SWATCHES.length : 0
+    const grid = tabName === 'Vehicle' ? RIDES.length : tabName === 'Paint' ? SWATCHES.length : 0
     if (grid) {
-      const cols = tabName === 'Car' ? 2 : Math.max(1, Math.round((this.view.querySelector('.oh-swatches')?.clientWidth ?? 400) / 56))
+      const cols = tabName === 'Vehicle' ? 2 : Math.max(1, Math.round((this.view.querySelector('.oh-swatches')?.clientWidth ?? 400) / 56))
       if (c === 'ArrowRight' || c === 'KeyD') this.sel = Math.min(grid - 1, this.sel + 1)
       else if (c === 'ArrowLeft' || c === 'KeyA') this.sel = Math.max(0, this.sel - 1)
       else if (c === 'ArrowDown' || c === 'KeyS') this.sel = Math.min(grid - 1, this.sel + cols)
       else if (c === 'ArrowUp' || c === 'KeyW') this.sel = Math.max(0, this.sel - cols)
-      else if (c === 'Enter' || c === 'Space') { if (tabName === 'Car') this.pickCar(this.sel); else this.pickPaint(this.sel); e.preventDefault(); return }
+      else if (c === 'Enter' || c === 'Space') { if (tabName === 'Vehicle') this.pickCar(this.sel); else this.pickPaint(this.sel); e.preventDefault(); return }
       else return
       e.preventDefault()
       this.render()

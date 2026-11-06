@@ -1,6 +1,7 @@
 import { continueRequested, requestContinue } from './save'
 import { loadSettings } from './settings'
 import { Menu } from './ui/Menu'
+import { fullscreenButton } from './ui/fullscreen'
 
 /**
  * OVERHILL — the entry: the TITLE screen first (ui/Menu.ts), the game (oth/main.ts) loaded only when the player
@@ -46,6 +47,8 @@ async function start(resume: boolean, menu: Menu | null): Promise<void> {
   }
   await import('./oth/main')
 }
+
+fullscreenButton() // (top right, from the title into the game)
 
 if (direct) {
   void start(continueRequested(), null)

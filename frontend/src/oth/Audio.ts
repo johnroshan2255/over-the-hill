@@ -121,6 +121,13 @@ export class OthAudio {
   private freewheel: { src: AudioBufferSourceNode; gain: GainNode } | null = null
   /** The bike (main.ts): while it's ridden its tyres and freewheel are heard, the parked car's engine is off. */
   bike: Bike | null = null
+  /** The MOTORBIKE (main.ts): its own engine — a second voice of the synth (the single's thump) — and its tyres. */
+  moto: Bike | null = null
+  private motoEngine: AudioWorkletNode | null = null
+  private motoTone!: BiquadFilterNode
+  private motoBus!: GainNode
+  private motoOn = false
+  private motoGear = 0
   private parkedWas = false
   private sense = 0
   private near = { stream: 1e9, streamPan: 0, fall: 1e9, fallPan: 0, forest: 0, fire: 1e9, firePan: 0, pond: 1e9, pondPan: 0, pondIdx: -1, ridge: 0 }
@@ -234,7 +241,16 @@ export class OthAudio {
     void ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([ENGINE_WORKLET], { type: 'application/javascript' }))).then(() => {
       this.engine = new AudioWorkletNode(ctx, 'oth-engine', { numberOfInputs: 0, outputChannelCount: [1] })
       this.engine.connect(this.engineTone)
+      this.motoEngine = new AudioWorkletNode(ctx, 'oth-engine', { numberOfInputs: 0, outputChannelCount: [1] })
+      this.motoEngine.connect(this.motoTone)
+      this.motoEngine.port.postMessage({ voice: VOICES.moto })
     })
+    this.motoTone = ctx.createBiquadFilter()
+    this.motoTone.type = 'lowpass'
+    this.motoTone.frequency.value = 9000
+    this.motoBus = ctx.createGain()
+    this.motoBus.gain.value = 0
+    this.motoTone.connect(this.motoBus).connect(this.master)
     // another car: this engine runs down (the new one gets its voice and starts once it's loaded — update)
     this.car.onCarChange = () => this.engine?.port.postMessage({ event: 'stop' })
     const load = (f: string) => fetch(BASE + f).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b))
@@ -269,12 +285,26 @@ export class OthAudio {
     const ctx = this.ctx
     if (!ctx || !this.beds) return
     const t = ctx.currentTime, sim = this.car.sim, D = sim?.real ?? null
-    const bk = this.bike?.sim ?? null
+    // (the two-wheeler ridden: its tyres are heard — the motorbike's engine below, the bicycle's freewheel)
+    const bk = this.moto?.sim ?? this.bike?.sim ?? null
+    const tw = this.moto?.sim ? this.moto : this.bike
+    const ms = this.moto?.sim ?? null, M = this.motoEngine
+    if (M) {
+      if (!!ms !== this.motoOn) { this.motoOn = !!ms; M.port.postMessage({ event: ms ? 'start' : 'stop' }) }
+      if (ms) {
+        const thr = ms.pedalling ? Math.max(0, ms.controls.pedal) : 0
+        M.port.postMessage({ set: [ms.rpm, thr, thr, 1700, 11800] })
+        if (ms.gear !== this.motoGear) { if (this.motoGear) M.port.postMessage({ event: 'shift' }); this.motoGear = ms.gear }
+        const dM = camera.position.distanceTo(this.moto!.pos), nearM = Math.min(1, Math.max(0.15, 9 / Math.max(dM, 1)))
+        this.motoTone.frequency.setTargetAtTime(2000 + 8000 * nearM, ctx.currentTime, 0.2)
+        this.motoBus.gain.setTargetAtTime(0.75 * nearM, ctx.currentTime, 0.2)
+      } else this.motoBus.gain.setTargetAtTime(0, ctx.currentTime, 0.6)
+    }
     // (the car parked — the rider on the bike: its engine runs down; back in, it starts again)
     if (this.engine && this.car.parked !== this.parkedWas) { this.parkedWas = this.car.parked; this.engine.port.postMessage({ event: this.car.parked ? 'stop' : 'start' }) }
     const speed = bk ? Math.abs(bk.speed) : sim ? Math.abs(sim.speed) : 0
     // the car from the camera: the further, the quieter
-    const dCar = camera.position.distanceTo(bk && this.bike ? this.bike.pos : this.car.pos), near = Math.min(1, Math.max(0.15, 9 / Math.max(dCar, 1)))
+    const dCar = camera.position.distanceTo(bk && tw ? tw.pos : this.car.pos), near = Math.min(1, Math.max(0.15, 9 / Math.max(dCar, 1)))
     // ENGINE: the sim's rpm, load and throttle to the synth (each car's own revs: idle … redline)
     const E = this.engine
     if (E && sim && !this.car.parked) {
@@ -319,7 +349,7 @@ export class OthAudio {
     }
     // the FREEWHEEL: clicking while the bike rolls without being pedalled
     if (this.freewheel) {
-      const coast = bk && !bk.crashed && !bk.pedalling && bk.rear.contact ? Math.min(1, Math.max(0, Math.abs(bk.speed) - 0.4)) : 0
+      const coast = bk && !ms && !bk.crashed && !bk.pedalling && bk.rear.contact ? Math.min(1, Math.max(0, Math.abs(bk.speed) - 0.4)) : 0
       this.freewheel.gain.gain.setTargetAtTime(coast * 0.22 * near, t, 0.05)
       if (bk) this.freewheel.src.playbackRate.setTargetAtTime(Math.max(0.05, Math.abs(bk.rear.spinRate) / (2 * Math.PI)), t, 0.05)
     }

@@ -166,7 +166,8 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   grass / trees / bushes / loose boulders on them; tracks route round them. `meta.rocks` lists them.
 - **Runtime**: ADAPTIVE RESOLUTION (PlayCanvas guideline: DPR at runtime) — once a second a slow frame (> 19 ms)
   lowers the pixel ratio 15 % (to half), a fast one (< 12.5 ms) raises it (`?dpr=fixed` off; F3 shows `res %`).
-  FULL SCREEN button (top-left; Fullscreen API + landscape lock; iPhone: "Add to Home Screen" hint). Default tier
+  FULL SCREEN button (top-right corner, title and game — `ui/fullscreen.ts`; Fullscreen API, the orientation left to
+  the phone; iPhone: "Add to Home Screen" hint). Default tier
   ULTRA everywhere.
 - **Score ceiling** (compare.py on OTH against ITSELF): golden grass from two OTH screenshots 70–73, a spruce vs another
   spruce in the same screenshot 51, the same crop shifted 5 % 89, identical 100 — so 100 means "the same image"; ours
@@ -199,6 +200,28 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   from a ring (160 LOW … 360 ULTRA) — dust thrown back from each tyre on the ground by what it rolls on (orange-brown
   off the tracks, grey off rock, pale off gravel, a little off grass; none on a bridge), more with speed and tyre
   slip; exhaust from the catalogue's tailpipes (haze at idle, grey puffs on the gas). ≈ 0.03 ms CPU.
+- **Matte paint, grain relief** (2026-11-05, the user — after Over the Hill's cars: "ours are shiny, glossy"; "by
+  grains I mean the 3D grains, not the colour"; "tiny 3D dots — on red, small red dots"; "on the body and the bonnet,
+  not the tyres"; "so small, like sand grains"; "only on the red parts — not the top of the car"): every vehicle (both
+  cars, both bikes — `Vehicle.ts` FRAG, shared by Bike.ts) is MATTE: rough everywhere (0.92), no clear coat (the
+  Schlick glint and the sky mirrored in the paint gone), only a very broad faint sheen in the paint's own colour and the
+  soft glow of the sky's light. All its BODYWORK carries a RELIEF of tiny raised GRAINS, light only, so each takes the
+  colour of what it's on: a dome round each point of the paint noise's cellular channel (A), at two sizes by the
+  distance, both fixed on the surface — SAND up close (~4.5 mm across every ~6.5 mm, ~1 mm high) giving way to DOTS
+  further off (~1 cm every ~2 cm, ~3 mm high; sand is under a pixel past ~2 m) — over a faint orange peel. In the
+  vehicle's own space, projected along each face's own axis (its normal from the position's derivatives: no
+  stretching, whichever way it turns), turned into a slope by Mikkelsen's surface gradient (three height samples a
+  pixel); the gaps between the grains shaded (their occlusion — a face square to a high sun shows no slope) and their
+  tops catching a little sky (black parts show faint grey grains); faded by the pixel's MEAN footprint (the longest
+  faded the grains off the top of the car, seen at a glance) and skipped beyond. WHERE: the paint mask — 1 the paint
+  (tinted), 2 the rest of the bodywork (untinted: the roof, trim, bumpers, arches; a bike's plastics, frame, engine —
+  loadModels.ts / Bike.ts), 0 smooth (the wheels and tyres, the chain, the cabin, the controls, the glass); the
+  character keeps his own (`NO_GRAIN`). `?grain=0` turns it off: A/B (abgpu, 1080p, the chase view) ULTRA +0.06 ms,
+  LOW +0.08 ms (4 %).
+- **Seen from inside** (2026-11-05, the user: "from inside the car the water isn't visible"): the windows no longer
+  write depth — the water, transparent too and drawn after them, was culled behind every window (the lake bed showed
+  through). And the meadow lies FLAT under the car (`Grass.car`: its footprint, 10 cm round its box; the blades in it
+  at 12 %) — it grew up through the floor and the dash. `?carflat=0` turns that off.
 - **Camera zoom** (the user): the chase camera's distance 3.5–40 m, eased — mouse wheel, two-finger PINCH, + / − keys,
   on-screen + / − buttons (held: keeps zooming); in the free camera the buttons change the field of view.
 - **The MOUNTAIN BIKE** (2026-11-05, the user: "a mountain bike like the stunt bike in GTA 5 … each and every physics
@@ -229,9 +252,122 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   - Around it: the chase camera framed for it (5.2 m, look 1.25 m — `ChaseCam.frame`, a `ChaseTarget` either vehicle),
     the map / GPS / crossing / pickups / camp / saved spot follow what's ridden (main.ts `ride`), thin tyre tracks and
     small dust (`TyreTracks.bikeMarks`, `Dust.bikeTyres`), its tyres' sound and a freewheel ratchet (Audio.ts), the
-    touch pads HOP / LEAN ▲ ▼ / BIKE. Keys: W pedal, S brake, A D steer, ↑ ↓ lean, Space hop, Shift sprint, R back on.
-    Harness: `scripts/harness/bikeride.mjs` (a scripted ride, state logged), `bikeshot.mjs` (still views);
+    touch pads HOP / LEAN ▲ ▼ (BIKE / CAR in the action wheel). Keys: W pedal, S brake, A D steer, ↑ ↓ lean, Space hop, Shift sprint, R back on.
+    (2026-11-05: the BICYCLE is out of the game — the user — only the motorbike is built; this section describes
+    the shared machine.) Harness: `scripts/harness/bikeride.mjs` (a scripted ride, state logged), `bikeshot.mjs` (still views);
     `?ride=bike` starts on it, `?bikedraw=0` hides it (cost A/B).
+- **The motorbike** (2026-11-05, the user: "it's a cycle, not a bike — we want a proper bike too, like the stunt bike in
+  GTA 5"): a 450 cm³ motocross / enduro bike, our own design (`moto.geometry.json`, `scripts/oth/moto.py` → `moto.glb`).
+  - **The physics** is the bicycle's: `MtbSim.ts` exports `buildBikeSim(geometry, tune)` — the suspension, tyres,
+    balance, rider, stunts and crashes are one machine; `MtbSim` is it with the bicycle's numbers, `MotoSim`
+    (`MotoSim.ts`) with the motorbike's: 105 + 82 kg, 310 mm both ends on near-linear coils, and an ENGINE in place of
+    the legs (`tune.engine`: 49 N·m / ~61 hp, idle 1700, limiter 11 800, 5 gears × 2.6 primary × 50/13 final; an
+    automatic clutch that slips under 3200 rpm, automatic shifts, engine braking; the drive held to 1.3 × the rear's
+    grip; WHEELIE CONTROL — not leaning back, the throttle eases as the front loses its load; the rear brake held to its
+    grip, ABS). Air control (flips, spins) only after 0.3 s in the air — a bump at 80 km/h isn't a jump; a front sliding
+    1.1 s washes out. 0–60 km/h 2.5 s, ~155–165 km/h flat out. Tests: `tests/moto.test.ts` (13).
+  - **The drawing** is the bicycle's: `Bike.ts` exports `Bike` and `MotoBike` (`buildBikeView(geometry, opts)`): the
+    countershaft sprocket is the 'crank' (turned by the rear wheel × the final drive), the footpegs are the 'pedals'
+    (fixed — `opts.pegs`), the rider stands at `rider.standHip`; the shock's halves are turned from their rest angle
+    (the motorbike's slants). The rider is the bicycle's — a stand-in until a character GLB.
+  - **Around it** (main.ts): `two` the two-wheeler ridden (`riding`); F on / off the motorbike, B the bicycle, either
+    straight across to the other; the action wheel has Car / Bicycle / Motorbike. The chase camera 6.2 m back. Its
+    engine is a second voice of the synth (`VOICES.moto`, a single — Audio.ts `moto`). HUD: gear · rpm.
+    `bikeride.mjs` takes `VEH=moto`; `?ride=moto` starts on it.
+- **The rider** (2026-11-05, the user's character — `refer/char.png`): `src/assets/models/human/rider.glb`, built by
+  `scripts/oth/rider.py` from the Meshy mesh (a bare A-posed mesh): decimated to 12 k tris (the colour borders kept),
+  cut into Bike.ts's 12 rider segments, each straightened into its frame (local −y from the proximal joint) and stretched
+  to the geometry's bone lengths, painted by region (flat colours by material). Near a joint each vertex also carries
+  the neighbour segment, its place and normal in that segment's frame and a weight: Bike.ts's vertex shader mixes the
+  two poses (smooth elbows, knees, hips, shoulders, neck). `Bike.load(url, riderUrl)` takes the bike's parts from its
+  model and the rider's from rider.glb (the model's own rider is the fallback). The vertex attributes are packed
+  (`aPack` = paint, part, blend part, weight) — WebGPU allows 8 vertex buffers. The three GLBs (mtb, moto, rider) are
+  DRACO-compressed by their scripts (14-bit positions, 10-bit normals, 12-bit generic — DRACO=0 writes them plain):
+  ~¼ the download, the same triangles; Bike.ts decodes them on PlayCanvas's workers (public/draco), as the formations.
+- **On foot** (2026-11-05, the user: "a skeleton and proper animation for walk, run, jump, grab … getting out of the
+  car by opening the door, on and off the bikes"): `src/oth/Character.ts`, the model `human/character.glb`.
+  - **The asset** (`scripts/oth/character.py`): rider.py's painted, decimated mesh; a 22-bone skeleton on its measured
+    joints with Mixamo's names; automatic (bone heat) weights, 4 a vertex; 19 Mixamo clips (`scripts/harness/
+    mixamo.mjs` — exported on Mixamo's X Bot through the user's signed-in session) RETARGETED: the source turned to face
+    our way, each of our bones made to point as the source's does at rest (their T-pose vs our A-pose), then the
+    source's turn from its rest applied; the hips' travel scaled by the legs. Loops (idle, walk, run …) have their
+    travel taken out and their speed kept (the skeleton node's `clips` extra); one-offs keep it. Blender at 30 fps.
+  - **Drawn**: one draw, skinned in the vertex shader (the bones' 3 × 4 poses × the inverse binds as one uniform array,
+    the bikes' pattern), the car's surface shader. The skin and clips are read from the GLB by Character.ts (the
+    game's loader keeps neither); the mesh through the loader (Draco).
+  - **Played**: clips sampled on the CPU and cross-faded (0.2 s); a loop's rate follows the speed it moves at; a one-off's
+    travel (`travel()`) is handed to the character's place and heading at its end.
+  - **Moved**: Rapier's kinematic character controller (a 0.3 × 1.7 m capsule in the Player group — it meets the ground,
+    rocks, trees, props and the cars, never a bike): W A S D from the camera's view, run 4.6 m/s, Shift sprint 7.2,
+    Ctrl walk 1.7; on a touch screen (the car's pads hidden) a STICK (a little = walk, most = run, the rim = sprint),
+    JUMP, SPRINT (held), the DOOR button; the camera dragged with a free finger. After getting out he turns to face
+    along the car (the camera comes round behind him down its flank). Space jumps
+    ~0.65 m (4.8 m/s, g 18) — GTA's short hop: Mixamo's game-pack "Unarmed Jump" / "Unarmed Jump Running" (the first
+    clips read "like Spider-Man"), IN STEP: each clip's air (its hips back up through their start after the crouch,
+    and down again) found at load, the clip started a moment before its take-off and its air played over the
+    physics'; their own rise and drift taken out; the arms 65 % the idle's / run's (an arms-only layer: closer to the
+    sides); a fall holds the jump's top; a real drop lands into a crouch.
+  - **GTA-style locomotion** (the user: "how walking and jumping work in GTA 4 and 5 — that much realism"; GTA IV's
+    Euphoria — physics-driven bodies — is beyond this; GTA V's techniques are here): ONE BLEND ('loco': idle → walk →
+    run → sprint by the speed, each over the last) on ONE stride PHASE — each clip lined up at load on its left foot
+    furthest forward, the phase advanced a cycle per stride length at the speed moved (no sliding feet, no foot
+    clash between clips); WEIGHT (up to speed at 9 m/s², stops at 13, turning 11 rad/s standing down to 5 at a
+    sprint, slower up a grade); a LEAN into turns (rate × speed, ≤ 12°) about the feet and forward / back with the
+    acceleration; the HEAD toward where the camera looks; stepping feet turning on the spot; FOOT IK — each ankle on
+    the ground under it (the terrain or a slab's top), the pelvis down for the lower, two-bone legs on their own bend
+    plane, the feet keeping their turn (all as model-space turns after the clips, before the skin).
+  - **On the bikes** (2026-11-05, the user: "the human on the bike is broken — I can see through his buttocks and hands,
+    parts are cracked"): the SKINNED character rides both bikes (`Character.rideOn(bike)`); the segment rider
+    (rider.glb) is no longer drawn (`Bike.skinned`: its parts zeroed). Bike.ts still poses its rider model each step and
+    hands the character its targets (`Bike.riderT`, bike space): the hips' centre, the torso's lean, the grips, the
+    ankles. On them: the seated clip as the base, the hips put on the bike's, the body tipped so the torso (hips →
+    neck, measured after the clip) leans as the rider model does, two-bone IK for the arms (the wrist 8 cm back from
+    the grip) and the legs (the feet keep their turn).
+  - **The bail** (GTA's): thrown off, he follows the crash's capsule (the falling clip, his middle on it) and the chase
+    camera follows him, not the bike; come to rest (under 0.8 m/s for 0.35 s, or 4 s), he GETS UP — Mixamo's
+    "Getting Up" from his back or from his stomach, chosen by which way his chest faces, the clip's lying pose laid
+    where the body lies with his head where its head is (`Character.lieOf`), its middle played at 1.8× (~2.5 s) — then
+    you're ON FOOT, the bike lying where it fell. F by it ("Get on"): stood up and ridden. Taking anything else, a
+    bike left lying is stood up, parked (`clearFallen`).
+  - **The API badge**: a small tag on the menu button's corner — amber GPU (WebGPU), grey GL2 (WebGL2).
+  - **Cameras** (2026-11-05): V first person ⇄ third (third the default), Shift + V the free camera. FIRST PERSON: the
+    camera at HIS EYES everywhere — on foot, on both bikes, in both cars (the user: "the camera must be his eyes, not
+    above his head"): the point between the eyes, 1.5 cm behind their surface, found on the mesh at load (the nose's
+    tip, the eyes 3.8 cm over it) and carried on the head bone (`Character.headWorld` — it turns and leans with the
+    head); the head shrunk away, the near plane 5 cm. In a car it's kept under the roof lining (`Vehicle.roofY`). On
+    foot the stride's bob is steadied (25 % of the head's swing round its 0.6 s average, as GTA's); W walks where you
+    look. Dragging looks round, in a vehicle easing back ahead. ON A BIKE (still his eyes) the lens widens to 70° and he sits up 0.4 rad
+    (`FPP_SIT_UP` — none of him seen but his arms: a leant rider's eye is over the bars, and a screen is narrower than
+    an eye), the view tipped down to put the grips ¾ of the way to its bottom edge (~22° on the motorbike, 34° on the
+    bicycle): the bars, the number board and his hands in view.
+  - **The cockpit** (Vehicle.ts): the models' own steering wheel (14 : 1 to the front wheels), pedals, gear lever and
+    wipers — never drawn before — on their pivots; the wipers always (P sweeps them), the rest within 14 m or inside.
+    THE DRIVER sits in the car whenever you're in it (`Character.sitIn`: the seated clip, the hips behind and under
+    the wheel's hub, under the roof), his hands at ten to two by two-bone IK, turning with the wheel (to ±80°).
+  - **Proportions** (rider.py, both the rider and the character): the shoulders and upper torso narrowed up to 13 %
+    and the head 5 % larger — the user: "a normal human, nothing big, nothing small" (from the back the shoulders were
+    round domes); the shoulder caps the clavicles' (the arms' share fades in past the joint); the FACE painted from
+    the nose's tip — eyes, brows, lips, a moustache, stubble on the jaw. Checked by eye in headless Chrome from
+    six sides.
+  - **The weights** (character.py): above the hip joints the thighs' share eased onto the hips (sooner at the back) — bone
+    heat had the buttocks swinging with every stride. AMBIENT OCCLUSION baked by Cycles into the vertices (COLOR_0),
+    multiplied into the colours (0.4 + 0.6·ao).
+  - **In and out** (main.ts `getOut` / `getIn`, F — on a touch screen the DOOR button, shown only when there's
+    something to get into or out of; on foot by a vehicle the prompt "F Get in / Get on"): the car stops and parks,
+    its DRIVER'S DOOR (drawn on its own pivot — `Vehicle.doorOpen`, `driverDoor`) moves IN STEP with the clip — from
+    the left hand's path in it: getting out it's pushed open over 7–27 %, the body leaves the seat over 34–55 % (the
+    step down from the 4×4's height), pushed shut over 62–74 %; getting in pulled open over 12–30 %, the climb up over
+    36–55 %, pulled shut over 60–75 %. A DOOR CAMERA (outside the driver's door, behind it) films it. Off a bike the bike is PARKED there (`Bike.park`: drawn without its rider, no physics); F
+    near it gets back on. WHICH VEHICLE is chosen in the GARAGE (2026-11-05, the user: not from the wheel): G500, E30,
+    the mountain bike, the motorbike (`settings.ride`; in the pause menu taken at once — `applyRide`: onto it beside
+    you, the car parked, or into the car — brought to you if it's far). The action wheel keeps only the rare things. The chase camera frames the character
+    (4.2 m) and stops in front of the cars (VehicleMesh in its ray). `?ride=foot` starts out of the car,
+    `?chardraw=0` hides the character (cost A/B: within noise, ULTRA and LOW).
+- **The motorbike's power and the climb assist** (2026-11-05, the user: "more speed and power so it can climb every
+  wall and hill"): ~80 hp (~180 km/h); `tune.climbGrip / climbTorque / climbStick` — on a slope from 12° to 55° the
+  tyres grip up to ×2.2, the drive ×2, the bike is held into the face with up to 0.9 g (and for 0.35 s after a bump
+  throws it off one); the rider lets the drive through on a face; fallen-over and sideways-landing judged against the
+  ground. Tests: 30° … 70° faces climbed; in the valley 33–46° hills (a rock ledge ridden into head-on still crashes).
 - **A fuller map** (2026-10-26 round 7, the user: "more bumps and hills, bigger and smaller, some with rocks, some just
   rock on the ground; proper cliffs; random ponds and lakes with tracks, trees and hills near them; bridges like
   OTH; make it fuller, all explorable"): terrain.py adds a HILL FIELD (~240 hills: small 18–45 m / 3–12 m, medium
@@ -382,6 +518,19 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   is 1) and IMP_FRAG divides the albedo and the normal / AO target by the coverage: a mip's edge is the tree's own
   average, never the background's. And the view ABOVE each in the atlas starts with its trunk's foot — blurred down a
   mip it drew a dark dash over the far trees' tops: the top (2^lod + 0.5) texels of a view are discarded.
+- **Woods (2026-11-05, the user: "the valley feels empty … make it feel full, without increasing cost — real trees at
+  the front, the back an image, no one will notice")**: `placeTrees` gathers the trees into STANDS (the 45 m clump noise
+  past 0.42–0.58: crown to crown, a dark mass with an edge) with open ground between, plus COPSES of a few on the open
+  meadows (the 28 m noise, off the forest mask); a stand's spruce a little taller toward its core and ~1 in 9 an old
+  GIANT of 26–36 m (was 6–21 m: nothing to read the hills' scale by). 23.1k → 42.9k trees (mean height 13.3 → 17.4 m).
+  Paid for by the LOD ranges (quality.ts): the mid LOD hands over to the impostor a quarter sooner (ULTRA 140 → 95,
+  HIGH 120 → 95, MEDIUM 100 → 80, LOW 85 → 70 m), ULTRA's full LOD 60 → 50 m, and the far rank cull starts ~1/6 sooner
+  (ULTRA 450 → 380 …; the survivors grow, and there are more trees to thin). Checked in headless Chrome: a still frame
+  can't tell an impostor from the tree past ~60 m; the near LOD at 50 m can't be told from 60, at 40 its plumes drop
+  off; a drive-by shows no pop. Cost (`scripts/harness/abwoods.mjs`, uncapped 1080p, interleaved ×4, 6 views + 6 spots
+  on tracks through the forest): ULTRA 1.02 → 1.01 ms, HIGH 0.91 → 0.95, LOW on the phone viewport 0.56 → 0.58 (the
+  run-to-run spread ±0.08). Most views are flat or cheaper; standing in a dense stand is ~+0.25 ms on ULTRA / HIGH
+  (the near crowns' fill, not their count). `?woods=0`: the old scatter and the old ranges.
 - **Not yet**: planar reflections; grass flattened by the tyres; photo mode / co-op.
 
 
@@ -399,6 +548,16 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   SETTINGS (graphics: quality, anti-aliasing, resolution, FPS overlay; audio; controls), PAUSE (Esc / the II button:
   resume, garage, settings, apply & restart here, quit to title). Paused = the frame returns at once: no physics, no
   clock, no drawing.
+- **The HUD's controls** (2026-11-05, the user: "congested and overlapping … make it like GTA 5, all inside a round
+  thing"): the top-right corner holds FULL SCREEN and the ACTION WHEEL's button (`oth/Wheel.ts`, Q on a keyboard) — one
+  SVG ring of sectors: pause, map, minimap, bike / car, winch, reset, lights, time, weather, sound (+ the free camera
+  on a keyboard). Tap the button then a sector, or hold it and slide onto one (GTA's); a tap outside / in the middle, Esc
+  or Q close it. Built when it opens, nothing while shut (DOM only: no GPU cost). The touch screen keeps only what you
+  drive with: ◀ ▶ bottom left, GAS / BRAKE bottom right (manual ▲ ▼ over the brake; on the bike HOP over GAS, LEAN ▲ ▼
+  beside the steering), the speed between them, CAMP a pill over the speed when you can. Portrait: smaller pads, the
+  speed above them, the compass its own row, the coins top left. Short screens shrink the title's list (`menu.css`).
+  Checked: `scripts/harness/uishot.mjs` — title, settings, car, bike, minimap, wheel, pause at 360×740, 740×360,
+  640×320 (touch), 1024×768, 900×600, 1280×720, 1920×1080: no two controls overlap, none leaves the screen.
 - **Settings** `src/settings.ts` (localStorage `overhill.settings.v1`) → `gameParams()`: the URL switches the game has
   always read (`tier`, `aa`, `scale`, `stats`, `car`, `paint`, `gearbox`, `aids`, `offroad`, `sound`), under the page's
   URL. Two cars only: the kei van was removed (catalogue, specs, engine voice, model).

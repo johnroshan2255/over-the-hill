@@ -1,0 +1,211 @@
+{
+  "about": "THE MOTORBIKE's geometry: ONE source for the model (scripts/oth/moto.py, Blender), the physics (MotoSim.ts, through the bikes' shared simulation in MtbSim.ts) and the renderer (src/oth/Bike.ts). Our own design: a 450 cm³ four-stroke motocross / enduro bike, 21-inch front and 18-inch rear wheels on knobbly tyres, a 310 mm upside-down fork, 310 mm of rear travel on a mono-shock straight to the swingarm; a 1.80 m rider in motocross kit. Same conventions as mtb.geometry.json: metres, GAME SPACE (+x right, +y up, +z backward, the bike faces -z), the origin on the ground midway between the axles, the suspension fully extended. The bicycle's keys keep their meaning; `bb` is the countershaft sprocket (the chain's front end, the 'crank' part turning with the rear wheel through the final drive), the `crank` has no arms (length 0) and the `pegs` are where the boots stand.",
+  "rotation": "ONE rotation sense for the wheels' roll, the cranks and the swingarm: R(a) takes a point at (y, z) (relative to the axle / the BB / the pivot) to (y cos a + z sin a, -y sin a + z cos a) — in a right-handed frame, a turn of -a about +x. Rolling forward, pedalling forward and compressing are all positive.",
+  "wheel": {
+    "radius": 0.355,
+    "tyreWidth": 0.11,
+    "rimRadius": 0.24,
+    "rimWidth": 0.04,
+    "hubWidthFront": 0.13,
+    "hubWidthRear": 0.16,
+    "discRadius": 0.13,
+    "frontRimRadius": 0.2667,
+    "rearRimRadius": 0.2286,
+    "frontTyreWidth": 0.085,
+    "rearTyreWidth": 0.125,
+    "about": "physics: one rolling radius for both (the 21-inch front 80/100 and the 18-inch rear 120/90 are within ~1 cm of it); the model's own rims and tyres from frontRimRadius / rearRimRadius and the widths. Spin as the bicycle's."
+  },
+  "frontAxle": [
+    0.0,
+    0.355,
+    -0.7425
+  ],
+  "rearAxle": [
+    0.0,
+    0.355,
+    0.7425
+  ],
+  "steer": {
+    "headAngleDeg": 63.5,
+    "axis": [
+      0.0,
+      0.8949,
+      0.4462
+    ],
+    "about": "as the bicycle's: the bars, the triple clamps, the fork's outer tubes, the number plate and the front fender turn about the axis through the lower clamp (`crown`).",
+    "crown": [
+      0.0,
+      1.0074,
+      -0.3926
+    ],
+    "headTubeBottom": [
+      0.0,
+      1.0343,
+      -0.3792
+    ],
+    "headTubeTop": [
+      0.0,
+      1.1909,
+      -0.3012
+    ],
+    "steererTop": [
+      0.0,
+      1.2267,
+      -0.2833
+    ],
+    "maxSteerDeg": 34
+  },
+  "fork": {
+    "about": "upside-down: the OUTER tubes are held in the clamps (steer); the inner tubes, the axle lugs and the front axle (fork_lowers) slide up the axis by up to `travel`.",
+    "travel": 0.31,
+    "axleToCrown": 0.74,
+    "offset": 0.022,
+    "stanchionDiameter": 0.052,
+    "stanchionHalfSpacing": 0.1,
+    "lowersLength": 0.5,
+    "outerDiameter": 0.06,
+    "outerLength": 0.52
+  },
+  "stem": {
+    "length": 0.0,
+    "barClamp": [
+      0.0,
+      1.2717,
+      -0.2883
+    ]
+  },
+  "bar": {
+    "width": 0.81,
+    "rise": 0.035,
+    "backsweepDeg": 12,
+    "upsweepDeg": 5,
+    "grips": [
+      [
+        -0.37,
+        1.3067,
+        -0.2133
+      ],
+      [
+        0.37,
+        1.3067,
+        -0.2133
+      ]
+    ]
+  },
+  "bb": [
+    0,
+    0.465,
+    0.035
+  ],
+  "crank": {
+    "about": "no arms: the countershaft SPROCKET at bb (chainringTeeth, chainringRadius) turns with the rear wheel × the final drive; pedalX / pedalSize are the FOOTPEGS' (see pegs). The chain runs on the LEFT (chainlineX < 0), the rear disc on the right.",
+    "length": 0.0,
+    "pedalX": 0.19,
+    "pedalSize": [
+      0.11,
+      0.025,
+      0.06
+    ],
+    "chainringTeeth": 13,
+    "chainringRadius": 0.033,
+    "chainlineX": -0.095
+  },
+  "pegs": [
+    0.19,
+    0.4,
+    0.125
+  ],
+  "cassette": {
+    "teeth": [
+      50
+    ],
+    "largestRadius": 0.105
+  },
+  "seat": {
+    "seatTubeAngleDeg": 0,
+    "saddleTop": [
+      0,
+      0.955,
+      0.2
+    ],
+    "saddleLength": 0.72,
+    "saddleWidth": 0.22,
+    "front": [
+      0,
+      0.985,
+      -0.12
+    ],
+    "back": [
+      0,
+      0.94,
+      0.58
+    ]
+  },
+  "rear": {
+    "about": "as the bicycle's single pivot: the SWINGARM (with the chain guide, the rear caliper, the axle) turns R(a) about the pivot; the mono-SHOCK (its coil spring on the body) runs from the frame under the seat to a mount on the swingarm just behind the pivot (no linkage).",
+    "pivot": [
+      0.0,
+      0.49,
+      0.1
+    ],
+    "shockFrameMount": [
+      0.0,
+      0.9,
+      0.13
+    ],
+    "shockSwingarmMount": [
+      0.0,
+      0.47,
+      0.415
+    ],
+    "shockEyeToEye": 0.5159,
+    "shockStroke": 0.1321,
+    "swingarmMaxRotation": 0.4769,
+    "wheelTravel": 0.31
+  },
+  "mass": {
+    "bike": 105,
+    "rider": 82,
+    "bikeCom": [
+      0,
+      0.6,
+      -0.03
+    ],
+    "riderComSeated": [
+      0,
+      1.27,
+      0.06
+    ]
+  },
+  "rider": {
+    "about": "a 1.80 m adult in motocross kit (a full-face helmet with a peak and goggles, jersey, pants, knee braces, gloves, boots). Each segment is built STRAIGHT along local -y from its PROXIMAL joint (its origin) to its distal joint at (0, -length, 0) — the arms and legs hanging down, the body facing -z (knees and toes to -z, elbows to +z). The torso is built UPRIGHT along +y from the hip centre (origin) to the shoulder line; the head UP along +y from the neck joint. `seatedHip` is the hip centre's place sitting on the saddle (game space).",
+    "height": 1.8,
+    "hipHalfWidth": 0.09,
+    "thigh": 0.44,
+    "shin": 0.45,
+    "ankleHeight": 0.075,
+    "footLength": 0.27,
+    "ballOfFoot": [
+      0,
+      -0.075,
+      -0.115
+    ],
+    "shoulderHalfWidth": 0.18,
+    "spine": 0.5,
+    "neck": 0.07,
+    "head": 0.23,
+    "upperArm": 0.3,
+    "forearm": 0.26,
+    "handToGrip": 0.07,
+    "seatedHip": [
+      0,
+      1.04,
+      0.07
+    ],
+    "standHip": [
+      0,
+      1.2,
+      0.12
+    ]
+  }
+}

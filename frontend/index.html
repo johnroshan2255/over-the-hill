@@ -26,66 +26,121 @@
       #drive .spd span { font-size: 15px; margin-left: 4px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; opacity: .8; }
       #drive .spd i { display: block; font-style: normal; font-size: 15px; font-weight: 700; letter-spacing: .14em; opacity: .85; }
       #drive .spd em { display: block; font-style: normal; font-size: 14px; font-weight: 600; letter-spacing: .14em; opacity: .7; }
-      #drive .help { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 3px 10px; background: rgba(8, 8, 10, .5); font-size: 13px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; opacity: .85; white-space: nowrap; }
+      #drive .help { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 660px); padding: 3px 10px; background: rgba(8, 8, 10, .5); font-size: 12px; font-weight: 600; letter-spacing: .1em; line-height: 1.4; text-align: center; text-transform: uppercase; opacity: .85; }
+      @media (max-width: 1080px) { #drive .help { display: none; } }
       /* the CONTROLS: round, light, see-through — easy to hit, easy to see past (the menus stay square) */
-      .oth-fs, .oth-zoom button, .oth-mapbtn, .oth-pausebtn, .oth-touch button {
+      .oth-fs, .oth-menubtn, .oth-touch button {
         border-radius: 50%; border: 2px solid rgba(255, 255, 255, .55); background: rgba(10, 10, 12, .28); color: #fff;
         font: 700 18px 'Barlow Condensed', system-ui; line-height: 1; touch-action: none; user-select: none; -webkit-user-select: none;
-        -webkit-tap-highlight-color: transparent; transition: background .08s, transform .08s;
+        -webkit-tap-highlight-color: transparent; transition: background .08s, transform .08s; cursor: pointer;
       }
-      .oth-fs, .oth-mapbtn, .oth-pausebtn { position: fixed; width: 42px; height: 42px; z-index: 5; }
-      .oth-fs { left: 14px; top: 14px; }
-      .oth-zoom { position: fixed; left: 14px; top: 64px; display: flex; flex-direction: column; gap: 8px; z-index: 5; }
-      .oth-zoom button { width: 42px; height: 42px; font-size: 24px; }
-      .oth-mapbtn { left: 14px; top: 164px; display: grid; place-items: center; padding: 0; }
-      .oth-mapbtn.on { background: rgba(242, 169, 59, .85); border-color: #f2a93b; color: #120c04; }
-      .oth-pausebtn { left: 14px; top: 214px; font-size: 15px; letter-spacing: .02em; }
-      .oth-fs:active, .oth-zoom button:active, .oth-mapbtn:active, .oth-pausebtn:active, .oth-touch button:active { background: rgba(242, 169, 59, .85); color: #120c04; transform: scale(.94); }
-      /* the thumb pads (touch screens) */
-      .oth-touch button { position: fixed; z-index: 5; display: grid; place-items: center; letter-spacing: .08em; }
-      .oth-touch [data-k=left], .oth-touch [data-k=right] { bottom: calc(18px + env(safe-area-inset-bottom)); width: 78px; height: 78px; font-size: 24px; }
+      .oth-fs:active, .oth-menubtn:active, .oth-touch button:active, .oth-fs.on, .oth-menubtn.on { background: rgba(242, 169, 59, .85); border-color: #f2a93b; color: #120c04; }
+      .oth-fs:active, .oth-menubtn:active, .oth-touch button:active { transform: scale(.94); }
+      /* THE TOP-RIGHT CORNER (every screen): full screen in the corner, the action wheel's button beside it (Wheel.ts) */
+      .oth-fs, .oth-menubtn { position: fixed; top: calc(12px + env(safe-area-inset-top)); width: 42px; height: 42px; padding: 0; display: grid; place-items: center; }
+      .oth-fs { right: calc(14px + env(safe-area-inset-right)); z-index: 26; }
+      .oth-menubtn { right: calc(64px + env(safe-area-inset-right)); z-index: 12; }
+      body.oth-fs-none .oth-menubtn { right: calc(14px + env(safe-area-inset-right)); }
+      /* the API the game draws with: a small tag on the menu button's corner (amber WebGPU, grey WebGL2) */
+      .oth-menubtn[data-api]::after { content: attr(data-api); position: absolute; left: -7px; bottom: -6px; padding: 2px 3px 1px; border-radius: 3px; background: #f2a93b; color: #120c04; font: 700 8px/1 'Barlow Condensed', system-ui; letter-spacing: .06em; pointer-events: none; }
+      .oth-menubtn.gl2[data-api]::after { background: #9a9da3; }
+      body.oh-panel-open .oth-fs { display: none; } /* (the garage / settings panels have their coins up there) */
+      @media (hover: hover) { .oth-fs:hover, .oth-menubtn:hover { border-color: #f2a93b; } }
+      /* THE ACTION WHEEL: the ring over a dimmed screen — dark sectors, the one under the finger white (GTA's) */
+      .oth-wheel { position: fixed; inset: 0; z-index: 11; display: none; place-items: center; background: radial-gradient(circle, rgba(6, 6, 8, .3), rgba(6, 6, 8, .72)); touch-action: none; }
+      .oth-wheel.on { display: grid; }
+      .oth-wheel svg { width: min(86vmin, 460px); height: min(86vmin, 460px); overflow: visible; }
+      .oth-wheel .bg { fill: rgba(10, 10, 12, .78); stroke: rgba(244, 239, 230, .2); stroke-width: .6; transition: fill .06s; }
+      .oth-wheel .ic { fill: none; stroke: #f4efe6; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+      .oth-wheel .sec text { fill: #f4efe6; font: 700 8px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-anchor: middle; }
+      .oth-wheel .sec.lit .ic { stroke: #f2a93b; }
+      .oth-wheel .sec.lit text { fill: #f2a93b; }
+      .oth-wheel .sec.sel .bg { fill: #f4efe6; stroke: #f2a93b; stroke-width: 1.4; }
+      .oth-wheel .sec.sel .ic { stroke: #0b0b0d; }
+      .oth-wheel .sec.sel text { fill: #0b0b0d; }
+      .oth-wheel .hub { fill: rgba(8, 8, 10, .86); stroke: #f2a93b; stroke-width: 1.6; }
+      .oth-wheel .hub-t { fill: #f4efe6; font: 400 12px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .05em; text-anchor: middle; }
+      .oth-wheel .hub-s { fill: rgba(244, 239, 230, .62); font: 700 6.5px 'Barlow Condensed', system-ui; letter-spacing: .14em; text-anchor: middle; }
+      body.oth-wheel-open .oth-touch, body.oth-wheel-open .oth-campbtn { visibility: hidden; }
+      body.oth-free .oth-touch, body.oth-free .oth-door, body.oth-free .oth-campbtn { display: none !important; }
+      /* THE THUMB PADS (touch screens): only what you drive with — the rest is in the wheel. LANDSCAPE first: steering
+         bottom left, pedals bottom right, the speed between them */
+      .oth-touch button { position: fixed; z-index: 5; display: grid; place-items: center; padding: 0; letter-spacing: .08em; }
+      .oth-touch [data-k=left], .oth-touch [data-k=right] { bottom: calc(16px + env(safe-area-inset-bottom)); width: 72px; height: 72px; font-size: 22px; }
       .oth-touch [data-k=left] { left: calc(16px + env(safe-area-inset-left)); }
-      .oth-touch [data-k=right] { left: calc(106px + env(safe-area-inset-left)); }
-      .oth-touch [data-k=gas] { right: calc(16px + env(safe-area-inset-right)); bottom: calc(26px + env(safe-area-inset-bottom)); width: 92px; height: 92px; font-size: 17px; }
-      .oth-touch [data-k=brake] { right: calc(118px + env(safe-area-inset-right)); bottom: calc(14px + env(safe-area-inset-bottom)); width: 74px; height: 74px; font-size: 15px; }
-      .oth-touch [data-k=up], .oth-touch [data-k=down] { right: calc(130px + env(safe-area-inset-right)); width: 46px; height: 46px; font-size: 15px; }
-      .oth-touch [data-k=up] { bottom: calc(150px + env(safe-area-inset-bottom)); }
-      .oth-touch [data-k=down] { bottom: calc(98px + env(safe-area-inset-bottom)); }
-      .oth-touch [data-k=reset], .oth-touch [data-k=winch] { top: calc(10px + env(safe-area-inset-top)); width: 40px; height: 40px; }
-      .oth-touch [data-k=reset] { right: calc(12px + env(safe-area-inset-right)); font-size: 20px; }
-      .oth-touch [data-k=winch] { right: calc(60px + env(safe-area-inset-right)); font-size: 10px; letter-spacing: .04em; }
-      /* the BIKE (B): its button beside the winch; on the bike HOP and LEAN ▲ ▼ over the pedals, no winch */
-      .oth-touch [data-k=ride] { top: calc(10px + env(safe-area-inset-top)); right: calc(108px + env(safe-area-inset-right)); width: 40px; height: 40px; font-size: 10px; letter-spacing: .04em; }
+      .oth-touch [data-k=right] { left: calc(100px + env(safe-area-inset-left)); }
+      .oth-touch [data-k=gas] { right: calc(16px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); width: 88px; height: 88px; font-size: 17px; }
+      .oth-touch [data-k=brake] { right: calc(114px + env(safe-area-inset-right)); bottom: calc(14px + env(safe-area-inset-bottom)); width: 68px; height: 68px; font-size: 14px; }
+      .oth-touch [data-k=up], .oth-touch [data-k=down] { right: calc(126px + env(safe-area-inset-right)); width: 44px; height: 44px; font-size: 15px; }
+      .oth-touch [data-k=up] { bottom: calc(146px + env(safe-area-inset-bottom)); }
+      .oth-touch [data-k=down] { bottom: calc(94px + env(safe-area-inset-bottom)); }
+      /* the BIKE: HOP over the pedals, LEAN ▲ ▼ beside the steering; no gears (it shifts itself) */
       .oth-touch .bk { display: none; }
       .oth-touch.bike .bk { display: grid; }
-      .oth-touch.bike [data-k=winch] { display: none; }
-      .oth-touch [data-k=hop] { right: calc(22px + env(safe-area-inset-right)); bottom: calc(132px + env(safe-area-inset-bottom)); width: 66px; height: 66px; font-size: 13px; }
-      .oth-touch [data-k=leanF], .oth-touch [data-k=leanB] { left: calc(196px + env(safe-area-inset-left)); width: 50px; height: 50px; font-size: 16px; }
-      .oth-touch [data-k=leanF] { bottom: calc(76px + env(safe-area-inset-bottom)); }
-      .oth-touch [data-k=leanB] { bottom: calc(18px + env(safe-area-inset-bottom)); }
-      /* PHONES: more of the screen for the game — the small buttons in one row top left, no + / − (pinch to zoom),
-         the speed a slim read-out between the thumbs */
-      body.touch .oth-zoom { display: none; }
-      body.touch .oth-fs, body.touch .oth-mapbtn, body.touch .oth-pausebtn { top: calc(10px + env(safe-area-inset-top)); width: 40px; height: 40px; }
-      body.touch .oth-pausebtn { left: calc(12px + env(safe-area-inset-left)); }
-      body.touch .oth-mapbtn { left: calc(60px + env(safe-area-inset-left)); }
-      body.touch .oth-fs { left: calc(108px + env(safe-area-inset-left)); }
-      body.touch #drive { left: 50%; right: auto; bottom: calc(10px + env(safe-area-inset-bottom)); transform: translateX(-50%); text-align: center; }
+      .oth-touch.bike [data-k=up], .oth-touch.bike [data-k=down] { display: none; }
+      /* on FOOT: the STICK where the steering is, JUMP where the pedals are; no pedals, no lean, no gears */
+      .oth-touch.foot [data-k=hop] { display: grid; right: calc(28px + env(safe-area-inset-right)); bottom: calc(30px + env(safe-area-inset-bottom)); width: 82px; height: 82px; font-size: 0; }
+      .oth-touch.foot [data-k=hop]::after { content: 'JUMP'; font-size: 16px; }
+      .oth-touch.foot [data-k=left], .oth-touch.foot [data-k=right], .oth-touch.foot [data-k=gas], .oth-touch.foot [data-k=brake],
+      .oth-touch.foot [data-k=up], .oth-touch.foot [data-k=down] { display: none; }
+      .oth-stick { display: none; position: fixed; z-index: 5; left: calc(22px + env(safe-area-inset-left)); bottom: calc(22px + env(safe-area-inset-bottom)); width: 132px; height: 132px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .45); background: rgba(10, 10, 12, .22); touch-action: none; }
+      .oth-stick i { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: rgba(244, 239, 230, .55); border: 2px solid rgba(255, 255, 255, .7); }
+      .oth-touch.foot .oth-stick { display: block; }
+      .oth-touch .oth-sprint { display: none; right: calc(124px + env(safe-area-inset-right)); bottom: calc(26px + env(safe-area-inset-bottom)); width: 64px; height: 64px; font-size: 12px; }
+      .oth-touch.foot .oth-sprint { display: grid; }
+      @media (orientation: portrait) { .oth-touch .oth-sprint { right: calc(116px + env(safe-area-inset-right)); bottom: calc(24px + env(safe-area-inset-bottom)); width: 58px; height: 58px; } }
+      /* THE DOOR button (touch): out of / into what's nearest — only when there's something to do; above the right
+         thumb's pads */
+      .oth-door { display: none; position: fixed; z-index: 5; right: calc(24px + env(safe-area-inset-right)); bottom: calc(196px + env(safe-area-inset-bottom)); width: 58px; height: 58px; padding: 0; border-radius: 50%; border: 2px solid #f2a93b; background: rgba(242, 169, 59, .32); color: #fff; place-items: center; touch-action: none; -webkit-tap-highlight-color: transparent; }
+      .oth-door span { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 3px; white-space: nowrap; color: #f4efe6; font: 700 11px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; text-shadow: 0 1px 2px rgba(0, 0, 0, .7); }
+      body.touch .oth-door.on { display: grid; }
+      .oth-door:active { background: rgba(242, 169, 59, .85); color: #120c04; }
+      body.oth-wheel-open .oth-door { visibility: hidden; }
+      @media (orientation: portrait) { .oth-door { bottom: calc(222px + env(safe-area-inset-bottom)); right: calc(22px + env(safe-area-inset-right)); } }
+      /* (a short screen — a phone sideways with its bars: the stick smaller, the door up under the coins, its word to
+         its left) */
+      @media (orientation: landscape) and (max-height: 380px) {
+        .oth-stick { width: 106px; height: 106px; left: calc(16px + env(safe-area-inset-left)); bottom: calc(14px + env(safe-area-inset-bottom)); }
+        .oth-stick i { width: 46px; height: 46px; margin: -23px 0 0 -23px; }
+        .oth-door { bottom: auto; top: calc(92px + env(safe-area-inset-top)); right: calc(14px + env(safe-area-inset-right)); width: 46px; height: 46px; }
+        .oth-door span { top: 50%; left: auto; right: 100%; transform: translateY(-50%); margin: 0 6px 0 0; }
+      }
+      .oth-touch [data-k=hop] { right: calc(30px + env(safe-area-inset-right)); bottom: calc(120px + env(safe-area-inset-bottom)); width: 60px; height: 60px; font-size: 13px; }
+      .oth-touch [data-k=leanF], .oth-touch [data-k=leanB] { left: calc(184px + env(safe-area-inset-left)); width: 46px; height: 46px; font-size: 16px; }
+      .oth-touch [data-k=leanF] { bottom: calc(72px + env(safe-area-inset-bottom)); }
+      .oth-touch [data-k=leanB] { bottom: calc(16px + env(safe-area-inset-bottom)); }
+      /* PHONES: more of the screen for the game — the corner buttons a little smaller, the speed a slim read-out */
+      body.touch .oth-fs, body.touch .oth-menubtn { top: calc(10px + env(safe-area-inset-top)); width: 40px; height: 40px; }
+      body.touch .oth-fs { right: calc(12px + env(safe-area-inset-right)); }
+      body.touch .oth-menubtn { right: calc(60px + env(safe-area-inset-right)); }
+      body.touch.oth-fs-none .oth-menubtn { right: calc(12px + env(safe-area-inset-right)); }
+      body.touch #drive { left: 50%; right: auto; bottom: calc(10px + env(safe-area-inset-bottom)); transform: translateX(-50%); text-align: center; white-space: nowrap; }
       body.touch #drive .spd { min-width: 0; padding: 2px 10px 3px; background: rgba(8, 8, 10, .32); border-right: 0; border-bottom: 3px solid #f2a93b; }
       body.touch #drive .spd b { font-size: 30px; }
       body.touch #drive .spd span { font-size: 12px; }
       body.touch #drive .spd i, body.touch #drive .spd em { display: inline; margin-left: 8px; font-size: 12px; }
-      body.touch .oth-compass { top: calc(8px + env(safe-area-inset-top)); max-width: calc(100vw - 330px); min-width: 160px; }
-      /* (portrait: no room between the thumbs — the speed sits above the pads, the compass under the top row) */
+      body.touch .oth-compass { top: calc(8px + env(safe-area-inset-top)); width: 420px; min-width: 0; max-width: calc(100vw - 224px - env(safe-area-inset-left) - env(safe-area-inset-right)); }
+      body.touch.oth-radar-shown .oth-compass { max-width: calc(100vw - 352px - env(safe-area-inset-left) - env(safe-area-inset-right)); }
+      /* PORTRAIT: no room between the thumbs — smaller pads, the speed above them, the compass a row of its own
+         under the corner buttons, the coins top left */
       @media (orientation: portrait) {
-        body.touch #drive { bottom: calc(112px + env(safe-area-inset-bottom)); }
-        body.touch .oth-compass { top: calc(58px + env(safe-area-inset-top)); max-width: calc(100vw - 24px); }
-        body.touch .oth-touch [data-k=up], body.touch .oth-touch [data-k=down] { right: calc(22px + env(safe-area-inset-right)); }
-        body.touch .oth-touch [data-k=up] { bottom: calc(196px + env(safe-area-inset-bottom)); }
-        body.touch .oth-touch [data-k=down] { bottom: calc(144px + env(safe-area-inset-bottom)); }
+        body.touch #drive { bottom: calc(96px + env(safe-area-inset-bottom)); }
+        body.touch .oth-compass, body.touch.oth-radar-shown .oth-compass { top: calc(58px + env(safe-area-inset-top)); max-width: calc(100vw - 24px); }
+        .oth-touch [data-k=left], .oth-touch [data-k=right] { bottom: calc(14px + env(safe-area-inset-bottom)); width: 64px; height: 64px; }
+        .oth-touch [data-k=left] { left: calc(12px + env(safe-area-inset-left)); }
+        .oth-touch [data-k=right] { left: calc(84px + env(safe-area-inset-left)); }
+        .oth-touch [data-k=gas] { right: calc(12px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); width: 76px; height: 76px; font-size: 15px; }
+        .oth-touch [data-k=brake] { right: calc(96px + env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom)); width: 60px; height: 60px; font-size: 13px; }
+        .oth-touch [data-k=up], .oth-touch [data-k=down] { right: calc(22px + env(safe-area-inset-right)); }
+        .oth-touch [data-k=up] { bottom: calc(156px + env(safe-area-inset-bottom)); }
+        .oth-touch [data-k=down] { bottom: calc(104px + env(safe-area-inset-bottom)); }
+        .oth-touch [data-k=hop] { right: calc(22px + env(safe-area-inset-right)); bottom: calc(104px + env(safe-area-inset-bottom)); width: 56px; height: 56px; }
+        .oth-touch [data-k=leanF], .oth-touch [data-k=leanB] { left: calc(12px + env(safe-area-inset-left)); }
+        .oth-touch [data-k=leanF] { bottom: calc(144px + env(safe-area-inset-bottom)); }
+        .oth-touch [data-k=leanB] { bottom: calc(90px + env(safe-area-inset-bottom)); }
       }
       /* coins: top right, a pop of "+25" when they change */
-      .oth-coins { position: fixed; right: 16px; top: 14px; padding: 4px 12px 3px; background: rgba(8, 8, 10, .55); border-right: 4px solid #f2a93b; color: #f2a93b; font: 400 22px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .04em; pointer-events: none; z-index: 4; }
+      .oth-coins { position: fixed; right: calc(14px + env(safe-area-inset-right)); top: calc(64px + env(safe-area-inset-top)); padding: 4px 12px 3px; background: rgba(8, 8, 10, .55); border-right: 4px solid #f2a93b; color: #f2a93b; font: 400 22px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .04em; pointer-events: none; z-index: 4; }
       .oth-coins::after { content: attr(data-d); position: absolute; right: 8px; top: 100%; color: #f4efe6; font: 700 16px 'Barlow Condensed', system-ui; opacity: 0; }
       .oth-coins.pop::after { animation: oth-pop 1.4s ease-out; }
       /* PlayCanvas's MiniStats (F3 / ?stats=1) draws into the game's canvas, bottom left: the signpost steps aside
@@ -100,14 +155,17 @@
       .oth-sign i { width: 18px; font-style: normal; color: #f2a93b; }
       .oth-sign span { margin-left: auto; padding-left: 14px; opacity: .7; }
       /* the camp prompt (keyboard) and button (touch) */
-      .oth-prompt { position: fixed; left: 50%; bottom: 48px; transform: translateX(-50%); padding: 5px 12px 4px; background: rgba(8, 8, 10, .62); color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; z-index: 4; display: none; }
+      .oth-prompt { position: fixed; left: 50%; bottom: 66px; transform: translateX(-50%); padding: 5px 12px 4px; background: rgba(8, 8, 10, .62); color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; z-index: 4; display: none; }
       .oth-prompt.on { display: block; }
       .oth-prompt kbd { margin-right: 8px; padding: 0 6px; background: #f4efe6; color: #0b0b0d; font: 700 13px 'Barlow Condensed', system-ui; }
       .oth-campbtn { display: none; position: fixed; z-index: 5; width: 50px; height: 50px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .55); background: rgba(242, 169, 59, .4); color: #fff; font: 700 12px 'Barlow Condensed', system-ui; letter-spacing: .06em; touch-action: none; }
-      body.touch .oth-campbtn.on { display: grid; place-items: center; right: calc(108px + env(safe-area-inset-right)); top: calc(8px + env(safe-area-inset-top)); }
+      /* (touch: CAMP a pill over the speed, only when you can — GTA's contextual prompt) */
+      body.touch .oth-campbtn.on { display: grid; place-items: center; left: 50%; transform: translateX(-50%); bottom: calc(58px + env(safe-area-inset-bottom)); width: auto; height: 36px; padding: 0 20px; border-radius: 18px; font-size: 14px; letter-spacing: .14em; }
+      @media (orientation: portrait) { body.touch .oth-campbtn.on { bottom: calc(142px + env(safe-area-inset-bottom)); } }
       body.touch .oth-prompt { display: none; }
       body.touch .oth-coins { top: calc(58px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right)); font-size: 18px; padding: 2px 9px 1px; }
-      body.touch .oth-sign { left: calc(176px + env(safe-area-inset-left)); bottom: auto; top: calc(58px + env(safe-area-inset-top)); min-width: 210px; font-size: 13px; }
+      body.touch .oth-sign { left: calc(176px + env(safe-area-inset-left)); bottom: auto; top: calc(62px + env(safe-area-inset-top)); min-width: 200px; font-size: 13px; }
+      @media (orientation: portrait) { body.touch .oth-coins { left: calc(12px + env(safe-area-inset-left)); right: auto; top: calc(17px + env(safe-area-inset-top)); } }
       /* a rest: the screen fades to black and back */
       .oth-fade { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: #050506; color: #f4efe6; font: 400 28px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; opacity: 0; transition: opacity .6s; pointer-events: none; }
       .oth-fade.on { opacity: 1; }
@@ -133,9 +191,9 @@
       body.touch .oth-map-bar, body.touch .oth-map-foot { font-size: 13px; }
       /* the radar: top left beside the round buttons, shown by the map button (Radar.ts) — the canvas turns and slides
          under a fixed frame; tapping it opens the full map. The compass narrows to stay clear of it. */
-      .oth-radar { position: fixed; left: 68px; top: 14px; z-index: 4; pointer-events: none; }
+      .oth-radar { position: fixed; left: 16px; top: 14px; z-index: 4; pointer-events: none; }
       .oth-radar-box { position: relative; width: 240px; height: 160px; overflow: hidden; background: #3b3a31; border: 3px solid rgba(8, 8, 10, .72); box-shadow: 0 0 0 1px rgba(244, 239, 230, .2); pointer-events: auto; cursor: pointer; }
-      body.oth-radar-shown .oth-compass { max-width: calc(100vw - 660px); min-width: 200px; }
+      body.oth-radar-shown .oth-compass { max-width: calc(100vw - 560px); min-width: 200px; }
       body.touch:not(.oth-radar-shown) .oth-sign { left: calc(12px + env(safe-area-inset-left)); }
       .oth-radar-box canvas { position: absolute; will-change: transform; }
       .oth-radar-car { position: absolute; width: 18px; height: 22px; will-change: transform; }
@@ -147,17 +205,18 @@
       .oth-radar-plate i { font-style: normal; font-size: 22px; line-height: .8; color: #c48bff; }
       .oth-radar-plate small { color: rgba(244, 239, 230, .62); font-size: 12px; }
       .oth-radar-plate span { margin-left: auto; padding-left: 10px; color: #f2a93b; }
-      body.touch .oth-radar { left: calc(12px + env(safe-area-inset-left)); top: calc(58px + env(safe-area-inset-top)); bottom: auto; }
+      body.touch .oth-radar { left: calc(12px + env(safe-area-inset-left)); top: calc(10px + env(safe-area-inset-top)); bottom: auto; }
       body.touch .oth-radar-box { width: 150px; height: 100px; border-width: 2px; }
       body.touch .oth-radar-plate { padding: 2px 8px 2px 6px; font-size: 12px; }
       body.touch .oth-radar-plate i { font-size: 17px; }
       /* (portrait: the compass takes the row under the buttons — the radar under it, the signpost under the radar) */
       @media (orientation: portrait) {
         body.touch .oth-radar { top: calc(112px + env(safe-area-inset-top)); }
-        body.touch .oth-sign { left: calc(14px + env(safe-area-inset-left)); top: calc(250px + env(safe-area-inset-top)); }
+        body.touch .oth-sign { left: calc(12px + env(safe-area-inset-left)); top: calc(250px + env(safe-area-inset-top)); }
+        body.touch:not(.oth-radar-shown) .oth-sign { top: calc(112px + env(safe-area-inset-top)); }
       }
       /* the compass: a square strip */
-      .oth-compass { position: fixed; left: 50%; top: 10px; width: 420px; max-width: calc(100vw - 140px); transform: translateX(-50%); pointer-events: none; z-index: 4; }
+      .oth-compass { position: fixed; left: 50%; top: 10px; width: 420px; max-width: calc(100vw - 260px); transform: translateX(-50%); pointer-events: none; z-index: 4; }
       .oth-compass-strip { position: relative; height: 28px; overflow: hidden; background: linear-gradient(90deg, rgba(8,8,10,0), rgba(8,8,10,.55) 16%, rgba(8,8,10,.55) 84%, rgba(8,8,10,0)); }
       .oth-compass-strip::after { content: ''; position: absolute; left: 50%; top: 0; width: 3px; height: 7px; margin-left: -1px; background: #f2a93b; }
       .oth-tick, .oth-mark { position: absolute; left: 0; top: 0; width: 30px; margin-left: -15px; text-align: center; line-height: 28px; color: rgba(244, 239, 230, .55); font: 700 12px 'Barlow Condensed', system-ui; letter-spacing: .06em; }

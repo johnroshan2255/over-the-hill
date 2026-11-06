@@ -77,6 +77,7 @@ export class Vehicle {
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.code)
       if (e.code === 'KeyR' && !this.parked) this.reset()
+      if (e.code === 'KeyP' && !e.repeat) this.wipers = !this.wipers
       if (e.code === 'KeyL') this.lightMode = this.lightMode === 'auto' ? 'off' : this.lightMode === 'off' ? 'on' : 'auto'
       const n = ['Digit1', 'Digit2'].indexOf(e.code)
       if (n >= 0 && VEHICLES[n]) void this.setCar(VEHICLES[n].id)
@@ -92,6 +93,46 @@ export class Vehicle {
    *  fixed obstacle the bike can ride into (kinematic: the physics streams its ground round the bike now, the car
    *  must not fall through ground it unloaded). */
   parked = false
+  /** The driver's door: 0 shut … 1 open (main.ts eases it as the character gets in or out). */
+  doorOpen = 0
+  private doorPivot: GFX.Group | null = null
+  // THE COCKPIT (2026-11-05, the user: "the car needs its inside properly — the hands on the steering wheel — and P for
+  // the wipers"): the model's own steering wheel, pedals, gear lever and wipers, drawn on their pivots (they were never
+  // drawn) — the wipers always, the rest only near (the camera within 14 m, or inside: `inside`)
+  private cockpit: GFX.Group | null = null
+  private wheelPivot: GFX.Group | null = null
+  private parts: { kind: string; g: GFX.Group; axis: GFX.Vector3 }[] = []
+  /** The camera is inside (first person): the whole cockpit drawn, whatever the distance; `near`: within 14 m. */
+  inside = false
+  near = true
+  /** P: the wipers sweep. */
+  wipers = false
+  private wipeT = 0
+  private lastT = 0
+  /** The roof's height over the ground (m, car space): the driver and the first-person eye stay under it. */
+  get roofY(): number {
+    const g = this.model?.body
+    if (!g) return 2
+    if (!g.boundingBox) g.computeBoundingBox()
+    return g.boundingBox!.max.y
+  }
+  /** The steering wheel's turn now (rad, + = clockwise to the driver) — the driver's hands follow it. */
+  steerWheel = 0
+  /** The steering wheel in car space: its hub, its column axis (away from the driver), its rim radius. */
+  get wheelRim(): { hub: GFX.Vector3; axis: GFX.Vector3; r: number } | null {
+    const m = this.model
+    return m?.steeringWheel ? { hub: new GFX.Vector3(...m.steeringPivot), axis: new GFX.Vector3(...m.steeringAxis).normalize(), r: m.steeringRadius } : null
+  }
+  /** The driver's door in car space (hinge, its length back from it, bottom / top) and the driver's seat — where the
+   *  character's hips sit (2026-11-05: getting in and out). */
+  get driverDoor(): { hinge: GFX.Vector3; length: number; bottom: number; top: number; seat: GFX.Vector3 } | null {
+    const d = this.model?.doors.find((q) => q.side === -1)
+    if (!d) return null
+    const hinge = new GFX.Vector3(...d.hinge)
+    // (the seat: inside the door's opening, a little behind its middle, just above its sill)
+    const seat = new GFX.Vector3(hinge.x + 0.42, hinge.y + d.bottom + 0.42, hinge.z + d.length * 0.62)
+    return { hinge, length: d.length, bottom: d.bottom, top: d.top, seat }
+  }
   park(): void {
     if (!this.sim || this.parked) return
     this.parked = true
@@ -224,7 +265,7 @@ export class Vehicle {
     u.uPaintMask.value = truck.paintMap
     ;(u.uPaint.value as GFX.Color).set(paint)
     // (MIST_K: the crossing's cloud takes less of the car than of the land — Atmosphere.ts)
-    const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45' }
+    const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45', ...(GRAIN_OFF ? { NO_GRAIN: '' } : {}) }
     if (truck.map) defines.USE_MAP_OTH = ''
     if (truck.paintMap) defines.USE_PAINTMAP = ''
     const vc = (g: GFX.BufferGeometry) => !!g.attributes.color
@@ -233,15 +274,56 @@ export class Vehicle {
     // of the body in the model, set at their hinges: they never open here) as one mesh, the windows as one, the four
     // wheels as one instanced mesh
     const atHinge = (geo: GFX.BufferGeometry, hinge: [number, number, number]) => geo.clone().translate(...hinge)
-    const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...truck.doors.map((d) => atHinge(d.body, d.hinge))])
-    const glassGeo = mergeParts([truck.glass, ...truck.doors.flatMap((d) => (d.glass ? [atHinge(d.glass, d.hinge)] : []))])
+    // (the DRIVER'S DOOR its own two draws on a pivot at its hinge: it opens as the character gets in or out —
+    //  2026-11-05; the other door stays in the body)
+    const driver = truck.doors.find((d) => d.side === -1) ?? null
+    const fixed = truck.doors.filter((d) => d !== driver)
+    const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...fixed.map((d) => atHinge(d.body, d.hinge))])
+    const glassGeo = mergeParts([truck.glass, ...fixed.flatMap((d) => (d.glass ? [atHinge(d.glass, d.hinge)] : []))])
     const body = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
-    const glass = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide })
+    const glass = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false })
+    // (no depth written: the water — drawn after the glass, transparent too — showed nowhere through a window from
+    //  inside; 2026-11-05)
     const b = new GFX.Mesh(bodyGeo, body)
     const g = new GFX.Mesh(glassGeo, glass)
     b.frustumCulled = g.frustumCulled = false
     g.renderOrder = 3 // (transparent: after the cabin behind it)
     this.root.add(b, g)
+    this.doorPivot?.removeFromParent()
+    this.doorPivot = null
+    if (driver) {
+      const pv = (this.doorPivot = new GFX.Group())
+      pv.position.set(...driver.hinge)
+      const db = new GFX.Mesh(driver.body, body), dg = driver.glass ? new GFX.Mesh(driver.glass, glass) : null
+      db.frustumCulled = false
+      pv.add(db)
+      if (dg) { dg.frustumCulled = false; dg.renderOrder = 3; pv.add(dg) }
+      this.root.add(pv)
+    }
+    this.cockpit?.removeFromParent()
+    for (const pt of this.parts) pt.g.removeFromParent()
+    this.parts = []
+    this.wheelPivot = null
+    const ck = (this.cockpit = new GFX.Group())
+    const partMesh = (geo: GFX.BufferGeometry) => {
+      const m = new GFX.Mesh(geo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(geo) }))
+      m.frustumCulled = false
+      return m
+    }
+    if (truck.steeringWheel) {
+      const g = (this.wheelPivot = new GFX.Group())
+      g.position.set(...truck.steeringPivot)
+      g.add(partMesh(truck.steeringWheel))
+      ck.add(g)
+    }
+    for (const c of truck.controls) {
+      const g = new GFX.Group()
+      g.position.set(...c.pivot)
+      g.add(partMesh(c.geo))
+      ;(c.kind.startsWith('wiper') ? this.root : ck).add(g)
+      this.parts.push({ kind: c.kind, g, axis: new GFX.Vector3(...c.axis).normalize() })
+    }
+    this.root.add(ck)
     const wheelMat = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) })
     this.wheelMesh = new GFX.InstancedMesh(truck.wheel, wheelMat, 4)
     this.wheelMesh.frustumCulled = false
@@ -333,7 +415,24 @@ export class Vehicle {
     this.pos.lerpVectors(this.prevP, this.curP, alpha)
     this.root.position.copy(this.pos)
     this.root.quaternion.slerpQuaternions(this.prevQ, this.curQ, alpha)
+    // the driver's door: swung out about its hinge (its rear edge to −x — the driver's side)
+    if (this.doorPivot) { const k = Math.min(1, Math.max(0, this.doorOpen)); this.doorPivot.rotation.set(0, -1.15 * k * k * (3 - 2 * k), 0) }
     const w = this.sim.wheels, tr = this.model
+    // the cockpit: the steering wheel at 14 : 1 to the front wheels, the pedals pressed, the wipers sweeping (P)
+    {
+      const now = performance.now() / 1000, dt = Math.min(0.1, now - (this.lastT || now)); this.lastT = now
+      const c = this.sim.controls, steer = (w[0].steer + (w[1]?.steer ?? w[0].steer)) / 2
+      this.steerWheel = Math.max(-2.6, Math.min(2.6, steer * 14))
+      if (this.wheelPivot) this.wheelPivot.quaternion.setFromAxisAngle(new GFX.Vector3(...tr.steeringAxis).normalize(), this.steerWheel)
+      if (this.wipers || this.wipeT % 1.1 > 0.02) this.wipeT += dt
+      const sweep = (0.5 - 0.5 * Math.cos((this.wipeT / 1.1) * Math.PI * 2)) * 1.45
+      const gas = Math.max(0, c.throttle), brk = c.brake || c.throttle < 0 ? 1 : 0
+      for (const pt of this.parts) {
+        const a = pt.kind === 'pedal_gas' ? gas * 0.32 : pt.kind === 'pedal_brake' ? brk * 0.3 : pt.kind.startsWith('wiper') ? sweep : 0
+        pt.g.quaternion.setFromAxisAngle(pt.axis, a)
+      }
+      if (this.cockpit) this.cockpit.visible = this.inside || (this.near && this.root.visible)
+    }
     tr.wheelPos.forEach(([x, y, z], k) => {
       const right = k === 1 || k === 3
       const spin = -w[k].spin
@@ -482,6 +581,9 @@ function mergeParts(parts: GFX.BufferGeometry[]): GFX.BufferGeometry {
   return merged
 }
 
+/** ?grain=0 (the cost A/B — scripts/harness/abgpu.mjs): the vehicles' paint grain off. */
+export const GRAIN_OFF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('grain') === '0'
+
 /** Paint per car on this map: the G500 in rust red, the E30 in cream. */
 const OTH_PAINT: Record<string, string> = { gwagen: '#b8452e', bmw: '#efe4cc' }
 
@@ -532,6 +634,20 @@ in vec3 vN;
 in vec2 vUv;
 in vec3 vCol;
 in float vPaint;
+#ifndef NO_GRAIN
+// the grain's height (0 … ~1) at p (the vehicle's space, m): GRAINS — a small dome round each of the cellular noise's
+// points (the texture's A: the distance to the nearest, in cells; 16 cells a tile) — at TWO SIZES by the distance, both
+// fixed on the surface: up close SAND (9.6 tiles a metre: a grain every ~6.5 mm, ~4.5 mm across — the user: "so small,
+// like sand grains"; share t1), further off the coarser DOTS (3.2 / m: every ~2 cm, ~1 cm across; share t2 — sand
+// grains are under a pixel past ~2 m, and the top of the car showed none); over a faint orange peel (×4.5 / m); along
+// each axis the face takes (w); one written out per axis (no loop — docs/MIGRATION.md)
+float vehGrain1(vec2 uv, float wi, float o, float t1, float t2) {
+  if (wi < 0.03) return 0.0;
+  float d1 = texture(uNoise, uv * 9.6 + o).a / 0.36, d2 = texture(uNoise, uv * 3.2 + o + 0.53).a / 0.28;
+  return wi * (t1 * sqrt(max(0.0, 1.0 - d1 * d1)) + t2 * sqrt(max(0.0, 1.0 - d2 * d2)) + 0.2 * texture(uNoise, uv * 4.5 + o * 0.7 + 0.17).g);
+}
+float vehGrainH(vec3 p, vec3 w, float t1, float t2) { return vehGrain1(p.yz, w.x, 0.0, t1, t2) + vehGrain1(p.xz, w.y, 0.41, t1, t2) + vehGrain1(p.xy, w.z, 0.83, t1, t2); }
+#endif
 void main() {
   vec3 N = normalize(vN);
   if (!gl_FrontFacing) N = -N;
@@ -551,19 +667,61 @@ void main() {
   albedo *= texture(uMap, vUv).rgb;
 #endif
   // the paint takes the panel's hue, keeps its shading; white = the model's own colours
-  float m = vPaint;
+  // (2 in the slot: a bike's unpainted BODYWORK — its plastics, its frame: the grain's dots, not the tint)
+  float body = step(1.5, vPaint);
+  float m = vPaint - 2.0 * body;
 #ifdef USE_PAINTMAP
   m *= texture(uPaintMask, vUv).r;
 #endif
   float lum = dot(albedo, vec3(0.3, 0.59, 0.11));
   float isWhite = step(2.95, uPaint.r + uPaint.g + uPaint.b);
   albedo = mix(albedo, uPaint * (lum * 1.3 + 0.08), m * (1.0 - isWhite));
+#ifndef NO_GRAIN
+  // GRAIN — RELIEF, not colour (2026-11-05, the user — after Over the Hill's cars: "ours are shiny, glossy"; then: "by
+  // grains I mean the 3D grains, not the colour"; "tiny 3D dots — on red, small red dots; the dots take the colour of
+  // what they're on"): tiny raised DOTS (vehGrainH) the light picks out — a lit top, a shaded foot — the colour the
+  // panel's own, whatever it is. A height field in the vehicle's OWN space (fixed to it; projected along the face's own
+  // axis — its normal there from the position's derivatives — so it never stretches, whichever way the vehicle turns),
+  // sampled here and one pixel right and up: the slope, by Mikkelsen's surface gradient, bends the normal. It fades as
+  // the dots shrink to a pixel (no shimmer) and is skipped beyond (~15 m at 1080p)
+  float grainCav = 1.0, grainTop = 0.0;
+  {
+    vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld), dlx = dFdx(vLocal), dly = dFdy(vLocal);
+    // (the pixel's footprint: the mean of its two sides — at a glance across the roof or the bonnet its long side
+    //  stretches far, and the longest faded the grains off the whole top of the car)
+    float px = sqrt(length(dpx) * length(dpy));
+    float showT = 1.0 - smoothstep(0.0025, 0.006, px), showD = smoothstep(0.0025, 0.005, px) * (1.0 - smoothstep(0.014, 0.035, px));
+    float showM = max(showT, showD);
+    // (on the PAINTED BODY only — the panels, the bonnet, the roof, a bike's frame / plastics: the paint mask; the
+    //  tyres, the trim, the chrome, the cabin smooth — the user: "the dots are on the body and the bonnet, not the tyres")
 #ifdef WHEEL
-  float rough = 0.8;
+    float gm = 0.0; // (never the wheels)
 #else
-  // (the paint's highlights are its own, below: the shared lobe kept broad and faint under them)
-  float rough = mix(0.75, 0.62, m);
+    float gm = max(m, body);
 #endif
+    if (showM * gm > 0.01) {
+      vec3 nl = abs(normalize(cross(dlx, dly) + 1e-7));
+      vec3 tw = pow(nl, vec3(6.0));
+      tw /= tw.x + tw.y + tw.z;
+      float h0 = vehGrainH(vLocal, tw, showT, showD), hx = vehGrainH(vLocal + dlx, tw, showT, showD), hy = vehGrainH(vLocal + dly, tw, showT, showD);
+      // (a sand grain ~1 mm high, a dot ~3 mm)
+      vec2 dB = vec2(hx - h0, hy - h0) * (mix(0.0011, 0.003, showD / max(showT + showD, 1e-3)) * gm);
+      vec3 R1 = cross(dpy, N), R2 = cross(N, dpx);
+      float det = dot(dpx, R1);
+      N = normalize(abs(det) * N - sign(det) * (dB.x * R1 + dB.y * R2));
+      // (and the shade in the gaps between the grains — their occlusion: a face square to the sun — the bonnet, the
+      //  roof under a high sun — hardly changes its light with a small tilt (the cosine is flat there), so the slope
+      //  alone left the top of the car smooth; the gaps' shade shows them on every face, lit or not)
+      grainCav = 1.0 - 0.16 * (1.0 - smoothstep(0.05, 0.55, h0)) * showM * gm;
+      // (and the grains' tops catch a little of the sky and the sun whatever the colour under them: on black — the
+      //  roof, the trim, an engine — the shade alone shows nothing; there they read as faint grey grains)
+      grainTop = smoothstep(0.35, 0.85, h0) * showM * gm;
+    }
+  }
+  albedo *= grainCav;
+#endif
+  // MATTE (the same: a powder-coat's paint, not a car's lacquer): rough everywhere — the shared lobe broad and faint
+  float rough = 0.92;
   // THE SAND COAT (Vehicle.weather): thickest low down and on what faces up, in blotches (fixed to the car)
   float coatK = 0.0;
   if (uCoat > 0.002) {
@@ -575,29 +733,25 @@ void main() {
     coatK = k;
   }
   // (the paint's light wraps further round — a softer terminator, the stylised look; the rest as before)
-  vec3 c = shade(albedo, N, V, rough, 0.05, 1.0, sun, mix(0.25, 0.55, m));
+  vec3 c = shade(albedo, N, V, rough, 0.02, 1.0, sun, mix(0.25, 0.55, m));
 #ifndef WHEEL
-  // THE PAINT: SATIN under a CLEAR COAT, its own light (2026-11-04 — a broad, gentle highlight that rolls across the
-  // panels; the shared shade()'s lobe was faint, × 0.25): the SATIN a wide soft lobe off the rough paint, half the
-  // paint's own colour; the CLEAR COAT a sharper glint (Schlick, f0 0.04) and the sky in it at a glance. Dust dulls both
+  // THE PAINT: MATTE (2026-11-05 — no clear coat: no glint, no sky mirrored in it; was a satin lobe + a Schlick glint +
+  // the sky at a glance): a very broad, faint sheen where the sun is, in the paint's own colour, and the soft glow of
+  // the sky's light over it (their cars are bright and soft). Dust dulls it
   float paintK = m * (1.0 - coatK / 0.8);
   if (paintK > 0.01) {
     vec3 H = normalize(uSunDir + V);
-    float NoH = max(dot(N, H), 0.0), NoL = max(dot(N, uSunDir), 0.0), NoV = max(dot(N, V), 0.0), VoH = max(dot(V, H), 0.0);
-    vec3 satin = uSunColor * sun * ggx(NoH, 0.65) * NoL * mix(vec3(1.0), albedo * 2.2, 0.5) * 0.36;
-    float Fc = 0.04 + 0.96 * pow(1.0 - VoH, 5.0);
-    vec3 glint = uSunColor * sun * ggx(NoH, 0.2) * Fc * NoL * 0.25;
-    vec3 R = reflect(-V, N);
-    float Fv = 0.04 + 0.96 * pow(1.0 - NoV, 5.0);
-    vec3 env = skyColor(normalize(vec3(R.x, abs(R.y) + 0.05, R.z))) * Fv * 0.16;
-    // (2026-11-04 — the user: "like theirs, not so shiny, glowless": their cars are BRIGHT and SOFT — a gentle glow of
-    //  the sky's light over the whole paint, lighter shade; a soft clear coat, never a mirror)
+    float NoH = max(dot(N, H), 0.0), NoL = max(dot(N, uSunDir), 0.0);
+    vec3 sheen = uSunColor * sun * ggx(NoH, 0.9) * NoL * albedo * 0.35;
     vec3 glow = albedo * ambient(N) * 0.45;
-    c += (satin + glint + env + glow) * paintK;
+    c += (sheen + glow) * paintK;
   }
 #endif
-  // a little painted rim light so the car reads against the field
-  c += albedo * uSunColor * pow(1.0 - max(dot(N, V), 0.0), 3.0) * (0.12 + 0.12 * m) * sun;
+#ifndef NO_GRAIN
+  c += grainTop * 0.026 * (ambient(N) + uSunColor * sun * 0.6);
+#endif
+  // a little painted rim light so the car reads against the field (soft: a matte surface's)
+  c += albedo * uSunColor * pow(1.0 - max(dot(N, V), 0.0), 3.0) * (0.08 + 0.06 * m) * sun;
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
 #endif
   #include <tonemapping_fragment>

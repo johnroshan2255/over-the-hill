@@ -104,3 +104,30 @@
 .oh-price { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 0; background: rgba(8, 8, 10, 0.78); color: var(--oh-accent); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
 .oh-note { color: var(--oh-accent) !important; font-weight: 700; }
 .oh-brand-camp h1 { font-size: clamp(36px, 6vw, 76px); }
+
+/* SHORT SCREENS (a phone held sideways, a small window): the title, the list and the hints shrink with the height so
+   the brand never runs into the list (2026-11-05) */
+@media (max-height: 560px) {
+  .oh-brand { top: max(12px, env(safe-area-inset-top)); left: max(clamp(20px, 5vw, 72px), env(safe-area-inset-left)); }
+  .oh-brand h1 { font-size: clamp(34px, 12vh, 64px); }
+  .oh-brand p { margin-top: 6px; padding: 2px 8px 1px; font-size: 12px; }
+  .oh-main { bottom: clamp(36px, 11vh, 60px); left: max(clamp(20px, 5vw, 72px), env(safe-area-inset-left)); width: min(340px, calc(100vw - 40px)); gap: 3px; }
+  .oh-item { padding: max(4px, 1.3vh) 14px; font-size: clamp(15px, 5.2vh, 22px); }
+  .oh-hints { bottom: 8px; font-size: 12px; }
+  .oh-panel { top: 8px; bottom: 40px; }
+  .oh-row { min-height: 36px; padding: 3px 14px; }
+  .oh-side { padding: 10px 14px; }
+  .oh-side p { font-size: 14px; margin-bottom: 8px; }
+  .oh-head h2 { padding: 5px 12px 3px; }
+  .oh-tab { padding: 7px 14px 5px; }
+  .oh-coins { padding: 5px 12px 3px; }
+}
+/* (narrow + short: the panel's side text goes beside the list, not under it — there's no height for both) */
+@media (max-height: 560px) and (max-width: 760px) { .oh-body { flex-direction: row; } .oh-side { flex: 0.8; max-height: none; } }
+@media (max-height: 560px) and (orientation: landscape) { .oh-body { flex-direction: row; } .oh-side { max-height: none; } }
+/* NARROW (a phone upright): the tabs a row of their own under the title and the coins, sharing it evenly */
+@media (max-width: 520px) {
+  .oh-head { flex-wrap: wrap; }
+  .oh-tabs { order: 3; flex-basis: 100%; }
+  .oh-tab { flex: 1; padding-left: 8px; padding-right: 8px; }
+}

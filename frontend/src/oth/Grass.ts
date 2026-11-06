@@ -41,6 +41,15 @@ export class Grass {
   /** THE FIELD (2026-11-03): what a tuft's root reads off the map — its paint, whether and how tall it grows — baked
    *  into world-space texels round the camera; every blade vertex reads two texels, not the map + groundPaint. */
   private readonly field: GrassField
+  /** THE CAR'S FOOTPRINT (2026-11-05: the meadow grew up through its floor and dash — seen from inside): its centre
+   *  (x, z) and heading's cos / sin, and its half width / length (m) — the blades in it lie flat. */
+  private readonly carBox = { value: new GFX.Vector4(0, 0, 1, 0) }
+  private readonly carHalf = { value: new GFX.Vector2(0, 0) }
+  /** Where the car stands now (main.ts, a frame). */
+  car(x: number, z: number, heading: number, halfX: number, halfZ: number): void {
+    this.carBox.value.set(x, z, Math.cos(heading), Math.sin(heading))
+    this.carHalf.value.set(halfX, halfZ)
+  }
 
   constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture, renderer: GFX.WebGLRenderer) {
     const R = tier.grassRadius, D0 = tier.grassDensity * AMOUNT
@@ -63,6 +72,7 @@ export class Grass {
       uRadius: { value: R },
       // fewer tufts on the lower tiers → each blade wider by the square root: the coverage stays HIGH's
       uWidthK: { value: Math.max(1, Math.sqrt((REF_DENSITY * REF_FAN) / (tier.grassDensity * tier.grassFan))) },
+      uCarBox: this.carBox, uCarHalf: this.carHalf,
     }
     this.field = new GrassField(renderer, R, uniforms, map.biomeDefines)
     Object.assign(uniforms, this.field.uniforms)
@@ -84,7 +94,7 @@ export class Grass {
       const mat = new GFX.ShaderMaterial({
         glslVersion: GFX.GLSL3,
         uniforms: { ...uniforms, uBuild: { value: density }, uRin: { value: bounds[r] }, uRout: { value: bounds[r + 1] }, uFan: { value: blades[r] } },
-        defines: { ...map.biomeDefines }, // (no specular: on blades of roughness 0.85 it never showed)
+        defines: { ...map.biomeDefines, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}) }, // (no specular: on blades of roughness 0.85 it never showed)
         vertexShader: VERT,
         fragmentShader: FRAG,
         side: GFX.DoubleSide,
@@ -197,6 +207,9 @@ uniform sampler2D uFieldB;
 uniform vec4 uField;
 `
 
+/** ?carflat=0 (the cost A/B): the grass not pressed flat under the car. */
+const CARFLAT_OFF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('carflat') === '0'
+
 const VERT = /* glsl */ `
 ${ATMOS_GLSL}
 ${HEIGHT_GLSL}
@@ -216,6 +229,8 @@ uniform float uRin;
 uniform float uRout;
 uniform float uRadius;
 uniform float uWidthK;
+uniform vec4 uCarBox;
+uniform vec2 uCarHalf;
 ${FIELD_GLSL}
 in vec4 aTuft;  // local x, local z, rank, seed
 in vec4 aBlade; // fan angle, lean, height ×, width ×
@@ -257,6 +272,12 @@ void main() {
   float tall = mix(0.95, 1.45, smoothstep(0.2, 0.8, FB.g)) * aBlade.z;
   float edge = 1.0 - smoothstep(uRadius * 0.8, uRadius, d);
   float height = tall * grow * edge * keep * mix(0.1, 1.0, approach) * (1.0 + 0.12 * flower);
+#ifndef NO_CARFLAT
+  // UNDER THE CAR: pressed flat in its footprint (its local x = (cos h, −sin h), z = (sin h, cos h) in the world)
+  vec2 rc = root - uCarBox.xy;
+  vec2 rl = vec2(rc.x * uCarBox.z - rc.y * uCarBox.w, rc.x * uCarBox.w + rc.y * uCarBox.z);
+  height *= 1.0 - 0.88 * step(abs(rl.x), uCarHalf.x) * step(abs(rl.y), uCarHalf.y);
+#endif
   // the blade: out of the tuft along its fan angle, leaning out, bending with the wind
   float ang = aBlade.x + aTuft.w * 6.2832;
   vec2 dir = vec2(cos(ang), sin(ang));

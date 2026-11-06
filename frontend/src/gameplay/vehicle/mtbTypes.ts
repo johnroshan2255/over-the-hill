@@ -59,6 +59,8 @@ export interface MtbState {
   readonly cadence: number
   readonly gear: number
   readonly pedalling: boolean
+  /** The motorbike's engine revs (0 on the bicycle). */
+  readonly rpm: number
   /** The rider's body as the physics placed it: crouch 0 … 1 (loading a hop, soaking a landing), fore / aft weight
    *  −1 … 1 (as `lean`, eased), standing out of the saddle 0 … 1 (sprinting, descending, in the air, landing). */
   readonly riderCrouch: number

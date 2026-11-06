@@ -44,6 +44,9 @@ export const VOICES: Record<string, EngineVoice> = {
   // E30 M3 (S14): an inline four (180° apart), a 4-2-1 header, a bright muffler, a loud intake (throttle bodies)
   bmw: { firing: [0, 0.75, 0.25, 0.5], bank: [0, 0, 0, 0], pipe: [2.9, 2.9], header: 0.6, muffler: 150, open: 4200, intake: 0.8, mech: 0.55, turbo: 0, gain: 0.95 },
   // the kei van: a 660 cm³ inline three (240° apart), a short pipe, a small buzzy muffler
+  // THE MOTORBIKE: a 450 cm³ single (one pulse every 720°), a short header into a small, bright silencer, a loud intake
+  // and a busy valvetrain — the thump at idle, the rasp up high
+  moto: { firing: [0], bank: [0], pipe: [1.25, 1.25], header: 0.55, muffler: 190, open: 5600, intake: 0.75, mech: 0.5, turbo: 0, gain: 1.25 },
 }
 
 export const ENGINE_WORKLET = /* js */ `

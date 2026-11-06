@@ -1156,6 +1156,10 @@ def checks(DT, arch, CHP, CHL):
     return out
 
 # ===================================================================================================== export + verify
+# DRACO (the user, 2026-11-05): the GLB's geometry compressed — a smaller download, decoded on PlayCanvas's workers
+# (public/draco); the triangles are the same. DRACO=0 writes it plain.
+DRACO = dict(export_draco_mesh_compression_enable=True, export_draco_mesh_compression_level=7, export_draco_position_quantization=14,
+             export_draco_normal_quantization=10, export_draco_generic_quantization=12) if ARGS.get('DRACO', '1') != '0' else {}
 def export(objs):
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     bpy.ops.object.select_all(action='DESELECT')
@@ -1163,7 +1167,8 @@ def export(objs):
     bpy.context.view_layer.objects.active = objs[0]
     bpy.ops.export_scene.gltf(filepath=OUT, export_format='GLB', use_selection=True, export_apply=True, export_yup=True,
                               export_normals=True, export_texcoords=False, export_tangents=False, export_materials='EXPORT',
-                              export_vertex_color='NONE', export_attributes=False, export_cameras=False, export_lights=False, export_extras=False)
+                              export_vertex_color='NONE', export_attributes=False, export_cameras=False, export_lights=False, export_extras=False,
+                              **DRACO)
     log(f'wrote {OUT}: {os.path.getsize(OUT) / 1e3:.1f} kB')
 
 def expected_origins():

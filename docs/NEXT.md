@@ -157,6 +157,82 @@ stands), B again gets back in — or brings the car to you from afar. Details: A
   listened to (headless); riding isn't saved (Continue puts you in the car, where you were); no stunt scoring (GTA's
   trick points); the thrown rider doesn't meet vehicles; a bunny hop clears ~0.35 m at 15 km/h (a skilled rider ~0.45).
 
+## Done — round 7: THE MOTORBIKE and the touch UI (2026-11-05)
+
+The user: "it's a cycle, not a bike — leave the cycle, we want a proper bike too, like the stunt bike in GTA 5"; and
+"the keys are congested and overlapping … make it like GTA 5, all inside a round thing". Details: ARCHITECTURE.md.
+- THE MOTORBIKE (F, or the action wheel): a 450 cm³ motocross bike — `MotoSim.ts` is the bicycle's simulation
+  (`MtbSim.ts buildBikeSim`) with its own numbers and an ENGINE (torque curve, 5 gears, automatic clutch and shift,
+  limiter, engine braking, traction and wheelie control, rear ABS); 13 checks in `tests/moto.test.ts`. Model
+  `scripts/oth/moto.py` → `moto.glb`; drawn by the same `Bike.ts` (`MotoBike`); its engine a single-cylinder voice
+  of the synth.
+- THE RIDER is the user's character (`human/Meshy_AI_Trail_Warden_*.glb`, after `refer/char.png`): `scripts/oth/rider.py`
+  (two passes: paint the full mesh, then decimate to 12 k tris and cut into the 12 segments, each straightened into
+  Bike.ts's frame, with a SKIN BLEND at the joints — `_PART2 / _POS2 / _NOR2 / _W`, packed with the part into one vec4:
+  WebGPU's 8 vertex buffers) → `human/rider.glb`, ridden on both bikes. Left: it's painted by region, not textured (a
+  textured export from Meshy would look better); the hands are the model's open hands round the grips; no rig, so
+  walking on foot needs one (or an auto-rigged export).
+- THE UI: the action wheel (`oth/Wheel.ts`, Q) and full screen (`ui/fullscreen.ts`) in the top-right corner; the
+  touch screen keeps only the driving pads; portrait / landscape / short screens laid out; `scripts/harness/uishot.mjs`
+  checks every screen at seven sizes for overlaps.
+- `?ride=bike|moto` works again (it fired before the car had physics). Cost of the motorbike drawn (abgpu 1080p, the
+  chase view): +0.02 ms ULTRA, within noise LOW — with the character rider +0.16 ms ULTRA, within noise LOW.
+- Left: the motorbike's model is a first pass (flat plastics, no decals or graphics, the engine simple); its sound not
+  listened to (headless — the synth's level checked in Node); not tried on a phone; no stunt scoring; the wheel's
+  slots aren't reachable by a gamepad.
+
+## Done — round 9: the character rides; the bail; first person on the bikes (2026-11-05)
+
+- The user: "the human on the bike is broken — I can see through his buttocks and hands, parts are cracked". The
+  segment rider (rider.glb) is retired from riding: the SKINNED character rides both bikes (`Character.rideOn`, the
+  targets from `Bike.riderT`: hips, lean, grips, ankles — IK for the limbs), leaning as a rider does.
+- THE BAIL, GTA's: thrown off, he tumbles with the crash's body (the camera on him); at rest he gets up (Mixamo's two
+  "Getting Up" clips, from his back / his front — `getup_back`, `getup_front`) and you're on foot; F by the fallen
+  bike gets back on.
+- FIRST PERSON on the bikes: from his head, a 70° lens, sat up and tipped down so the bars and his hands are in view.
+- Then (the user: "first person must be his eyes, not above his head — on the bikes, walking, whatever"; "inside the
+  jeep it's tilted to one side"; "remove the black / brown from the hands"): the camera at his eyes in every mode
+  (found on the mesh, carried on the head bone; the walk's bob steadied); the G500's dashboard screen — yawed 21°
+  across the windscreen in the model — straightened and brought down to its real height (`scripts/oth/g500_dash.py`);
+  the hands bare (the glove band painted as patches).
+- Then (the user, after Over the Hill's cars: "ours are shiny, glossy"; "from inside the car the water isn't
+  visible"): every vehicle MATTE, all its bodywork (every colour — not the tyres) with a RELIEF of tiny raised grains
+  (light only — each the colour of what it's on; sand up close, ~1 cm dots further off, so the top of the car shows
+  them too); the windows stop writing depth (the water shows through them); the grass
+  pressed flat under the car (it grew through the BMW's dash). The grain: +0.06 ms ULTRA, +0.08 ms LOW (1080p).
+- Every game starts IN THE CAR (the user: "the default is the car, not the cycle"; "he must stay in his car — the bike
+  only if you select it in the garage"): the Garage's motorbike holds for the session, not the next load
+  (`loadSettings`), and ?ride= is honoured only in a test session (?save=0 — an old link kept starting him on a bike).
+- THE BICYCLE IS OUT OF THE GAME (the user: "remove the cycle — we only need cars and the bike"): not built, not
+  loaded, not in the Garage (`RideId` 'car' | 'moto'); the motorbike's physics are still `MtbSim.ts buildBikeSim` (its
+  tests stay); the harnesses (bikeride, bikeshot, uishot) use the motorbike; `mtb.glb` / `mtb.py` kept, unused.
+- Checked headless (WebGPU, WebGL2): the riders from three sides, a crash on each bike through to getting back on,
+  first person on each; `npm test` and the build pass; uishot all clear for the bike / moto screens.
+- Left: the bail capsule rolls on its long axis while it slides (he spins a little before he lies still); no
+  hit-the-ground reaction (GTA IV's Euphoria) — the falling clip until he rests; getting on / off a bike is still
+  instant; rider.glb is now only the fallback when character.glb fails to load.
+
+## Done — round 8: ON FOOT, the character animated; the motorbike climbs (2026-11-05)
+
+- The character (the Trail Warden) rigged in Blender, 17 Mixamo clips retargeted (`scripts/oth/character.py`,
+  `scripts/harness/mixamo.mjs`), walking / running / sprinting / jumping / falling / landing / grabbing on foot
+  (`Character.ts`); F out of the car (the driver's door opens, the exiting-car clip) and back in, off a bike (parked)
+  and back on. The motorbike ~80 hp with a climb assist (hills to 70°). Details: ARCHITECTURE.md.
+- Then (the user's notes): the butt's wobble (the hip weights), the jump (in step, no rise of its own, arms layered),
+  the door in step with the hand, a door camera, F / the touch DOOR button only, the vehicle chosen in the GARAGE (the
+  wheel keeps the rare things), the pick-up removed, a touch STICK on foot, ambient occlusion on the character.
+- Then: the jumps swapped for Mixamo's game-pack ones (GTA's short hop — the first read "like Spider-Man"), timed from
+  their hips; GTA V-style locomotion (one phase-synced blend, weight, lean, head look, foot IK); the API badge.
+- Then: V first / third person (Shift + V free), the cockpit drawn (wheel, pedals, wipers — P), the driver seated with
+  his hands on the wheel, the proportions and the face.
+- NEXT (asked, not done): the G500's REAR DOORS (cut from the body in Blender) and a SEAT per door — entering by the
+  nearest free one (mirrored clips for the right side), passengers (4 in the G500, 2 in the E30, a pillion on the
+  motorbike — for multiplayer); the car knocking the character down.
+- Left: the LEDGE grab and climb (the clips are in, not wired); getting on / off a bike is instant (no clip); no footstep sounds; the
+  character is flat-coloured with baked shading — REALISM needs a texture: the full turnaround sheet (front, side,
+  back, large) to project, or a textured export from Meshy; after getting out the chase camera can rise over the car
+  (the character faces away from it).
+
 ## Next, in order
 
 1. **Look**: the sky still short of their cyan-white (the light clouds grey it; try fewer clouds in the desert's clear

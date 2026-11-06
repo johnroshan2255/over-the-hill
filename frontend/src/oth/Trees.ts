@@ -3,6 +3,7 @@ import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
+import { gameParams } from '../settings'
 import { cellSeed, type Rocks } from './Rocks'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 import { createFrondTexture, createLeafTexture, FROND_GLSL, LEAF_GLSL } from './leafTexture'
@@ -690,6 +691,8 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
     return
   }
   const G = 6.5, half = map.half - 50
+  const woods = gameParams().get('woods') !== '0'
+  const smooth = (a: number, b: number, v: number) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t) }
   let s = 0x7f4a7c15
   const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
   const mk: [number, number, number, number] = [0, 0, 0, 0]
@@ -734,8 +737,19 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       const bands = (td > hw + 3 && td < 26 ? 0.33 * (1 - (td - 5) / 21) : 0) + (rd > 14 && rd < 45 ? 0.34 : 0)
         + (sd < 300 ? 0.52 * (1 - sd / 300) : 0)
       // (a little denser everywhere — the user: "feel a bit denser, but not a lot")
-      const p = forest * (0.058 + 0.25 * clump) * (groveN > 0.55 ? 2 : 1) + bands * Math.max(0, clumpS * 1.6 - 0.42)
-        + 0.005 + 0.034 * Math.max(0, mk[3] - 0.08)
+      // WOODS, NOT A SCATTER (2026-11-05, the user: "make it feel full, remove emptiness, without increasing cost"):
+      // the trees gathered into STANDS — a stand's core crown to crown, a dark mass with an edge, the ground between
+      // open; the even half-filled scatter read as empty — and COPSES of a few on the open meadows (~20 m, where the
+      // small noise peaks). ~86 % more trees than the scatter (42.9k, was 23.1k): the farther ones are impostors, which
+      // the mid LOD now hands over to sooner and the far rank cull thins sooner (quality.ts) — the same mean frame time,
+      // measured (docs/ARCHITECTURE.md "Woods"). `?woods=0`: the old scatter and ranges (A/B).
+      const stand = woods ? smooth(0.42, 0.58, clump) : 0
+      const copse = woods ? (1 - forest) * smooth(0.62, 0.72, clumpS) * smooth(0.35, 0.6, clump) : 0
+      const p = woods
+        ? forest * (0.012 + 0.78 * stand) * (groveN > 0.55 ? 1.4 : 1) + bands * Math.max(0, clumpS * 1.6 - 0.42) * 0.85
+          + 0.003 + 0.018 * Math.max(0, mk[3] - 0.08) + 0.45 * copse
+        : forest * (0.058 + 0.25 * clump) * (groveN > 0.55 ? 2 : 1) + bands * Math.max(0, clumpS * 1.6 - 0.42)
+          + 0.005 + 0.034 * Math.max(0, mk[3] - 0.08)
       const r = rnd()
       if (r > p) continue
       if (mk[2] > 0.75 || mk[0] > 0.45) continue // water / its banks, rock
@@ -767,7 +781,14 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       const other = vn(x / 60 - 23, z / 60 + 41) + (hash01(x + 0.37, z + 0.11) - 0.5) * 0.3 > 0.7
       if (!other) species = 0
       else if (species === 0) species = 1
-      const H = family(species) === 1 ? (7 + 8 * Math.pow(rnd(), 0.8)) * (0.85 + 0.15 * forest) : (6 + 15 * Math.pow(rnd(), 0.8)) * (0.75 + 0.25 * forest)
+      let H = family(species) === 1 ? (7 + 8 * Math.pow(rnd(), 0.8)) * (0.85 + 0.15 * forest) : (6 + 15 * Math.pow(rnd(), 0.8)) * (0.75 + 0.25 * forest)
+      // BIG PINES (a size, not a tree more — the vertices are the same): a stand's spruce a little taller toward its
+      // core (no more: the cost is fill — a dense stand's near crowns), and one spruce in ~9 an old giant of 26–36 m — the
+      // scale the hills are read by
+      if (woods && species === 0) {
+        H *= 1 + 0.12 * stand
+        if (hash01(x + 0.71, z - 0.29) < 0.11) H = Math.max(H, 26 + 10 * hash01(x - 0.53, z + 0.17))
+      }
       out.push(x, y - 0.3, z, H, rnd() * Math.PI * 2, species, rnd(), rnd())
     }
   }

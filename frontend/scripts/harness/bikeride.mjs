@@ -1,7 +1,8 @@
 // bikeride.mjs <dir> [tier] — the MOUNTAIN BIKE ridden by a script (B off the car, then a sequence of keys), the
 // state logged as it goes (speed, gear, cadence, fork / swingarm, air, crash) and shots taken from the chase camera.
 // env: WORLD=valley|desert, API=webgpu|webgl2, AT='[x, z, heading]' (where the car is put first; default its start),
-// STEPS='[[seconds, "keys held, space-separated", "shot name or empty"]]', Q='…' (more of the URL).
+// STEPS='[[seconds, "keys held, space-separated", "shot name or empty"]]', Q='…' (more of the URL), VEH=bike|moto (the
+// mountain bike — B — or the motorbike — F).
 // Needs `npm run dev` (:5200).
 import puppeteer from 'puppeteer-core'
 import fs from 'node:fs'
@@ -18,14 +19,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const at = JSON.parse(process.env.AT || 'null')
 if (at) await p.evaluate(([x, z, h]) => window.__oth.car.placeAt(x, z, h), at)
 await sleep(800)
-await p.evaluate(() => window.__oth.ride())
+const VEH = process.env.VEH || 'moto' // (the bicycle is out of the game)
+await p.evaluate((v) => window.__oth.ride(v), VEH)
 await sleep(600)
-const state = () => p.evaluate(() => {
-  const s = window.__oth.bike.sim
+const state = () => p.evaluate((v) => {
+  const s = window.__oth[v].sim
   if (!s) return null
   const t = s.body.translation()
-  return { x: +t.x.toFixed(1), z: +t.z.toFixed(1), kmh: +(s.speed * 3.6).toFixed(1), gear: s.gear, rpm: Math.round(s.cadence), ped: s.pedalling, fork: +s.forkTravel.toFixed(3), swing: +s.swingarm.toFixed(3), shock: +s.shockLength.toFixed(3), air: s.airborne, crash: s.crashed, crouch: +s.riderCrouch.toFixed(2), stand: +s.riderStand.toFixed(2) }
-})
+  return { x: +t.x.toFixed(1), z: +t.z.toFixed(1), kmh: +(s.speed * 3.6).toFixed(1), gear: s.gear, rpm: Math.round(s.cadence), ped: s.pedalling, fork: +s.forkTravel.toFixed(3), swing: +s.swingarm.toFixed(3), shock: +s.shockLength.toFixed(3), air: s.airborne, crash: s.crashed, crouch: +s.riderCrouch.toFixed(2), stand: +s.riderStand.toFixed(2), pitch: Math.round((s.pitch ?? 0) * 57.3), roll: Math.round((s.roll ?? 0) * 57.3), wheelie: s.wheelie, why: s.crashReason, hd: Math.round(s.heading * 57.3), v: +Math.hypot(s.body.linvel().x, s.body.linvel().z).toFixed(1) }
+}, VEH)
 console.log('on the bike:', await p.evaluate(() => window.__oth.riding), JSON.stringify(await state()))
 const STEPS = JSON.parse(process.env.STEPS || 'null') ?? [
   [1, '', 'start'], [4, 'KeyW', 'pedal'], [2, 'KeyW KeyD', 'turn'], [1.5, 'KeyW', ''], [0.5, 'KeyW Space', ''], [0.6, 'KeyW', 'hop'],

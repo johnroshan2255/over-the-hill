@@ -60,10 +60,10 @@ export interface Tier {
 }
 
 export const TIERS: Record<TierName, Tier> = {
-  low: { name: 'low', dpr: 1, msaa: false, terrainGrid: 16, terrainLeaf: 32, terrainNear: 70, grassRadius: 38, grassDensity: 9, grassFan: 6, rockReach: 600, rockNear: 45, treeNear: 35, treeMid: 85, treeFar: 300, treeReach: 600, bushNear: 30, bushReach: 140, grassSegments: 1, spec: false, far: 4500, fogNear: 100, haze: 2600, rain: 1600, bloom: 0, samples: 0, bloomStart: 1, rayDiv: 4, rockRelief: false },
-  medium: { name: 'medium', dpr: 1.25, msaa: true, terrainGrid: 24, terrainLeaf: 48, terrainNear: 110, grassRadius: 50, grassDensity: 14, grassFan: 8, rockReach: 720, rockNear: 60, treeNear: 45, treeMid: 100, treeFar: 360, treeReach: 720, bushNear: 40, bushReach: 190, grassSegments: 1, spec: true, far: 6000, fogNear: 110, haze: 2900, rain: 2400, bloom: 4, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: false },
-  high: { name: 'high', dpr: 1.5, msaa: true, terrainGrid: 32, terrainLeaf: 64, terrainNear: 140, grassRadius: 62, grassDensity: 22, grassFan: 11, rockReach: 820, rockNear: 75, treeNear: 50, treeMid: 120, treeFar: 420, treeReach: 820, bushNear: 50, bushReach: 230, grassSegments: 1, spec: true, far: 7500, fogNear: 120, haze: 3100, rain: 3200, bloom: 5, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: true },
-  ultra: { name: 'ultra', dpr: 2, msaa: true, terrainGrid: 32, terrainLeaf: 64, terrainNear: 180, grassRadius: 72, grassDensity: 26, grassFan: 9, rockReach: 900, rockNear: 90, treeNear: 60, treeMid: 140, treeFar: 450, treeReach: 900, bushNear: 60, bushReach: 260, grassSegments: 2, spec: true, far: 9000, fogNear: 130, haze: 3300, rain: 4000, bloom: 6, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: true },
+  low: { name: 'low', dpr: 1, msaa: false, terrainGrid: 16, terrainLeaf: 32, terrainNear: 70, grassRadius: 38, grassDensity: 9, grassFan: 6, rockReach: 600, rockNear: 45, treeNear: 35, treeMid: 70, treeFar: 250, treeReach: 600, bushNear: 30, bushReach: 140, grassSegments: 1, spec: false, far: 4500, fogNear: 100, haze: 2600, rain: 1600, bloom: 0, samples: 0, bloomStart: 1, rayDiv: 4, rockRelief: false },
+  medium: { name: 'medium', dpr: 1.25, msaa: true, terrainGrid: 24, terrainLeaf: 48, terrainNear: 110, grassRadius: 50, grassDensity: 14, grassFan: 8, rockReach: 720, rockNear: 60, treeNear: 45, treeMid: 80, treeFar: 300, treeReach: 720, bushNear: 40, bushReach: 190, grassSegments: 1, spec: true, far: 6000, fogNear: 110, haze: 2900, rain: 2400, bloom: 4, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: false },
+  high: { name: 'high', dpr: 1.5, msaa: true, terrainGrid: 32, terrainLeaf: 64, terrainNear: 140, grassRadius: 62, grassDensity: 22, grassFan: 11, rockReach: 820, rockNear: 75, treeNear: 50, treeMid: 95, treeFar: 330, treeReach: 820, bushNear: 50, bushReach: 230, grassSegments: 1, spec: true, far: 7500, fogNear: 120, haze: 3100, rain: 3200, bloom: 5, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: true },
+  ultra: { name: 'ultra', dpr: 2, msaa: true, terrainGrid: 32, terrainLeaf: 64, terrainNear: 180, grassRadius: 72, grassDensity: 26, grassFan: 9, rockReach: 900, rockNear: 90, treeNear: 50, treeMid: 95, treeFar: 380, treeReach: 900, bushNear: 60, bushReach: 260, grassSegments: 2, spec: true, far: 9000, fogNear: 130, haze: 3300, rain: 4000, bloom: 6, samples: 4, bloomStart: 1, rayDiv: 4, rockRelief: true },
 }
 
 /** `?tier=`, else ULTRA on every device (2026-10-26: the user plays it in ULTRA; `?tier=low` etc. to compare). The
@@ -81,6 +81,14 @@ export function pickTier(): Tier {
   // old pass (with the phone profile above), to compare.
   if (p.get('post') !== '1') Object.assign(out, { bloom: 0 })
   if (p.get('aa') === '0') Object.assign(out, { msaa: false }) // (cost tests: no MSAA)
+  // THE WOODS (2026-11-05, the user: "real trees at the front, the back an image — no one will notice"): the skirted
+  // mid LOD hands over to the impostor a quarter sooner (ULTRA 140 → 95 m; a still frame can't tell one from the other
+  // past ~60 m, a moving one by its 12 baked views snapping, so ≥ 70) — what that saves pays for the forests' 86 % more
+  // trees (Trees.ts placeTrees). `?woods=0`: the old ranges and the old scatter, for the A/B.
+  // (ULTRA's full LOD — skirts + plumes — 60 → 50 m: the stands' near trees were most of a dense wood's cost; 50 can't
+  //  be told from 60, at 40 the plumes visibly drop off). The far rank cull (thinner, each survivor bigger) starts ~1/6
+  //  sooner: the woods hold ~86 % more trees, so the far hills keep more cover than before all the same.
+  if (p.get('woods') === '0') Object.assign(out, { treeMid: { low: 85, medium: 100, high: 120, ultra: 140 }[t.name], treeNear: { low: 35, medium: 45, high: 50, ultra: 60 }[t.name], treeFar: { low: 300, medium: 360, high: 420, ultra: 450 }[t.name] })
   // (with ?post=1) PHONES at full resolution (2026-10-27, the user: "full resolution at ULTRA on Snapdragon 600+"): measured on the
   // phone viewport (ULTRA, 824 × 1830) the post pass was most of the frame — MSAA 4× on the HDR target 3.3 ms, the
   // half-size bloom levels and their passes ~2 ms, the god rays 1 ms — the scene itself ~2. At 2× pixel density a

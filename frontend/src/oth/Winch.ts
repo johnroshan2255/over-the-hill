@@ -16,6 +16,8 @@ const REACH = 35
 const SEG = 16
 
 export class Winch {
+  /** E toggles it (off while the player is on foot or on a bike). */
+  keysOn = true
   readonly mesh: GFX.Mesh
   private anchor: GFX.Vector3 | null = null
   private what = ''
@@ -39,7 +41,8 @@ export class Winch {
     this.mesh = new GFX.Mesh(this.geo, new GFX.MeshBasicMaterial({ color: new GFX.Color(0.12, 0.1, 0.085), side: GFX.DoubleSide }))
     this.mesh.frustumCulled = false
     this.mesh.visible = false
-    window.addEventListener('keydown', (e) => { if (e.code === 'KeyE' && !e.repeat) this.toggle() })
+    // (E is the winch only in the car — on foot it's the character's grab: main.ts sets keysOn)
+    window.addEventListener('keydown', (e) => { if (e.code === 'KeyE' && !e.repeat && this.keysOn) this.toggle() })
   }
 
   get attached(): boolean { return this.anchor !== null }

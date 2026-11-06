@@ -1,4 +1,4 @@
-// bikeshot.mjs <dir> [tier] — the mountain bike (Bike.ts) in still views: env WORLD=valley|desert, API=webgl2|webgpu,
+// bikeshot.mjs <dir> [tier] — the motorbike (Bike.ts — the bicycle is out of the game) in still views: env WORLD=valley|desert, API=webgl2|webgpu,
 // AT='[x, z, heading]' (the bike's place; default by the spawn), VIEWS='[[name, dx, dz, h, yaw, pitch]]' (the camera
 // relative to the bike: dx / dz metres off it, h above its ground; yaw 0 looks north), Q='…' (more of the URL).
 // Needs `npm run dev` (:5200). Prints errors and the frame's cost.
@@ -17,7 +17,7 @@ const at = JSON.parse(process.env.AT || 'null')
 const pos = await p.evaluate((at) => {
   const o = window.__oth, sp = o.world.map.meta.spawn
   const [x, z, h] = at ?? [sp.x + 6, sp.z - 4, 0.6]
-  o.bike.showAt(x, z, h)
+  o.moto.showAt(x, z, h)
   return { x, z, h }
 }, at)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

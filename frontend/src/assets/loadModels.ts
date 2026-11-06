@@ -19,7 +19,7 @@ import { bodyHulls, triangles } from '../gameplay/vehicle/hulls'
 export interface TruckModel {
   /** Catalogue id. */
   id: string
-  /** Body: position / normal / uv / color (material colour baked) / paintMask (1 = takes the paint colour). */
+  /** Body: position / normal / uv / color (material colour baked) / paintMask (1 = takes the paint colour; 2 = other bodywork: the paint grain, no tint; 0 = smooth). */
   body: GFX.BufferGeometry
   glass: GFX.BufferGeometry
   /** Front-left wheel, centred on its hub (right-side wheels use it turned 180°). */
@@ -582,7 +582,10 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
     const textured = !!mm
     // Door insides / cabin interior: dark trim, never painted (textured: the texture darkened).
     const inner = /inner|interior/i.test(m.mat.name)
-    const paint = inner || /^(wheel_|caliper_|acc_|cab_|pedal_|gear_|wiper_|tow_)/i.test(m.name) ? 0 : def.paintRegex ? (def.paintRegex.test(m.mat.name) ? 1 : 0) : 1
+    // (1 the paint — tinted; 2 the rest of the BODYWORK — the roof, trim, bumpers, mirrors: untinted, but the paint's
+    //  grain on it too — 2026-11-05, the user: "the grains only show on the red parts"; 0 the wheels, the cabin, the
+    //  controls, the hardware: smooth)
+    const paint = inner || /^(wheel|caliper_|acc_|cab_|pedal_|gear_|wiper_|tow_|steering)/i.test(m.name) ? 0 : def.paintRegex ? (def.paintRegex.test(m.mat.name) ? 1 : 2) : 1
     const g = paintGeometry(m.geo, textured ? new GFX.Color(inner ? 0.3 : 1, inner ? 0.3 : 1, inner ? 0.3 : 1) : inner ? color.clone().multiplyScalar(0.35) : color, textured, paint, (vertexAo && !inner) || /^wheel_/i.test(m.name)) // (a big-triangle cabin liner would draw AO gradients as X shapes)
     if (!textured) flat.push(g)
     const control = /^(pedal_(?:gas|brake|clutch)|gear_lever|wiper_[LR])/i.exec(m.name)?.[1].toLowerCase()
