@@ -9,7 +9,7 @@ const variants = (process.argv[2] ?? '').split('|')
 const views = (process.argv[3] || 'spawn,lake').split(',')
 const reps = Number(process.argv[4] || 3)
 const tier = process.env.TIER || 'ultra'
-const V = { spawn: ['valley', true], forest: ['valley', false, 260, 640, 2.2, 0.6, -0.05], lake: ['valley', false, -160, -1320, 3, -1.2, -0.04], cliff: ['valley', false, 1102, -1700, 2.2, 0, -0.02], oasis: ['desert', false, -330, 420, 3, -1.2, -0.02], plain: ['desert', false, -300, 1100, 2, 0.3, 0.02] }
+const V = { spawn: ['valley', true], forest: ['valley', false, 260, 640, 2.2, 0.6, -0.05], lake: ['valley', false, -160, -1320, 3, -1.2, -0.04], cliff: ['valley', false, 1102, -1700, 2.2, 0, -0.02], rockhill: ['valley', false, -864.6, -449.9, 2.4, 2.454, -0.05], oasis: ['desert', false, -330, 420, 3, -1.2, -0.02], plain: ['desert', false, -300, 1100, 2, 0.3, 0.02] }
 const CHROME = process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const ANGLE = process.platform === 'win32' ? 'd3d11' : 'metal'
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
@@ -29,11 +29,15 @@ for (const view of views) {
   const v = V[view]
   const pages = []
   for (const q of variants) {
+    // (one browser context: a second context is a second window, drawing too — never measure with two)
     const p = await b.newPage()
     p.on('pageerror', (e) => console.log(`  [${q}] page error: ${e.message.slice(0, 200)}`))
     // (a shader that fails to compile only logs: say so — a variant measured without its draw is no measurement)
     p.on('console', (m) => { if (m.type() === 'error' && !/favicon|404/.test(m.text())) console.log(`  [${q}] console error: ${m.text().slice(0, 200)}`) })
-    await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&world=${v[0]}&sound=0&save=0${api}${q ? `&${q}` : ''}`, { waitUntil: 'load' })
+    // (a variant's port=N: that server — e.g. a second `npm run dev` with another build, PCDEBUG=1)
+    const port = new URLSearchParams(q).get('port') || process.env.PORT || 5200
+    await p.goto(`http://localhost:${port}/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&world=${v[0]}&sound=0&save=0${api}${q ? `&${q}` : ''}`, { waitUntil: 'load' })
+    await p.bringToFront() // (a page in a background tab draws no frames: the game never gets ready)
     await p.waitForFunction(() => window.__oth?.ready && window.__oth.car?.sim, { timeout: 180000, polling: 250 })
     await p.evaluate((v) => { const o = window.__oth; if (v[1]) o.drive(true); else o.view(v[2], v[3], v[4], v[5], v[6]) }, v)
     // (a variant's hide=a+b: those parts of the world not drawn — what they cost; trees.2: only the part's 3rd child)

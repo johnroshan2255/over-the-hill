@@ -5,6 +5,52 @@ will give const 60+ in ultra"*; *"we can hide things from far"*; *"do all the st
 preserve the visual appearance while reducing the actual rendering cost"*; *"check the cheapest way to create water"*.
 This is step 8 of `MIGRATION.md`, with the phone made a goal of its own.
 
+## 2026-11-07 — the Windows PC (Ryzen 7 7435HS + RTX 4050 Laptop): the CPU's frame, and the hitches
+
+The user: *"travel around all places in valley and check places with fps drop and fix it … loop it until we get
+500+"*; *"this PC must get 500+ fps, Mac mini … 700+"*; *"even a Chromebook … and a small phone 100+ … all ULTRA"*;
+*"don't compromise current visual quality"*.
+
+**What the frame was here.** WebGPU timestamps: the GPU drew a view in **0.8–1.0 ms**; the frame took 1.9–3.4 ms. The
+rest was the CPU — the game's JavaScript, PlayCanvas, Chrome's WebGPU calls — so this PC (unlike the M4) was CPU-bound
+(the GPU ~60 % busy). Every fix below is CPU-side and changes no pixel (`pixdiff.mjs`: old vs new at the noise floor).
+
+| | what | gain (`abq.mjs`, interleaved) |
+|---|---|---|
+| 1 | PlayCanvas's RELEASE build in dev (the `development` export is the debug build: error scopes round every GPU call, validation) — `vite.config.ts`; `PCDEBUG=1` for the debug one | spawn −0.83 ms, forest −0.84, lake −0.47, cliff −0.49 |
+| 2 | the gfx layer's frame (`material.ts` uniforms bound once, `scene.ts` no key strings / attribute lists / sets a frame, hidden meshes not re-prepared) | spawn −0.74, forest −0.70, lake −0.66, cliff −0.55 |
+| 3 | the driving HUD written only when it changes (the same text set again re-lays out the page every frame) | spawn −0.73 |
+| 4 | garbage and small things: the character's math at offsets, the instance getter, the terrain's sort, the frustum tests, PlayCanvas's parameter walk (`OthMaterial`), the car shadow's stream written in place, the hills' answer kept per horizon | garbage 158 → 89 KB a frame; spawn under the profiler 496 → 562 fps |
+
+Then the HITCHES, found by driving the camera down every track at 25 m/s (`tour.mjs drive`: each frame, each system):
+
+| hitch | cause | fix |
+|---|---|---|
+| 20–96 ms, every tree update | the far impostors' instancing buffer (50 391 slots, ~1000 drawn) copied and sent whole (1.6 MB) at each change; the terrain's 2048 nodes every frame | buffers sized to what's drawn (grown by half), copied from where they were last copied to (`scene.ts`) |
+| 1.3–5.5 ms every 4 m driven | the horizon (occlusion) rebuilt in one frame: 33 k height samples | built an eighth a frame from 2.5 m, swapped in whole; the 4 m limit kept (`Horizon.ts`) |
+| 2–4 ms every ~200 frames | a garbage collection: ~150 KB of garbage a frame (the character's animation, the scene walk, the terrain sort, the horizon query …) | the hot paths allocation-free where it was easy |
+| ~5 ms every ~12 s of play (the day running) | the terrain shadow's bake: 6.3 MB of textures copied twice on the main thread before the upload | the worker's arrays become the textures' data, handed to PlayCanvas as its level (`TerrainShadow.ts`, `texture.ts`): 5.2 → 3.0 ms |
+| 20–60 ms for 1–2 s, every 30–50 s, uncapped | a MAJOR garbage collection (the frame it starts on, the heap drops 70–120 MB; the GPU's own time unchanged): Chrome's, after ~30 s of promoted garbage — PlayCanvas's per-frame frame graph and WebGPU objects, ~2.4 KB a frame. NOT physics (the same with it off), not the JS heap's size (its object graph is small: 730 k nodes), not the uniform staging (`queue.writeBuffer` instead: tried, no change, reverted) | **mostly a DEV-server thing**: the production build (`npm run build` + `npm run preview`) has 10–20 ms frames for ~0.5 s instead; capped to the screen (144 Hz) none in 90 s driving. Open — the next lever is PlayCanvas's per-frame allocations |
+
+**Where it stands (dev server, ULTRA 1920 × 1080 uncapped, WebGPU, the Windows laptop):**
+
+| view | before this round (the release build already in) | now |
+|---|---|---|
+| spawn, DRIVING (the car, the HUD) | 373 fps | **687** |
+| forest | 509 | **782** |
+| lake | 543 | **801** |
+| cliff | 560 | **790** |
+| rockhill | 521 | **913** |
+
+(30 s of frames counted at each, one after the other — `abq.mjs`'s drained samples were thrown about by the
+collection stall above, so the steady pace is the honest yardstick here. Before the release build the spawn was ~240.)
+
+**The whole valley** (`tour.mjs drive`, every track at 25 m/s: 63 tracks, 30.6 km, 957 859 frames): mean **1.26 ms
+(794 fps)**, 0.22 % of frames a hitch (> 2.5× the median), the worst left the collection stall. `tour.mjs sweep`
+(every 150 m of track both ways + every place, 529 spots): median 1.654 ms (605 fps) mid-round. **In a visible Chrome**
+(`playchrome.mjs`: the car driven with the keys, the overlay on): 614 fps over 60 s, the overlay 686 fps — frame 1.7,
+CPU 1.2, GPU 1.1 ms.
+
 ## Now (2026-11-06, end of day) — `fps.mjs ultra`: mean 2.827 → **1.885 ms (354 → 531 fps)**
 
 | view | this morning | now | |
@@ -176,3 +222,7 @@ Several windows at once are fine for CHECKING (browsers, phones), never for MEAS
 | 2026-11-06 | the valley's places (Kit / Locations / Sites; ARCHITECTURE.md "stage 2"): composed cabins, mine, camps, tunnel, grotto, ghost house, ruins, hamlet …; the caves' dark; smoke columns; landmarks cut past the tier's reach (`absites.mjs`, `?sites=0`) | calm, interleaved: 0.768 → 0.787 (≈ 1270 fps); every place 0.70–1.05, worst the Hollow House in deep forest 1.30 (770 fps); the caves' dark +0.01 | LOW phone viewport 0.593 → 0.627, worst 0.82 (no phone) | — |
 | 2026-11-06 | every valley track DRIVABLE (`trackgrade.py`: the lines cleaned and re-traced for a 7.5 m turn, the ground graded ≤ 22 % / ≤ 28 % rock-crawl, level across; `Rocks.ts`: outcrop blocks out of the beds) — the bot (`trackdrive.mjs`, every track both ways) clean on 46 → 121 runs, 465 → 21 problems | spawn +0.07, forest −0.05, lake −0.08, cliff −0.06 ms (noise: a data change; the stones / trees re-picked on the new ground); load +~1 ms (the rock filter) | — | — |
 | 2026-11-06 | the caves as land (tunnel hill, three one-way caves; cavecost.mjs, ?sites=0) | ULTRA 1080p: +0.02–0.14 ms at a cave, worst 1.34 (745 fps, deep forest; 1.67 without the sites) | LOW: +0.01–0.18, worst 1.03 | — |
+| 2026-11-06 | the caves' rock round 2 — FACETS not plaster (`rockMesh` / `hillMesh`: pushed by `rockField`, flat-shaded; `rockPaint`: no beds, moss; `rockRelief` on the cliff HIGH / ULTRA). Measured on the WINDOWS PC (slower than the Mac: baselines 2.3–3.6 ms), `cavecost.mjs`, the original two files swapped in for the "before" run; triangles +~1 k a cave | ULTRA: the caves over `?sites=0` +0.14–0.34 before, +0.05–0.26 after: no measurable cost (the run-to-run noise at a view with no cave, spawn, was 0.19 ms). LOW: unresolved — the `?sites=0` baseline itself moved up to 0.8 ms between runs; "on" 2.59–3.69 before, 2.62–3.75 after (the LOW rock reads 3 paint fetches, was 6) | not measured (no phone) | — |
+| 2026-11-06 | no grass on stone: the grass bake reads the ground's normal at mip 0 (was 2.5 — the terrain paints with mip 0 up close) and stops short of scree (`screeNear`) | no frame cost: the bake re-runs only the texels the camera uncovers, the same fetches (one mip, one smoothstep more) | — | — |
+| 2026-11-06 | the rock's relief LIVE on every rock pixel (the cache stores its strength, no longer the baked bend — that came out weaker than the live walls': the user's patchy rock). Everything else the ground cache does is as it was | Windows PC, `abq.mjs` ABBA `"|tcut=ncr|tcut=ncr|"` × 4 (ncr: a temporary switch, the relief off on cached ground — the cost of exactly this; removed after): rockhill (a new view: the user's rock hillside, -864.6 / -449.9) 2.821 live vs 2.853 without, forest 3.164 vs 3.215, spawn 4.423 vs 4.361, cliff 2.829 vs 2.756 — no measurable cost (±0.07, this PC's noise). The bake no longer runs the relief: lighter. Re-run on the Mac mini to confirm 500+ | phones: not compiled (no relief there) | — |
+| 2026-11-07 | the CPU's frame and the hitches (the Windows laptop): PlayCanvas's release build in dev; the gfx layer's frame; the HUD's DOM; instancing buffers sized to what's drawn; the horizon a slice a frame; the garbage 158 → 89 KB a frame; the shadow bake's copies — all pixel-identical (`pixdiff.mjs`) | spawn driving 373 → 687 fps, forest 509 → 782, lake 543 → 801, cliff 560 → 790, rockhill 521 → 913; the valley drive 794 fps mean | not measured (no phone) | — |

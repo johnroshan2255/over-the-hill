@@ -2,8 +2,10 @@
 // cave's front / inside / above (trimmed mean of 2 s). Needs `npm run dev` on 5200.
 import puppeteer from 'puppeteer-core'
 const tier = process.argv[2] || 'ultra'
-const b = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new',
-  args: ['--disable-gpu-vsync', '--disable-frame-rate-limit', '--use-angle=metal', '--ignore-gpu-blocklist', '--window-size=1920,1080', '--mute-audio'], defaultViewport: { width: 1920, height: 1080 } })
+const CHROME = process.env.CHROME || (process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+const ANGLE = process.platform === 'win32' ? 'd3d11' : process.platform === 'darwin' ? 'metal' : 'gl'
+const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
+  args: ['--disable-gpu-vsync', '--disable-frame-rate-limit', `--use-angle=${ANGLE}`, '--ignore-gpu-blocklist', '--window-size=1920,1080', '--mute-audio'], defaultViewport: { width: 1920, height: 1080 } })
 const p = await b.newPage()
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const ft = () => p.evaluate(() => new Promise((r) => { const d = []; const t = performance.now(); let l = t; const tick = () => { const n = performance.now(); d.push(n - l); l = n; if (n - t < 2000) requestAnimationFrame(tick); else { d.sort((a, b) => a - b); const k = Math.floor(d.length * 0.1), m = d.slice(k, d.length - k); r(m.reduce((a, b) => a + b, 0) / m.length) } }; requestAnimationFrame(tick) }))

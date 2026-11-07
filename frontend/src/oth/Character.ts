@@ -67,27 +67,33 @@ void main() {
 
 // ------------------------------------------------------------------------------------------------- small math
 type Q = Float32Array | number[]
-function slerp(a: Q, b: Q, t: number, out: Float32Array, o = 0): void {
-  let bx = b[0], by = b[1], bz = b[2], bw = b[3]
-  let d = a[0] * bx + a[1] * by + a[2] * bz + a[3] * bw
+// (2026-11-07, docs/PERF.md "the garbage": the quaternions and matrices read at an OFFSET into their arrays and the
+//  scratch kept — a subarray view, a destructured array or a new matrix per bone per frame was ~28 KB of garbage a
+//  frame, a garbage collection's hitch every few hundred frames; the arithmetic is unchanged)
+/** Quaternion a (at ao) to b (at bo) by t, into out at o (out may be a or b). */
+function slerp(a: Q, ao: number, b: Q, bo: number, t: number, out: Float32Array, o = 0): void {
+  const ax = a[ao], ay = a[ao + 1], az = a[ao + 2], aw = a[ao + 3]
+  let bx = b[bo], by = b[bo + 1], bz = b[bo + 2], bw = b[bo + 3]
+  let d = ax * bx + ay * by + az * bz + aw * bw
   if (d < 0) { d = -d; bx = -bx; by = -by; bz = -bz; bw = -bw }
   let k0 = 1 - t, k1 = t
   if (d < 0.9995) { const th = Math.acos(d), s = Math.sin(th); k0 = Math.sin((1 - t) * th) / s; k1 = Math.sin(t * th) / s }
-  const x = a[0] * k0 + bx * k1, y = a[1] * k0 + by * k1, z = a[2] * k0 + bz * k1, w = a[3] * k0 + bw * k1
+  const x = ax * k0 + bx * k1, y = ay * k0 + by * k1, z = az * k0 + bz * k1, w = aw * k0 + bw * k1
   const n = Math.hypot(x, y, z, w) || 1
   out[o] = x / n; out[o + 1] = y / n; out[o + 2] = z / n; out[o + 3] = w / n
 }
-/** Column-major 4 × 4 from a translation and a quaternion. */
-function compose(t: Q, q: Q, out: Float32Array): void {
-  const [x, y, z, w] = [q[0], q[1], q[2], q[3]]
+/** Column-major 4 × 4 from a translation (t at to) and a quaternion (q at qo). */
+function compose(t: Q, to: number, q: Q, qo: number, out: Float32Array): void {
+  const x = q[qo], y = q[qo + 1], z = q[qo + 2], w = q[qo + 3]
   const x2 = x + x, y2 = y + y, z2 = z + z, xx = x * x2, xy = x * y2, xz = x * z2, yy = y * y2, yz = y * z2, zz = z * z2, wx = w * x2, wy = w * y2, wz = w * z2
   out[0] = 1 - (yy + zz); out[1] = xy + wz; out[2] = xz - wy; out[3] = 0
   out[4] = xy - wz; out[5] = 1 - (xx + zz); out[6] = yz + wx; out[7] = 0
   out[8] = xz + wy; out[9] = yz - wx; out[10] = 1 - (xx + yy); out[11] = 0
-  out[12] = t[0]; out[13] = t[1]; out[14] = t[2]; out[15] = 1
+  out[12] = t[to]; out[13] = t[to + 1]; out[14] = t[to + 2]; out[15] = 1
 }
+const _mul = new Float32Array(16), _fk = new Float32Array(16)
 function mul4(a: Float32Array, b: Float32Array, out: Float32Array): void {
-  const r = new Float32Array(16)
+  const r = _mul
   for (let c = 0; c < 4; c++) for (let rr = 0; rr < 4; rr++) r[c * 4 + rr] = a[rr] * b[c * 4] + a[4 + rr] * b[c * 4 + 1] + a[8 + rr] * b[c * 4 + 2] + a[12 + rr] * b[c * 4 + 3]
   out.set(r)
 }
@@ -107,11 +113,11 @@ function qfromTo(a: number[], b: number[]): [number, number, number, number] {
 }
 /** Turn a 4 × 4's rotation by q (pre-multiplied: a turn in model space), its origin kept. */
 function turnMat(m: Float32Array, q: Q): void {
-  const [x, y, z, w] = [q[0], q[1], q[2], q[3]]
-  const r = [1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y), 2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x), 2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)]
+  const x = q[0], y = q[1], z = q[2], w = q[3]
+  const r0 = 1 - 2 * (y * y + z * z), r1 = 2 * (x * y + w * z), r2 = 2 * (x * z - w * y), r3 = 2 * (x * y - w * z), r4 = 1 - 2 * (x * x + z * z), r5 = 2 * (y * z + w * x), r6 = 2 * (x * z + w * y), r7 = 2 * (y * z - w * x), r8 = 1 - 2 * (x * x + y * y)
   for (let c = 0; c < 3; c++) {
     const a = m[c * 4], b = m[c * 4 + 1], e = m[c * 4 + 2]
-    m[c * 4] = r[0] * a + r[3] * b + r[6] * e; m[c * 4 + 1] = r[1] * a + r[4] * b + r[7] * e; m[c * 4 + 2] = r[2] * a + r[5] * b + r[8] * e
+    m[c * 4] = r0 * a + r3 * b + r6 * e; m[c * 4 + 1] = r1 * a + r4 * b + r7 * e; m[c * 4 + 2] = r2 * a + r5 * b + r8 * e
   }
 }
 function rotV(q: Q, v: number[]): number[] {
@@ -121,8 +127,8 @@ function rotV(q: Q, v: number[]): number[] {
 }
 
 /** The yaw (about +y) a quaternion turns the forward axis (−z) by. */
-function yawOf(q: Q): number {
-  const [x, y, z, w] = [q[0], q[1], q[2], q[3]]
+function yawOf(q: Q, o = 0): number {
+  const x = q[o], y = q[o + 1], z = q[o + 2], w = q[o + 3]
   const fx = -(2 * (x * z + w * y)), fz = -(1 - 2 * (x * x + y * y))
   return Math.atan2(-fx, -fz)
 }
@@ -403,7 +409,7 @@ export class Character {
    *  the left, turned). */
   travel(): { dx: number; dz: number; yaw: number } {
     const i = this.hipsIndex
-    return { dx: this.lt[i * 3] - this.hipsRest[0], dz: this.lt[i * 3 + 2] - this.hipsRest[2], yaw: yawOf(this.lr.subarray(i * 4, i * 4 + 4)) - yawOf(this.bones[i].r) }
+    return { dx: this.lt[i * 3] - this.hipsRest[0], dz: this.lt[i * 3 + 2] - this.hipsRest[2], yaw: yawOf(this.lr, i * 4) - yawOf(this.bones[i].r) }
   }
   /** The hips' place at the start of clip `name` (model space): to line a one-off up with where it must start. */
   hipsAt(name: ClipName, t: number): [number, number, number] {
@@ -440,7 +446,7 @@ export class Character {
       this.sample({ clip: c, t: (((this.phase + (this.locoOff.get(name) ?? 0)) % 1) + 1) % 1 * c.dur }, this.lt3, this.lr3)
       for (let b = 0; b < this.bones.length; b++) {
         for (let q = 0; q < 3; q++) T[b * 3 + q] += (this.lt3[b * 3 + q] - T[b * 3 + q]) * k
-        slerp(R.subarray(b * 4, b * 4 + 4), this.lr3.subarray(b * 4, b * 4 + 4), k, R, b * 4)
+        slerp(R, b * 4, this.lr3, b * 4, k, R, b * 4)
       }
     }
     mixIn('walk', w.walk); mixIn('run', w.run); mixIn('sprint', w.sprint)
@@ -456,7 +462,7 @@ export class Character {
       if (t >= tm[n - 1]) i = n - 1
       else { let lo = 0, hi = n - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (tm[m] <= t) lo = m; else hi = m }; i = lo }
       const j = Math.min(n - 1, i + 1), f = j > i ? Math.min(1, Math.max(0, (t - tm[i]) / (tm[j] - tm[i]))) : 0
-      if (ch.path === 'rotation') slerp(ch.values.subarray(i * 4, i * 4 + 4), ch.values.subarray(j * 4, j * 4 + 4), f, R, ch.bone * 4)
+      if (ch.path === 'rotation') slerp(ch.values, i * 4, ch.values, j * 4, f, R, ch.bone * 4)
       else for (let k = 0; k < 3; k++) T[ch.bone * 3 + k] = ch.values[i * 3 + k] + (ch.values[j * 3 + k] - ch.values[i * 3 + k]) * f
     }
   }
@@ -491,7 +497,7 @@ export class Character {
       const w = this.fade * this.fade * (3 - 2 * this.fade)
       for (let b = 0; b < this.bones.length; b++) {
         for (let k = 0; k < 3; k++) this.lt[b * 3 + k] = this.tmpT[b * 3 + k] + (this.lt[b * 3 + k] - this.tmpT[b * 3 + k]) * w
-        slerp(this.tmpR.subarray(b * 4, b * 4 + 4), this.lr.subarray(b * 4, b * 4 + 4), w, this.lr, b * 4)
+        slerp(this.tmpR, b * 4, this.lr, b * 4, w, this.lr, b * 4)
       }
       if (this.fade >= 1) this.prev = null
     }
@@ -499,7 +505,7 @@ export class Character {
     if (up) {
       up.t = (up.t + dt) % Math.max(1e-3, up.clip.dur)
       this.sample(up, this.upT, this.upR)
-      for (const b of this.upperBones) slerp(this.lr.subarray(b * 4, b * 4 + 4), this.upR.subarray(b * 4, b * 4 + 4), up.w, this.lr, b * 4)
+      for (const b of this.upperBones) slerp(this.lr, b * 4, this.upR, b * 4, up.w, this.lr, b * 4)
     }
     this.skin()
   }
@@ -507,9 +513,9 @@ export class Character {
   /** Forward kinematics: every bone's model-space matrix from local poses, each with its post-turn (model space,
    *  about its own origin) — the lean, the head, the legs' IK. */
   private fk(T: Float32Array, R: Float32Array, posts = false): void {
-    const m = new Float32Array(16)
+    const m = _fk
     for (let b = 0; b < this.bones.length; b++) {
-      compose(T.subarray(b * 3, b * 3 + 3), R.subarray(b * 4, b * 4 + 4), m)
+      compose(T, b * 3, R, b * 4, m)
       const p = this.bones[b].parent
       if (p >= 0) mul4(this.world[p], m, this.world[b]); else this.world[b].set(m)
       const q = posts ? this.post[b] : null

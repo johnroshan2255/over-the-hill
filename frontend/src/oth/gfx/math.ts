@@ -475,16 +475,20 @@ export class Frustum {
     p[5].setComponents(me3 + me2, me7 + me6, me11 + me10, me15 + me14).normalize()
     return this
   }
+  // (indexed and the plane's distance written in — the same sums: a frame runs thousands of these, and the iterator /
+  //  returned double were garbage — 2026-11-07, docs/PERF.md "the garbage")
   intersectsBox(b: Box3): boolean {
-    for (const pl of this.planes) {
-      const n = pl.normal
-      _v.x = n.x > 0 ? b.max.x : b.min.x; _v.y = n.y > 0 ? b.max.y : b.min.y; _v.z = n.z > 0 ? b.max.z : b.min.z
-      if (pl.distanceToPoint(_v) < 0) return false
+    const P = this.planes
+    for (let i = 0; i < P.length; i++) {
+      const pl = P[i], n = pl.normal
+      const x = n.x > 0 ? b.max.x : b.min.x, y = n.y > 0 ? b.max.y : b.min.y, z = n.z > 0 ? b.max.z : b.min.z
+      if (n.x * x + n.y * y + n.z * z + pl.constant < 0) return false
     }
     return true
   }
   intersectsSphere(s: Sphere): boolean {
-    for (const pl of this.planes) if (pl.distanceToPoint(s.center) < -s.radius) return false
+    const P = this.planes, c = s.center
+    for (let i = 0; i < P.length; i++) { const pl = P[i], n = pl.normal; if (n.x * c.x + n.y * c.y + n.z * c.z + pl.constant < -s.radius) return false }
     return true
   }
   containsPoint(p: Vector3): boolean {

@@ -704,6 +704,130 @@ function smoothMesh(b: Builder, P: number[], I: number[], want: (x: number, y: n
 /** The rock's tint (SURF.cliff: the terrain's slab paint × this). */
 const CLIFF: V3 = [1.0, 0.97, 0.93]
 const cliffCol = (k = 1): V3 => [CLIFF[0] * k, CLIFF[1] * k, CLIFF[2] * k]
+/** 3D VALUE NOISE ≈ 0…1 (smooth), its own for each seed. */
+function vnoise3(seed: number): (x: number, y: number, z: number) => number {
+  const h = (i: number, j: number, k: number) => {
+    let s = Math.imul(i, 73856093) ^ Math.imul(j, 19349663) ^ Math.imul(k, 83492791) ^ Math.imul(seed + 1, 2654435761)
+    s = Math.imul(s ^ (s >>> 15), 2246822519); s = Math.imul(s ^ (s >>> 13), 3266489917); s ^= s >>> 16
+    return (s >>> 0) / 4294967296
+  }
+  return (x, y, z) => {
+    const i = Math.floor(x), j = Math.floor(y), k = Math.floor(z)
+    let u = x - i, v = y - j, w = z - k
+    u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v); w = w * w * (3 - 2 * w)
+    const L = (a: number, c: number, t: number) => a + (c - a) * t
+    return L(L(L(h(i, j, k), h(i + 1, j, k), u), L(h(i, j + 1, k), h(i + 1, j + 1, k), u), v),
+      L(L(h(i, j, k + 1), h(i + 1, j, k + 1), u), L(h(i, j + 1, k + 1), h(i + 1, j + 1, k + 1), u), v), w)
+  }
+}
+/** THE ROCK'S SHAPE (m): how far a cave's rock stands out into the cave / the air (+) or back (−) at p — big CHUNKS
+ *  ~7 m across with sharp crests (ridged noise), crumples ~2.5 m, and LEDGES: beds ~2.7 m thick that wander, each
+ *  standing out its own amount, changing along the wall (where one stands out under a deeper one it faces up: moss
+ *  grows there — SURF.cliff). About ±1 m. */
+type RockField = (x: number, y: number, z: number) => number
+function rockField(seed: number): RockField {
+  const n1 = vnoise3(seed), n2 = vnoise3(seed + 11), n3 = vnoise3(seed + 23), n4 = vnoise3(seed + 37)
+  const ridge = (v: number) => { const r = 1 - Math.abs(2 * v - 1); return r * r }
+  return (x, y, z) => {
+    const big = ridge(n1(x / 7, y / 5, z / 7)) - 0.55
+    const small = ridge(n2(x / 2.6 + 3.1, y / 2.1, z / 2.6 + 1.7)) - 0.55
+    const yy = y / 2.7 + 1.6 * (n3(x / 11, 0.5, z / 11) - 0.5), L = Math.floor(yy)
+    const bed = (q: number) => n4(q * 1.7, x / 14, z / 14) - 0.5
+    return 1.3 * big + 0.45 * small + 0.9 * (bed(L) + (bed(L + 1) - bed(L)) * ss(0.7, 1, yy - L))
+  }
+}
+/** ROCK AS FACETS (2026-11-06, round 2 — the user: "now it's like a cement building"; "like in Genshin Impact"): a
+ *  shell P / I, each triangle turned to face `want` (the cave, the air); each vertex moved out (+) or back along its
+ *  smooth normal — or along D[i] where two shells share an edge (both move it the same: no crack) — by the rock's shape
+ *  × K[i] (0 where it must stay put: on the turf's edge, under the floor); then every triangle drawn FLAT with its own
+ *  face normal — the terrain's low-poly rock, chunky, never plaster. Coloured darker in the hollows and lighter on
+ *  what stands out, each facet its own tone (SURF.cliff paints the rest). */
+function rockMesh(b: Builder, P: number[], I: number[], want: (x: number, y: number, z: number) => V3, field: RockField, K: number[], D: (V3 | null)[]): void {
+  const n = P.length / 3, N = new Float32Array(P.length)
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t], c1 = I[t + 1], c2 = I[t + 2]
+    const ux = P[c1 * 3] - P[a * 3], uy = P[c1 * 3 + 1] - P[a * 3 + 1], uz = P[c1 * 3 + 2] - P[a * 3 + 2]
+    const vx = P[c2 * 3] - P[a * 3], vy = P[c2 * 3 + 1] - P[a * 3 + 1], vz = P[c2 * 3 + 2] - P[a * 3 + 2]
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    const [wx, wy, wz] = want((P[a * 3] + P[c1 * 3] + P[c2 * 3]) / 3, (P[a * 3 + 1] + P[c1 * 3 + 1] + P[c2 * 3 + 1]) / 3, (P[a * 3 + 2] + P[c1 * 3 + 2] + P[c2 * 3 + 2]) / 3)
+    if (nx * wx + ny * wy + nz * wz < 0) { I[t + 1] = c2; I[t + 2] = c1; nx = -nx; ny = -ny; nz = -nz }
+    for (const v of [a, c1, c2]) { N[v * 3] += nx; N[v * 3 + 1] += ny; N[v * 3 + 2] += nz }
+  }
+  // (vertices at one place — a ring closing on itself, a column pinched to a point — share one normal, so they move
+  //  as one: no crack where the shell's ends meet)
+  const same = new Map<string, number[]>()
+  for (let i = 0; i < n; i++) {
+    const key = `${Math.round(P[i * 3] * 1000)},${Math.round(P[i * 3 + 1] * 1000)},${Math.round(P[i * 3 + 2] * 1000)}`
+    const list = same.get(key)
+    if (list) list.push(i); else same.set(key, [i])
+  }
+  for (const list of same.values()) {
+    if (list.length < 2) continue
+    let sx = 0, sy = 0, sz = 0
+    for (const i of list) { sx += N[i * 3]; sy += N[i * 3 + 1]; sz += N[i * 3 + 2] }
+    for (const i of list) { N[i * 3] = sx; N[i * 3 + 1] = sy; N[i * 3 + 2] = sz }
+  }
+  const Q = new Float32Array(P.length), H = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2], d = D[i]
+    let dx = N[i * 3], dy = N[i * 3 + 1], dz = N[i * 3 + 2]
+    if (d) [dx, dy, dz] = d
+    else { const L = Math.hypot(dx, dy, dz) || 1; dx /= L; dy /= L; dz /= L }
+    const h = K[i] > 0 ? field(x, y, z) * K[i] : 0
+    H[i] = h; Q[i * 3] = x + dx * h; Q[i * 3 + 1] = y + dy * h; Q[i * 3 + 2] = z + dz * h
+  }
+  const pos: number[] = [], nor: number[] = [], col: number[] = [], idx: number[] = []
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t], c1 = I[t + 1], c2 = I[t + 2]
+    const ux = Q[c1 * 3] - Q[a * 3], uy = Q[c1 * 3 + 1] - Q[a * 3 + 1], uz = Q[c1 * 3 + 2] - Q[a * 3 + 2]
+    const vx = Q[c2 * 3] - Q[a * 3], vy = Q[c2 * 3 + 1] - Q[a * 3 + 1], vz = Q[c2 * 3 + 2] - Q[a * 3 + 2]
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx, L = Math.hypot(nx, ny, nz)
+    if (L < 1e-9) continue
+    const tone = 0.92 + 0.14 * b.rnd(), base = pos.length / 3
+    for (const v of [a, c1, c2]) {
+      pos.push(Q[v * 3], Q[v * 3 + 1], Q[v * 3 + 2]); nor.push(nx / L, ny / L, nz / L)
+      const k = tone * (0.8 + 0.3 * ss(-0.7, 0.7, H[v]))
+      col.push(CLIFF[0] * k, CLIFF[1] * k, CLIFF[2] * k)
+    }
+    idx.push(base, base + 1, base + 2)
+  }
+  b.setSurf(SURF.cliff)
+  b.raw(pos, nor, col, idx)
+  b.setSurf(SURF.wood)
+}
+const unit = (x: number, y: number, z: number): V3 => { const L = Math.hypot(x, y, z) || 1; return [x / L, y / L, z / L] }
+/** A CAVE'S HILL (2026-11-06, round 2): its TURF — smooth, in the field's own paint — and where it's steep (≳ 45°),
+ *  bare ROCK the caves' own way: pushed out and back by the rock's shape (gently: the trees stand on the hill —
+ *  Sites.dressHills) and drawn as flat facets (rockMesh), never a smooth grey sheet. TP / TI: the hill's grid;
+ *  `keep(i)`: a vertex another shell shares (it stays put). */
+function hillMesh(b: Builder, TP: number[], TI: number[], paint: (x: number, z: number) => [number, number], field: RockField, lift: (x: number, y: number, z: number) => number, keep: (i: number) => boolean): void {
+  const n = TP.length / 3, N = new Float32Array(TP.length)
+  for (let t = 0; t < TI.length; t += 3) {
+    const a = TI[t], c1 = TI[t + 1], c2 = TI[t + 2]
+    const ux = TP[c1 * 3] - TP[a * 3], uy = TP[c1 * 3 + 1] - TP[a * 3 + 1], uz = TP[c1 * 3 + 2] - TP[a * 3 + 2]
+    const vx = TP[c2 * 3] - TP[a * 3], vy = TP[c2 * 3 + 1] - TP[a * 3 + 1], vz = TP[c2 * 3 + 2] - TP[a * 3 + 2]
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    if (ny < 0) { nx = -nx; ny = -ny; nz = -nz }
+    for (const v of [a, c1, c2]) { N[v * 3] += nx; N[v * 3 + 1] += ny; N[v * 3 + 2] += nz }
+  }
+  const W = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const L = Math.hypot(N[i * 3], N[i * 3 + 1], N[i * 3 + 2])
+    if (L < 1e-9) continue
+    const nx = N[i * 3] / L, ny = N[i * 3 + 1] / L, nz = N[i * 3 + 2] / L
+    W[i] = ss(0.72, 0.5, ny)
+    if (W[i] <= 0 || keep(i)) continue
+    const x = TP[i * 3], y = TP[i * 3 + 1], z = TP[i * 3 + 2], h = 0.6 * W[i] * field(x, y, z) * lift(x, y, z)
+    TP[i * 3] += nx * h; TP[i * 3 + 1] += ny * h; TP[i * 3 + 2] += nz * h
+  }
+  const rockI: number[] = [], turfI: number[] = []
+  for (let t = 0; t < TI.length; t += 3) (W[TI[t]] + W[TI[t + 1]] + W[TI[t + 2]] > 1.5 ? rockI : turfI).push(TI[t], TI[t + 1], TI[t + 2])
+  smoothMesh(b, TP, turfI, () => [0, 1, 0], (i, nn) => {
+    const [dry, forest] = paint(TP[i * 3], TP[i * 3 + 2])
+    return [dry, forest, Math.min(1, Math.max(0, (0.62 - nn[1]) / 0.2))]
+  }, SURF.turf)
+  if (rockI.length) rockMesh(b, TP, rockI, () => [0, 1, 0], field, new Array(n).fill(0), new Array(n).fill(null))
+}
 /** GRASS TUFTS over a hill: blades in the turf's paint, lit as the ground, lighter to their tips (x, y, z, height,
  *  lean: 0 any way, ±1 out over a brow toward ±z). */
 function tuftMesh(b: Builder, tufts: [number, number, number, number, number][], paint: (x: number, z: number) => [number, number]): void {
@@ -737,7 +861,7 @@ function scatterTufts(b: Builder, out: [number, number, number, number, number][
 function stalactites(b: Builder, n: number, at: () => [number, number], roof: (x: number, z: number) => number, g: Ground, clear: number): void {
   b.setSurf(SURF.cliff)
   for (let k = 0; k < n; k++) {
-    const [x, z] = at(), y0 = roof(x, z) + 0.25
+    const [x, z] = at(), y0 = roof(x, z) + 0.4 // (its root in the rock: the roof's facets lie a little either side)
     const len = Math.min(0.5 + 1.8 * b.rnd() * b.rnd() + 0.4, y0 - g(x, z) - clear), r = 0.16 + 0.22 * b.rnd()
     if (len < 0.4) continue
     const tip = V(x + (b.rnd() - 0.5) * 0.2, y0 - len, z), col = cliffCol(0.75 + 0.3 * b.rnd())
@@ -779,8 +903,24 @@ export function tunnel(c: Ctx, L: number, paint: (x: number, z: number) => [numb
   const H = tunnelHill(L, g), { Zp, Z, X, Wc, a, b: B } = H
   const wob = wobble(c.seed), wob2 = wobble(c.seed + 7)
   const archY = (x: number, z: number) => H.gRoad(z) - 0.6 + (B + 0.6) * Math.sqrt(Math.max(0, 1 - (x / a) ** 2))
+  // THE ROCK'S SHAPE (rockMesh): faded in over the first ~2 m up from the ground (the shells' feet stay under it, the
+  // walls by the road where they were)
+  const field = rockField(c.seed * 13 + 5), lift = (x: number, y: number, z: number) => ss(0.2, 2.2, y - g(x, z))
+  // the vault's ring at z — t = 0 its right foot … S its left — and (where the vault meets each mouth's face) the way
+  // both move that ring: toward the tunnel's axis
+  const S = 24, yA = (z: number) => H.gRoad(z) - 0.6
+  // (uneven all through — at the mouths too: the arch's line wanders, no clean ellipse; the faces take the same ring)
+  const shellR = (th: number, z: number) => 1 + (0.085 + 0.04 * ss(Zp - 3, Zp, Math.abs(z))) * (wob(th * 2.2, z * 0.55) + 0.6 * wob2(th * 5, z * 1.3))
+  const vaultAt = (t: number, z: number): V3 => {
+    const th = (Math.PI * t) / S, r = shellR(th, z), x = a * Math.cos(th) * r
+    return [x, t === 0 || t === S ? Math.min(yA(z), g(x, z) - 1.0) : yA(z) + (B + 0.6) * Math.sin(th) * r, z]
+  }
+  const toAxis = (p: V3): V3 => unit(-p[0], yA(p[2]) + 1.5 - p[1], 0)
+  const moved = (p: V3, d: V3): V3 => { const h = field(...p) * lift(...p); return [p[0] + d[0] * h, p[1] + d[1] * h, p[2] + d[2] * h] }
   // the cut's walls: leaning back, bulging (none at the mouth: they meet its face there)
-  const cutX = (s: number, z: number, y: number) => { const k = ss(Zp, Zp + 3, Math.abs(z)); return s * (Wc + k * (0.12 * Math.max(0, y - g(s * Wc, z)) + 0.5 * wob(z * 0.8, s * 3) + 0.25 * wob2(z * 1.7, y * 0.9))) }
+  // (2026-11-06, round 2: leaning from the face itself — the face's sides with it — so no edge stands vertical; short of
+  //  the hill's next column)
+  const cutX = (s: number, z: number, y: number) => s * (Wc + Math.max(0, Math.min(2.6, 0.3 * Math.max(0, y - g(s * Wc, z)) + 0.5 * wob(z * 0.8, s * 3) + 0.25 * wob2(z * 1.7, y * 0.9))))
 
   // ---- THE HILL: a grid (finer across the road), the cut's edge vertices on its walls
   const xs: number[] = []
@@ -796,7 +936,7 @@ export function tunnel(c: Ctx, L: number, paint: (x: number, z: number) => [numb
   const TP: number[] = [], TI: number[] = []
   for (let j = 0; j < nz; j++) for (let k = 0; k < nx; k++) {
     const x = xs[k], z = zs[j], y = H.y(x, z) ?? H.y(Math.sign(x || 1) * Wc, z) ?? g(x, z) - 0.5
-    const edge = (k === kW0 || k === kW1) && Math.abs(z) > Zp
+    const edge = (k === kW0 || k === kW1) && Math.abs(z) >= Zp - 1e-3
     TP.push(edge ? cutX(Math.sign(x), z, y) : x, y, z)
   }
   for (let j = 0; j < nz - 1; j++) for (let k = 0; k < nx - 1; k++) {
@@ -804,56 +944,62 @@ export function tunnel(c: Ctx, L: number, paint: (x: number, z: number) => [numb
     const p = j * nx + k
     TI.push(p, p + nx, p + 1, p + 1, p + nx, p + nx + 1)
   }
-  smoothMesh(b, TP, TI, () => [0, 1, 0], (i, n) => {
-    const [dry, forest] = paint(TP[i * 3], TP[i * 3 + 2])
-    return [dry, forest, Math.min(1, Math.max(0, (0.62 - n[1]) / 0.2))]
-  }, SURF.turf)
+  // (its steep, bare: faceted rock — hillMesh; the faces' top edge and the cut walls' kept where they are)
+  hillMesh(b, TP, TI, paint, field, lift, (i) => { const k = i % nx; return Math.abs(zs[Math.floor(i / nx)]) >= Zp - 1e-3 && k >= kW0 && k <= kW1 })
   const at = (k: number, j: number) => TP[(j * nx + k) * 3 + 1]
 
-  // ---- THE ROCK: each mouth's face (the arch up to the turf) and the cut's walls (4 rows up, to the turf's edge)
+  // ---- THE ROCK: each mouth's face (from the vault's own end ring out to the turf's edge and down the sides) and the
+  // cut's walls (4 rows up, to the turf's edge) — FACETS (rockMesh): the face's arch and the vault's end move as one,
+  // the face's sides and the cut walls' first column as one, the turf's edge stays
   {
-    const P: number[] = [], I: number[] = []
-    const quadStrip = (rows: V3[][]) => { // rows[r][q]: a grid of points → triangles
-      const base = P.length / 3, w = rows[0].length
-      for (const row of rows) for (const p of row) P.push(...p)
-      for (let r = 0; r < rows.length - 1; r++) for (let q = 0; q < w - 1; q++) { const o = base + r * w + q; I.push(o, o + w, o + 1, o + 1, o + w, o + w + 1) }
-    }
+    const P: number[] = [], I: number[] = [], K: number[] = [], D: (V3 | null)[] = []
+    const add = (p: V3, k: number, d: V3 | null) => { P.push(...p); K.push(k); D.push(d) }
+    const grid = (base: number, rows: number, w: number) => { for (let r = 0; r < rows - 1; r++) for (let q = 0; q < w - 1; q++) { const o = base + r * w + q; I.push(o, o + w, o + 1, o + 1, o + w, o + w + 1) } }
     for (const e of [-1, 1]) {
-      const z = e * Zp, j = zs.indexOf(z), bottom: V3[] = [], mid: V3[] = [], topRow: V3[] = []
-      for (let k = kW0; k <= kW1; k++) {
-        const x = xs[k], y0 = Math.abs(x) < a ? archY(x, z) : g(x, z) - 0.5, y1 = at(k, j)
-        bottom.push([x, y0, z]); mid.push([x, (y0 + y1) / 2, z + e * 0.35 * wob(x * 0.7, 1)]); topRow.push([x, y1, z])
+      const z = e * Zp, j = zs.indexOf(z)
+      // the face's outer edge, t = 0 … S: up the right side (the cut wall's own rows), along the turf's edge, down the left
+      const side = (s: number, r: number): V3 => { const y0 = g(s * Wc, z) - 0.5, y1 = at(s < 0 ? kW0 : kW1, j), y = y0 + ((y1 - y0) * r) / 4; return [cutX(s, z, y), y, z] }
+      const outer: V3[] = []
+      for (let r = 0; r < 4; r++) outer.push(side(1, r))
+      for (let k = kW1; k >= kW0; k--) outer.push([TP[(j * nx + k) * 3], at(k, j), z])
+      for (let r = 3; r >= 0; r--) outer.push(side(-1, r))
+      const R = 4, base = P.length / 3
+      for (let r = 0; r <= R; r++) for (let t = 0; t <= S; t++) {
+        const pi = vaultAt(t, z), po = outer[t], f = (r / R) ** 1.2
+        const p: V3 = r === 0 ? pi : r === R ? po : [pi[0] + (po[0] - pi[0]) * f, pi[1] + (po[1] - pi[1]) * f, z]
+        const onSide = t < 4 || t > S - 4
+        if (r === 0) add(p, lift(...p), toAxis(p))
+        else if (r === R) add(p, onSide ? lift(...p) : 0, onSide ? unit(-Math.sign(p[0]), 0, e) : null)
+        else add(p, lift(...p), null)
       }
-      quadStrip([bottom, mid, topRow])
+      grid(base, R + 1, S + 1)
       for (const s of [-1, 1]) {
-        const k = s < 0 ? kW0 : kW1, rows: V3[][] = [[], [], [], [], []]
-        for (let jj = 0; jj < nz; jj++) {
-          const zz = zs[jj]
-          if (e * zz < Zp - 1e-3) continue
-          const y0 = g(s * Wc, zz) - 0.5, y1 = at(k, jj)
-          for (let r = 0; r <= 4; r++) { const y = y0 + ((y1 - y0) * r) / 4; rows[r].push([r === 4 ? TP[(jj * nx + k) * 3] : cutX(s, zz, y), y, zz]) }
+        const k = s < 0 ? kW0 : kW1, cols: number[] = []
+        for (let jj = 0; jj < nz; jj++) if (e * zs[jj] >= Zp - 1e-3) cols.push(jj)
+        const base2 = P.length / 3
+        for (let r = 0; r <= 4; r++) for (const jj of cols) {
+          const zz = zs[jj], y0 = g(s * Wc, zz) - 0.5, y1 = at(k, jj), y = y0 + ((y1 - y0) * r) / 4
+          const p: V3 = [r === 4 ? TP[(jj * nx + k) * 3] : cutX(s, zz, y), y, zz]
+          add(p, r === 4 ? 0 : lift(...p), Math.abs(zz) <= Zp + 1e-3 && r < 4 ? unit(-s, 0, e) : null)
         }
-        quadStrip(rows)
+        grid(base2, 5, cols.length)
       }
     }
-    smoothMesh(b, P, I, (x, _y, z) => (Math.abs(z) <= Zp + 0.6 ? [0, 0, Math.sign(z)] : [-Math.sign(x), 0, 0]), () => cliffCol(0.9 + 0.15 * b.rnd()), SURF.cliff)
+    rockMesh(b, P, I, (x, _y, z) => (Math.abs(z) <= Zp + 0.6 ? [0, 0, Math.sign(z)] : [-Math.sign(x), 0, 0]), field, K, D)
   }
 
-  // ---- THE VAULT: one uneven shell of rock, facing in (no seams, no blocks: the cliff's paint and beds do the rest)
-  const shellR = (th: number, z: number) => 1 + 0.085 * ss(Zp, Zp - 2.5, Math.abs(z)) * (wob(th * 2.2, z * 0.55) + 0.6 * wob2(th * 5, z * 1.3))
+  // ---- THE VAULT: one shell of rock facing in, its facets chunky (rockMesh); its end rings shared with the faces
   {
-    const P: number[] = [], I: number[] = [], S = 22
+    const P: number[] = [], I: number[] = [], K: number[] = [], D: (V3 | null)[] = []
     const zv: number[] = []
     for (let z = -Zp; z < Zp - 0.4; z += 1.2) zv.push(z)
     zv.push(Zp)
-    for (const z of zv) for (let t = 0; t <= S; t++) {
-      const th = (Math.PI * t) / S, r = shellR(th, z), x = a * Math.cos(th) * r
-      P.push(x, t === 0 || t === S ? Math.min(H.gRoad(z) - 0.6, g(x, z) - 1.0) : H.gRoad(z) - 0.6 + (B + 0.6) * Math.sin(th) * r, z)
-    }
+    for (const z of zv) for (let t = 0; t <= S; t++) { const p = vaultAt(t, z); P.push(...p); K.push(lift(...p)); D.push(Math.abs(z) >= Zp - 1e-3 ? toAxis(p) : null) }
     for (let r = 0; r < zv.length - 1; r++) for (let t = 0; t < S; t++) { const p = r * (S + 1) + t; I.push(p, p + S + 1, p + 1, p + 1, p + S + 1, p + S + 2) }
-    smoothMesh(b, P, I, (x, y, z) => [-x, H.gRoad(z) + 1 - y, 0], () => cliffCol(0.85 + 0.2 * b.rnd()), SURF.cliff)
+    rockMesh(b, P, I, (x, y, z) => [-x, H.gRoad(z) + 1 - y, 0], field, K, D)
   }
-  const roof = (x: number, z: number) => archY(x, z)
+  // (the roof where the rock's shape has moved it: down where it stands out)
+  const roof = (x: number, z: number) => { const y = archY(x, z); return y - field(x, y, z) * lift(x, y, z) }
   stalactites(b, 22, () => [(b.rnd() - 0.5) * 8, -Zp + 2.5 + (2 * Zp - 5) * b.rnd()], roof, g, 5)
   // the walls' colliders (the car keeps to the floor)
   for (let z = -Zp + 1.3; z <= Zp - 1; z += 2.6) for (const s of [-1, 1]) c.col(s * (W + 1.3), g(s * W, z) + 2, z, 1.5, 2.2, 1.4)
@@ -870,7 +1016,9 @@ export function tunnel(c: Ctx, L: number, paint: (x: number, z: number) => [numb
   b.setSurf(SURF.fabric)
   const moss: RGB = [0.1, 0.17, 0.07]
   for (const e of [-1, 1]) for (let k = 0; k < 14; k++) {
-    const x = (b.rnd() - 0.5) * 2 * (a - 1.2), z = e * (Zp + 0.15), y0 = archY(x, z) + 0.1, len = 0.8 + 2.4 * b.rnd() * Math.sqrt(1 - (x / a) ** 2)
+    // (from the rim as the rock's shape moved it: the vault's end ring at this angle)
+    const t = (S / Math.PI) * (0.55 + (Math.PI - 1.1) * b.rnd()), p0 = vaultAt(t, e * Zp), [x, y1] = moved(p0, toAxis(p0))
+    const z = e * (Zp + 0.15), y0 = y1 + 0.2, len = 0.8 + 2.4 * b.rnd() * Math.sin((Math.PI * t) / S)
     panel(b, V(x - 0.12, y0, z), V(x + 0.12, y0, z), V(x + 0.07, y0 - len, z + e * 0.05), V(x - 0.07, y0 - len, z + e * 0.05), shade(moss, 1.1 + 0.4 * b.rnd()), shade(moss, 0.7))
   }
   b.setSurf(SURF.wood)
@@ -931,7 +1079,10 @@ export function cavernLand(style: CaveStyle, seed: number, g: Ground): CavernLan
     if (Math.abs(x) > X || z < zb || z > 0.01) return null
     const gt = g(x, z)
     const crest = Math.max(crest0, y0 + sp.ah + 3) + 0.9 * Math.sin(x * 0.21 + z * 0.13) + 0.6 * Math.sin(z * 0.29 - x * 0.09)
-    const f = (1 - ss(sp.Rx * 0.85, X, Math.abs(x))) * (1 - ss(zc - sp.Rz * 0.7, zb, z))
+    // (its front SWEPT DOWN at the sides — 2026-11-06, round 2: the face was one broad trapezoid of rock across the whole
+    //  hill; now the hill comes down to the land in slopes beside the mouth, the face only round and over it)
+    const fr = 1.5 + 16 * ss(sp.aw + 1, sp.aw + 9, Math.abs(x))
+    const f = (1 - ss(sp.Rx * 0.85, X, Math.abs(x))) * (1 - ss(zc - sp.Rz * 0.7, zb, z)) * ss(0, -fr, z)
     let v = crest > gt ? gt + (crest - gt) * f - 0.5 * (1 - f) : gt - 0.5
     if (sp.sky > 0) { const d = Math.hypot(x / hx, (z - zc) / hz); if (d < 1) return null; v -= 0.6 * (1 - ss(1, 1.8, d)) } // (the rim dips to the hole)
     return v
@@ -952,78 +1103,100 @@ export function cavern(c: Ctx, style: CaveStyle, paint: (x: number, z: number) =
   // the mouth's outline at angle φ (0 right foot … π left foot): an arch, its line wandering
   const mr = (ph: number) => 1 + 0.12 * wob(ph * 2.3, 0.5) + 0.06 * wob2(ph * 6, 1.1)
   const mouthAt = (ph: number, sc = 1): [number, number] => [sp.aw * sc * mr(ph) * Math.cos(ph), y0 + sp.ah * sc * mr(ph) * Math.sin(ph)]
-  const wallZ = (x: number, y: number) => Math.max(-7.2, -0.32 * Math.max(0, y - y0) + 1.5 * wob(x * 0.22, y * 0.2) + 0.55 * wob2(x * 0.8, y * 0.75) + 0.6 * Math.sin(y * 1.1 + x * 0.15))
+  // (the face leans back as it rises — a steep slope of rock, not a wall — and bulges; its ledges and chunks are the
+  //  rock's shape: rockMesh)
+  const wallZ = (x: number, y: number) => Math.max(-8.0, -0.4 * Math.max(0, y - y0) + 1.5 * wob(x * 0.22, y * 0.2) + 0.55 * wob2(x * 0.8, y * 0.75))
+  const field = rockField(c.seed * 13 + 5), lift = (x: number, y: number, z: number) => ss(0.2, 2.2, y - g(x, z))
+  // (where two shells share an edge, both move it the same way: the mouth's line toward the mouth's middle, the
+  //  skylight's ring toward the shaft's axis)
+  const toMouth = (x: number, y: number): V3 => unit(-x, y0 + sp.ah * 0.3 - y, 0)
+  const toShaft = (x: number, z: number): V3 => unit(-x, 0, zc - z)
 
   // ---- THE HILL: a grid back from the face (its front row the face's top edge), the hole pushed out to its rim
   const xs: number[] = [], zs: number[] = []
   for (let x = -X; x <= X + 1e-3; x += 1.5) xs.push(x)
   for (let z = zb; z < -8.9; z += 1.5) zs.push(z)
-  zs.push(0)
+  // (then M rows between the last and the front, each column its own: from there to its front's z — the slopes down
+  //  beside the mouth are drawn by them)
+  const nReg = zs.length, M = 5
+  for (let m = 0; m <= M; m++) zs.push(0)
   const nx = xs.length, nz = zs.length
+  const yAt = (x: number, z: number) => land.y(x, Math.min(z, -2)) ?? land.y(x * 1.02, zc + (z - zc) * 1.02) ?? g(x, z) - 0.5
+  const zFront = xs.map((x) => wallZ(x, yAt(x, 0)))
   const TP: number[] = [], TI: number[] = []
   for (let j = 0; j < nz; j++) for (let k = 0; k < nx; k++) {
-    let x = xs[k], z = zs[j]
+    let x = xs[k], z = j < nReg ? zs[j] : zs[nReg - 1] + ((zFront[k] - zs[nReg - 1]) * (j - nReg + 1)) / (M + 1)
     if (sp.sky > 0) { const d = Math.hypot(x / hx, (z - zc) / hz); if (d < 1) { const q = 1.0001 / Math.max(d, 1e-3); x *= q; z = zc + (z - zc) * q } }
-    const y = land.y(x, Math.min(z, -2)) ?? land.y(x * 1.02, zc + (z - zc) * 1.02) ?? g(x, z) - 0.5
-    TP.push(x, y, j === nz - 1 ? wallZ(x, y) : z)
+    TP.push(x, yAt(x, z), z)
   }
   for (let j = 0; j < nz - 1; j++) for (let k = 0; k < nx - 1; k++) { const p = j * nx + k; TI.push(p, p + nx, p + 1, p + 1, p + nx, p + nx + 1) }
-  smoothMesh(b, TP, TI, () => [0, 1, 0], (i, n) => {
-    const [dry, forest] = paint(TP[i * 3], TP[i * 3 + 2])
-    return [dry, forest, Math.min(1, Math.max(0, (0.62 - n[1]) / 0.2))]
-  }, SURF.turf)
+  // (its steep, bare: faceted rock — hillMesh; the front row (the face's top edge) and the skylight's rim kept)
+  hillMesh(b, TP, TI, paint, field, lift, (i) => {
+    const j = Math.floor(i / nx)
+    return j === nz - 1 || (sp.sky > 0 && j < nReg && Math.hypot(xs[i % nx] / hx, (zs[j] - zc) / hz) < 1.1)
+  })
 
   // ---- THE FACE: from the mouth's line out to the hill's front edge (each edge vertex its own ray), leaning, bulging
   const front: [number, number][] = []
   for (let k = 0; k < nx; k++) front.push([TP[((nz - 1) * nx + k) * 3], TP[((nz - 1) * nx + k) * 3 + 1]])
   const angle = (x: number, y: number) => Math.min(Math.PI, Math.max(0, Math.atan2((y - y0) / sp.ah, x / sp.aw)))
   const inner: [number, number][] = front.map(([x, y]) => mouthAt(angle(x, y)))
+  // (FACETS, all of it — rockMesh: the face's and the passage's shared line moved as one, the face's top edge kept on
+  //  the turf's)
   {
-    const P: number[] = [], I: number[] = [], R = 5
+    const P: number[] = [], I: number[] = [], K: number[] = [], D: (V3 | null)[] = [], R = 8
     for (let r = 0; r <= R; r++) for (let k = 0; k < nx; k++) {
       const t = (r / R) ** 1.4, [xi, yi] = inner[k], [xo, yo] = front[k]
       const x = xi + (xo - xi) * t, y = r === R ? yo : yi + (yo - yi) * t
       // (the foot of the face on the land; its top edge the hill's own front row)
       const yy = r > 0 && r < R && (k === 0 || k === nx - 1) ? Math.min(y, g(x, 0) - 0.5) : y
-      P.push(x, yy, r === R ? TP[((nz - 1) * nx + k) * 3 + 2] : wallZ(x, yy) * (r === 0 ? 0.6 : 1))
+      const z = r === R ? TP[((nz - 1) * nx + k) * 3 + 2] : wallZ(x, yy) * (r === 0 ? 0.6 : 1)
+      P.push(x, yy, z); K.push(r === R ? 0 : lift(x, yy, z)); D.push(r === 0 ? toMouth(x, yy) : null)
     }
     for (let r = 0; r < R; r++) for (let k = 0; k < nx - 1; k++) { const o = r * nx + k; I.push(o, o + nx, o + 1, o + 1, o + nx, o + nx + 1) }
-    smoothMesh(b, P, I, () => [0, 0, 1], () => cliffCol(0.88 + 0.2 * b.rnd()), SURF.cliff)
+    rockMesh(b, P, I, () => [0, 0, 1], field, K, D)
   }
   // ---- THE PASSAGE: the mouth's line carried back into the chamber, widening, its walls wandering
   const zEnd = zc + sp.Rz * 0.82, J = Math.max(3, Math.ceil(-zEnd / 1.5))
   {
-    const P: number[] = [], I: number[] = []
+    const P: number[] = [], I: number[] = [], K: number[] = [], D: (V3 | null)[] = []
     for (let j = 0; j <= J; j++) {
       const t = j / J, sc = 1 + 0.25 * t * t
       for (let k = 0; k < nx; k++) {
         const ph = angle(front[k][0], front[k][1])
-        if (j === 0) { P.push(inner[k][0], inner[k][1], wallZ(inner[k][0], inner[k][1]) * 0.6); continue }
+        if (j === 0) { const [x, y] = inner[k], z = wallZ(x, y) * 0.6; P.push(x, y, z); K.push(lift(x, y, z)); D.push(toMouth(x, y)); continue }
         const q = 1 + 0.07 * wob2(ph * 3, t * 4) * Math.sin(Math.PI * t)
         const [x, y] = mouthAt(ph, sc * q)
         // (its end just inside the chamber's wall there: the dome's front at this x, y, less a margin for its bulge)
         const zd = zc + sp.Rz * Math.sqrt(Math.max(0, 1 - (x / sp.Rx) ** 2 - ((y - yc) / sp.Ry) ** 2)) - 1.6, z = Math.max(zd, zc) * t
-        P.push(x, ph <= 1e-3 || ph >= Math.PI - 1e-3 ? g(x, z) - 0.6 : y, z)
+        const yy = ph <= 1e-3 || ph >= Math.PI - 1e-3 ? g(x, z) - 0.6 : y
+        P.push(x, yy, z); K.push(lift(x, yy, z)); D.push(null)
       }
     }
     for (let j = 0; j < J; j++) for (let k = 0; k < nx - 1; k++) { const o = j * nx + k; I.push(o, o + nx, o + 1, o + 1, o + nx, o + nx + 1) }
-    smoothMesh(b, P, I, (x, y) => [-x, y0 + sp.ah * 0.35 - y, 0], () => cliffCol(0.82 + 0.2 * b.rnd()), SURF.cliff)
+    rockMesh(b, P, I, (x, y) => [-x, y0 + sp.ah * 0.35 - y, 0], field, K, D)
   }
   // ---- THE CHAMBER: a dome (rows from under the floor to its crown or the skylight's ring), the passage's way in cut
-  const T = 36, rowsPh: number[] = []
+  // (~1.5 m facets: enough of them for the rock's chunks to show)
+  const T = Math.max(40, Math.round((2 * Math.PI * Math.max(sp.Rx, sp.Rz)) / 1.6)), NR = 14, rowsPh: number[] = []
   const phTop = sp.sky > 0 ? Math.acos(Math.min(0.95, sp.sky / sp.Rx)) : Math.PI / 2
-  for (let i = 0; i <= 10; i++) rowsPh.push(-0.12 + ((phTop + 0.12) * i) / 10)
-  const domeR = (th: number, ph: number) => 1 + 0.09 * wob(th * 3.1, ph * 4) + 0.05 * wob2(th * 7, ph * 9)
+  for (let i = 0; i < NR; i++) rowsPh.push(-0.12 + ((phTop + 0.12) * i) / NR)
+  rowsPh.push(phTop) // (exactly: the skylight's shaft starts on this ring)
+  // (all the way round and back to its start: blended into its own beginning over the last ~45°, so the ring closes —
+  //  it left a crack of daylight at th = 0)
+  const round = (f: (th: number) => number) => (th: number) => f(th) + (f(th - 2 * Math.PI) - f(th)) * ss(2 * Math.PI - 0.8, 2 * Math.PI, th)
+  const domeR = (th: number, ph: number) => round((t) => 1 + 0.09 * wob(t * 3.1, ph * 4) + 0.05 * wob2(t * 7, ph * 9))(th)
+  const shaftW = round((t) => 0.4 * wob(t * 3, 2))
   const domeAt = (th: number, ph: number): V3 => {
     const r = domeR(th, ph)
     return [sp.Rx * Math.cos(ph) * Math.sin(th) * r, yc + sp.Ry * Math.sin(ph) * r, zc + sp.Rz * Math.cos(ph) * Math.cos(th) * r]
   }
   {
-    const P: number[] = [], I: number[] = []
+    const P: number[] = [], I: number[] = [], K: number[] = [], D: (V3 | null)[] = []
     for (const ph of rowsPh) for (let t = 0; t <= T; t++) {
       const v = domeAt((2 * Math.PI * t) / T, ph)
       if (ph === rowsPh[0]) v[1] = Math.min(v[1], g(v[0], v[2]) - 1.2) // (its foot always under the land: no light under it)
-      P.push(...v)
+      P.push(...v); K.push(lift(...v)); D.push(sp.sky > 0 && ph === phTop ? toShaft(v[0], v[2]) : null)
     }
     const wayIn = (x: number, y: number, z: number) => z > zc && Math.abs(x) < sp.aw * 1.12 && y < y0 + sp.ah * 1.12 * Math.sqrt(Math.max(0, 1 - (x / (sp.aw * 1.12)) ** 2))
     for (let i = 0; i < rowsPh.length - 1; i++) for (let t = 0; t < T; t++) {
@@ -1031,25 +1204,31 @@ export function cavern(c: Ctx, style: CaveStyle, paint: (x: number, z: number) =
       if (quad.every((v) => wayIn(P[v * 3], P[v * 3 + 1], P[v * 3 + 2]))) continue
       I.push(o, o + T + 1, o + 1, o + 1, o + T + 1, o + T + 2)
     }
-    smoothMesh(b, P, I, (x, y, z) => [-x, yc + 1 - y, zc - z], () => cliffCol(0.8 + 0.22 * b.rnd()), SURF.cliff)
+    rockMesh(b, P, I, (x, y, z) => [-x, yc + 1 - y, zc - z], field, K, D)
   }
   // ---- THE SKYLIGHT'S SHAFT: from the dome's top ring up through the hill to a lip over the turf's hole
   if (sp.sky > 0) {
-    const P: number[] = [], I: number[] = []
+    const P: number[] = [], I: number[] = [], K: number[] = [], D: (V3 | null)[] = []
     for (let t = 0; t <= T; t++) {
       const th = (2 * Math.PI * t) / T, [x0, y0d, z0] = domeAt(th, phTop)
       const x1 = hx * 1.02 * Math.sin(th), z1 = zc + hz * 1.02 * Math.cos(th), y1 = (land.y(x1 * 1.05, zc + (z1 - zc) * 1.05) ?? y0d + 3) + 0.15
-      const xm = (x0 + x1) / 2 + 0.4 * wob(th * 3, 2) * Math.sin(th), zm = (z0 + z1) / 2 + 0.4 * wob(th * 3, 2) * Math.cos(th)
-      P.push(x0, y0d, z0, xm, (y0d + y1) / 2, zm, x1, y1, z1)
+      for (let r = 0; r <= 3; r++) {
+        // (its rows from the dome's ring — that ring moved as the dome moves it — up to the turf's hole: that one stays)
+        const f = r / 3, w = shaftW(th) * Math.sin(Math.PI * f)
+        const x = x0 + (x1 - x0) * f + w * Math.sin(th), y = y0d + (y1 - y0d) * f, z = z0 + (z1 - z0) * f + w * Math.cos(th)
+        P.push(x, y, z); K.push(r === 3 ? 0 : lift(x, y, z)); D.push(r === 0 ? toShaft(x, z) : null)
+      }
     }
-    for (let t = 0; t < T; t++) for (let r = 0; r < 2; r++) { const o = t * 3 + r; I.push(o, o + 3, o + 1, o + 1, o + 3, o + 4) }
-    smoothMesh(b, P, I, (x, _y, z) => [-x, 0, zc - z], () => cliffCol(0.85 + 0.2 * b.rnd()), SURF.cliff)
+    for (let t = 0; t < T; t++) for (let r = 0; r < 3; r++) { const o = t * 4 + r; I.push(o, o + 4, o + 1, o + 1, o + 4, o + 5) }
+    rockMesh(b, P, I, (x, _y, z) => [-x, 0, zc - z], field, K, D)
   }
-  const roof = (x: number, z: number) => {
+  // (the roof where the rock's shape has moved it: down where it stands out)
+  const roof0 = (x: number, z: number) => {
     if (z > zEnd) { const ph = Math.acos(Math.min(1, Math.abs(x) / sp.aw)); return mouthAt(ph)[1] }
     const u = x / sp.Rx, v = (z - zc) / sp.Rz
     return yc + sp.Ry * Math.sqrt(Math.max(0, 1 - u * u - v * v))
   }
+  const roof = (x: number, z: number) => { const y = roof0(x, z); return y - field(x, y, z) * lift(x, y, z) }
   const inChamber = () => { for (;;) { const u = (b.rnd() - 0.5) * 1.6, v = (b.rnd() - 0.5) * 1.6; if (u * u + v * v < 0.6) return [u * sp.Rx, zc + v * sp.Rz] as [number, number] } }
   stalactites(b, style === 'den' ? 6 : style === 'hall' ? 26 : 18, () => {
     for (;;) { const p = inChamber(); if (!sp.sky || Math.hypot(p[0] / hx, (p[1] - zc) / hz) > 1.4) return p }
@@ -1067,7 +1246,9 @@ export function cavern(c: Ctx, style: CaveStyle, paint: (x: number, z: number) =
   b.setSurf(SURF.fabric)
   const moss: RGB = [0.1, 0.17, 0.07]
   for (let k = 0; k < 12; k++) {
-    const ph = 0.5 + (Math.PI - 1) * b.rnd(), [x, y] = mouthAt(ph), z = wallZ(x, y) * 0.6 + 0.1, len = 0.6 + 2.2 * b.rnd() * Math.sin(ph)
+    // (from the mouth's line as the rock's shape moved it)
+    const ph = 0.5 + (Math.PI - 1) * b.rnd(), [mx, my] = mouthAt(ph), z = wallZ(mx, my) * 0.6 + 0.1, len = 0.6 + 2.2 * b.rnd() * Math.sin(ph)
+    const d = toMouth(mx, my), h = field(mx, my, z - 0.1) * lift(mx, my, z - 0.1), x = mx + d[0] * h, y = my + d[1] * h + 0.2
     panel(b, V(x - 0.12, y, z), V(x + 0.12, y, z), V(x + 0.07, y - len, z + 0.05), V(x - 0.07, y - len, z + 0.05), shade(moss, 1.1 + 0.4 * b.rnd()), shade(moss, 0.7))
   }
   b.setSurf(SURF.wood)

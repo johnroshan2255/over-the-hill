@@ -160,7 +160,14 @@ export class Terrain {
     const P = this.picked, ord = this.order
     ord.length = this.count
     for (let n = 0; n < this.count; n++) ord[n] = n
-    ord.sort((u, v) => P[u * 5 + 4] - P[v * 5 + 4])
+    // (an insertion sort — stable, as Array.sort is: the same order — on the ~60 patches, nothing allocated: the
+    //  comparator closure and TimSort's scratch were garbage every frame — 2026-11-07, docs/PERF.md "the garbage")
+    for (let n = 1; n < this.count; n++) {
+      const u = ord[n], key = P[u * 5 + 4]
+      let m = n - 1
+      while (m >= 0 && P[ord[m] * 5 + 4] > key) { ord[m + 1] = ord[m]; m-- }
+      ord[m + 1] = u
+    }
     const a = this.nodes.array as Float32Array
     for (let n = 0; n < this.count; n++) { const o = ord[n] * 5; a[n * 4] = P[o]; a[n * 4 + 1] = P[o + 1]; a[n * 4 + 2] = P[o + 2]; a[n * 4 + 3] = P[o + 3] }
     this.geo.instanceCount = this.count
@@ -530,8 +537,13 @@ Surf gcSurface(vec2 xz, float Lf) {
   Surf s;
   s.col = a.rgb * a.rgb; s.rock = a.a;
   s.rough = b.r; s.aoB = b.g; s.grassy = b.b; s.under = b.a;
-  s.relief = 0.0; s.shape = (c.r - 0.5) * 4.0; s.trail = c.g; s.bog = c.b; s.pudN = c.a * 1.2; // (the relief: live only — the walls)
-  s.rip = (d.rg - 0.5) * 2.0; s.dots = d.b; s.flower = d.a * 0.3; // (rip: the normal's bend — relief + ripples)
+  s.shape = (c.r - 0.5) * 4.0; s.trail = c.g; s.bog = c.b; s.pudN = c.a * 1.2;
+  s.dots = d.b; s.flower = d.a * 0.3;
+#ifdef OTH_DESERT
+  s.relief = 0.0; s.rip = (d.rg - 0.5) * 2.0; // (the ripples' bend; the relief's strength: the terrain, from the slope)
+#else
+  s.relief = d.r; s.rip = vec2(0.0); // (the relief's strength — drawn live: GroundCache's bake)
+#endif
   return s;
 }
 #endif
@@ -591,18 +603,19 @@ void main() {
   if (s.flower > 0.002) col = mix(col, flowerColor(xz, 0.5), s.flower);
   vec3 N = Ns;
   float cav = 1.0;
+#ifdef OTH_DESERT
   if (cached) {
-    // (the cache's normal map: the relief and the ripples, baked — its bend added to this pixel's smooth normal)
+    // (the cache's normal map: the ripples, baked — their bend added to this pixel's smooth normal)
     vec2 nxz = Ns.xz + s.rip;
     N = vec3(nxz.x, sqrt(max(1.0 - dot(nxz, nxz), 0.0)), nxz.y);
-  } else {
+    s.relief = s.rock * (1.0 - s.trail) * (1.0 - 0.75 * smoothstep(0.25, 0.55, steep)); // (surfaceAt's, desert)
+  } else N = normalize(N + vec3(s.rip.x, 0.0, s.rip.y));
+#endif
+  // THE ROCK'S RELIEF, LIVE on every rock pixel — cached ground or not, as before the ground cache (2026-11-06, the
+  // user: "all should have the same … the same as 2 days before"; GroundCache's bake says why)
 #if defined(OTH_ROCK_RELIEF) && !defined(TC_RELIEF)
-    N = rockRelief(vWorld, N, s.relief, dpx, dpy, cav);
+  N = rockRelief(vWorld, N, s.relief, dpx, dpy, cav);
 #endif
-#ifdef OTH_DESERT
-    N = normalize(N + vec3(s.rip.x, 0.0, s.rip.y));
-#endif
-  }
 
   float wrap = mix(0.62, 0.45, s.rock); // (rock's light softer at its edge too)
   float ao = s.aoB * cav;

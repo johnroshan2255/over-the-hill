@@ -21,6 +21,31 @@ notes below are carried over from DARK's ARCHITECTURE.md §10 (paths now relativ
 - **Frame**: PlayCanvas's own loop (`renderer.start`); the game runs in `app.on('update')`, `renderer.prepare(scene,
   camera)` syncs the scene (world matrices, culling, draw order — `renderOrder`, then material; transparent back to
   front) and PlayCanvas draws. Offscreen draws (the impostor bake) use `renderer.render(scene, camera)`.
+- **The CPU's frame (2026-11-07, docs/PERF.md "the CPU's frame")** — on the Windows PC the frame was the CPU's, not
+  the GPU's (GPU 0.8–1.0 ms of a 2–3 ms frame), so:
+  - **PlayCanvas's RELEASE build in dev too** (`vite.config.ts` aliases `playcanvas` to `build/playcanvas.mjs`; its
+    package's `development` export is the debug build — error scopes, validation: ~0.8 ms a frame). `PCDEBUG=1 npm run
+    dev` for the debug build and its warnings. (Its modular release folder was incomplete in `node_modules` here, so
+    `vite build` failed before.)
+  - **Uniforms bound once** (`material.ts` `Bound`): each `{ value }` object's conversion and Float32Array worked out
+    when first seen; a frame copies the numbers in and calls PlayCanvas only on a change. A uniform must be in the
+    `uniforms` object before the material's first draw (all are) — one added later isn't seen.
+  - **The scene walk** (`scene.ts`): a mesh's PlayCanvas material + its streams are looked up again only when the
+    material version or geometry layout changes; the state compared field by field (no key strings); a HIDDEN mesh
+    already made is only kept hidden (made ready the frame it shows); frame stamps, no sets a frame.
+  - **Instancing buffers sized to what's drawn** (grown by half, never shrunk) and copied from where they were last
+    copied to: the far impostors' 50 391 slots were re-sent whole (1.6 MB) at each tree update — 20–90 ms hitches.
+  - **A stream rewritten in place** (same count, the index unchanged — the car's ground shadow every frame) written
+    straight into the mesh's vertex buffer, its bounds recomputed as PlayCanvas does; the rest goes `Mesh.update`.
+  - **Our PlayCanvas material** (`material.ts` `OthMaterial`): its parameters walked from a kept key list — PlayCanvas's
+    for…in over ~50 materials was megamorphic (a key list built each call).
+  - **The hills asked again only for a new horizon** (`cullHidden`: a part's box is fixed — its answer kept per
+    `Horizon.builds`); the frustum tests indexed and their sums written in; the grass tiles' corner heights kept.
+  - **A data texture's array handed to PlayCanvas as its level** (same type and size: `texture.ts`) and the terrain
+    shadow's worker arrays become its textures' data — the bake's 6.3 MB not copied twice on the main thread.
+  - **The DOM written only on a change** (`driveUi`): setting the same text re-lays out the page: 0.7 ms a frame.
+  - **No garbage in the hot paths** where it was easy (the character's quaternions / matrices at offsets, Math.hypot
+    out of the horizon query): a scavenge every ~200 frames was a 2–4 ms frame.
 - **Stats**: PlayCanvas's MiniStats (FPS, frame / CPU / GPU time, draw calls, VRAM) — F3 or `?stats=1`.
 
 ## The world (`frontend/src/oth/`)
@@ -46,7 +71,8 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   `groundPaint` (`paint.ts`: palette + world-space paint noise from `noiseTex.ts`, generated at boot).
   **THE GROUND CACHE** (`GroundCache.ts`, 2026-11-06, docs/PERF.md — the paint was ~70 % of the frame): the ground's
   surface (colour, rock, roughness, AO, sheen share, grass shade, track, puddle inputs, shrub dots, flowers, and the
-  rock relief + desert ripples as a NORMAL MAP — `SURF_GLSL`, one code path for bake and live) baked into a CLIPMAP
+  desert's ripples as a NORMAL MAP; the valley's rock-relief STRENGTH — `SURF_GLSL`, one code path for bake and live)
+  baked into a CLIPMAP
   round the camera: 8 toroidal levels (ULTRA 3.1 cm … 4 m texels, 1024² each; phones 512², 6.25 cm … 8 m) + a FAR level
   (the whole 16 km, baked once), one 3 × 3 atlas per output (4 × RGBA8; ULTRA ~152 MB, phones ~38 MB). Each level is
   baked with its texel as the footprint (the live paint's own mip chain); re-baked only where a 16-texel step uncovers
@@ -127,6 +153,21 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   flat faces, soft edges), light blue-grey; outcrops on steep ground / the rock mask, lone boulders, river stones;
   never on a track or in water; deterministic; one instanced draw per shape; re-picked only when the camera crosses a
   128 m cell; their 2 m footprint texture keeps the grass out of them.
+- **No grass on stone** (the user, 2026-11-06: "where ever the place is if its rock texture then no grass must be
+  there"): the grass bake (`Grass.ts` GrassField) decides growth with the terrain's own paint (`groundPaint`) fed the
+  SAME inputs — the mask, the paint noise at mip 0, and the ground's normal at mip 0 (the terrain's `groundNormal`
+  bias 0.8 clamps to mip 0 up close). It read the normal 2.5 mips blurred: a track's narrow cut, painted grey scree,
+  read gentle and grew a meadow. The blades also stop a little short of scree (`screeNear`), where the far paint's
+  blurred noise moves a patch's edge.
+- **The rock's relief is LIVE on every rock pixel, cached ground or not** (2026-11-06, the user, a rock hill crumpled
+  in blocks and smooth between: "all should have the same … the same as 2 days before"). The ground cache had baked
+  the relief into its normal map, and only the steep walls (`GC_STEEP`) drew it live: the baked one came out far
+  weaker, so rock was crumpled where it was steep and smooth beside it, in blocks along the steep / cached line. Now
+  the bake stores only the relief's STRENGTH (o3.r — the valley has no ripples; the desert works it out from its rock
+  and the slope) and the terrain draws `rockRelief` live everywhere, as before the cache — the same relief as on
+  2026-11-04, nothing added to it. Cost: none measurable (PERF.md); the bake is lighter. (Two wrong turns first, both
+  removed: painting the creases into the colour, then a sunlight gain on the relief — the user: "it was not a
+  texture, it's a real 3D thing"; "this was not the one".)
 - **Matching Over the Hill** (`scripts/oth/compare.py`, Blender python): pairs of (reference crop, our render crop)
   scored 0–100 on colour (HSV histogram), tone, texture energy in 3 bands, stroke orientation; writes side-by-sides.
   2026-10-26: 25 rounds, 53.8 → 64.8 overall (golden slope 86, golden field 75, green 67, trail 59, mountain 58,
@@ -404,8 +445,9 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   closed meshes; leaf cards are double-sided by nature), SMALL-FEATURE (a rock under ~2 px tall is skipped), and
   OCCLUSION (`Horizon.ts`: 320 azimuth rays marched over the height grid from the camera each keep the highest slope
   met — the horizon; a tree / bush tile or rock cell whose top is under it in every azimuth it spans is behind a hill
-  and skipped; conservative — eye +1.2 m, ±1 ray, a margin; rebuilt each 4 m moved ≈ 0.4–0.9 ms; `?occlusion=0`
-  off). No shadow-map passes to cull (shadows are baked images). F3 shows the culled counts.
+  and skipped; conservative — eye +1.2 m, ±1 ray, a margin; ≈ 1.3 ms a build here, so (2026-11-07) the next one is
+  built an eighth a frame into a second buffer from 2.5 m moved and swapped in whole — at the old 4 m limit the rest
+  is done at once: never staler than before; `?occlusion=0` off). No shadow-map passes to cull (shadows are baked images). F3 shows the culled counts.
 - **Gap round (2026-10-27, the user: "what are we missing vs Over the Hill — add those"; "fix the bridge colliders";
   "match the style")**:
   - **Track junctions** (terrain.py): a track near a bed already carved takes THAT bed's height (`BedH`, eased over
@@ -745,15 +787,28 @@ after all of it"*.
 The user: caves must be real land with grass above, rock that looks like the terrain's (no piles of boulders, inside
 or out), different shapes, one way in, big ones with pines under a hole in the roof. `Locations.ts` THE CAVES:
 - every cave is a HILL of turf (`SURF.turf`: the field's own `grassPaint`, the land's dryness per vertex, grass tufts)
-  over one continuous rock shell in `SURF.cliff` (the terrain's slab paint, its beds, `rockFill`), smooth surfaces with
-  their own normals (`Builder.raw`, `smoothMesh`) — no blocks;
-- the Lantern Tunnel: the track through a hill, cliff faces over the arches, the road's cut walled in leaning rock;
+  over one continuous rock shell in `SURF.cliff` — no blocks;
+- THE ROCK IS FACETS, NOT PLASTER (round 2, the user: "now it's like a cement building … like Genshin Impact"):
+  `rockMesh` pushes every shell out and back by `rockField` (ridged 3D noise: chunks ~7 m, crumples ~2.5 m, and
+  wandering LEDGES ~2.7 m thick, ≈ ±1 m; faded in over the first 2 m up from the ground) and draws each triangle flat
+  with its own face normal, coloured darker in the hollows. Where two shells share an edge (arch ↔ vault, mouth ↔
+  passage, dome ↔ skylight shaft, face ↔ cut wall) both move it along one direction (`D`), the turf's edge not at all
+  (`K` = 0), and coincident vertices share a normal — no cracks. The hills' steep parts (≳ 45°) are rock the same way
+  (`hillMesh`: pushed gently — trees stand there — and faceted), the rest smooth turf. The paint (`rockPaint`,
+  Bridges FRAG): the terrain's slab grey in broad tones read on each facet's own plane (no smearing), streaks down
+  the walls, MOSS on what faces up; no painted beds (evenly spaced, they read as a building's courses); the terrain's
+  `rockRelief` on HIGH / ULTRA;
+- the Lantern Tunnel: the track through a hill, rock faces over uneven arches, the road's cut leaning back from the
+  face itself (no vertical edge);
+- a one-way cave's hill sweeps down to the land beside its mouth (`cavernLand`: its front's depth grows with |x|), so
+  the rock face rises only round and over the mouth — not one trapezoid across the hill;
 - three one-way caves (`grotto`, `Landmark.style`): `sky` (a big dome, a shaft through the hill to a hole in the turf,
   a lit column — `caveK`'s B.w — young pines and bushes growing in it), `hall` (a long gallery, crystals, the survey's
   camp), `den` (small and low, a nest); each mouth a cliff face leaning back, its line, the walls' bulge and the sizes
   varied by the seed (`cavernLand`, shared with `Sites.dressHills`, which lifts the trees and bushes onto the hills);
 - the dark: the three caves nearest the camera each frame (`caveUniforms`).
 Cost (`scripts/harness/cavecost.mjs`): ≤ 0.14 ms at a cave ULTRA (worst 1.34 ms ≈ 745 fps, the forest's), ≤ 0.18 LOW.
+The faceted rock (round 2) measured within the noise of that (docs/PERF.md, 2026-11-06 round 2).
 
 ## Worlds, the desert (2026-11-02 — the to-do list: docs/NEXT.md)
 

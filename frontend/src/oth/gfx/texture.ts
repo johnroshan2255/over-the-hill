@@ -108,9 +108,12 @@ export class Texture {
       this.uploaded = this.version
       if (isData) {
         if (img.data) {
-          const dst = t.lock() as unknown as { set(a: ArrayLike<number>): void; length: number }
-          const src = img.data as unknown as ArrayLike<number>
-          if (src.length === dst.length) dst.set(src)
+          const dst = t.lock() as unknown as { set(a: ArrayLike<number>): void; length: number; constructor: unknown }
+          const src = img.data as unknown as ArrayLike<number> & { constructor: unknown }
+          // (the same type and size: handed to PlayCanvas as its level — not copied into its own first; 2026-11-07, docs/
+          //  PERF.md "the hitches": the terrain shadow's 6 MB went through four copies at every bake)
+          if (src.length === dst.length && src.constructor === dst.constructor) (t as unknown as { _levels: unknown[] })._levels[0] = src
+          else if (src.length === dst.length) dst.set(src)
           else dst.set(new (dst.constructor as new (b: ArrayBuffer, o: number, l: number) => ArrayLike<number>)((img.data as ArrayBufferView).buffer as ArrayBuffer, (img.data as ArrayBufferView).byteOffset, dst.length))
           t.unlock()
         }

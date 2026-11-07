@@ -1,6 +1,7 @@
 import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import { PAINT_GLSL } from './paint'
+import { ROCK_RELIEF_GLSL } from './rockRelief'
 import type { Horizon } from './Horizon'
 import { type Bridge, deckY, type MapData } from './MapData'
 import type { Tier } from './quality'
@@ -41,7 +42,7 @@ export function woodMaterial(atmos: Atmosphere, shadow: TerrainShadow, tier: Tie
   return new GFX.ShaderMaterial({
     glslVersion: GFX.GLSL3,
     uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid } },
-    defines: tier.spec ? { OTH_SPEC: '' } : {},
+    defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}) },
     vertexShader: VERT,
     fragmentShader: FRAG,
   })
@@ -294,7 +295,8 @@ export class Builder {
 }
 
 /** A part culled whole: by the view (three, its bounding sphere) and behind the hills (`cullHidden`, its box). */
-export interface CullPart { obj: GFX.Object3D; box: GFX.Box3 }
+/** (hid / hidAt: the hills' answer for its box, and the horizon it was asked of — cullHidden) */
+export interface CullPart { obj: GFX.Object3D; box: GFX.Box3; hid?: boolean; hidAt?: number }
 
 /** One mesh per vertex range of b (a bridge, a landmark — 2026-11-02: one merged mesh over the whole map was in view
  *  from everywhere, ~0.1–0.2 ms a frame with none of them on screen), added to group. */
@@ -307,9 +309,15 @@ export function splitMeshes(b: Builder, ranges: [number, number][], mat: GFX.Mat
   })
 }
 
-/** Hide the parts the hills hide (once a frame). */
+/** Hide the parts the hills hide (once a frame). A part's box doesn't move and the answer depends only on the horizon in
+ *  use — so it's asked again only when a new horizon is swapped in (Horizon.builds; 2026-11-07, docs/PERF.md). */
 export function cullHidden(parts: CullPart[], horizon: Horizon | null): void {
-  for (const p of parts) p.obj.visible = !horizon?.hiddenBox(p.box)
+  const at = horizon && horizon.enabled ? horizon.builds : -1
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i]
+    if (p.hidAt !== at) { p.hidAt = at; p.hid = !!horizon?.hiddenBox(p.box) }
+    p.obj.visible = !p.hid
+  }
 }
 
 const VERT = /* glsl */ `
@@ -333,12 +341,38 @@ void main() {
 }
 `
 
+// THE CAVES' ROCK (SURF.cliff, and a cave's hill where it's bare and steep — 2026-11-06, round 2, the user: "now it's
+// like a cement building … the outside and top where we used the normal terrain was really good"; "like in Genshin
+// Impact"): the terrain's own rock (paint.ts: the valley's slab grey in broad tones, darker hollows and faint cracks, a
+// little lichen; Terrain's soft streaks down the walls) and MOSS on what faces up — the ledges the rock's shape makes
+// (Locations.rockField). No beds drawn on it: evenly spaced, they read as a building's courses. A facet (`facet` 1:
+// flat, its own normal Ng) reads the paint on its own plane — across a wall, from above on a ledge — so nothing
+// smears; a smooth hill (0) reads it from above, as the terrain's rock does.
+const ROCK_PAINT = /* glsl */ `
+const float ROCK_VALUE = 1.55;
+vec3 rockPaint(vec3 p, vec3 Ng, float facet) {
+  float wallK = smoothstep(0.4, 0.7, 1.0 - abs(Ng.y)) * facet;
+  float across = abs(Ng.x) > abs(Ng.z) ? p.z : p.x;
+  vec2 q = wallK > 0.5 ? vec2(across, p.y) : p.xz;
+  vec4 f = texture(uNoise, q * (1.0 / 13.0) + vec2(0.71, 0.13));
+  vec4 gr = texture(uNoise, q * (1.0 / 3.7) + vec2(0.23, 0.91));
+  vec3 rk = mix(SLAB_DEEP, SLAB, 0.78 + (f.g - 0.5) * 0.35 + (gr.r - 0.5) * 0.14 - (1.0 - abs(Ng.y)) * 0.2);
+  rk = mix(rk, rk * vec3(0.92, 1.0, 0.86), smoothstep(0.6, 0.78, f.b) * 0.5);
+  rk *= (1.0 - 0.12 * smoothstep(0.66, 0.8, gr.a)) * (0.88 + 0.2 * f.a);
+  if (wallK > 0.01) rk *= 1.0 - 0.16 * wallK * smoothstep(0.5, 0.82, texture(uNoise, vec2(across / 9.0, p.y / 70.0 + 0.6)).g);
+  float moss = smoothstep(0.5, 0.75, Ng.y + (gr.g - 0.5) * 0.35);
+  return mix(rk, mix(GREEN, GREEN_DEEP, f.r) * (1.1 / ROCK_VALUE), moss * 0.85);
+}
+`
+
 const FRAG = /* glsl */ `
 ${FRAG_OUT}
 ${ATMOS_GLSL}
+${ROCK_RELIEF_GLSL}
 uniform vec4 uFarGrid;
 ${SHADOW_GLSL}
 ${PAINT_GLSL}
+${ROCK_PAINT}
 in vec3 vWorld;
 in vec3 vN;
 in vec3 vCol;
@@ -346,10 +380,13 @@ in float vGlow;
 void main() {
   vec3 N = normalize(vN);
   vec3 V = normalize(uCamPos - vWorld);
+#ifdef OTH_ROCK_RELIEF
+  vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld); // (the rock's relief: taken here, outside any branch)
+#endif
   // THE SURFACE (Builder.setSurf, packed with the glow: glow + 2 × surface) — 0 wood, 1 stone, 2 metal, 3 fabric, 4 plain
   float surf = floor(vGlow * 0.5 + 0.01), glow = vGlow - surf * 2.0;
   vec3 albedo = vCol;
-  float rough = 0.85, wrap = 0.2, fillK = 0.0;
+  float rough = 0.85, wrap = 0.2, fillK = 0.0, ao = 1.0;
   if (surf < 0.5) {
     // the grain: soft streaks along the wood (the paint noise, stretched)
     float grain = texture(uNoise, vec2(dot(vWorld.xz, vec2(0.7, 0.7)) * 0.9, vWorld.y * 0.6 + dot(vWorld.xz, vec2(-0.7, 0.7)) * 0.08)).b;
@@ -375,39 +412,36 @@ void main() {
     albedo = mix(albedo, albedo * 1.25 + 0.03, smoothstep(0.5, 0.95, N.y) * 0.25);
     rough = 0.95; wrap = 0.5;
   } else if (surf > 7.5) {
-    // CLIFF (a cave's walls, the hill's faces — 2026-11-06, the user: "inside it looks like lots of rocks: the rock
-    // texture the terrain uses"): the valley's slab paint (paint.ts: SLAB, its tones, streaks down the faces, darker
-    // hollows, faint cracks) read on the wall (its plane: across + up), and the cliffs' BEDS — bands by height, uneven
-    // thickness (Terrain's strata); vCol a tint
-    // (on a wall: across it and up; on a roof or a ledge — no 'across' there — plain from above: no smearing)
-    vec2 q = mix(vWorld.xz, vec2(dot(vWorld.xz, normalize(vec2(-N.z, N.x) + 1e-4)), vWorld.y) + vWorld.xz * 0.15, smoothstep(0.35, 0.75, 1.0 - abs(N.y)));
-    Paint p = paintNoise(q);
-    float steep = 1.0 - abs(N.y);
-    vec3 slab = mix(SLAB_DEEP, SLAB, 0.78 + (p.fine.g - 0.5) * 0.25 + (p.grain.r - 0.5) * 0.12 - steep * 0.25);
-    slab = mix(slab, slab * vec3(0.92, 1.0, 0.86), smoothstep(0.62, 0.8, p.mid.b) * 0.5);
-    slab *= (1.0 - 0.14 * smoothstep(0.66, 0.8, p.grain.a)) * (0.86 + 0.24 * p.fine.a);
-    float yb = vWorld.y + (p.fine.r - 0.5) * 1.6;
-    float bed = fract(yb / 1.35), band = texture(uNoise, vec2(floor(yb / 1.35) * 0.137, 0.31)).g;
-    slab *= 0.82 + 0.3 * band;                                        // each bed its own tone
-    slab *= 1.0 - 0.32 * smoothstep(0.86, 0.97, bed) * steep;         // the dark seam under each bed's lip
-    slab *= 1.0 + 0.12 * (1.0 - smoothstep(0.0, 0.1, bed)) * steep;   // its lit top edge
-    albedo = slab * vCol * 1.8;
-    rough = 0.92; wrap = 0.45; fillK = 1.0;
+    // CLIFF — a cave's rock (Locations.rockMesh: flat facets, chunks and ledges; vCol its tint, darker in the hollows)
+    albedo = rockPaint(vWorld, N, 1.0) * vCol * ROCK_VALUE;
+#ifdef OTH_ROCK_RELIEF
+    float cav;
+    N = rockRelief(vWorld, N, 1.0, dpx, dpy, cav); // (the terrain's own crumpled creases: HIGH / ULTRA)
+    ao = cav; // (their shade, as the terrain's)
+#endif
+    rough = 0.62; wrap = 0.45; fillK = 1.0;
   } else if (surf > 6.5) {
     // TURF (the tunnel's hill, its grass): the field's own paint (grassPaint — the terrain's and the grass's), from the
     // vertex: x the dryness (the mask's, where it stands), y the forest floor, z bare earth / rock (its steep faces)
     Paint p = paintNoise(vWorld.xz);
     vec3 gcol = grassPaint(vCol.x, p) * (0.9 + 0.2 * p.fine.g + (p.mid.r - 0.5) * 0.12 + (p.grain.r - 0.5) * 0.1);
     gcol = mix(gcol, FOREST * (0.8 + 0.4 * p.grain.g), vCol.y * 0.8);
-    float b1 = texture(uNoise, vWorld.xz * 0.31 + vWorld.y * 0.17).g;
-    vec3 rk = mix(SLAB_DEEP, SLAB, 0.45 + 0.55 * b1) * (0.85 + 0.3 * p.grain.b); // (the cliffs' slab grey)
+    // (bare where it's steep: the caves' own rock — one rock, the face's and the hill's the same)
     fillK = smoothstep(0.45, 0.55, vCol.z + (p.fine.g - 0.5) * 0.5);
-    albedo = mix(gcol, rk, fillK);
+    albedo = gcol;
+    if (fillK > 0.0) {
+      albedo = mix(gcol, rockPaint(vWorld, N, 0.0) * ROCK_VALUE, fillK);
+#ifdef OTH_ROCK_RELIEF
+      float cav;
+      N = rockRelief(vWorld, N, fillK, dpx, dpy, cav);
+      ao = cav; // (fades with fillK)
+#endif
+    }
     albedo *= 1.0 + 0.45 * clamp(-vCol.z, 0.0, 1.0); // (the grass tufts' blades: lighter to their tips)
-    rough = 0.95; wrap = 0.35;
+    rough = mix(0.95, 0.62, fillK); wrap = mix(0.35, 0.45, fillK);
   }
   float sun = sunVisibility(vWorld.xz), ck = caveK(vWorld);
-  vec3 c = shade(albedo, N, V, rough, 0.03, 1.0, sun * (1.0 - ck), wrap);
+  vec3 c = shade(albedo, N, V, rough, 0.03, ao, sun * (1.0 - ck), wrap);
   c += rockFill(albedo, N) * fillK * (1.0 - 0.6 * ck); // (the rock's sky fill: as the terrain's rock reads)
   c *= 1.0 - 0.75 * ck; // (in a cave: Sites.ts)
   c += albedo * uAmbSky * 0.35 * ck * fillK; // (a cave's walls: dim, never pitch black)

@@ -56,11 +56,12 @@ export class TerrainShadow {
       const m = e.data
       this.busy = false
       if (m.id !== this.id) return
-      ;(this.box.image.data as Uint8Array).set(m.box)
-      ;(this.world.image.data as Uint8Array).set(m.world)
+      // (the worker's arrays — transferred, its own no more — become the textures' data: not copied in, 2026-11-07)
+      this.box.image.data = m.box
+      this.world.image.data = m.world
       this.box.needsUpdate = this.world.needsUpdate = true
       if (m.trees) {
-        ;(this.treeTex.image.data as Uint8Array).set(m.trees)
+        this.treeTex.image.data = m.trees
         this.treeTex.needsUpdate = true
         this.uniforms.uTreeShOn.value = 1
       }

@@ -2,10 +2,12 @@
 // env ONLY (a name part), HOUR. Needs `npm run dev` on 5200.
 import puppeteer from 'puppeteer-core'
 import fs from 'node:fs'
-const dir = process.argv[2] || '/Users/johnroshan/Downloads/Projects/overhill/screenshots'
+const dir = process.argv[2] || 'screenshots'
 const only = process.env.ONLY
 fs.mkdirSync(dir, { recursive: true })
-const b = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--mute-audio', '--window-size=1600,900'], defaultViewport: { width: 1600, height: 900 } })
+const CHROME = process.env.CHROME || (process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+const ANGLE = process.platform === 'win32' ? 'd3d11' : process.platform === 'darwin' ? 'metal' : 'gl'
+const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: [`--use-angle=${ANGLE}`,'--ignore-gpu-blocklist', '--mute-audio', '--window-size=1600,900'], defaultViewport: { width: 1600, height: 900 } })
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()) })
 await p.goto(`http://localhost:5200/?world=valley&tier=ultra&hour=${process.env.HOUR || 14}&drive=0&dpr=fixed&time=0&weather=clear&sound=0&save=0`, { waitUntil: 'load' })

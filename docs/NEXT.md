@@ -5,7 +5,7 @@ The previous hand-off (the desert and the crossing) is in git: `git show 3a28864
 
 ## Where it stands
 
-**Nothing is committed.** The working tree mixes two sessions' work:
+**Committed in `28e074b`** (both sessions' work together); the caves' round 2 (section 1) is not committed yet. That commit holds:
 - **This one (places and caves):**
   - New files: `Kit.ts`, `Locations.ts`, `Sites.ts`.
   - Changes in `Landmarks.ts`, `Bridges.ts`, `Atmosphere.ts`, `Terrain.ts`, `Rocks.ts`, `Bushes.ts`, `Places.ts`, `Props.ts`, `World.ts`, `main.ts`, `MapData.ts`, `Chart.ts`, `paint.ts` and `index.html`.
@@ -30,7 +30,7 @@ What's in, working:
 
 Cost, measured: ULTRA 1080p +0.02 to +0.14 ms at a cave; the worst view is 1.34 ms (745 fps, deep forest). LOW adds at most 0.18 ms. Elsewhere ULTRA averages 0.787 ms (about 1270 fps). The details are in `docs/PERF.md`.
 
-## 1. THE FIX: the caves' rock reads as cement, not as the terrain's rock (the user, 2026-11-06)
+## 1. DONE: the caves' rock read as cement, not as the terrain's rock (the user, 2026-11-06)
 
 The user's words: *"i asked u to change the rock part to the texture the outside and top where we used the normal terrain was really good, now it's like a cement building."*
 
@@ -53,33 +53,89 @@ The user's words: *"i asked u to change the rock part to the texture the outside
   2. `ROCK_RELIEF_GLSL` (`rockRelief.ts`): per-pixel crumpled creases on HIGH/ULTRA, also used by the boulders (`Rocks.ts`);
   3. its paint varies with steepness and comes in broad tones (`paint.ts`: slab, streaks, lichen, `rockFill`).
 
-**The fix, in order. Check each step visually against a terrain cliff in the same frame:**
-1. **Outside: no separate cliff faces where possible.** Let the hill's turf mesh itself come down over the front and the cut. The turf already paints rock where it's steep (vertex z = rock share, `fillK`). That surface is exactly what the user liked on top. Concretely:
-   - In `cavern()`, extend the hill grid forward past the mouth and use a steep falloff instead of the vertical face.
-   - Cut the mouth's arch out of it. The jagged edge can be hidden under a thin cliff "lip" (a ring, a couple of metres deep) or snapped to the arch, as the skylight's hole does: grid vertices inside it are pushed out to its rim.
-   - Do the same for the tunnel's cut walls: make the cut a steep turf slope rather than a wall.
-2. **Inside, and any rock that remains: FACETS, not plaster.**
-   - Give `smoothMesh` a `flat` option: each triangle gets its own vertices and its face normal.
-   - Rebuild the cliff shells at about 1.5–2 m triangles.
-   - Displace them with ridged fractal noise (2–3 octaves, about 0.6–1.5 m) instead of the slow `wobble` bulges.
-   - It should look like the terrain's low-poly mountains.
-3. **The terrain's relief on the cliff surface.**
-   - Include `ROCK_RELIEF_GLSL` in the Bridges FRAG, under the same `OTH_ROCK_RELIEF` define the tier sets (see how `Rocks.ts` includes and calls it).
-   - Apply it to `SURF.cliff` only.
-   - Measure it with `cavecost.mjs`, since it adds a few texture fetches per pixel on the rock.
-4. **Paint.** Drop the beds (`bed` / `band` in the cliff branch), or make them faint and broken. Then match the slab colour and value to the terrain's rock side by side, both in the sun and in shade (the `rockFill` is already there).
-5. Re-shoot with `node scripts/harness/caveshot.mjs <dir>` (`ONLY=Sky` for one cave) and show the user before going further.
+**DONE (round 2, 2026-11-06; the user then asked for it "like in Genshin Impact").** Re-shoot with `caveshot.mjs`.
+
+Fix 1.1 as planned (turf down over the faces) was not done. Chunky rock FACES with moss on their ledges, and the hill
+swept down beside them, read as Genshin's cave mouths. They also keep the meshes that the colliders and `dressHills`
+already know. What was done (ARCHITECTURE.md "The caves, as land" has the how):
+- **Facets, not plaster.** Every cliff shell goes through `rockMesh`:
+  - it is pushed out and back by `rockField` (ridged 3D noise: chunks ~7 m, crumples ~2.5 m, wandering ledges ~2.7 m;
+    about ±1 m);
+  - each triangle is drawn flat with its own normal, darker in the hollows;
+  - shared edges move as one (`D`), the turf's edge stays put (`K` = 0), and coincident vertices share a normal;
+  - sizes: dome facets ~1.6 m (`T` from its size), the cavern face 8 rows, the tunnel's vault 24 round.
+- **The hills' steep parts** are rock the same way (`hillMesh`: gently pushed, faceted). The rest is smooth turf.
+- **Paint** (`rockPaint`, Bridges FRAG):
+  - the beds are gone;
+  - the terrain's slab grey in broad tones, read on each facet's own plane (the old projection smeared);
+  - streaks, and MOSS on what faces up;
+  - `ROCK_VALUE` 1.55 sets its value against the terrain's rock. Checked side by side: the tunnel by the grey
+    boulders, the grotto under the grey hills.
+- **The terrain's relief** (`rockRelief`) on the cliff and on the turf's rock, HIGH / ULTRA.
+- **Shapes:**
+  - Sky Hollow's trapezoid is gone. The hill sweeps down beside the mouth (`cavernLand`: the front's depth `fr` grows
+    with |x|; `M` extra rows in front of the hill's grid draw the slopes).
+  - The tunnel's cut leans back from the face itself (no vertical edges), and its arches are uneven at the mouths too.
+  - The dome's ring now closes (its wobble wrapped). There had been a crack of daylight at th = 0 since the first
+    version.
+- **Cost:** within noise (PERF.md).
+- **Harness:** `caveshot.mjs` and `cavecost.mjs` now find Chrome on Windows too.
+- **Also fixed: grass on rock** (the user's screenshot of a track's cut, grey with a meadow on it). The grass bake
+  read the ground's normal blurred (mip 2.5), so narrow steep cuts the terrain paints as scree grew grass. It now
+  reads mip 0, as the terrain does up close, and stops a little short of scree (ARCHITECTURE.md "No grass on stone").
+- **Also fixed: patchy rock** (the user's screenshots: a rock hill crumpled in blocks, smooth between). The ground
+  cache baked the relief weaker than the live steep walls drew it; now the relief is live on all rock, exactly as on
+  2026-11-04, and the cache keeps everything else (ARCHITECTURE.md "The rock's relief is LIVE"). No measurable cost.
+  The user rejected painted creases and a sunlight gain: keep the relief as it was. **To do: confirm on the Mac
+  mini** (the user's 500+ fps at ULTRA): \`node scripts/harness/abq.mjs "" rockhill,spawn,forest,cliff 4\` before and
+  after this change.
+
+**Still open on the look** (ask the user first; they've not seen round 2):
+- Sky Hollow's hill top is flat and its sides steep, so from above it reads as a mesa. Rounder shoulders would help.
+- Genshin-style touches not tried yet:
+  - grass spilling over the face's brow (longer tufts, `tuftMesh` lean);
+  - the crystals tinting the walls near them;
+  - a warmer lit / cooler shaded rock.
+- Sky Hollow's floor climbs steeply from the mouth to the chamber (the passage keeps the mouth's height, `y0`). So
+  from the chamber, looking out, you face the dome wall above the passage. `caveshot`'s `e_inside_out` shows only rock
+  there (it did before round 2 too). This is part of the drive-in check below.
+
+## 1b. The frame rate round (2026-11-07) — docs/PERF.md "2026-11-07"
+
+The user: travel the whole valley, fix every sudden fps drop, 500+ fps at ULTRA on the Windows laptop (Ryzen 7 +
+RTX 4050), 700+ on the Mac mini, 100+ on a Chromebook / small phone — never at the cost of the look.
+
+- **Done (all CPU-side, pixel-identical — `pixdiff.mjs`):** PlayCanvas's release build in dev (`vite.config.ts`;
+  `PCDEBUG=1` for the debug one — this also makes `vite build` work again); the gfx layer's frame (uniforms bound once,
+  no key strings / sets / attribute lists a frame, hidden meshes not re-prepared, `OthMaterial`); the driving HUD
+  written only on change; instancing buffers sized to what's drawn (the 20–96 ms hitches); the horizon built a slice a
+  frame; the garbage cut (158 → 89 KB a frame).
+- **Tools:** `tour.mjs sweep` (every track every 150 m + every place: the GPU cost spot by spot) and `tour.mjs drive`
+  (the camera down every track at 25 m/s: each frame, each system — the hitches and where); `pixdiff.mjs` (the same
+  picture? two servers, with the noise floor); `playchrome.mjs` (a VISIBLE Chrome, uncapped, the car driven with the
+  keys, the overlay); `abq.mjs` variants take `port=N` (a second dev server: e.g. a copy of the old code).
+- **Where it stands (this laptop, ULTRA 1080p uncapped):** spawn driving 373 → 687 fps, forest 509 → 782, lake 543 →
+  801, cliff 560 → 790, rockhill 521 → 913; the whole valley driven at 25 m/s: mean 794 fps, 0.22 % hitches; a visible
+  Chrome with the car driven: 614 fps (PERF.md has the tables). The terrain shadow's bake (every ~12 s of play): 5.2 →
+  3.0 ms.
+- **Open — the collection stall:** every 30–50 s, uncapped, a MAJOR garbage collection gives 1–2 s of 20–60 ms frames
+  on the dev server; the production build (`npm run build` then `npm run preview`) only ~0.5 s of 10–20 ms. What's
+  promoted is PlayCanvas's per-frame frame graph and WebGPU objects (~2.4 KB a frame) — the next lever, inside
+  PlayCanvas. (Ruled out: physics, the JS heap's size, the uniform staging.) Play / judge fps on the production build.
+- **To do:** re-run on the Mac mini: `node scripts/harness/abq.mjs "" spawn,forest,lake,cliff,rockhill 4` and
+  `node scripts/harness/tour.mjs drive` — the M4's CPU is faster, so expect more than this PC's gains. A phone /
+  Chromebook needs measuring on the device (`phone.mjs`); a 60 Hz screen caps Chrome at 60 fps, so "100+" there needs
+  a 90 / 120 Hz screen. The garbage left (~89 KB a frame: Rapier, PlayCanvas's own, the terrain select) is the next
+  hitch source to cut.
 
 ## 2. Other fixes, smaller
 
-- **Sky Hollow's front face** is one big flat trapezoid. Taper it into the hill at the sides and break it with grass ledges. This mostly goes away with fix 1.1.
 - **Glare through rock.** The sun's glow sprite shows through cave roofs (a star on the vault in the tunnel and the hall). `Glow.ts` draws it without testing occlusion. Hide it while the camera is in a cave: `caveK` at the camera, done on the CPU in `main.ts`.
 - **Drive into every cave with the car and the bike.** The colliders are boxes: the walls, the hill's bulk by rows, and a lid over each roof. Check that nothing snags at the mouths and that the floors are drivable (the skylight's mound especially). `scripts/harness/rockdrive.mjs` / `trackdrive.mjs` are a start.
 - **Phone.** Measure the caves with `PHONE=1` (`absites.mjs` has the phone viewport; `cavecost.mjs` doesn't yet).
 - **Notes.** Sky Hollow and Bear's Den have none (`NOTES` in `Sites.ts`, keyed by name). The Ranger Station's note mentions "the grotto"; keep the story consistent.
 - **Crate ids.** After the data changes, re-check that every crate keeps its id with `?sites=0` vs `1` (it held at 72 before).
-- **Tunnel cut and portal faces.** Covered by fix 1; they are the smoothest, most "cement" parts now.
-- **Commit.** Ask the user: separate commits for the other session's water/track work and for this (places + caves).
+- **Commit** the caves' round 2 when the user has seen it.
 
 ## Where things are
 

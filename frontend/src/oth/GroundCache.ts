@@ -26,7 +26,7 @@ export const GC_LEVELS = 8
  * atlas per output (3 × 3 tiles of N + 4 texels: a 2-texel gutter round each holds the wrap's neighbours, so the
  * hardware's bilinear filter never reads across the wrap or into the next tile). Four RGBA8 outputs (Terrain.ts
  * gcSurface): colour (√, for the dark greens' steps) + rock; roughness, AO, the sheen's share, the grass's shade;
- * the ground's small shapes (hollows, crests), track, bog, the puddles' noise; the normal's bend (the rock relief + the desert's ripples, a NORMAL MAP),
+ * the ground's small shapes (hollows, crests), track, bog, the puddles' noise; the desert's ripples (a NORMAL MAP) / the valley's rock-relief strength (the relief itself is drawn live),
  * the shrub dots, the flowers.
  *
  * The bake's texture reads take their mip from the bake's own texel spacing (implicit derivatives): the window's start
@@ -65,8 +65,8 @@ export class GroundCache {
       uGC3: { value: this.rt.textures[3] },
       uGC: { value: new GFX.Vector4(n, this.t0, 1 / W, this.tFar) },
     }
-    // GC_BIAS: a level's texel ≈ the pixel (foot ≈ √2 × a pixel's side); GC_STEEP: steeper than ~57°, the rock relief
-    // stays live (the paint still comes from the cache)
+    // GC_BIAS: a level's texel ≈ the pixel (foot ≈ √2 × a pixel's side); GC_STEEP: steeper than ~57°, the paint is
+    // live too (a top-down texel stretches down a wall). The rock's relief is live everywhere (the bake's note)
     // (?gcsteep= / ?gcbias= / ?gcblend=0: cost and look tests)
     const q = gameParams(), num = (k: string, d: number) => { const v = Number(q.get(k)); return q.get(k) !== null && Number.isFinite(v) ? v : d }
     this.defines = { GC_ON: '', GC_LEVELS: `${GC_LEVELS}.0`, GC_BIAS: num('gcbias', 0.6).toFixed(3), GC_STEEP: num('gcsteep', 0.45).toFixed(3), ...(q.get('gcblend') === '0' ? { GC_NOBLEND: '' } : {}) }
@@ -151,17 +151,19 @@ void main() {
   // THE RELIEF AND THE RIPPLES as a NORMAL MAP: the light-only detail bent into the normal here, at this level's texel
   // (the relief fades as its creases shrink under a texel, as under a pixel), stored as the change to the smooth
   // normal's x / z — the terrain adds it to its own smooth normal (the walls, read live, keep the live relief)
-  vec3 N = Ns;
-  float cav = 1.0;
-#ifdef OTH_ROCK_RELIEF
-  float ny = max(Ns.y, 0.2);
-  // (not on the steep walls: the terrain keeps their relief live)
-  if (1.0 - Ns.y < GC_STEEP) N = rockRelief(vec3(xz.x, h, xz.y), N, s.relief, vec3(t, -Ns.x / ny * t, 0.0), vec3(0.0, -Ns.z / ny * t, t), cav);
-#endif
-  N = normalize(N + vec3(s.rip.x, 0.0, s.rip.y));
+  // THE ROCK'S RELIEF IS NOT BAKED (2026-11-06 — the user: a rock hill crumpled in blocks, smooth between them: "all
+  // should have the same … the same as 2 days before"). Baked at the cache's texels it came out far weaker than the
+  // live relief on the steep walls beside it, cut along the steep / cached line. The terrain draws it LIVE on every
+  // rock pixel, as before the cache; the cache keeps only its strength (the valley: o3.r — the valley has no ripples;
+  // the desert works its own out from its rock and the slope) and the desert's ripples as a normal map
+  vec3 N = normalize(Ns + vec3(s.rip.x, 0.0, s.rip.y));
   o0 = vec4(sqrt(max(s.col, vec3(0.0))), s.rock);
-  o1 = vec4(s.rough, s.aoB * cav, s.grassy, s.under);
+  o1 = vec4(s.rough, s.aoB, s.grassy, s.under);
   o2 = vec4(clamp(groundRelief(xz) * 0.25 + 0.5, 0.0, 1.0), s.trail, s.bog, s.pudN / 1.2); // (the small shapes, ±2 m)
+#ifdef OTH_DESERT
   o3 = vec4(clamp((N.xz - Ns.xz) * 0.5 + 0.5, 0.0, 1.0), s.dots, s.flower / 0.3);
+#else
+  o3 = vec4(s.relief, 0.0, s.dots, s.flower / 0.3);
+#endif
 }
 `

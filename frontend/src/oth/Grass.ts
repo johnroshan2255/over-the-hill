@@ -20,7 +20,8 @@ import { SHADOW_GLSL } from './TerrainShadow'
  * blades widen by the inverse square root of that share — the field thins with distance at the SAME coverage (no
  * ring edge), and LOW (fewer tufts) keeps the look: fewer, wider tufts, never a thinner field.
  */
-interface Ring { rin: number; rout: number; tile: number; density: number; blades: number; mesh: GFX.Mesh; geo: GFX.InstancedBufferGeometry; tiles: GFX.InstancedBufferAttribute; max: number }
+/** (hW / hi / hj / hv: the tile corners' heights kept — a W × W toroidal table on the corner grid, by (i, j)) */
+interface Ring { rin: number; rout: number; tile: number; density: number; blades: number; mesh: GFX.Mesh; geo: GFX.InstancedBufferGeometry; tiles: GFX.InstancedBufferAttribute; max: number; hW: number; hi: Int32Array; hj: Int32Array; hv: Float64Array }
 
 /** HIGH's near tuft density: the reference the lower tiers widen their blades against. */
 const REF_DENSITY = 22
@@ -104,12 +105,24 @@ export class Grass {
       mesh.matrixAutoUpdate = false
       mesh.renderOrder = -30 + r // nearest ring FIRST (it hides the most; 1 − r had drawn the far ring first), all before the terrain
       this.group.add(mesh)
-      this.rings.push({ rin: bounds[r], rout: bounds[r + 1], tile: tiles[r], density, blades: blades[r], mesh, geo, tiles: attr, max })
+      const hW = Math.ceil((2 * bounds[r + 1]) / tiles[r]) + 3
+      this.rings.push({ rin: bounds[r], rout: bounds[r + 1], tile: tiles[r], density, blades: blades[r], mesh, geo, tiles: attr, max, hW, hi: new Int32Array(hW * hW).fill(0x7fffffff), hj: new Int32Array(hW * hW), hv: new Float64Array(hW * hW) })
     }
   }
 
   /** (the world goes: its field's target with it) */
   dispose(): void { this.field.dispose() }
+
+  /** The ground's height at corner (i, j) of a ring's tile grid (x = i × tile, z = j × tile) — asked of the map once
+   *  and kept while the corner stays in reach (2026-11-07, docs/PERF.md "the garbage": each tile's four corners were
+   *  asked of the map every frame, shared corners four times — the same heights, ~10 KB of boxed numbers a frame). */
+  private corner(ring: Ring, i: number, j: number): number {
+    const W = ring.hW, k = (((i % W) + W) % W) * W + (((j % W) + W) % W)
+    if (ring.hi[k] === i && ring.hj[k] === j) return ring.hv[k]
+    const h = this.map.height(i * ring.tile, j * ring.tile)
+    ring.hi[k] = i; ring.hj[k] = j; ring.hv[k] = h
+    return h
+  }
 
   update(camera: GFX.PerspectiveCamera): void {
     this.field.update(camera.position.x, camera.position.z)
@@ -130,7 +143,7 @@ export class Grass {
           if (nx * nx + nz * nz > ring.rout * ring.rout) continue
           const fx = Math.max(Math.abs(x - cx), Math.abs(x + T - cx)), fz = Math.max(Math.abs(z - cz), Math.abs(z + T - cz))
           if (fx * fx + fz * fz < ring.rin * ring.rin) continue
-          const h0 = this.map.height(x, z), h1 = this.map.height(x + T, z + T), h2 = this.map.height(x + T, z), h3 = this.map.height(x, z + T)
+          const h0 = this.corner(ring, i, j), h1 = this.corner(ring, i + 1, j + 1), h2 = this.corner(ring, i + 1, j), h3 = this.corner(ring, i, j + 1)
           this.box.min.set(x, Math.min(h0, h1, h2, h3) - 1.5, z)
           this.box.max.set(x + T, Math.max(h0, h1, h2, h3) + 2.5, z + T)
           if (!this.frustum.intersectsBox(this.box)) continue
@@ -473,7 +486,12 @@ void main() {
   // (the grass vertex shader's root, as it was before 2026-11-03)
   float h = terrainHeight(root);
   vec4 m = textureLod(uMask, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0);
-  vec3 N = unpackN(textureLod(uNIn, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 2.5).rg);
+  // THE GROUND'S OWN NORMAL — the one the terrain paints with where the grass grows: mip 0 (~1 m texels; groundNormal's
+  // 0.8 is a BIAS on the automatic level, which up close — a pixel, or a near cache texel, far under a texel — clamps to
+  // mip 0). It was 2.5 mips (~6 m): a track's narrow cut, steep enough for the terrain to paint it grey scree, read
+  // gentle here — and grew grass all over the rock (2026-11-06, the user: "where ever the place is if its rock texture
+  // then no grass must be there"). The same steepness, the same rock and scree: no blade where the ground shows stone
+  vec3 N = unpackN(textureLod(uNIn, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0).rg);
   float trail = textureLod(uTrail, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0).r * 8.0;
   // (the blade's colour is the FIELD's: painted without the track, so the blades at its edge don't take the earth)
   Ground g = groundPaint(root, m, h, 1.0 - N.y, paintNoise(root), 0.0, 99.0, uTrailHW, 0.0); // (no painted shrub dots under the grass: the bushes are real there)
@@ -483,6 +501,10 @@ void main() {
   // (never on rock: none where the ground shows any rock or scree tint at all — the user: "never put grass on rock")
   float grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * (1.0 - 0.6 * g.forest) * (1.0 - g.snow) * (1.0 - smoothstep(0.02, 0.1, g.scree));
   grow *= (1.0 - smoothstep(0.3, 0.6, onTrack)); // (off the track)
+  // (and a little short of the scree: the terrain's far paint reads its noise blurred, which moves a patch's edge a
+  //  metre or two from where this sharp bake puts it — the blades stop before the grey starts, wherever it's drawn;
+  //  they were already shortened to a third there: approach)
+  grow *= 1.0 - smoothstep(0.45, 0.75, g.screeNear);
 #ifdef OTH_DESERT
   // THE DESERT: grass only in the oasis (its growth, the damp banks) — the open sand stays bare
   float oasis = max(smoothstep(0.15, 0.5, m.a), smoothstep(0.45, 0.8, m.b / 0.85)) * smoothstep(0.15, 0.5, g.lawn); // (in its green patches only)

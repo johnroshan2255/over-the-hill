@@ -1333,6 +1333,10 @@ function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear:
     }
   }
   let actLabel: string | null = ''
+  // (2026-11-07, docs/PERF.md: written only when it CHANGES — the same text set again still replaces the text node, and
+  //  the page re-lays out and repaints the HUD: every frame at 500 fps, ~0.3 ms of the frame's main thread)
+  const spdBox = box.querySelector('.spd') as HTMLElement
+  let shown = '', free: boolean | null = null, spdTxt = '', gearTxt = '', clkTxt = '', spdShown = ''
   return {
     action: (label) => {
       if (!door || label === actLabel) return
@@ -1341,10 +1345,12 @@ function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear:
       ;(door.querySelector('span') as HTMLElement).textContent = label ?? ''
     },
     update: (driving, time: string) => {
-      box.style.display = driving ? 'block' : 'none'
-      document.body.classList.toggle('oth-free', !driving) // (the free camera: no pads — its own touch: one finger looks, two fly)
-      spd.textContent = ride.speedKmh.toFixed(0)
-      gear.textContent = ride.gear
+      const disp = driving ? 'block' : 'none'
+      if (disp !== shown) { shown = disp; box.style.display = disp }
+      if (free !== !driving) { free = !driving; document.body.classList.toggle('oth-free', free) } // (the free camera: no pads — its own touch: one finger looks, two fly)
+      const s = ride.speedKmh.toFixed(0)
+      if (s !== spdTxt) { spdTxt = s; spd.textContent = s }
+      if (ride.gear !== gearTxt) { gearTxt = ride.gear; gear.textContent = gearTxt }
       const on = onFoot() ? 2 : twos.some((b) => !!b.sim) ? 1 : -1 // (1 the motorbike, 2 on foot, −1 the car)
       if (on !== onBike) {
         onBike = on
@@ -1353,8 +1359,9 @@ function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear:
         pad?.classList.toggle('foot', on === 2)
       }
       // (on foot: no speedometer)
-      ;(box.querySelector('.spd') as HTMLElement).style.display = onFoot() ? 'none' : ''
-      clk.textContent = time
+      const sd = onFoot() ? 'none' : ''
+      if (sd !== spdShown) { spdShown = sd; spdBox.style.display = sd }
+      if (time !== clkTxt) { clkTxt = time; clk.textContent = time }
     },
   }
 }

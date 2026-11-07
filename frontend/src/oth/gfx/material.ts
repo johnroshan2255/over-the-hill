@@ -72,22 +72,6 @@ export function registerGlobals(u: Record<string, IUniform<unknown>>): void {
   globals.push(u as Record<string, IUniform<UniformValue>>)
   for (const k in u) { globalObjects.add(u[k] as IUniform<UniformValue>); globalNames.add(k) }
 }
-const scratch = new Map<string, Float32Array>()
-/** A uniform's value as PlayCanvas takes it (vectors and matrices into a reused array per name). */
-function pcValue(name: string, v: UniformValue): number | Float32Array | pc.Texture | number[] | null {
-  if (v === null || v === undefined) return null
-  if (typeof v === 'number') return v
-  if (typeof v === 'boolean') return v ? 1 : 0
-  if (v instanceof Texture) return v.pcTexture()
-  if (v instanceof Float32Array || Array.isArray(v)) return v
-  const arr = (n: number) => { let a = scratch.get(name); if (!a || a.length !== n) scratch.set(name, (a = new Float32Array(n))); return a }
-  if (v instanceof Vector3) { const a = arr(3); a[0] = v.x; a[1] = v.y; a[2] = v.z; return a }
-  if (v instanceof Color) { const a = arr(3); a[0] = v.r; a[1] = v.g; a[2] = v.b; return a }
-  if (v instanceof Vector4) { const a = arr(4); a[0] = v.x; a[1] = v.y; a[2] = v.z; a[3] = v.w; return a }
-  if (v instanceof Vector2) { const a = arr(2); a[0] = v.x; a[1] = v.y; return a }
-  if (v instanceof Matrix4 || v instanceof Matrix3) return v.elements
-  return null
-}
 /** A 1×1 texture for a sampler nothing set (WebGL sampled (0, 0, 0, 1) from an empty unit). */
 const defaults = new Map<string, pc.Texture>()
 function defaultTexture(kind: 'f' | 'u' | 'i'): pc.Texture {
@@ -104,20 +88,62 @@ function defaultTexture(kind: 'f' | 'u' | 'i'): pc.Texture {
   return t
 }
 
+/**
+ * ONE UNIFORM, BOUND (2026-11-07, docs/PERF.md "the CPU's frame"): its `{ value }` object, how its value converts and
+ * the Float32Array it's written into — all worked out when the value object is first seen (or replaced), not per frame.
+ * A frame then only copies the numbers into that same array (PlayCanvas reads it at each draw) and calls PlayCanvas
+ * when what it holds must change. (Was: a key string built, a map looked up and an `instanceof` chain walked for each
+ * of ~2000 uniforms a frame — 0.5 ms of the Windows PC's 2.9 ms frame.) Exactly the values the old path sent.
+ */
+const K_NULL = 0, K_NUM = 1, K_BOOL = 2, K_TEX = 3, K_ARR = 4, K_V2 = 5, K_V3 = 6, K_V4 = 7, K_COL = 8, K_MAT = 9
+interface Bound { k: string; u: IUniform<UniformValue>; last: unknown; kind: number; arr: Float32Array | null; sent: unknown }
+const bind = (k: string, u: IUniform<UniformValue>): Bound => ({ k, u, last: bind, kind: K_NULL, arr: null, sent: bind })
+/** The value to hand PlayCanvas for `b` this frame (its array refilled), or null: nothing to send. */
+function boundValue(b: Bound): unknown {
+  const v = b.u.value
+  if (v !== b.last && !(typeof v === 'number' && b.kind === K_NUM)) { // (a number that changed: still a number)
+    b.last = v
+    const n = v instanceof Vector3 || v instanceof Color ? 3 : v instanceof Vector4 ? 4 : v instanceof Vector2 ? 2 : 0
+    b.kind = v === null || v === undefined ? K_NULL : typeof v === 'number' ? K_NUM : typeof v === 'boolean' ? K_BOOL : v instanceof Texture ? K_TEX
+      : v instanceof Float32Array || Array.isArray(v) ? K_ARR : v instanceof Vector3 ? K_V3 : v instanceof Color ? K_COL : v instanceof Vector4 ? K_V4
+        : v instanceof Vector2 ? K_V2 : v instanceof Matrix4 || v instanceof Matrix3 ? K_MAT : K_NULL
+    if (n && (!b.arr || b.arr.length !== n)) b.arr = new Float32Array(n)
+  }
+  const a = b.arr!
+  switch (b.kind) {
+    case K_NUM: return v
+    case K_BOOL: return v ? 1 : 0
+    case K_TEX: return (v as Texture).pcTexture()
+    case K_ARR: return v
+    case K_V3: { const q = v as Vector3; a[0] = q.x; a[1] = q.y; a[2] = q.z; return a }
+    case K_COL: { const q = v as Color; a[0] = q.r; a[1] = q.g; a[2] = q.b; return a }
+    case K_V4: { const q = v as Vector4; a[0] = q.x; a[1] = q.y; a[2] = q.z; a[3] = q.w; return a }
+    case K_V2: { const q = v as Vector2; a[0] = q.x; a[1] = q.y; return a }
+    case K_MAT: return (v as Matrix4).elements
+    default: return null
+  }
+}
+
 /** The renderer's per-render state the converted shaders read (tone mapping on / off, sRGB out or linear). */
 export const outputState = { toneMap: 1, srgb: 1, exposure: 1 }
 const scopeIds = new Map<string, pc.ScopeId>()
+let globalBinds: { b: Bound; id: pc.ScopeId }[] = [], globalsBound = 0
 export function pushGlobals(): void {
   const scope = gfx().device.scope
-  const set = (name: string, v: unknown) => {
-    let id = scopeIds.get(name)
-    if (!id) scopeIds.set(name, (id = scope.resolve(name)))
-    if (v !== null) id.setValue(v as number)
+  const id = (name: string) => { let s = scopeIds.get(name); if (!s) scopeIds.set(name, (s = scope.resolve(name))); return s }
+  // (bound once — again only if a module registers more)
+  if (globalsBound !== globals.length) {
+    globalsBound = globals.length
+    globalBinds = []
+    for (const g of globals) for (const k in g) globalBinds.push({ b: bind(k, g[k]), id: id(k) })
   }
-  for (const g of globals) for (const k in g) set(k, pcValue(`g:${k}`, g[k].value))
-  set('uOthToneMap', outputState.toneMap)
-  set('uOthSRGB', outputState.srgb)
-  set('toneMappingExposure', outputState.exposure)
+  for (let i = 0; i < globalBinds.length; i++) {
+    const e = globalBinds[i], v = boundValue(e.b)
+    if (v !== null) e.id.setValue(v as number)
+  }
+  id('uOthToneMap').setValue(outputState.toneMap)
+  id('uOthSRGB').setValue(outputState.srgb)
+  id('toneMappingExposure').setValue(outputState.exposure)
 }
 
 // ------------------------------------------------------------------------------------------------- the conversion
@@ -158,6 +184,17 @@ export interface Layout {
   vs: string
   fs: string
   key: string
+}
+/** A material's PlayCanvas material for one layout: the state version applied, its own uniforms bound (Bound). */
+export interface PcEntry {
+  m: pc.ShaderMaterial
+  layout: Layout
+  state: number
+  binds: Bound[] | null
+  src: Record<string, IUniform> | null
+  samp?: { k: string; u: IUniform<UniformValue> | null; b: Bound | null; sent: unknown }[]
+  /** (scene.ts) the sync that last pushed its uniforms */
+  pushed?: number
 }
 
 const hash = (s: string) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36) }
@@ -264,6 +301,34 @@ export function convert(vertex: string, fragment: string, defines: Record<string
 }
 
 // ------------------------------------------------------------------------------------------------- materials
+/**
+ * OUR PLAYCANVAS MATERIAL (2026-11-07, docs/PERF.md "the CPU's frame"): PlayCanvas walks a material's `parameters`
+ * with for…in at each material change in the frame — over ~50 materials, each with its own key order, that loop is
+ * megamorphic and V8 builds the key list every call (0.13 ms and ~12 KB of garbage a frame on the Windows PC). Here the
+ * same walk, in the same order, over a key list kept with the material — dropped whenever a key is added, deleted or
+ * the parameters cleared (the only ways they change for our materials: StandardMaterial's direct deletes are not ours).
+ */
+type Param = { scopeId: pc.ScopeId | null; data: unknown }
+class OthMaterial extends pc.ShaderMaterial {
+  private keys: string[] | null = null
+  override setParameter(name: string, data: number | number[] | pc.Texture | Float32Array): void {
+    if (typeof name !== 'string' || !(name in (this.parameters as Record<string, Param>))) this.keys = null
+    super.setParameter(name, data)
+  }
+  override deleteParameter(name: string): void { this.keys = null; super.deleteParameter(name) }
+  override clearParameters(): void { this.keys = null; super.clearParameters() }
+  override setParameters(device: pc.GraphicsDevice, names?: unknown): void {
+    if (names) { (pc.ShaderMaterial.prototype.setParameters as (d: pc.GraphicsDevice, n?: unknown) => void).call(this, device, names); return }
+    const ps = this.parameters as Record<string, Param>
+    const keys = (this.keys ??= Object.keys(ps))
+    for (let i = 0; i < keys.length; i++) {
+      const n = keys[i], p = ps[n]
+      if (!p.scopeId) p.scopeId = device.scope.resolve(n)
+      p.scopeId.setValue(p.data as number)
+    }
+  }
+}
+
 let materialIds = 0
 
 export class Material {
@@ -307,11 +372,6 @@ export class Material {
     this.gpu.clear()
   }
 
-  /** The state signature (scene.ts re-applies the state when it changes). */
-  stateKey(): string {
-    return `${this.transparent}|${this.blending}|${this.blendSrc}|${this.blendDst}|${this.blendEquation}|${this.blendSrcAlpha}|${this.blendDstAlpha}|${this.premultipliedAlpha}|${this.depthTest}|${this.depthWrite}|${this.side}|${this.alphaToCoverage}|${this.polygonOffset}|${this.polygonOffsetFactor}|${this.polygonOffsetUnits}|${this.colorWrite}|${this.depthEqual}`
-  }
-
   /** Blend / depth / cull / coverage onto a PlayCanvas material (three's rules — WebGLState.setBlending). */
   applyState(m: pc.Material): void {
     const B = pc.BlendState
@@ -352,36 +412,70 @@ export class ShaderMaterial extends Material {
     Object.assign(this, rest)
   }
 
-  /** The PlayCanvas material for this material's sources + defines (and drawn instanced by matrix or not). */
-  pcMaterial(instanceMatrix: boolean, attrs: string[]): { m: pc.ShaderMaterial; layout: Layout } {
-    const sig = `${this.version}|${instanceMatrix}|${attrs.join(',')}`
+  /** The PlayCanvas material for this material's sources + defines (and drawn instanced by matrix or not); `attrKey`:
+   *  the geometry's attribute names joined (scene.ts keeps it per geometry layout — not rebuilt each frame). */
+  pcMaterial(instanceMatrix: boolean, attrs: string[], attrKey = attrs.join(',')): PcEntry {
+    const sig = `${this.version}|${instanceMatrix}|${attrKey}`
     let entry = this.layouts.get(sig)
     if (!entry) {
       const layout = convert(this.vertexShader, this.fragmentShader, this.defines, instanceMatrix, this.vertexColors, new Set(attrs))
-      const m = new pc.ShaderMaterial({ uniqueName: `oth_${layout.key}`, vertexGLSL: layout.vs, fragmentGLSL: layout.fs, attributes: layout.semantics, ...(layout.outputs > 1 ? { fragmentOutputTypes: Array(layout.outputs).fill('vec4') } : {}) })
+      const m = new OthMaterial({ uniqueName: `oth_${layout.key}`, vertexGLSL: layout.vs, fragmentGLSL: layout.fs, attributes: layout.semantics, ...(layout.outputs > 1 ? { fragmentOutputTypes: Array(layout.outputs).fill('vec4') } : {}) })
       m.name = this.name || `oth_${this.id}`
-      entry = { m, layout, state: '' }
+      entry = { m, layout, state: -1, binds: null, src: null }
       this.layouts.set(sig, entry)
       this.gpu.set(sig, m)
     }
-    const st = this.stateKey()
-    if (entry.state !== st) { entry.state = st; this.applyState(entry.m); entry.m.update() }
+    this.syncState(entry)
     return entry
   }
-  private readonly layouts = new Map<string, { m: pc.ShaderMaterial; layout: Layout; state: string }>()
+  private readonly layouts = new Map<string, PcEntry>()
 
-  /** This frame's own (non-global) uniforms onto the PlayCanvas material; a sampler with no texture gets a default. */
-  pushUniforms(m: pc.ShaderMaterial, layout: Layout): void {
-    for (const k in this.uniforms) {
-      const u = this.uniforms[k] as IUniform<UniformValue>
-      if (globalObjects.has(u)) continue
-      const v = pcValue(`${this.id}:${k}`, u.value)
-      if (v !== null) m.setParameter(k, v as number)
+  /** The state (blend, depth, side …) onto `entry`'s PlayCanvas material if it changed since — compared field by
+   *  field, no key string a frame (2026-11-07: was a string of them all, built and compared per mesh per frame). */
+  syncState(entry: PcEntry): void {
+    const s = this.snap
+    if (s[0] !== this.transparent || s[1] !== this.blending || s[2] !== this.blendSrc || s[3] !== this.blendDst || s[4] !== this.blendEquation
+      || s[5] !== this.blendSrcAlpha || s[6] !== this.blendDstAlpha || s[7] !== this.premultipliedAlpha || s[8] !== this.depthTest
+      || s[9] !== this.depthWrite || s[10] !== this.side || s[11] !== this.alphaToCoverage || s[12] !== this.polygonOffset
+      || s[13] !== this.polygonOffsetFactor || s[14] !== this.polygonOffsetUnits || s[15] !== this.colorWrite || s[16] !== this.depthEqual
+      || s[17] !== this.blendEquationAlpha) {
+      s[0] = this.transparent; s[1] = this.blending; s[2] = this.blendSrc; s[3] = this.blendDst; s[4] = this.blendEquation
+      s[5] = this.blendSrcAlpha; s[6] = this.blendDstAlpha; s[7] = this.premultipliedAlpha; s[8] = this.depthTest
+      s[9] = this.depthWrite; s[10] = this.side; s[11] = this.alphaToCoverage; s[12] = this.polygonOffset
+      s[13] = this.polygonOffsetFactor; s[14] = this.polygonOffsetUnits; s[15] = this.colorWrite; s[16] = this.depthEqual
+      s[17] = this.blendEquationAlpha
+      this.stateVer++
     }
-    for (const k in layout.samplers) {
-      const u = this.uniforms[k]
-      if ((u && u.value) || (!u && globalNames.has(k))) continue
-      m.setParameter(k, defaultTexture(layout.samplers[k]) as never)
+    if (entry.state !== this.stateVer) { entry.state = this.stateVer; this.applyState(entry.m); entry.m.update() }
+  }
+  private readonly snap: unknown[] = []
+  private stateVer = 0
+
+  /** This frame's own (non-global) uniforms onto the PlayCanvas material; a sampler with no texture gets a default.
+   *  (Bound once per PlayCanvas material — `Bound` above; again if `uniforms` is replaced. A uniform ADDED to the
+   *  object after the first draw is not seen: add them before, as every module does.) */
+  pushUniforms(entry: PcEntry): void {
+    const m = entry.m
+    if (!entry.binds || entry.src !== this.uniforms) {
+      entry.src = this.uniforms
+      entry.binds = []
+      for (const k in this.uniforms) {
+        const u = this.uniforms[k] as IUniform<UniformValue>
+        if (!globalObjects.has(u)) entry.binds.push(bind(k, u))
+      }
+      entry.samp = Object.keys(entry.layout.samplers).map((k) => ({ k, u: (this.uniforms[k] as IUniform<UniformValue> | undefined) ?? null, b: entry.binds!.find((b) => b.k === k) ?? null, sent: null as unknown }))
+    }
+    const B = entry.binds
+    for (let i = 0; i < B.length; i++) {
+      const b = B[i], v = boundValue(b)
+      if (v !== null && v !== b.sent) { b.sent = v; m.setParameter(b.k, v as number) }
+      // (a number / texture: sent when it changes; an array: once — its contents are rewritten in place)
+    }
+    for (const s of entry.samp!) {
+      if ((s.u && s.u.value) || (!s.u && globalNames.has(s.k))) { s.sent = null; continue }
+      const d = defaultTexture(entry.layout.samplers[s.k])
+      // (its own uniform's last texture no longer what PlayCanvas holds: sent again when it comes back)
+      if (s.sent !== d) { s.sent = d; m.setParameter(s.k, d as never); if (s.b) s.b.sent = d }
     }
   }
 

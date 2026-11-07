@@ -1,7 +1,7 @@
 import * as pc from 'playcanvas'
 import { gfx } from './core'
 import { BufferAttribute, BufferGeometry, InstancedBufferAttribute, InstancedBufferGeometry, type TypedArray } from './geometry'
-import { type Layout, type Material, ShaderMaterial } from './material'
+import { type Layout, type Material, type PcEntry, ShaderMaterial } from './material'
 import { Box3, Euler, Matrix4, Quaternion, Sphere, Vector3 } from './math'
 
 /**
@@ -75,7 +75,8 @@ export class Object3D {
     if (this.matrixAutoUpdate) this.updateMatrix()
     if (this.parent) this.matrixWorld.multiplyMatrices(this.parent.matrixWorld, this.matrix)
     else this.matrixWorld.copy(this.matrix)
-    for (const c of this.children) c.updateMatrixWorld(force)
+    const ch = this.children
+    for (let i = 0; i < ch.length; i++) ch[i].updateMatrixWorld(force)
   }
   updateWorldMatrix(updateParents: boolean, updateChildren: boolean): void {
     if (updateParents && this.parent) this.parent.updateWorldMatrix(true, false)
@@ -145,10 +146,26 @@ interface Gpu {
   /** attribute name → the version uploaded */
   uploaded: Map<string, number>
   vb: pc.VertexBuffer | null
-  /** instanced streams in the instancing buffer: name, array, item size, its offset (bytes) and the version uploaded */
-  inst: { name: string; attr: BufferAttribute; offset: number; ver: number }[]
+  /** the instancing buffer's format (the buffer itself made at the size drawn) */
+  fmt: pc.VertexFormat | null
+  /** instanced streams in the instancing buffer: name, array, its offset (bytes), the version uploaded and how many of
+   *  its entries are in the buffer, its components and (instanceMatrix's rows) which four */
+  inst: { name: string; attr: BufferAttribute; offset: number; ver: number; upTo: number; comps: number; sub: number }[]
   node: pc.GraphNode
   world: Float32Array
+  /** the culling sphere last given PlayCanvas (centre, radius; NaN radius: none) */
+  box: number[]
+}
+
+interface Pick {
+  mat: Material
+  ver: number
+  geo: BufferGeometry
+  geoVer: number
+  inst: boolean
+  entry: PcEntry
+  /** the geometry's own (not instanced) streams the layout draws */
+  streams: { name: string; a: BufferAttribute; sem: string }[]
 }
 
 const DTYPE = (a: TypedArray) => (a instanceof Float32Array ? pc.TYPE_FLOAT32 : a instanceof Uint8Array ? pc.TYPE_UINT8 : a instanceof Int8Array ? pc.TYPE_INT8 : a instanceof Uint16Array ? pc.TYPE_UINT16 : a instanceof Int16Array ? pc.TYPE_INT16 : a instanceof Uint32Array ? pc.TYPE_UINT32 : pc.TYPE_INT32)
@@ -160,6 +177,14 @@ export class Mesh extends Object3D {
   gpu: Gpu | null = null
   /** (scene.ts) the layer its instance is in */
   layer: pc.Layer | null = null
+  /** (scene.ts) its material's PlayCanvas entry and the geometry's streams, for this material version and geometry
+   *  layout — looked up again only when one of them changes (not a key string and an attribute list each frame) */
+  pick: Pick | null = null
+  /** (scene.ts) the last sync that met it */
+  seen = 0
+  private instKey: BufferGeometry | null = null
+  private instVer = -1
+  private instAttrs: BufferAttribute[] = []
   constructor(public geometry: BufferGeometry = new BufferGeometry(), public material: Material = new ShaderMaterial()) { super() }
   /** InstancedMesh: its instance matrices (null for a plain mesh). */
   get instanceMatrixAttr(): InstancedBufferAttribute | null { return null }
@@ -169,7 +194,10 @@ export class Mesh extends Object3D {
     if (!g.isInstancedBufferGeometry) return -1
     if (Number.isFinite(g.instanceCount)) return g.instanceCount
     let n = Infinity
-    for (const a of Object.values(g.attributes)) if (a.isInstancedBufferAttribute) n = Math.min(n, a.count)
+    // (the instanced attributes listed once per geometry layout — not an array of them made each call)
+    if (this.instKey !== g || this.instVer !== g.layoutVersion) { this.instKey = g; this.instVer = g.layoutVersion; this.instAttrs = Object.values(g.attributes).filter((a) => a.isInstancedBufferAttribute) }
+    const L = this.instAttrs
+    for (let i = 0; i < L.length; i++) n = Math.min(n, L[i].count)
     return Number.isFinite(n) ? n : 0
   }
   /** The bounds the camera culls this with (null: PlayCanvas's own from the positions). */
@@ -231,8 +259,15 @@ function prepare(mesh: Mesh): Gpu | null {
   const pos = mesh.geometry.attributes.position ?? Object.values(mesh.geometry.attributes).find((a) => !a.isInstancedBufferAttribute)
   if (!pos || pos.count === 0) return null
   const instMat = mesh.instanceMatrixAttr
-  const { m: pcMat, layout } = mat.pcMaterial(!!instMat, Object.keys(mesh.geometry.attributes))
   const geo = mesh.geometry
+  let pk = mesh.pick
+  if (!pk || pk.mat !== mat || pk.ver !== mat.version || pk.geo !== geo || pk.geoVer !== geo.layoutVersion || pk.inst !== !!instMat) {
+    const entry = mat.pcMaterial(!!instMat, Object.keys(geo.attributes))
+    const streams: Pick['streams'] = []
+    for (const [name, a] of Object.entries(geo.attributes)) if (!a.isInstancedBufferAttribute && entry.layout.semantics[name]) streams.push({ name, a, sem: entry.layout.semantics[name] })
+    pk = mesh.pick = { mat, ver: mat.version, geo, geoVer: geo.layoutVersion, inst: !!instMat, entry, streams }
+  } else mat.syncState(pk.entry)
+  const { m: pcMat, layout } = pk.entry
   let g = mesh.gpu
   // (a new layout — the material's defines changed, or the geometry or its attributes: made again, back in its layer)
   const layer = mesh.layer
@@ -241,47 +276,105 @@ function prepare(mesh: Mesh): Gpu | null {
     const pcMesh = meshFor(geo, layout)
     const node = new pc.GraphNode(mesh.name || 'oth')
     const mi = new pc.MeshInstance(pcMesh, pcMat, node)
-    g = mesh.gpu = { mi, pcMesh, geo, layout, matVersion: mat.version, geoLayout: geo.layoutVersion, uploaded: new Map(), vb: null, inst: [], node, world: new Float32Array(16).fill(NaN) }
+    g = mesh.gpu = { mi, pcMesh, geo, layout, matVersion: mat.version, geoLayout: geo.layoutVersion, uploaded: new Map(), vb: null, fmt: null, inst: [], node, world: new Float32Array(16).fill(NaN), box: [NaN, NaN, NaN, NaN] }
     // the instancing buffer: every instanced attribute (+ InstancedMesh's matrices as four vec4s), INTERLEAVED — one
     // vertex buffer binding (WebGPU allows 8 a draw, and PlayCanvas binds each non-interleaved stream as its own)
     const streams: { name: string; attr: BufferAttribute; comps: number; sub: number }[] = []
     for (const [name, a] of Object.entries(geo.attributes)) if (a.isInstancedBufferAttribute && layout.semantics[name]) streams.push({ name, attr: a, comps: a.itemSize, sub: 0 })
     if (instMat) for (let r = 0; r < 4; r++) streams.push({ name: `instanceMatrix${r}`, attr: instMat, comps: 4, sub: r })
     if (streams.length) {
-      const count = Math.max(1, ...streams.map((s) => s.attr.count))
       const desc = streams.map((s) => ({ semantic: layout.semantics[s.name], components: s.comps, type: DTYPE(s.attr.array), normalize: s.attr.normalized }))
-      const fmt = new pc.VertexFormat(gfx().device, desc)
-      g.vb = new pc.VertexBuffer(gfx().device, fmt, count, { usage: pc.BUFFER_DYNAMIC })
-      g.inst = streams.map((s, i) => ({ name: s.name, attr: s.attr, offset: fmt.elements[i].offset, ver: -1, comps: s.comps, sub: s.sub })) as Gpu['inst']
-      mi.setInstancing(g.vb, false)
+      const fmt = g.fmt = new pc.VertexFormat(gfx().device, desc)
+      g.inst = streams.map((s, i) => ({ name: s.name, attr: s.attr, offset: fmt.elements[i].offset, ver: -1, upTo: 0, comps: s.comps, sub: s.sub }))
     }
     if (layer) { mesh.layer = layer; layer.addMeshInstances([mi]) }
   }
   if (g.mi.material !== pcMat) g.mi.material = pcMat
   // re-upload what changed: the mesh's own streams, the instancing buffer
-  let dirty = false
-  for (const [name, a] of Object.entries(geo.attributes)) {
-    if (a.isInstancedBufferAttribute || !layout.semantics[name]) continue
-    if (g.uploaded.get(name) !== a.version) { g.uploaded.set(name, a.version); if (a.version > 0) { g.pcMesh.setVertexStream(layout.semantics[name], a.array, a.itemSize, a.count, DTYPE(a.array), a.normalized); dirty = true } }
+  let dirty = false, direct = 0
+  // (a stream rewritten IN PLACE — the same count, the index as it was: written straight into the mesh's vertex buffer,
+  //  its bounds recomputed as PlayCanvas does, one upload — 2026-11-07, docs/PERF.md "the garbage": PlayCanvas's
+  //  Mesh.update walked every vertex through iterator objects and re-sent the index too, every frame for the car's
+  //  ground shadow. Anything else — a first upload, a new count, a new index — goes the full way, as before.)
+  const idxSame = !geo.index || g.uploaded.get('#index') === geo.index.version
+  for (let i = 0; i < pk.streams.length; i++) {
+    const { name, a, sem } = pk.streams[i]
+    const was = g.uploaded.get(name)
+    if (was === a.version) continue
+    g.uploaded.set(name, a.version)
+    if (a.version <= 0) continue
+    if (was !== undefined && idxSame && canWrite(g.pcMesh, sem, a)) { _direct[direct++] = pk.streams[i]; continue }
+    g.pcMesh.setVertexStream(sem, a.array, a.itemSize, a.count, DTYPE(a.array), a.normalized); dirty = true
   }
-  if (dirty) { if (geo.index) g.pcMesh.setIndices(geo.index.array as Uint16Array); g.pcMesh.update(pc.PRIMITIVE_TRIANGLES) }
-  if (g.vb) {
+  if (direct && !dirty) writeStreams(g.pcMesh, direct)
+  else if (direct) for (let i = 0; i < direct; i++) { const { a, sem } = _direct[i]; g.pcMesh.setVertexStream(sem, a.array, a.itemSize, a.count, DTYPE(a.array), a.normalized) }
+  if (dirty) {
+    if (geo.index) { g.pcMesh.setIndices(geo.index.array as Uint16Array); g.uploaded.set('#index', geo.index.version) } // (the index sent: as it is now)
+    g.pcMesh.update(pc.PRIMITIVE_TRIANGLES)
+  }
+  // THE INSTANCING BUFFER, SIZED TO WHAT'S DRAWN (2026-11-07, docs/PERF.md "the hitches"): it holds the instances
+  // drawn now — grown by half again when more are, never shrunk — and each stream's entries are copied from where it
+  // was last copied to (all of them again when the attribute's version changes). Was: the attribute's whole capacity
+  // copied and sent at each change — the far impostors' 50 391 slots (1.6 MB, ~1000 drawn) at every tree update, the
+  // terrain's 2048 nodes every frame. The GPU reads only instances [0, count): the same picture.
+  if (g.inst.length) {
+    let n = Math.max(0, mesh.instances)
+    for (const s of g.inst) n = Math.min(n, s.attr.count)
+    if (!g.vb || g.vb.numVertices < n) {
+      let cap = Math.max(16, Math.ceil(n * 1.5))
+      for (const s of g.inst) cap = Math.min(cap, Math.max(s.attr.count, n))
+      const old = g.vb
+      g.vb = new pc.VertexBuffer(gfx().device, g.fmt!, Math.max(1, cap), { usage: pc.BUFFER_DYNAMIC })
+      g.mi.setInstancing(g.vb, false)
+      old?.destroy()
+      for (const s of g.inst) s.upTo = 0
+    }
     let up = false
-    for (const s of g.inst) if (s.ver !== s.attr.version) { s.ver = s.attr.version; up = true }
+    for (const s of g.inst) {
+      if (s.ver !== s.attr.version) { s.ver = s.attr.version; s.upTo = 0 }
+      if (s.upTo < n) up = true
+    }
     if (up) {
       const buf = g.vb.lock() as ArrayBuffer, stride = g.vb.format.size
-      for (const s of g.inst as (Gpu['inst'][number] & { comps: number; sub: number })[]) {
-        const src = s.attr.array, n = Math.min(s.attr.count, g.vb.numVertices), el = src.BYTES_PER_ELEMENT
+      for (const s of g.inst) {
+        if (s.upTo >= n) continue
+        const src = s.attr.array, el = src.BYTES_PER_ELEMENT
         // (a view of the buffer in the stream's own type: its components at offset + i × stride)
         const dst = new (src.constructor as new (b: ArrayBuffer) => TypedArray)(buf), st = stride / el, off = s.offset / el, it = s.attr.itemSize, from = s.sub * 4
         const c = s.comps
-        if (c === 4) for (let i = 0; i < n; i++) { const o = i * st + off, q = i * it + from; dst[o] = src[q]; dst[o + 1] = src[q + 1]; dst[o + 2] = src[q + 2]; dst[o + 3] = src[q + 3] }
-        else for (let i = 0; i < n; i++) for (let k = 0; k < c; k++) dst[i * st + off + k] = src[i * it + from + k]
+        if (c === 4) for (let i = s.upTo; i < n; i++) { const o = i * st + off, q = i * it + from; dst[o] = src[q]; dst[o + 1] = src[q + 1]; dst[o + 2] = src[q + 2]; dst[o + 3] = src[q + 3] }
+        else for (let i = s.upTo; i < n; i++) for (let k = 0; k < c; k++) dst[i * st + off + k] = src[i * it + from + k]
+        s.upTo = n
       }
       g.vb.unlock()
     }
   }
   return g
+}
+
+/** (prepare's streams written straight into a vertex buffer this frame) */
+const _direct: Pick['streams'] = []
+/** Can stream `a` be written straight into the PlayCanvas mesh's vertex buffer: one there already, of its count, with
+ *  an element of its semantic, components and type? */
+function canWrite(m: pc.Mesh, sem: string, a: BufferAttribute): boolean {
+  const vb = m.vertexBuffer, gd = (m as unknown as { _geometryData?: { vertexCount: number } })._geometryData
+  if (!vb || !gd || gd.vertexCount !== a.count || vb.numVertices < a.count) return false
+  const el = vb.format.elements.find((e) => e.name === sem)
+  return !!el && el.numComponents === a.itemSize && el.dataType === DTYPE(a.array)
+}
+/** Write the first `n` of `_direct` into the mesh's vertex buffer (one upload); its bounds from the positions. */
+function writeStreams(m: pc.Mesh, n: number): void {
+  const vb = m.vertexBuffer, fmt = vb.format, buf = vb.lock() as ArrayBuffer
+  for (let i = 0; i < n; i++) {
+    const { a, sem } = _direct[i], src = a.array, k = a.itemSize, cnt = a.count, B = src.BYTES_PER_ELEMENT
+    const el = fmt.elements.find((e) => e.name === sem)!
+    const Ctor = src.constructor as new (b: ArrayBuffer, o?: number, l?: number) => TypedArray
+    if (el.stride === k * B && el.offset % B === 0) new Ctor(buf, el.offset, cnt * k).set(src.length === cnt * k ? src : src.subarray(0, cnt * k))
+    else { const dst = new Ctor(buf), st = el.stride / B, off = el.offset / B; for (let v = 0; v < cnt; v++) for (let c = 0; c < k; c++) dst[off + v * st + c] = src[v * k + c] }
+    // (as Mesh.update: the bounds from a 3-component position stream)
+    if (sem === pc.SEMANTIC_POSITION && k === 3) { m.aabb.compute(src, cnt); m.aabb = m.aabb }
+  }
+  vb.unlock()
 }
 
 /** The PlayCanvas mesh for a geometry under a material's attribute slots (shared by the meshes drawing it so). */
@@ -381,14 +474,22 @@ export class Scene extends Object3D {
   sync(camPos: Vector3): void {
     this.frame++
     this.updateMatrixWorld()
-    const seen = new Set<Mesh>(), pushed = new Set<pc.Material>(), add: pc.MeshInstance[] = []
+    const id = ++syncs, add: pc.MeshInstance[] = []
     let calls = 0, tris = 0
     const walk = (o: Object3D, vis: boolean) => {
       const v = vis && o.visible
       if (o instanceof Mesh) {
+        // (hidden, already made, nothing disposed: only kept hidden — made ready again the frame it shows)
+        if (!v && o.gpu && o.layer === this.layer && this.inLayer.has(o) && !o.geometry.disposed && !(o.material as ShaderMaterial).disposed) {
+          o.seen = id
+          o.gpu.mi.visible = false
+          const ch = o.children
+          for (let i = 0; i < ch.length; i++) walk(ch[i], v)
+          return
+        }
         const g = prepare(o)
         if (g) {
-          seen.add(o)
+          o.seen = id
           if (!this.inLayer.has(o) || o.layer !== this.layer) { this.inLayer.add(o); o.layer = this.layer; add.push(g.mi) }
           const n = o.instances
           const show = v && o.material.visible && n !== 0
@@ -410,36 +511,44 @@ export class Scene extends Object3D {
             if (n >= 0 || s) {
               if (s && s.radius >= 0) {
                 const c = _v.copy(s.center).applyMatrix4(o.matrixWorld), r = s.radius * o.matrixWorld.getMaxScaleOnAxis()
-                _aabb.center.set(c.x, c.y, c.z); _aabb.halfExtents.set(r, r, r)
-                g.mi.setCustomAabb(_aabb)
+                // (set only when it moved: PlayCanvas re-derives its bounds from it each time it's set)
+                const b = g.box
+                if (b[0] !== c.x || b[1] !== c.y || b[2] !== c.z || b[3] !== r) {
+                  b[0] = c.x; b[1] = c.y; b[2] = c.z; b[3] = r
+                  _aabb.center.set(c.x, c.y, c.z); _aabb.halfExtents.set(r, r, r)
+                  g.mi.setCustomAabb(_aabb)
+                }
                 g.mi.cull = true
-              } else { g.mi.setCustomAabb(null); g.mi.cull = false }
+              } else { if (!Number.isNaN(g.box[3])) { g.box[3] = NaN; g.mi.setCustomAabb(null) } g.mi.cull = false }
             } else g.mi.cull = o.frustumCulled
             // the draw order: renderOrder, then (opaque) by material, (transparent) far → near
             if (o.material.transparent) {
               const d = Math.min(Math.sqrt(_v.setFromMatrixPosition(o.matrixWorld).distanceToSquared(camPos)), 99999)
               g.mi.drawOrder = o.renderOrder * 1e6 - d * 10
             } else g.mi.drawOrder = o.renderOrder * 1e6 + (o.material.id % 100000)
-            const mat = o.material as ShaderMaterial
-            if (!pushed.has(g.mi.material!)) { pushed.add(g.mi.material!); mat.pushUniforms(g.mi.material as pc.ShaderMaterial, g.layout) }
+            const pe = o.pick!.entry
+            if (pe.pushed !== id) { pe.pushed = id; (o.material as ShaderMaterial).pushUniforms(pe) }
             calls++
             const ib = g.pcMesh.primitive[0].count
             tris += (ib / 3) * Math.max(1, n)
           }
         }
       }
-      for (const c of o.children) walk(c, v)
+      const ch = o.children
+      for (let i = 0; i < ch.length; i++) walk(ch[i], v)
     }
     walk(this, true)
     if (add.length) this.layer.addMeshInstances(add)
     const gone: pc.MeshInstance[] = []
-    for (const m of this.inLayer) if (!seen.has(m)) { this.inLayer.delete(m); if (m.gpu) gone.push(m.gpu.mi); m.layer = null }
+    for (const m of this.inLayer) if (m.seen !== id) { this.inLayer.delete(m); if (m.gpu) gone.push(m.gpu.mi); m.layer = null }
     if (gone.length) this.layer.removeMeshInstances(gone)
     this.info.calls = calls
     this.info.triangles = tris
   }
 }
 const scenes: Scene[] = []
+/** every sync, numbered (any scene): what it met and what it pushed carry its number — no sets made a frame */
+let syncs = 0
 
 const _v = new Vector3(), _p = new Vector3(), _s = new Vector3(), _t = new Vector3(), _x = new Vector3(1, 0, 0), _y = new Vector3(0, 1, 0), _z = new Vector3(0, 0, 1)
 const _q = new Quaternion(), _m = new Matrix4(), _e = new Euler(), _b = new Box3(), _ident = new Matrix4()
