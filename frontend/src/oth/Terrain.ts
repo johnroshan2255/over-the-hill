@@ -646,13 +646,10 @@ void main() {
 #ifdef TC_SHADE
   vec3 c = lit * (0.4 + 0.6 * max(dot(N, uSunDir), 0.0));
 #else
-  float ck = caveK(vWorld); // (the caves' dark: Sites.ts)
-  vec3 c = shade(lit, N, V, s.rough, 0.04, ao, sun * (1.0 - ck), wrap);
+  // (no cave's dark on the ground — 2026-11-07: the cave world has its own floors, the terrain runs hidden under it)
+  vec3 c = shade(lit, N, V, s.rough, 0.04, ao, sun, wrap);
 #endif
   c += rockFill(lit, N) * s.rock * ao;
-#ifndef TC_SHADE
-  c *= 1.0 - 0.75 * ck;
-#endif
   c += headlight(lit, N, vWorld);
   // PUDDLES (the rain): pools in the tracks' ruts and dips, a still dark mirror of the sky, spreading as it gets wetter
 #ifdef TC_PUD

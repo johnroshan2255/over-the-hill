@@ -118,7 +118,11 @@ export class ChaseCam {
     if (this.obstruct) {
       // (from the car's own middle, not the look point 1.6 m up: pressed under an overhang, the look point is in the
       //  rock and the camera stayed in it — a grey screen)
-      const oy = p.y + this.lookH * 0.56, hit0 = this.obstruct(p.x, oy, p.z, ux, uy, uz, dist + 0.6 + 0.7)
+      const oy = p.y + this.lookH * 0.56, hitLow = this.obstruct(p.x, oy, p.z, ux, uy, uz, dist + 0.6 + 0.7)
+      // (and along the camera's OWN line, from the look point — 2026-11-07, the cave world: under a low roof the camera,
+      //  0.44 × lookH over the low ray, went up into the rock and looked out through the hill)
+      const hitTop = this.obstruct(p.x, p.y + this.lookH, p.z, ux, uy, uz, dist + 0.6 + 0.7)
+      const hit0 = hitLow === null ? hitTop : hitTop === null ? hitLow : Math.min(hitLow, hitTop)
       const hit = hit0 === null ? null : Math.max(0, hit0 - 0.7)
       const free = hit === null ? 1e4 : Math.max(1.2, hit - 0.6) // (finite: Infinity − Infinity in the ease was NaN — a black screen)
       this.room = free < this.room ? free : this.room + (free - this.room) * Math.min(1, dt * 2.5)

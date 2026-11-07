@@ -847,10 +847,8 @@ void main() {
 #else
   float sun = sunVisibility(vWorld.xz);
 #endif
-  float ck = caveK(vWorld);
-  vec3 c = shade(albedo, N, V, 0.75, 0.04, ao * cav, sun * (1.0 - ck), 0.05);
+  vec3 c = shade(albedo, N, V, 0.75, 0.04, ao * cav, sun, 0.05);
   c += rockFill(albedo, N) * ao;
-  c *= 1.0 - 0.75 * ck;
   c += headlight(albedo, N, vWorld);
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
   #include <tonemapping_fragment>

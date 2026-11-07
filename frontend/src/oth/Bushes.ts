@@ -5,6 +5,7 @@ import type { MapData } from './MapData'
 import type { Tier } from './quality'
 import { gameParams } from '../settings'
 import { cellSeed, type Rocks } from './Rocks'
+import { grovesOf } from './Groves'
 import { LEAF_GLSL } from './leafTexture'
 import { PLANT_VALUE_GLSL } from './paint'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
@@ -315,6 +316,11 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
       if (map.stillDepth(x, z) > -0.2) continue
       out.push(x, map.height(x, z) - 0.12 * size, z, size, rot, kind, tint)
     }
+  }
+  // THE GROVES' BUSHES (Groves.ts): about the feet of each group of trees
+  for (const gv of grovesOf(map, rocks)) for (const [x, z, size, kind] of gv.bushes) {
+    s = cellSeed(Math.round(x * 3), Math.round(z * 3), 78)
+    out.push(x, map.height(x, z) - 0.12 * size, z, size, rnd() * Math.PI * 2, kind, rnd())
   }
   // THE VERGES (2026-11-06, the user: "the valley feels empty"): ~3.6 bushes stood within 25 m of a track — groups of
   // one to three along both edges, thick on the green and at the forest's edge, sparse on the gold; each spot its own

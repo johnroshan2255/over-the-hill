@@ -46,7 +46,7 @@ import { caveUniforms } from './Sites'
  *      ?car=gwagen|bmw ?paint=rrggbb ?gearbox=auto|manual ?aids=off|standard|full ?offroad=0|1 ?aa=0 ?scale=50…100
  *      ?sound=0 ?drive=0 (start in the free camera) ?x= &z= (m) ?h= (m above the ground) ?yaw= ?pitch= (rad) ?hour=
  *      ?tm=neutral|agx|aces ?exp= (exposure) ?stats=1 ?world=valley|desert ?weather=clear|cloudy|rain|sandstorm
- *      ?save=0 (a test session: the journey and the journal never written)
+ *      ?save=0 (a test session: the journey and the journal never written) ?at=cave (start before Sky Hollow's mouth)
  * Keys: drive W A S D, Space handbrake, Shift boost, X / Z gears (manual), R reset, 1 / 2 the car, V free camera ⇄ the
  *      car, F3 stats, Esc pause.
  */
@@ -60,13 +60,14 @@ const status = document.getElementById('status')!
 
 async function boot() {
   // THE RENDERER (docs/MIGRATION.md): PlayCanvas, through the game's graphics layer (gfx/) — WebGPU on a desktop, WebGL2
-  // on phones (2026-11-03, the user) and wherever the browser has no WebGPU; ?api=webgl2 / webgpu forces one.
+  // on phones (2026-11-03, the user), on a weak GPU (quality.ts: an Intel UHD / Mali Chromebook — its WebGPU drivers
+  // the least tried, WebGL2 the phones' path) and wherever the browser has no WebGPU; ?api=webgl2 / webgpu forces one.
   // An OPAQUE canvas (2026-11-02, the user: "in the morning, evening and night a border of light on all trees"): the
   // leaf cards' alpha-to-coverage leaves alpha < 1 at their edges — the page's peach background showed through there.
   // Standard depth (PlayCanvas has no reversed-Z): 24-bit, the near plane 0.3 m.
   const antialias = tier.msaa
   const canvas = document.createElement('canvas')
-  const renderer = await GFX.WebGLRenderer.create(canvas, { antialias, api: q.get('api') === 'webgl2' ? 'webgl2' : q.get('api')?.startsWith('webgpu') ? 'webgpu' : isMobileDevice() ? 'webgl2' : 'webgpu', powerPreference: 'high-performance' })
+  const renderer = await GFX.WebGLRenderer.create(canvas, { antialias, samples: tier.msaaSamples, api: q.get('api') === 'webgl2' ? 'webgl2' : q.get('api')?.startsWith('webgpu') ? 'webgpu' : isMobileDevice() || tier.weakGpu ? 'webgl2' : 'webgpu', powerPreference: 'high-performance' })
   // (?scale=: the Resolution setting, a fixed share of the full pixel ratio)
   renderer.setPixelRatio(Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100)
   renderer.setSize(innerWidth, innerHeight)
@@ -162,6 +163,7 @@ async function boot() {
   physics.trees = world.trees
   physics.addLandmarks(world.landmarks.colliders)
   physics.addLandmarks(world.formations?.colliders ?? [])
+  physics.addTrimesh(world.cave?.collider)
   physics.addPropColliders(world.props.colliders)
   const car = new Vehicle(map, physics, atmos, shadow, tier, env.farGrid)
   if (q.get('paint')) car.paint = '#' + q.get('paint')!.replace('#', '')
@@ -175,6 +177,12 @@ async function boot() {
   if (saved && saved.map === map.meta.id) {
     car.spawnAt = { x: saved.x, z: saved.z, heading: saved.heading }
     if (!q.has('hour')) atmos.hour = saved.hour
+  }
+  // ?at=cave (2026-11-07, the user: "a URL param that makes me spawn near the cave"): 30 m before Sky Hollow's mouth,
+  // facing it (over a CONTINUE's spot)
+  if (q.get('at') === 'cave') {
+    const l = world.places.find((p) => p.kind === 'cave')
+    if (l) car.spawnAt = { x: l.x + Math.sin(l.rot) * 30, z: l.z + Math.cos(l.rot) * 30, heading: l.rot }
   }
   await car.setCar(q.get('car') ?? 'gwagen')
   scene.add(car.root, car.shadowMesh)
@@ -719,6 +727,7 @@ async function boot() {
     physics.setWorld(next.map, next.rocks, next.trees)
     physics.addLandmarks(next.landmarks.colliders)
     physics.addLandmarks(next.formations?.colliders ?? [])
+    physics.addTrimesh(next.cave?.collider)
     physics.addPropColliders(next.props.colliders)
     winch.setWorld(next.trees, next.rocks)
     mapView.dispose()
@@ -757,10 +766,11 @@ async function boot() {
   }
 
   const baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100 // (?maxdpr=: the pixel-ratio cap, cost tests)
-  let dprScale = 1, dprT = performance.now() + 4000
-  // (phones only: on a PC / laptop the resolution never drops — the user: "don't reduce resolution automatically, turn it
-  //  off on PC / laptop"; ?adaptive=1 forces it on, ?dpr=fixed / ?adaptive=0 off)
-  const adaptive = q.get('adaptive') === '1' || (isMobileDevice() && q.get('dpr') !== 'fixed' && q.get('adaptive') !== '0')
+  let dprScale = 1, dprT = performance.now() + 4000, dprFrames = 0, dprSlow = 0, dprGood = 0, dprWait = 8, sinceUp = 99
+  // (EVERY device now — 2026-11-07, the user: "do all optimization works, so that even a Chromebook …" — it was phones
+  //  only, "turn it off on PC / laptop". It acts only on a SLOW machine: a PC at 500 fps never comes near 52 fps, so its
+  //  resolution never moves. The Resolution setting at a fixed % (?dpr=fixed) or ?adaptive=0 turns it off; ?adaptive=1 on)
+  const adaptive = q.get('adaptive') === '1' || (q.get('dpr') !== 'fixed' && q.get('adaptive') !== '0')
   const size = () => {}
   window.addEventListener('resize', () => {
     renderer.setSize(innerWidth, innerHeight)
@@ -939,17 +949,32 @@ async function boot() {
     if (pause) return
     const now = performance.now()
     frameMs += (now - last - frameMs) * 0.1
-    // ADAPTIVE RESOLUTION, phones (PlayCanvas guidelines: device pixel ratio at runtime): once a second, a slow frame
-    // (> 19 ms ≈ under 52 fps) lowers the pixel ratio 15 % (down to half the tier's), a fast one (< 12.5 ms) raises
-    // it back — the look stays, only the sharpness gives. ?dpr=fixed turns it off.
-    if (adaptive && now - dprT > 1000) {
-      dprT = now
-      const k = frameMs > 19 ? 0.85 : frameMs < 12.5 ? 1.08 : 1
-      const next = Math.min(1, Math.max(0.5, dprScale * k))
-      if (Math.abs(next - dprScale) > 0.02) {
-        dprScale = next
-        renderer.setPixelRatio(baseDpr * dprScale)
-        size()
+    // ADAPTIVE RESOLUTION (PlayCanvas guidelines: device pixel ratio at runtime): once a second, the second's AVERAGE
+    // frame (its time over its frames — a garbage-collection stall or one hitch barely moves it, as the old smoothed
+    // frame did) — slow (> 19 ms ≈ under 52 fps) TWO seconds running lowers the pixel ratio 15 % (down to half the
+    // tier's), fast (< 12.5 ms) raises it back 8 % — the look stays, only the sharpness gives. A frame over 250 ms (the
+    // tab hidden, a load) starts the second again. ?dpr=fixed turns it off.
+    if (adaptive) {
+      if (now - last > 250) { dprT = Math.max(dprT, now); dprFrames = 0 }
+      else if (now > dprT) dprFrames++
+      if (now - dprT > 1000 && dprFrames > 0) {
+        const avg = (now - dprT) / dprFrames
+        dprT = now; dprFrames = 0
+        dprSlow = avg > 19 ? dprSlow + 1 : 0
+        // (a 60 Hz screen never shows a frame under 12.5 ms: held at its cap — ≥ 57 fps — for dprWait seconds, it TRIES
+        //  a step up; a try that turns slow comes back down and waits twice as long before the next — max 2 min)
+        dprGood = avg < 17.5 ? dprGood + 1 : 0
+        const up = avg < 12.5 || (dprScale < 1 && dprGood >= dprWait)
+        const k = dprSlow >= 2 ? 0.85 : up ? 1.08 : 1
+        sinceUp++
+        if (dprSlow >= 2) { dprSlow = 0; if (sinceUp <= 4) dprWait = Math.min(120, dprWait * 2) } // (the try it undoes)
+        if (up) { dprGood = 0; sinceUp = 0 }
+        const next = Math.min(1, Math.max(0.5, dprScale * k))
+        if (Math.abs(next - dprScale) > 0.02 || (next === 1 && dprScale !== 1)) {
+          dprScale = next
+          renderer.setPixelRatio(baseDpr * dprScale)
+          size()
+        }
       }
     }
     last = now
@@ -1036,6 +1061,15 @@ async function boot() {
     atmos.tick(dt)
     atmos.update(camera.position, clock.elapsedTime)
     rain.update()
+    // (in the cave world no rain but down its skylight — Rain.setCave)
+    {
+      const cw = world.cave
+      if (cw?.cameraInside) {
+        const l = cw.site, W = (a: number, c: number) => [l.x + a * Math.cos(l.rot) + c * Math.sin(l.rot), l.z - a * Math.sin(l.rot) + c * Math.cos(l.rot)]
+        const [sx, sz, sr] = cw.meta.sky, [s2x, s2z, s2r] = cw.meta.sky2 ?? [0, 0, 0], a = W(sx, sz), b2 = W(s2x, s2z)
+        rain.setCave(true, a[0], a[1], sr * 1.3, b2[0], b2[1], s2r * 1.3)
+      } else rain.setCave(false)
+    }
     sand.update()
     mapView.update(dt)
     radar?.update(dt, radarOn && driving && !mapView.isOpen, ride.speedKmh)
@@ -1068,6 +1102,11 @@ async function boot() {
   ;(window as unknown as { __oth: unknown }).__oth = {
     get ready() { return shadowReady },
     tier: tier.name,
+    /** (quality.ts) drawn the weak GPU's way — and the resolution share the adaptive resolution is at */
+    weakGpu: !!tier.weakGpu,
+    get dprScale() { return dprScale },
+    /** the canvas's MSAA samples as drawn (1: none) */
+    get samples() { return renderer.samples },
     get props() { return world.props },
     get birds() { return world.birds },
     get world() { return world },
@@ -1082,7 +1121,7 @@ async function boot() {
     /** (the harness's probes: offscreen bakes re-run, targets read back) */
     renderer,
     /** The drawn parts, each with `visible` (scripts/harness/ablate.mjs: the GPU's frame, system by system). */
-    parts: () => ({ terrain: world.terrain.mesh, grass: world.grass.group, trees: world.trees.group, bushes: world.bushes.group, rocks: world.rocks.group, water: world.water.group, falls: world.falls.group, bridges: world.bridges.group, landmarks: world.landmarks.group, props: world.props.group, ...(world.glow ? { glow: world.glow.group } : {}), ...(world.formations ? { formations: world.formations.group } : {}), ...(world.birds ? { birds: world.birds.mesh } : {}), sky: sky.mesh, car: car.root, carShadow: car.shadowMesh, dust: dust.mesh, tracks: tyreTracks.mesh }),
+    parts: () => ({ terrain: world.terrain.mesh, grass: world.grass.group, trees: world.trees.group, bushes: world.bushes.group, rocks: world.rocks.group, water: world.water.group, falls: world.falls.group, bridges: world.bridges.group, landmarks: world.landmarks.group, props: world.props.group, ...(world.glow ? { glow: world.glow.group } : {}), ...(world.formations ? { formations: world.formations.group } : {}), ...(world.birds ? { birds: world.birds.mesh } : {}), ...(world.cave ? { cave: world.cave.group } : {}), sky: sky.mesh, car: car.root, carShadow: car.shadowMesh, dust: dust.mesh, tracks: tyreTracks.mesh }),
     journal,
     openCamp,
     view: (x: number, z: number, h: number, yaw: number, pitch: number) => { driving = false; fly.place(x, z, h, yaw, pitch) },

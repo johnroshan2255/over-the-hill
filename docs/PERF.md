@@ -5,6 +5,53 @@ will give const 60+ in ultra"*; *"we can hide things from far"*; *"do all the st
 preserve the visual appearance while reducing the actual rendering cost"*; *"check the cheapest way to create water"*.
 This is step 8 of `MIGRATION.md`, with the phone made a goal of its own.
 
+## 2026-11-07 — Chromebooks and integrated GPUs: ULTRA drawn the phones' way, the resolution adaptive everywhere
+
+The user: *"we need it be played on anything"*; *"do all optimization works, so that even a chrome book will get 500
+fps in ultra"*. **500 fps on a Chromebook is not reachable**: its screen is 60 Hz (Chrome stops at the screen's rate),
+and an Intel UHD / Mali has ~1/10–1/20 of the RTX 4050's GPU (which draws a view in ~1 ms). The goal set instead: a
+**steady 60 at ULTRA** — the same world, ranges and look, fewer pixels (as the phones, "The phone, by the numbers").
+
+Before this, a Chromebook was drawn as a PC: not "mobile", so ULTRA with MSAA 4×, the 2× pixel cap, the 1024 ground
+cache, the rock relief, WebGPU, and NO adaptive resolution (phones only).
+
+| change | where |
+|---|---|
+| **A weak GPU recognised** by its name (WebGL's unmasked renderer, a throwaway context at boot): Intel HD / UHD / Iris Plus (not Iris Xe, Arc), Mali / Immortalis / PowerVR / Adreno (not Snapdragon X), software. 19 real strings tested (`npm run test:gpu`) | `DeviceProfile.ts` `isWeakGpu` / `weakRenderer`; `tests/gpuclass.test.ts` |
+| On a weak GPU, ULTRA the phones' way: **MSAA 2×** (not 4×; on WebGL2 PlayCanvas's own multisampled back buffer takes `device.samples`, `core.ts`), ground cache 512 (34 MB, not ~4×: shared memory), the rock relief off, ≤ 1 pixel per CSS pixel, WebGL2 (the phones' path; these drivers' WebGPU the least tried). `?gpu=weak` / `?gpu=full` force it; `?aa=0` no MSAA, `?msaa=4` 4× | `quality.ts` `pickTier`, `main.ts`, `gfx/core.ts` |
+| **Adaptive resolution on EVERY device** (was phones only): judged on each second's AVERAGE frame (a GC stall or a hitch barely moves it), two slow seconds (> 19 ms) running to drop 15 %, down to half; back up 8 % when fast (< 12.5 ms) — and on a 60 Hz screen (which never shows < 12.5 ms) a TRY up after 8 s held at ≥ 57 fps, the wait doubled (to 2 min) when a try turns slow. A frame > 250 ms (tab hidden, a load) restarts the second. A PC at 500 fps never moves. The Resolution setting at a fixed % / `?dpr=fixed` / `?adaptive=0` turn it off | `main.ts` |
+| `gpuclass.mjs`: what the game makes of a machine's GPU (name, weak, backend, canvas, the resolution share) | `scripts/harness/` |
+
+**Cost, measured on the M4 (abq.mjs, ULTRA 1920 × 1080 uncapped, 3 reps interleaved) — `gpu=weak` forces the profile
+here, so this is the profile's saving on the M4, not a Chromebook's frame:**
+
+| view | ULTRA (PC way) | ULTRA, weak-GPU way | + 70 % resolution |
+|---|---|---|---|
+| spawn | 4.740 ms | 1.914 (−60 %) | 1.661 |
+| forest | 4.543 | 1.717 (−62 %) | 1.449 |
+| lake | 4.824 | 1.854 (−62 %) | 1.387 |
+| cliff | 4.349 | 1.664 (−62 %) | 1.491 |
+| rockhill | 3.750 | 1.681 (−55 %) | 1.689 |
+
+(That table was the weak way with NO MSAA, before the user's *"can't we at least MSAA 2× on small"*. MSAA on it,
+abq.mjs, WebGL2, 3 reps — forest / lake / cliff: off 1.736 / 1.890 / 1.676 ms, **2× +0.70 / +0.66 / +0.65**, 4× +1.01 /
++1.11 / +1.03: 2× is ~⅔ of 4×'s cost on the M4; on an Intel UHD (no tile memory) the saving should be larger, on a
+Mali / PowerVR (MSAA resolved in tile memory) both are cheap. The spawn's row was thrown by a stall, not used. The look,
+`viewshot.mjs`: 2× smooths the trunks, ridges and the car as 4× does; off they stair-step.)
+
+**CAUTION, these absolute numbers:** a tab in the user's own Chrome was running at 70–115 % CPU for 1.5 h during the
+run (likely the game: the GPU shared), and `fps.mjs ultra` read 3.562 ms mean against 1.885 on 2026-11-06 — re-measure
+on a quiet machine before believing either column; the A/B's ratio is the interleaved, fair part. The look: the same
+(`viewshot.mjs`: grass edges a touch harder without MSAA, the rock without its relief, as on phones).
+
+**Not done yet (the order to do them):** (1) measure on a real Chromebook (`gpuclass.mjs`'s numbers there, `?stats=1`,
+`chrome://inspect`), and the WebGPU vs WebGL2 A/B on it; (2) render scale + a sharpening upscale (FSR1-style EASU /
+RCAS, or PlayCanvas's `CameraFrame` `renderTargetScale`) so a dropped resolution keeps its edges — the main camera
+into a target and a blit; the water's depth reads to check; (3) f16 / mediump in the terrain, grass and tree colour
+maths (Mali / PowerVR run it at 2×; Intel's GL drivers mostly ignore it; never world positions — 16 km); (4) the
+major-GC stall (PlayCanvas's per-frame allocations) — on a Chromebook's CPU it's longer; (5) physics in a worker,
+multi-draw for trees / rocks (Phase 5).
+
 ## 2026-11-07 — the Windows PC (Ryzen 7 7435HS + RTX 4050 Laptop): the CPU's frame, and the hitches
 
 The user: *"travel around all places in valley and check places with fps drop and fix it … loop it until we get
@@ -226,3 +273,8 @@ Several windows at once are fine for CHECKING (browsers, phones), never for MEAS
 | 2026-11-06 | no grass on stone: the grass bake reads the ground's normal at mip 0 (was 2.5 — the terrain paints with mip 0 up close) and stops short of scree (`screeNear`) | no frame cost: the bake re-runs only the texels the camera uncovers, the same fetches (one mip, one smoothstep more) | — | — |
 | 2026-11-06 | the rock's relief LIVE on every rock pixel (the cache stores its strength, no longer the baked bend — that came out weaker than the live walls': the user's patchy rock). Everything else the ground cache does is as it was | Windows PC, `abq.mjs` ABBA `"|tcut=ncr|tcut=ncr|"` × 4 (ncr: a temporary switch, the relief off on cached ground — the cost of exactly this; removed after): rockhill (a new view: the user's rock hillside, -864.6 / -449.9) 2.821 live vs 2.853 without, forest 3.164 vs 3.215, spawn 4.423 vs 4.361, cliff 2.829 vs 2.756 — no measurable cost (±0.07, this PC's noise). The bake no longer runs the relief: lighter. Re-run on the Mac mini to confirm 500+ | phones: not compiled (no relief there) | — |
 | 2026-11-07 | the CPU's frame and the hitches (the Windows laptop): PlayCanvas's release build in dev; the gfx layer's frame; the HUD's DOM; instancing buffers sized to what's drawn; the horizon a slice a frame; the garbage 158 → 89 KB a frame; the shadow bake's copies — all pixel-identical (`pixdiff.mjs`) | spawn driving 373 → 687 fps, forest 509 → 782, lake 543 → 801, cliff 560 → 790, rockhill 521 → 913; the valley drive 794 fps mean | not measured (no phone) | — |
+| 2026-11-07 | Chromebooks / integrated GPUs: a weak GPU recognised by name → ULTRA the phones' way (MSAA 2× — +0.65–0.70 ms on the M4 against off, 4× +1.0–1.1 —, cache 512, no relief, ≤ 1 px/CSS px, WebGL2); adaptive resolution on every device (per-second average, two slow seconds, a try-up on 60 Hz screens) | M4 with `gpu=weak` forced: −55 to −62 % (spawn 4.74 → 1.91 ms) — a busy machine, re-measure; the PC way unchanged (`gpu=full` / not weak), the adaptive resolution never moves at 500 fps | not measured (no phone / Chromebook) | — |
+| 2026-11-07 | THE CAVE WORLD (Blender's, CaveWorld.ts) replaces the four procedural caves: 54 k turf + 128 k rock + 1 k garden triangles, ~45 k tufts / stones; the inside drawn only from in / near it; no cave dark on the terrain and boulders any more; the car takes it | abq `|cave=0` (M4, ULTRA 1080p): in front of it −0.71 ms, in the great hall −0.43…−0.52 (the hill hides the land behind), over it from 120 m up +0.42 (its turf shader over much of the screen); spawn ±0.03. LOW: front −0.34, hall −0.82, above +0.23. Load: cave.glb 0.5 MB, ~100–130 ms | not measured (no phone) | — |
+| 2026-11-07 | GROVES (Groves.ts): 151 groups of 5–10 trees and their bushes (~1 070 trees, ~750 bushes) | abq `|groves=0`: spawn +0.016, lake +0.044 ms (noise); the forest view's run was thrown by a stall | not measured | — |
+| 2026-11-07 | THE CAVE WORLD round 3: taller, a second skylight, 3 ponds, ~30 trees, ~110 bushes, ~2 600 tufts, ~60 % grass inside; the field's grass on its hill (Grass.setHill, the tiles' boxes on it) | abq `|cave=0` (M4, ULTRA 1080p, a busy machine — spawn 5.1 ms): front −0.43, inside the great hall +0.62 (was −0.43 before the growth), above +0.60, spawn ±0.00. Load ~350 ms (cave.glb 0.83 MB, bones.glb 0.2) | not measured | — |
+| 2026-11-07 | THE CAVE WORLD round 4: twice the height (184 k rock triangles), the hill painted from the land's mask, the turf's smooth transitions. Found on the way: the inside's tufts / bones / props mesh (122 k triangles) was drawn ALWAYS — now hidden with the inside; "in front of the mouth" counts only low enough to see in; the inside drawn after the turf from outside (renderOrder); the outside hill reads its paint from above only; the rock's 6-fetch paint only where it shows | abq `|cave=0` (M4, ULTRA 1080p): front +0.03, great hall +0.66 (+1.9 before the fixes), above +0.35 (+1.7 before; round 3 +0.60), spawn +0.04 | not measured | — |

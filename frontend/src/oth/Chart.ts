@@ -84,7 +84,7 @@ export function bakedChart(id: WorldId): Promise<HTMLImageElement | null> {
 }
 
 // ------------------------------------------------------------------------------------------------- shared drawing
-export const ICON: Record<Landmark['kind'], string> = { tower: '♜', view: '◭', cabin: '⌂', shack: '⌂', sawmill: '▤', mine: '⛏', meteorite: '✶', falls: '≋', meadow: '✿', camp: '▲', oasis: '≈', aqueduct: '⌓', arch: '⌒', spires: '▴', gorge: '≍', ksar: '▦', dunes: '∿', slickrock: '◒', tunnel: '◠', grotto: '◖', ghost: '☗', ruin: '⌂', ranger: '⚑', garage: '⚙', shelter: '⌂', hamlet: '⌂', research: '◬', dock: '⚓', wreck: '✕' }
+export const ICON: Record<Landmark['kind'], string> = { tower: '♜', view: '◭', cabin: '⌂', shack: '⌂', sawmill: '▤', mine: '⛏', meteorite: '✶', falls: '≋', meadow: '✿', camp: '▲', oasis: '≈', aqueduct: '⌓', arch: '⌒', spires: '▴', gorge: '≍', ksar: '▦', dunes: '∿', slickrock: '◒', cave: '◖', ghost: '☗', ruin: '⌂', ranger: '⚑', garage: '⚙', shelter: '⌂', hamlet: '⌂', research: '◬', dock: '⚓', wreck: '✕' }
 /** The route's colour (GTA's waypoint violet: it reads on green and on sand). */
 export const ROUTE = '#a24dff'
 

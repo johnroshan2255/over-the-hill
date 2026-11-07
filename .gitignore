@@ -17,3 +17,6 @@ frontend/.cert
 
 # reference frames from Over the Hill gameplay videos (theirs: never committed)
 frontend/refer
+
+# headless screenshots (scripts/harness/caveshot.mjs etc.): local review, not committed
+frontend/screenshots

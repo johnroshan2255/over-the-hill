@@ -123,6 +123,16 @@ export class OthPhysics {
     }
   }
 
+  /** A TRIANGLE MESH collider (the cave world: its hill and its cave, one mesh — CaveWorld.ts): GROUND (the wheel rays
+   *  and the feet see it), both sides. */
+  addTrimesh(m: { verts: Float32Array; idx: Uint32Array } | null | undefined): void {
+    if (!m) return
+    const body = this.pw.world.createRigidBody(this.R.RigidBodyDesc.fixed())
+    this.statics.push(body)
+    this.pw.world.createCollider(this.R.ColliderDesc.trimesh(m.verts, m.idx)
+      .setCollisionGroups(group(Groups.Static | Groups.StaticMesh, STATIC_MESH_FILTER)).setFriction(0.9), body)
+  }
+
   /** The props' boxes (Props.ts): streamed in round the car with the rocks (follow). */
   addPropColliders(list: PropCollider[]): void {
     this.props = list

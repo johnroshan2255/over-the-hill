@@ -1,4 +1,4 @@
-import { isMobileDevice } from '../rendering/quality/DeviceProfile'
+import { isMobileDevice, isWeakGpu } from '../rendering/quality/DeviceProfile'
 import { gameParams } from '../settings'
 
 /**
@@ -60,6 +60,10 @@ export interface Tier {
   /** THE GROUND CACHE (GroundCache.ts): texels a level's side (a multiple of 16; 0: off — the ground painted live on
    *  every pixel). The finest texel is 1/32 m × 1024 / this; phones 512 (34 MB, 1/16 m: their pixels are bigger). */
   groundCache: number
+  /** (pickTier) MSAA's samples on the canvas when `msaa` (WebGL2 only — WebGPU has 1 or 4); unset: the most, ≤ 4 */
+  msaaSamples?: number
+  /** (pickTier) a weak GPU — an integrated / phone-class chip (DeviceProfile.ts isWeakGpu): drawn the phones' way */
+  weakGpu?: boolean
 }
 
 export const TIERS: Record<TierName, Tier> = {
@@ -102,5 +106,17 @@ export function pickTier(): Tier {
   // went (bloom 0) phones drew ULTRA with MSAA 4× on WebGL2, +1.2–1.4 ms even on the M4): no MSAA (the leaf cards
   // alpha-test; at 2× density a stair-step is under half a CSS pixel), the ground cache's smaller atlas
   if (mobile) Object.assign(out, { msaa: p.get('aa') === '1', groundCache: Math.min(out.groundCache, 512) })
+  // A WEAK GPU ON A LAPTOP (2026-11-07, the user: "even a Chromebook … in ULTRA"; docs/PERF.md "Chromebooks"): an Intel
+  // HD / UHD, a Mali / PowerVR / Adreno Chromebook, software rendering — the phones' way of drawing ULTRA: the same
+  // world, ranges, grass, trees and light, but MSAA 2× not 4× (2026-11-07, the user: "can't we at least MSAA 2× on small":
+  // half the samples' bandwidth on these chips' shared memory — the edges still smoothed, the leaves still
+  // alpha-to-coverage; ?aa=0 / the Anti-aliasing setting OFF: none; ?msaa=4: 4×),
+  // the ground cache's smaller atlas (34 MB, not ~4×: 4 GB machines share it with the system), the rock relief off (as
+  // on phones: a per-pixel noise on every rock pixel), and at most 1 pixel per CSS pixel (a 1.25× / 1.5× screen draws
+  // 36–56 % fewer pixels; the adaptive resolution, main.ts, goes on from there). ?gpu=full: as a PC; ?gpu=weak: test it.
+  if (!mobile && isWeakGpu(p.get('gpu'))) {
+    Object.assign(out, { weakGpu: true, msaa: p.get('aa') !== '0', msaaSamples: Number(p.get('msaa')) || 2, groundCache: Math.min(out.groundCache, 512), dpr: Math.min(out.dpr, 1) })
+    if (relief !== '1') out.rockRelief = false
+  }
   return out
 }

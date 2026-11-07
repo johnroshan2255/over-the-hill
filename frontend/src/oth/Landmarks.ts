@@ -7,8 +7,8 @@ import type { Tier } from './quality'
 import type { TerrainShadow } from './TerrainShadow'
 import { tentA as kitTentA } from './Kit'
 import {
-  type CaveStyle, cavern, type Ctx, cabin, cabinYard, camp as campOf, type CampStyle, FIRE_AT, fishingHut, garage, ghostHouse, hamlet,
-  houseRuin, mineSite, PAINTS, pondDock, rangerStation, researchCamp, riverShelter, tunnel, wreck,
+  type Ctx, cabin, cabinYard, camp as campOf, type CampStyle, FIRE_AT, fishingHut, garage, ghostHouse, hamlet,
+  houseRuin, mineSite, PAINTS, pondDock, rangerStation, researchCamp, riverShelter, wreck,
 } from './Locations'
 import { C as KC } from './Kit'
 
@@ -403,18 +403,7 @@ const PLACES: Partial<Record<Landmark['kind'], (c: Ctx, l: Landmark, map: MapDat
     if (style !== 'abandoned') { l.fire = [FIRE_AT.x, FIRE_AT.z]; l.lights = [[FIRE_AT.x - 3.6, 1.72, FIRE_AT.z + 0.4]] }
     if (style === 'hikers' || style === 'expedition') l.smoke = [FIRE_AT.x, 0.6, FIRE_AT.z]
   },
-  tunnel(c, l, map) {
-    // (the hill's turf takes the land's own dryness and forest floor where it stands)
-    const cr = Math.cos(l.rot), sr = Math.sin(l.rot), mk: [number, number, number, number] = [0, 0, 0, 0]
-    tunnel(c, l.dark ? l.dark.z1 - l.dark.z0 - 2 : 30, (x, z) => { const m = map.maskAt(l.x + x * cr + z * sr, l.z - x * sr + z * cr, mk); return [m[1], m[3]] })
-    l.fire = [3.9, 3]
-  },
-  grotto(c, l, map) {
-    // (a one-way cave in its own hill — Locations.cavern: its style the place's; the turf the land's own paint)
-    const cr = Math.cos(l.rot), sr = Math.sin(l.rot), mk: [number, number, number, number] = [0, 0, 0, 0]
-    const fire = cavern(c, (l.style ?? 'hall') as CaveStyle, (x, z) => { const m = map.maskAt(l.x + x * cr + z * sr, l.z - x * sr + z * cr, mk); return [m[1], m[3]] })
-    if (fire) l.fire = fire
-  },
+  // (the cave, Sky Hollow: its own — CaveWorld.ts; the procedural tunnel and grottos are gone, 2026-11-07)
   ghost(c) { ghostHouse(c) },
   ruin(c, l) { houseRuin(c, l.id % 2 === 0) },
   ranger(c, l) { rangerStation(c); l.lights = [[-2.2, LIT, 3.6]] },

@@ -70,12 +70,14 @@ export class Renderer {
   private constructor(canvas: HTMLCanvasElement) { this.domElement = canvas }
 
   /** The device up (WebGL2, or WebGPU with ?api=webgpu), the renderer on it. */
-  static async create(canvas: HTMLCanvasElement, o: { antialias: boolean; api?: 'webgl2' | 'webgpu'; powerPreference?: 'high-performance' | 'low-power' }): Promise<Renderer> {
+  static async create(canvas: HTMLCanvasElement, o: { antialias: boolean; samples?: number; api?: 'webgl2' | 'webgpu'; powerPreference?: 'high-performance' | 'low-power' }): Promise<Renderer> {
     await initGfx(canvas, o)
     return new Renderer(canvas)
   }
 
   get backend(): string { return gfx().device.deviceType }
+  /** the canvas's MSAA samples (1: none) */
+  get samples(): number { return (gfx().device as unknown as { samples: number }).samples }
   getContext(): WebGL2RenderingContext | null { return (gfx().device as unknown as { gl?: WebGL2RenderingContext }).gl ?? null }
   setPixelRatio(r: number): void { this.pr = r; this.resize() }
   getPixelRatio(): number { return this.pr }

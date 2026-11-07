@@ -13,6 +13,16 @@ import type { Tier } from './quality'
 export class Rain {
   readonly mesh: GFX.Mesh
 
+  /** IN THE CAVE WORLD (2026-11-07, the user: "no rain inside — only the exposed parts"): while the camera is inside
+   *  its hill (CaveWorld.cameraInside) the streaks fall only down its skylight's shaft (x, z, radius; w 1: inside). Outside,
+   *  the hill hides what falls behind its slopes. */
+  private readonly shaft: GFX.IUniform = { value: new GFX.Vector4(0, 0, 0, 0) }
+  private readonly shaft2: GFX.IUniform = { value: new GFX.Vector4(0, 0, 0, 0) }
+  setCave(inside: boolean, x = 0, z = 0, r = 0, x2 = 0, z2 = 0, r2 = 0): void {
+    ;(this.shaft.value as GFX.Vector4).set(x, z, r, inside ? 1 : 0)
+    ;(this.shaft2.value as GFX.Vector4).set(x2, z2, r2, 0)
+  }
+
   constructor(private readonly atmos: Atmosphere, tier: Tier, private readonly kind: 'rain' | 'sand' = 'rain') {
     const n = tier.rain
     const g = new GFX.InstancedBufferGeometry()
@@ -27,10 +37,12 @@ export class Rain {
     g.instanceCount = n
     const u = atmos.uniforms
     const mat = new GFX.ShaderMaterial({
-      uniforms: { uCamPos: u.uCamPos, uTime: u.uTime, uRain: kind === 'sand' ? u.uDust : u.uRain, uWind: u.uWind, uAmbSky: u.uAmbSky, uSunColor: u.uSunColor, uHeadL: u.uHeadL, uHeadR: u.uHeadR, uHeadDir: u.uHeadDir, uDustColor: u.uDustColor },
+      uniforms: { uCamPos: u.uCamPos, uTime: u.uTime, uRain: kind === 'sand' ? u.uDust : u.uRain, uWind: u.uWind, uAmbSky: u.uAmbSky, uSunColor: u.uSunColor, uHeadL: u.uHeadL, uHeadR: u.uHeadR, uHeadDir: u.uHeadDir, uDustColor: u.uDustColor, uShaft: this.shaft, uShaft2: this.shaft2 },
       defines: kind === 'sand' ? { SAND: '' } : {},
       vertexShader: /* glsl */ `
         attribute vec4 seed;
+        uniform vec4 uShaft;
+        uniform vec4 uShaft2;
         uniform vec3 uCamPos;
         uniform float uTime;
         uniform vec2 uWind;
@@ -56,6 +68,8 @@ export class Rain {
           vec3 p = seed.xyz * BOX + vel * uTime;
           p = mod(p - uCamPos + BOX * 0.5, BOX) - BOX * 0.5 + uCamPos;
           vec3 dir = normalize(vel);
+          // (in the cave: only down the skylight's shaft — Rain.setCave)
+          if (uShaft.w > 0.5 && length(p.xz - uShaft.xy) > uShaft.z && length(p.xz - uShaft2.xy) > uShaft2.z) { gl_Position = vec4(0.0, 0.0, -2.0, 1.0); vFade = 0.0; vV = 0.0; vWorld = p; return; }
           #ifdef SAND
           float len = 0.9 + seed.w * 1.5;
           #else

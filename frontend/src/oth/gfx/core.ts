@@ -20,7 +20,7 @@ export function gfx(): Gfx {
   return G
 }
 
-export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | 'webgpu'; antialias: boolean; powerPreference?: 'high-performance' | 'low-power' }): Promise<Gfx> {
+export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | 'webgpu'; antialias: boolean; samples?: number; powerPreference?: 'high-performance' | 'low-power' }): Promise<Gfx> {
   // (?api=webgpu-only: no fallback — a debug switch, so a failed WebGPU start shows its error)
   const types = o.api === 'webgpu' ? (new URLSearchParams(location.search).get('api') === 'webgpu-only' ? [pc.DEVICETYPE_WEBGPU] : [pc.DEVICETYPE_WEBGPU, pc.DEVICETYPE_WEBGL2]) : [pc.DEVICETYPE_WEBGL2]
   const device = await pc.createGraphicsDevice(canvas, {
@@ -40,6 +40,15 @@ export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | '
     twgslUrl: '/lib/twgsl/twgsl.js',
   } as never)
   device.maxPixelRatio = 1
+  // FEWER MSAA SAMPLES (2026-11-07, quality.ts: a weak GPU's 2×): on WebGL2 PlayCanvas draws into its own multisampled
+  // back buffer of `device.samples` (the most the GPU has, ≤ 4) and blits it to the canvas — made again from
+  // `samples` at every resize, so set here it holds. WebGPU allows only 1 or 4: left as it is there.
+  const dev = device as unknown as { samples: number; backBuffer: { destroy(): void }; createBackbuffer(fb: null): void }
+  if (!device.isWebGPU && o.samples && dev.samples > 1 && o.samples < dev.samples) {
+    dev.samples = o.samples
+    dev.backBuffer.destroy()
+    dev.createBackbuffer(null)
+  }
   if (device.isWebGPU) await fastWgsl(device)
   const opts = new pc.AppOptions()
   opts.graphicsDevice = device

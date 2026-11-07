@@ -30,6 +30,34 @@ What's in, working:
 
 Cost, measured: ULTRA 1080p +0.02 to +0.14 ms at a cave; the worst view is 1.34 ms (745 fps, deep forest). LOW adds at most 0.18 ms. Elsewhere ULTRA averages 0.787 ms (about 1270 fps). The details are in `docs/PERF.md`.
 
+## 0. THE CAVE WORLD (2026-11-07) — replaces the procedural caves (ARCHITECTURE.md "The cave world — Sky Hollow")
+
+Done: modelled in Blender (`scripts/oth/caves.py`), exported (`public/oth/valley/cave.glb` + `cave.json`), placed,
+laid on the land, painted (grass gold and green with rock patches, the terrain's rock inside), pines on top and in the
+skylight's garden, collision, the dark, the drivable lane (`cavedrive.mjs`: to the far chamber, no flip). The
+procedural tunnel and the three grottos are gone (Locations.ts' caves, Sites' tunnel / grotto picks). Sections 1 and the
+caves' items in 2 below are history.
+
+Round 4 (2026-11-07, the user: "twice the height; on top like the terrain — rock no grass, green grass on green, yellow on
+yellow; a gradual transition, not a sticker"): every roof twice as high over its floor (caves.py `TALL`, `_taller`;
+floors, the lane, the pools, the Haven unmoved), the hill ~77 m (its blobs raised), the arch scaled with the mouth.
+The hill's turf paints from the land's MASK as the terrain does (Bridges `uMask` / `uMaskGrid`; CaveWorld.grassOn writes
+the hill's rock as smooth ramps into R and its dryness, softened over 20 m, into G — the blades read the same).
+The turf shader: the paint blended across the floor→wall bend (no stepped line), a ragged wide grass → soil →
+rock band, the lit-blades normal bend eased out over it; inside per pixel from the slope (grass up, rock on the walls,
+moss-green on ledges, green / gold patches). Views on the top: `cavecheck.mjs` o_top / p_top_rim / q_top_flank.
+Next:
+- **The user's idea: the cave as its OWN small world** (~400 m, Draco; the outside unloaded while inside — World.ts's
+  swap, as at the pass). Then the deep parts can go under the land.
+- Water in the far chamber's basin; the hill's shadow on the land (TerrainShadow: the TOP grid into its heights).
+- The garden turf's edge shows a seam on the rock floor (separate meshes): blend it.
+- The terrain's own ground shows a little at the mouth's threshold (a gold patch on the floor just inside the arch).
+- Measure on a phone (the cave's inside: ~200 k triangles, its trees and bushes — only drawn from in or near it); the
+  inside's cost in the great hall is +0.6 ms ULTRA on the M4 (the growth) — LODs for the tufts / a lighter far LOD.
+- A faint dotted line on the hill from afar (the grass field's far edge crossing the slope, likely) — check.
+- The lake / ponds are flat dark water: a reflection, a ripple.
+- Old saves: the places after it got new ids (the four caves became one) — a found-flag may point at the wrong place.
+
 ## 1. DONE: the caves' rock read as cement, not as the terrain's rock (the user, 2026-11-06)
 
 The user's words: *"i asked u to change the rock part to the texture the outside and top where we used the normal terrain was really good, now it's like a cement building."*

@@ -21,7 +21,7 @@ export interface Landmark {
   id: number
   kind: 'tower' | 'view' | 'cabin' | 'shack' | 'sawmill' | 'mine' | 'meteorite' | 'falls' | 'meadow' | 'camp' | 'oasis' | 'aqueduct' | 'arch' | 'spires' | 'gorge' | 'ksar' | 'dunes' | 'slickrock'
     // (2026-11-06, Sites.ts — the valley's new places)
-    | 'tunnel' | 'grotto' | 'ghost' | 'ruin' | 'ranger' | 'garage' | 'shelter' | 'hamlet' | 'research' | 'dock' | 'wreck'
+    | 'cave' | 'ghost' | 'ruin' | 'ranger' | 'garage' | 'shelter' | 'hamlet' | 'research' | 'dock' | 'wreck'
   name: string; x: number; z: number; y: number; rot: number; r: number
   /** Its style (a camp's: expedition / hikers / fishers / abandoned; a cabin's story). */
   style?: string
@@ -33,8 +33,12 @@ export interface Landmark {
   smoke?: [number, number, number]
   /** A NOTE left here (read when you stop by it: main.ts). */
   note?: { title: string; text: string }
-  /** (the tunnel / grotto) the dark under its roof: a segment (local z0 → z1 on x 0), its radius and the roof's height */
-  dark?: { z0: number; z1: number; r: number; top: number; sky?: number }
+  /** (the cave) the dark under its roof: a segment (local (0, z0) → (x1, z1)), its radius, the roof's height, the
+   *  skylight's radius at its far end, how far in from the mouth it comes on (m, 9 if unset) */
+  dark?: { z0: number; z1: number; x0?: number; x1?: number; r: number; top: number; sky?: number; fade?: number }
+  /** (the cave world) a second and third reach of its dark — its far chambers, the Haven */
+  dark2?: { z0: number; z1: number; x0?: number; x1?: number; r: number; top: number; sky?: number; fade?: number }
+  dark3?: { z0: number; z1: number; x0?: number; x1?: number; r: number; top: number; sky?: number; fade?: number }
 }
 /** A bridge: deck ends (x0, z0) → (x1, z1), the deck's top there y0 → y1, width w; a ROPE bridge (the desert's gorge)
  *  hangs `sag` m below that line at its middle (a parabola). */

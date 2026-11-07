@@ -652,7 +652,9 @@ void main() {
   vec3 N = normalize(vN);
   if (!gl_FrontFacing) N = -N;
   vec3 V = normalize(uCamPos - vWorld);
-  float sun = sunVisibility(vWorld.xz);
+  // (in the cave world: its dark — no sun under the hill, the light dimmed: Sites.caveUniforms)
+  float ck = caveK(vWorld);
+  float sun = sunVisibility(vWorld.xz) * (1.0 - ck);
 #ifdef GLASS
   // WINDOWS: lightly tinted glass — the cabin shows through, the sky reflects in it by Fresnel, the sun glints
   float F = 0.08 + 0.88 * pow(1.0 - max(dot(N, V), 0.0), 4.0);
@@ -752,6 +754,7 @@ void main() {
 #endif
   // a little painted rim light so the car reads against the field (soft: a matte surface's)
   c += albedo * uSunColor * pow(1.0 - max(dot(N, V), 0.0), 3.0) * (0.08 + 0.06 * m) * sun;
+  c *= 1.0 - 0.75 * ck;
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
 #endif
   #include <tonemapping_fragment>

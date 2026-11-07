@@ -4,6 +4,7 @@ import { Birds } from './Birds'
 import { Bridges } from './Bridges'
 import { Bushes, placeBushes } from './Bushes'
 import { Falls } from './Falls'
+import { CaveWorld, loadCaveMeta } from './CaveWorld'
 import { Formations } from './Formations'
 import { Glow } from './Glow'
 import { Grass } from './Grass'
@@ -79,6 +80,8 @@ export class World {
     readonly formations: Formations | null,
     /** Every landmark and camp (the signposts, the map, the journal count them). */
     readonly places: Landmark[],
+    /** The valley's cave world (Blender's — CaveWorld.ts; its physics a triangle mesh: main.ts). */
+    readonly cave: CaveWorld | null = null,
   ) {}
 
   /** Build world `id` (its files fetched first); `pace` runs between the steps (a frame, when built while playing).
@@ -135,14 +138,16 @@ export class World {
     const treeAll = new Float32Array(treeData)
     const placed = await step('places', () => placeThings(map, rocks, { data: treeAll, count: treeAll.length / TREE_STRIDE } as unknown as Trees))
     // (?sites=0: without the new places — the cost A/B)
-    const plan = gameParams().get('sites') === '0' ? { sites: [], keep: [] } : await step('sites', () => planSites(map, rocks, placed.props, [...(map.meta.landmarks ?? []), ...placed.camps]))
+    // (the cave world's shape: its hill's top, its apron — fetched before the places are chosen: it takes the most room)
+    const caveMeta = map.desert || gameParams().get('cave') === '0' ? null : await loadCaveMeta(WORLDS[id].path)
+    const plan = gameParams().get('sites') === '0' ? { sites: [], keep: [] } : await step('sites', () => planSites(map, rocks, placed.props, [...(map.meta.landmarks ?? []), ...placed.camps], 1000, caveMeta))
     const open = (x: number, z: number) => plan.keep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r)
     const keepEvery = (a: ArrayLike<number>, stride: number) => { const o: number[] = []; for (let i = 0; i < a.length; i += stride) if (open(a[i], a[i + 2])) for (let k = 0; k < stride; k++) o.push(a[i + k]); return new Float32Array(o) }
     rocks.removeWithin(plan.keep)
     // (and the small things on it: pebbles, logs, stumps — never a crate, a sign, a camp's)
     placed.props = placed.props.filter((p) => !['stones', 'log', 'stump', 'logs'].includes(p.kind) || open(p.x, p.z))
     // (the tunnel's hill: the trees and bushes where it stands lifted onto it, a few more on its crest — Sites.dressHills)
-    const dressed = dressHills(map, plan.sites, keepEvery(treeAll, TREE_STRIDE), TREE_STRIDE, keepEvery(bushData, 7), 7)
+    const dressed = dressHills(map, plan.sites, keepEvery(treeAll, TREE_STRIDE), TREE_STRIDE, keepEvery(bushData, 7), 7, caveMeta)
     const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks, !background, dressed.trees))
     await step('impostors', () => trees.bakeImpostors(env.renderer))
     const bushes = await step('bushes', () => new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture, dressed.bushes))
@@ -170,13 +175,20 @@ export class World {
     const formations = map.desert ? await Formations.load(`${WORLDS[id].path}/formations.glb`, atmos, shadow, tier, env.farGrid) : null
     timings.formations = performance.now() - tf
     if (formations) formations.horizon = horizon
-    const w = new World(id, map, terrain, rocks, grass, water, falls, trees, bushes, horizon, bridges, glow, landmarks, props, birds, formations, places)
+    // THE CAVE WORLD (cave.glb, Draco): laid on the land where Sites put it
+    const caveSite = places.find((l) => l.kind === 'cave')
+    const tCave = performance.now()
+    const cave = caveSite && caveMeta ? await CaveWorld.load(WORLDS[id].path, map, caveSite, caveMeta, atmos, shadow, tier, env.farGrid, rocks.footprint) : null
+    if (cave) cave.grassOn(map, grass) // (the field's grass on its hill)
+    timings.cave = performance.now() - tCave
+    const w = new World(id, map, terrain, rocks, grass, water, falls, trees, bushes, horizon, bridges, glow, landmarks, props, birds, formations, places, cave)
     w.farGrid.copy(farGrid)
     Object.assign(w.timings, timings)
     w.group.add(props.group, landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group)
     if (glow) w.group.add(glow.group)
     if (birds) w.group.add(birds.mesh)
     if (formations) w.group.add(formations.group)
+    if (cave) w.group.add(cave.group)
     // WARM: its textures on the GPU (one a frame — ~35 MB went up in the first frame after a swap) and its shaders
     // compiled (in parallel where the browser can) before it's ever drawn
     const textures = new Set<GFX.Texture>()
@@ -217,6 +229,8 @@ export class World {
     this.bushes.update(camera)
     this.props.update(camera)
     this.formations?.update(camera)
+    this.cave?.update(camera.position)
+    if (this.glow) this.glow.group.visible = !this.cave?.cameraInside // (no sun's glare through the hill)
     this.landmarks.cull(camera.position)
     this.bridges.cull()
     this.falls.cull()

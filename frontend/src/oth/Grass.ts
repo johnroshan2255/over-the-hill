@@ -52,6 +52,27 @@ export class Grass {
     this.carHalf.value.set(halfX, halfZ)
   }
 
+  /** THE CAVE'S HILL (CaveWorld.ts — 2026-11-07, the user: "why no grass over the cave? there must be grass"): its top's
+   *  height over the ground on a world-aligned grid (x0, z0, step, n — n 0: none); the blades stand on it. */
+  private readonly hill: GFX.IUniform = { value: new GFX.DataTexture(new Float32Array(1), 1, 1, GFX.RedFormat, GFX.FloatType) }
+  private readonly hillGrid: GFX.IUniform = { value: new GFX.Vector4(0, 0, 0, 0) }
+  setHill(tex: GFX.DataTexture, x0: number, z0: number, step: number, n: number): void {
+    this.hill.value = tex
+    ;(this.hillGrid.value as GFX.Vector4).set(x0, z0, step, n)
+    this.hillCpu = { data: tex.image.data as Float32Array, x0, z0, step, n }
+    for (const r of this.rings) r.hi.fill(0x7fffffff) // (the kept corner heights: again, with the hill)
+  }
+  private hillCpu: { data: Float32Array; x0: number; z0: number; step: number; n: number } | null = null
+  /** (the CPU's hill lift — the tiles' boxes stand on it: the near tiles on the hill were culled as under the ground) */
+  private hillAt(x: number, z: number): number {
+    const h = this.hillCpu
+    if (!h) return 0
+    const fx = (x - h.x0) / h.step, fz = (z - h.z0) / h.step
+    if (fx < 0 || fz < 0 || fx > h.n - 1.001 || fz > h.n - 1.001) return 0
+    const i = fx | 0, j = fz | 0, u = fx - i, v = fz - j, d = h.data, n = h.n
+    return (d[j * n + i] * (1 - u) + d[j * n + i + 1] * u) * (1 - v) + (d[(j + 1) * n + i] * (1 - u) + d[(j + 1) * n + i + 1] * u) * v
+  }
+
   constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture, renderer: GFX.WebGLRenderer) {
     const R = tier.grassRadius, D0 = tier.grassDensity * AMOUNT
     const mg = map.meta.mask
@@ -74,6 +95,7 @@ export class Grass {
       // fewer tufts on the lower tiers → each blade wider by the square root: the coverage stays HIGH's
       uWidthK: { value: Math.max(1, Math.sqrt((REF_DENSITY * REF_FAN) / (tier.grassDensity * tier.grassFan))) },
       uCarBox: this.carBox, uCarHalf: this.carHalf,
+      uHill: this.hill, uHillGrid: this.hillGrid,
     }
     this.field = new GrassField(renderer, R, uniforms, map.biomeDefines)
     Object.assign(uniforms, this.field.uniforms)
@@ -119,7 +141,7 @@ export class Grass {
   private corner(ring: Ring, i: number, j: number): number {
     const W = ring.hW, k = (((i % W) + W) % W) * W + (((j % W) + W) % W)
     if (ring.hi[k] === i && ring.hj[k] === j) return ring.hv[k]
-    const h = this.map.height(i * ring.tile, j * ring.tile)
+    const h = this.map.height(i * ring.tile, j * ring.tile) + this.hillAt(i * ring.tile, j * ring.tile)
     ring.hi[k] = i; ring.hj[k] = j; ring.hv[k] = h
     return h
   }
@@ -259,6 +281,17 @@ out float vSun;
 
 vec3 unpackN(vec2 e) { vec2 n = e * 2.0 - 1.0; return vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y); }
 
+uniform highp sampler2D uHill;
+uniform vec4 uHillGrid;
+// (the cave's hill: its top over the ground here — bilinear on its grid; 0 off it)
+float hillLift(vec2 xz) {
+  if (uHillGrid.w < 1.0) return 0.0;
+  vec2 f = (xz - uHillGrid.xy) / uHillGrid.z;
+  if (f.x < 0.0 || f.y < 0.0 || f.x > uHillGrid.w - 1.001 || f.y > uHillGrid.w - 1.001) return 0.0;
+  ivec2 p = ivec2(floor(f)); vec2 w = fract(f);
+  float a = texelFetch(uHill, p, 0).r, b = texelFetch(uHill, p + ivec2(1, 0), 0).r, c = texelFetch(uHill, p + ivec2(0, 1), 0).r, d = texelFetch(uHill, p + ivec2(1, 1), 0).r;
+  return mix(mix(a, b, w.x), mix(c, d, w.x), w.y);
+}
 void main() {
   vec2 root = aTile + aTuft.xy;
   float d = length(root - uCamPos.xz);
@@ -275,7 +308,7 @@ void main() {
     return;
   }
   // THE GROUND HERE: its height and soft normal; what the root reads off the map, from the field
-  float h = terrainHeight(root);
+  float h = terrainHeight(root) + hillLift(root);
 #ifdef OTH_SHAPE
   // (the ground's normal a mip up — ~4 m: the field's bumps light the blades; it was 2.5 mips, ~11 m: every bump under
   //  that lit as flat ground — 2026-11-06) and the hill's (~45 m) the small slopes' light is measured against

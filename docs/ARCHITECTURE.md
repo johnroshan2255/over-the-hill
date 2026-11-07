@@ -782,33 +782,78 @@ after all of it"*.
 - **Not yet**: trails cut to the hidden places (they're reached off-road); interiors; the grotto deeper than its
   overhang (the heightfield has no overhangs: caves are built over it); chimney smoke by night.
 
-### The caves, as land (2026-11-06, later)
+### The cave world — Sky Hollow (2026-11-07: replaces the procedural tunnel and three grottos)
 
-The user: caves must be real land with grass above, rock that looks like the terrain's (no piles of boulders, inside
-or out), different shapes, one way in, big ones with pines under a hole in the roof. `Locations.ts` THE CAVES:
-- every cave is a HILL of turf (`SURF.turf`: the field's own `grassPaint`, the land's dryness per vertex, grass tufts)
-  over one continuous rock shell in `SURF.cliff` — no blocks;
-- THE ROCK IS FACETS, NOT PLASTER (round 2, the user: "now it's like a cement building … like Genshin Impact"):
-  `rockMesh` pushes every shell out and back by `rockField` (ridged 3D noise: chunks ~7 m, crumples ~2.5 m, and
-  wandering LEDGES ~2.7 m thick, ≈ ±1 m; faded in over the first 2 m up from the ground) and draws each triangle flat
-  with its own face normal, coloured darker in the hollows. Where two shells share an edge (arch ↔ vault, mouth ↔
-  passage, dome ↔ skylight shaft, face ↔ cut wall) both move it along one direction (`D`), the turf's edge not at all
-  (`K` = 0), and coincident vertices share a normal — no cracks. The hills' steep parts (≳ 45°) are rock the same way
-  (`hillMesh`: pushed gently — trees stand there — and faceted), the rest smooth turf. The paint (`rockPaint`,
-  Bridges FRAG): the terrain's slab grey in broad tones read on each facet's own plane (no smearing), streaks down
-  the walls, MOSS on what faces up; no painted beds (evenly spaced, they read as a building's courses); the terrain's
-  `rockRelief` on HIGH / ULTRA;
-- the Lantern Tunnel: the track through a hill, rock faces over uneven arches, the road's cut leaning back from the
-  face itself (no vertical edge);
-- a one-way cave's hill sweeps down to the land beside its mouth (`cavernLand`: its front's depth grows with |x|), so
-  the rock face rises only round and over the mouth — not one trapezoid across the hill;
-- three one-way caves (`grotto`, `Landmark.style`): `sky` (a big dome, a shaft through the hill to a hole in the turf,
-  a lit column — `caveK`'s B.w — young pines and bushes growing in it), `hall` (a long gallery, crystals, the survey's
-  camp), `den` (small and low, a nest); each mouth a cliff face leaning back, its line, the walls' bulge and the sizes
-  varied by the seed (`cavernLand`, shared with `Sites.dressHills`, which lifts the trees and bushes onto the hills);
-- the dark: the three caves nearest the camera each frame (`caveUniforms`).
-Cost (`scripts/harness/cavecost.mjs`): ≤ 0.14 ms at a cave ULTRA (worst 1.34 ms ≈ 745 fps, the forest's), ≤ 0.18 LOW.
-The faceted rock (round 2) measured within the noise of that (docs/PERF.md, 2026-11-06 round 2).
+The user: "use Blender to make / sculpt a cave, a proper one"; "a single mesh, a big one, like a small world which can
+be explored, like in Genshin"; "on top normal grass and some rock texture, some trees; inside, grass and pines where
+the light gets"; "naturally blended". One cave in the valley:
+- **Modelled** by `frontend/scripts/oth/caves.py` (Blender, headless: `blender -b --factory-startup --python
+  scripts/oth/caves.py -- STYLES=world OUT=public/oth/valley [PREVIEW=screenshots/caves-world|none]`): a SIGNED DISTANCE
+  FIELD in numpy (0.6 m grid) — the hill a smooth union of ellipsoids, its foot filleted into an apron 0.7 m under the
+  land; the cave subtracted: passages (`PATHS`), chambers with flat floors (`CHAMBERS`), the skylight's shaft, wall
+  LEDGES, and rounded rock added back (pillars, a natural arch, stalactites / stalagmites, boulders in the walls,
+  platforms); a smooth DRIVING LANE carved last (`LANE_FLOOR`: no bump on it, 4.5 m clear over it). SURFACE NETS → mesh;
+  smooth, decimate, cut 4 m under the ground. Every floor ≥ ~0.3 m over the ground: the terrain runs on, hidden in rock.
+- **Exported**: `public/oth/valley/cave.glb` (Draco, ~0.5 MB: TURF 54 k triangles, ROCK 128 k, GARDEN 1 k, a COLLIDER
+  58 k) and `cave.json` (the hill's TOP as a 2 m height grid, its apron, the skylight, the garden's pines and tufts, the
+  stones). Local frame: the mouth at the origin looking +z, y up, the ground at y = 0.
+- **Placed** by `Sites.planSites` first (it takes the most room): its mouth 22–90 m from a track and facing it, its
+  apron free of tracks, water, bridges, cliffs and big things, the land under it within 24 m of level. `keep` discs
+  clear its ground; `dressHills` plants stands of pines (and the kinds about it) on its TOP and young pines in the garden.
+- **In the game** (`CaveWorld.ts`): every vertex LAID ON THE LAND (y = its own + the terrain's under it); the landmarks'
+  material — the hill `SURF.turf` (the field's grass, the land's dryness swung by a slow noise: gold and green; bare rock
+  in patches where steep), the cave `SURF.cliff` (`caveRockPaint`: the terrain's slab paint read triplanar, + rockRelief),
+  the garden turf flagged inside (vCol.y −1: the dark applies). Grass tufts over the hill and the garden; rounded stones
+  round the mouth and on the way to it. The terrain's own grass kept off where it stands (the rocks' footprint), not off
+  its foot. Physics: one TRIANGLE MESH (`OthPhysics.addTrimesh`). The inside is drawn only from inside, before the mouth
+  or by the skylight.
+- **The dark** (`Sites.caveUniforms` → Atmosphere `caveK`): two reaches (mouth → skylight, skylight → the far chamber),
+  62 m wide, fading in over the way in's first ~26 m; the skylight's column lit and its BOUNCE (`caveBounce`) on the
+  chamber round it. Only the cave's surfaces, the props and the car (`Vehicle.ts`) take it — no longer the terrain or the
+  boulders. No sun's glare while the camera is inside (World.update).
+- **The entrance** (the user: "a welcome entrance, rounded, the one rock texture and shader"): a rounded rock ARCH (a
+  half-torus, `ARCH` in caves.py — its own part, drawn as the turf all bare); grass up to it, no bare patches within
+  ~24 m; the grass turns to rock as the terrain's does — over a WIDE band broken by the paint's noise, the grass
+  thinning and darkening, the rock's grey breaking through in patches (Bridges.ts turf: `rz`, `gravel`), the tufts
+  thinning toward it. ONE rock everywhere: the arch, the hill's bare patches, the cave and the stones — `caveRockPaint`.
+- **Driving it round** (the user: "my cars must go in easily and come back"): the lane is one ROUND (`LANE_FLOOR`): in
+  by the way in, a broad bend across the hall into the gallery, the far chamber, back by the loop and round the garden
+  to the way out; 9.6 m wide, 4.6 m clear; the pillars ~10 m off it. `cavedrive.mjs` (CAR=gwagen | bmw): both drive it
+  round and out, no flip, no stall. `?at=cave`: start 30 m before its mouth, facing it.
+- **Grass on the hill** (the user: "there must be grass"): the field's own blades — `Grass.setHill` gets the hill's top
+  over the ground (a 2 m world grid, `CaveWorld.grassOn`) and stands them on it; its rock patches go into the map's
+  mask (R) so the field thins on them as on any rocky hill; the blades kept off its mouth, skylight and steep.
+- **Inside green and gold**: the walls, the floor (Blender's FLOOR part: what faces up at the floor's height) and the
+  garden one inside-turf (vCol.y −1: the dark on it), the walls bare rock, the floor's grass turning to rock over ~3 m
+  toward them; grass tufts over the floor, bushes (`floorBushes`), a LAKE in the great hall by the garden; BROKEN WOOD
+  (a smashed crate, fallen timbers, planks, a cart wheel) and the BONES (`scripts/oth/bones.py` → `bones.glb`: low-poly
+  skeletons lying and sitting, skulls, ribs, femurs, hands, feet and their toes) on its floor and on the way to the mouth.
+- **Room to do things** (the user: "later each player builds their safe house, a garage"): a bigger great hall and THE
+  HAVEN — a chamber off the loop with a dead flat pad (`HAVEN`: ~34 × 27 m, 8 m clear, nothing on it); its own reach of
+  the dark (`dark3`).
+- **Night and rain**: FIREFLIES in the cave's air at night (one draw, camera-facing quads in the vertex shader, out by
+  day); no rain inside — while the camera is in it, the streaks fall only down the skylight's shaft (`Rain.setCave`).
+- **A different place inside** (round 3): taller chambers and wider passages; a SECOND SKYLIGHT over the far chamber
+  (`SKY2`; `dark2` ends at it, lit); three PONDS (`POOLS`); ~30 TREES where there's ≥ 12 m over them (`innerTrees` —
+  Sites.dressHills: spruce, birch, aspen); ~110 bushes, ~2 600 grass tufts; the inside turf ~60 % grass — what faces up
+  grows it, the walls rock with grass and moss in patches, the roof rock; the skylights' rims turn to rock as the
+  arch's foot does. The lane 12 m wide (a car off its line by a metre or two still on smooth ground: the BMW spun on a
+  bank beside a 9.6 m one).
+- **The seams** (round 3, "cracks like lines"): the parts were cut apart and each packed on its own Draco grid, so a
+  shared edge came back ~1 cm apart and the land showed through — positions now 18-bit, and CaveWorld welds every vertex
+  within ~2.5 cm of another (two passes, offset 2 cm grids).
+- **The camera** stays in the cave: the chase camera tests its own line from the look point too (it went up through
+  a low roof).
+- **Checks**: `scripts/harness/cavecheck.mjs` (where it went, shots outside and in), `cavedrive.mjs` (the round),
+  `abq.mjs` views `caveFront`, `caveHall`, `caveAbove`.
+
+### Groves (2026-11-07 — `Groves.ts`)
+
+The user: "some places with a group of trees, 5–6 together, and bushes, like a natural place — maybe 10 together". One
+in about every other 230 m cell of the valley (151): on open ground or a forest's edge, 5–10 trees on a golden-angle
+spiral (a clump, never a ring or a row), the tallest at the middle; mostly spruce with a larch or two, some groves
+birch and aspen; 4–8 bushes about their feet. Each cell its own seed: added after `placeTrees` / `placeBushes`, nothing
+of theirs moves. `?groves=0`: none (A/B: no measurable cost — ~1 070 trees on ~43 000).
 
 ## Worlds, the desert (2026-11-02 — the to-do list: docs/NEXT.md)
 

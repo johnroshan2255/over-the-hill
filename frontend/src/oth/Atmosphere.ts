@@ -365,11 +365,16 @@ float caveOne(vec3 p, vec4 A, vec4 B) {
   vec2 a = A.xy, ab = A.zw - A.xy;
   float L2 = max(dot(ab, ab), 1e-3), t = clamp(dot(p.xz - a, ab) / L2, 0.0, 1.0), L = sqrt(L2);
   float d = length(p.xz - (a + ab * t));
-  float mouth = smoothstep(0.0, 9.0, t * L) * (B.z > 0.5 ? 1.0 : smoothstep(0.0, 9.0, (1.0 - t) * L));
+  float fl = 9.0 * max(B.z, 1.0); // (B.z: the far end closed (> 0.5) and the fade in from the mouth, its metres / 9)
+  float mouth = smoothstep(0.0, fl, t * L) * (B.z > 0.5 ? 1.0 : smoothstep(0.0, 9.0, (1.0 - t) * L));
   float sky = B.w > 0.0 ? smoothstep(B.w * 0.6, B.w * 1.7, length(p.xz - A.zw)) : 1.0; // (a skylight: lit under it)
   return 0.86 * (1.0 - smoothstep(B.x * 0.75, B.x, d)) * (1.0 - smoothstep(B.y - 1.2, B.y, p.y)) * mouth * sky;
 }
 float caveK(vec3 p) { return max(caveOne(p, uCaveA0, uCaveB0), max(caveOne(p, uCaveA1, uCaveB1), caveOne(p, uCaveA2, uCaveB2))); }
+// THE SKYLIGHT'S BOUNCE (2026-11-07, the cave world): the daylight down its shaft lights the chamber round it softly —
+// 1 under the light, 0 by ~7 radii off (a cave without a skylight: 0)
+float caveBounceOne(vec3 p, vec4 A, vec4 B) { return B.x > 0.0 && B.w > 0.0 ? 1.0 - smoothstep(B.w, B.w * 7.0, length(p.xz - A.zw)) : 0.0; }
+float caveBounce(vec3 p) { return max(caveBounceOne(p, uCaveA0, uCaveB0), max(caveBounceOne(p, uCaveA1, uCaveB1), caveBounceOne(p, uCaveA2, uCaveB2))); }
 uniform sampler2D uNoise;
 uniform float uNight;
 uniform float uRockFill;

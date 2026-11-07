@@ -63,3 +63,4 @@ Played by `src/oth/Audio.ts`. The engine, the rain and the ridge wind are synthe
 | Tawny owl hoots (2026-11-02) | `owl_1.mp3`, `owl_2.mp3` | https://bigsoundbank.com/tawny-owl-1-s1763.html, https://bigsoundbank.com/tawny-owl-2-s1764.html | Joseph Sardin | silence trimmed, levelled, mono MP3 96 k |
 | One frog at night (2026-11-02) | `frog.mp3` | https://bigsoundbank.com/one-frog-s0819.html | Joseph Sardin | silence trimmed, levelled, mono MP3 96 k |
 | Common blackbird song (2026-11-02) | `bird_1.mp3` … `bird_4.mp3` | https://bigsoundbank.com/common-blackbird-7-s3480.html, …-13-s3486, …-17-s3490, …-21-s3494 | Le tiroir du fond (BigSoundBank) | silence trimmed, levelled, mono MP3 96 k |
+| `frontend/public/oth/valley/cave.glb`, `cave.json`, `bones.glb` | made here: `scripts/oth/caves.py`, `scripts/oth/bones.py` (Blender, procedural) | — | the project's own |

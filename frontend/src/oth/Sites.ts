@@ -2,7 +2,7 @@ import type { Atmosphere } from './Atmosphere'
 import type { Landmark, MapData } from './MapData'
 import type { Prop } from './Places'
 import type { Rocks } from './Rocks'
-import { type CaveStyle, cavernLand, tunnelHill } from './Locations'
+import { CAVE_PROPS, type CaveMeta, caveFrame, caveTop, inCaveFoot } from './CaveWorld'
 
 /**
  * THE VALLEY'S NEW PLACES (2026-11-06, the user: "a player drives along a mountain road, notices smoke rising behind
@@ -10,8 +10,8 @@ import { type CaveStyle, cavernLand, tunnelHill } from './Locations'
  * note"; "caves big enough to drive through, lights on the walls"; "broken houses, hidden places — a terror feel"):
  * where they go, picked ONCE from the map (deterministic — the same valley every session), each by its own rule:
  *
- *   tunnel    a DRIVE-THROUGH cave over a straight stretch of track (a ridge's flank best), 30 m long
- *   grotto    a cave under an overhang at a slope's foot, deep enough to drive into — off the road, hidden
+ *   cave      SKY HOLLOW — the cave world (2026-11-07, CaveWorld.ts: Blender's, one): a great grassed hill, its mouth
+ *             toward a track, a cave to explore inside it (the procedural tunnel and three grottos it replaces are gone)
  *   ghost     the HOLLOW HOUSE deep in the forest, far from every track
  *   ruin      two stone house ruins in the meadows and the woods' edges
  *   ranger    a ranger station beside a road, on its high ground
@@ -32,9 +32,8 @@ export interface SitePlan { sites: Landmark[]; keep: [number, number, number][] 
 /** The NOTES — what the places say (by name; the old landmarks' too). */
 export const NOTES: Record<string, { title: string; text: string }> = {
   'Survey Camp': { title: 'Field log, day 19', text: 'Readings off the scale again below the north ridge. Ivers says the instruments are fine. They are not fine. We pack up at first light. — the rest of the page is torn out.' },
-  'Ranger Station 7': { title: 'Duty board', text: 'SURVEY TEAM OVERDUE 3 DAYS. Last radio contact from the old tunnel road. If found, bring them here. Do NOT follow them into the grotto after dark.' },
-  'Lantern Tunnel': { title: 'Scratched into a timber', text: 'The lights were here before the miners. We only built around them.' },
-  'Crystal Grotto': { title: 'A notebook by the bedroll', text: 'The crystals hum when the fire goes low. Ivers went further in to listen. I am staying by the light. I am staying by the light.' },
+  'Ranger Station 7': { title: 'Duty board', text: 'SURVEY TEAM OVERDUE 3 DAYS. Last radio contact from the hill they call Sky Hollow. If found, bring them here. Do NOT follow them into the cave after dark.' },
+  'Sky Hollow': { title: 'Scratched into the rock by the light', text: 'Ivers went on past the great hall to see where the passage goes. I am staying by the light. I am staying by the light.' },
   'The Hollow House': { title: 'Nailed to the door', text: 'WE ARE NOT HOME. — and under it, in another hand: They never left.' },
   'Ashford': { title: 'A water-stained register', text: 'Winter, \'58. The Hollow family stopped coming down to the village. The lamp in their upstairs window kept burning all the same.' },
   'The Drowned Truck': { title: 'A delivery slip on the seat', text: 'Ashford store — paraffin, rope, forty candles. URGENT. Deliver before dark.' },
@@ -46,14 +45,14 @@ export const NOTES: Record<string, { title: string; text: string }> = {
 
 /** The places' names. */
 const NAME: Partial<Record<Landmark['kind'], string[]>> = {
-  tunnel: ['Lantern Tunnel'], grotto: ['Sky Hollow', 'Crystal Grotto', "Bear's Den"], ghost: ['The Hollow House'], ruin: ['Stonewall Ruin', "Miller's Ruin"],
+  cave: ['Sky Hollow'], ghost: ['The Hollow House'], ruin: ['Stonewall Ruin', "Miller's Ruin"],
   ranger: ['Ranger Station 7'], garage: ["Hank's Garage"], shelter: ['Kingfisher Shelter', 'River Lean-to'], hamlet: ['Ashford'],
   research: ['Survey Camp'], dock: ['Heron Dock', 'Old Jetty', 'Quiet Pier', "Fisher's Landing"], wreck: ['The Drowned Truck'],
 }
 
 /** Where the new places go (the valley only), clear of `taken` (the landmarks and camps there), of the things placed
  *  (props) and of each other. ids from `idBase`. */
-export function planSites(map: MapData, rocks: Rocks, props: Prop[], taken: Landmark[], idBase = 1000): SitePlan {
+export function planSites(map: MapData, rocks: Rocks, props: Prop[], taken: Landmark[], idBase = 1000, cave: CaveMeta | null = null): SitePlan {
   const sites: Landmark[] = [], keep: [number, number, number][] = []
   if (map.desert) return { sites, keep }
   const half = map.half - 140
@@ -131,83 +130,52 @@ export function planSites(map: MapData, rocks: Rocks, props: Prop[], taken: Land
   const sp = map.meta.spawn
   const fromSpawn = (x: number, z: number) => Math.hypot(x - sp.x, z - sp.z)
 
-  // ---- THE TUNNEL: a straight 30 m of track, gentle along, no other track or thing beside it, the land rising on a side
-  {
-    let best: [number, number, number, number] | null = null
-    for (const L of map.meta.trails.lines) for (let i = 1; i < L.length - 2; i++) {
-      // the stretch from point i on to the first point 30 m away (the track's points are not evenly spaced)
-      let j = i + 1
-      while (j < L.length - 1 && Math.hypot(L[j][0] - L[i][0], L[j][1] - L[i][1]) < 30) j++
-      const a = L[i], b = L[j]
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1])
-      if (len < 28 || len > 46) continue
-      // straight: every point between within 1.5 m of the chord
-      let straight = true
-      for (let k = i + 1; k < j; k++) { const p = L[k]; const t = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / (len * len); const d = Math.hypot(p[0] - (a[0] + (b[0] - a[0]) * t), p[1] - (a[1] + (b[1] - a[1]) * t)); if (d > 1.5) { straight = false; break } }
-      if (!straight) continue
-      const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2, ux = (b[0] - a[0]) / len, uz = (b[1] - a[1]) / len
-      if (Math.abs(H(b[0], b[1]) - H(a[0], a[1])) / len > 0.1 || Math.abs(mx) > half || Math.abs(mz) > half) continue
-      if (!farFrom(mx, mz, 260)) continue
-      if (!propClear(mx, mz, 36)) continue // (the hill over it reaches ~30 m: no crate buried under it)
-      if (fromSpawn(mx, mz) < 350) continue
-      // nothing else beside it: no other track, no water, no bridge, along both walls
-      let clear = true
-      for (let t = -0.6; t <= 0.6 && clear; t += 0.2) for (const sd of [-1, 1]) {
-        const px = mx + ux * len * t - uz * sd * 8.5, pz = mz + uz * len * t + ux * sd * 8.5
-        if (map.trailDist(px, pz) < 7.5 || !dry(px, pz, 2) || !dry(mx + ux * len * t, mz + uz * len * t, 1)) clear = false
-      }
-      if (!clear) continue
-      // (best where the road runs between rising ground — the hill over it then meets the land each side)
-      const h0 = H(mx, mz), sa = H(mx - uz * 18, mz + ux * 18) - h0, sb = H(mx + uz * 18, mz - ux * 18) - h0
-      // (no cliff, no bare rock beside it: the hill must be the land's, rounded and grassed, seen from round about)
-      let soft = Math.max(sa, sb) < 11
-      for (const d of [10, 20, 30]) for (const sd of [-1, 1]) for (const t of [-0.5, 0, 0.5]) {
-        const px = mx + ux * len * t - uz * sd * d, pz = mz + uz * len * t + ux * sd * d
-        if (mask(px, pz)[0] > 0.25 || Math.abs(H(px, pz) - h0) > 12) soft = false
-      }
-      if (!soft) continue
-      const score = Math.min(Math.min(sa, sb), 6) + 0.3 * Math.min(Math.max(sa, sb), 8) - fromSpawn(mx, mz) / 3000
-      if (!best || score > best[3]) best = [mx, mz, Math.atan2(ux, uz), score]
-    }
-    if (best) {
-      const [x, z, rot] = best, Lt = 30
-      add('tunnel', x, z, rot, 16, 0, { dark: { z0: -Lt / 2 - 1, z1: Lt / 2 + 1, r: 7.0, top: 11.0 } })
-      keep.pop()
-      for (let t = -Lt / 2 - 3; t <= Lt / 2 + 3; t += 4) keep.push([x + Math.sin(rot) * t, z + Math.cos(rot) * t, 10.5])
-      // (the road's cut through the hill beyond each mouth)
-      for (const e of [-1, 1]) for (let t = Lt / 2 + 6; t <= Lt / 2 + 32; t += 4) keep.push([x + Math.sin(rot) * t * e, z + Math.cos(rot) * t * e, 8.5])
-    }
-  }
-  // ---- THE CAVES (2026-11-06, the user: "bigger, different shapes, one way in, no way out; big ones with pines inside
-  //  and a small opening in the top — no two the same"): three, each its own make (Locations.cavern) in its own HILL —
-  //  the mouth toward a track 22–70 m off, the hill's ground (≈ 60 × 60 m behind it) dry, no track or big thing on it
-  for (const [style, name] of [['sky', 'Sky Hollow'], ['hall', 'Crystal Grotto'], ['den', "Bear's Den"]] as [CaveStyle, string][]) {
-    const id = idBase + sites.length, seed = (id * 7919 + 13) >>> 0
-    const spanX = (style === 'sky' ? 19 : style === 'hall' ? 11 : 8) + 14, back = style === 'sky' ? 52 : style === 'hall' ? 62 : 32
-    pick(30, 1, 300, (x, z) => {
+  // ---- THE CAVE WORLD (2026-11-07 — CaveWorld.ts, the user: "use this; make sure it's perfectly suited"): FIRST, the
+  //  biggest — its hill's apron ~250 × 215 m. The mouth 22–90 m off a track and facing it; over the whole apron no
+  //  track (but before the mouth), no water, no bridge, no bare cliff, no big thing; the land under it within 24 m of
+  //  level (the hill is laid on it: CaveWorld) — gentle best, forest about best
+  if (cave) {
+    const f = cave.foot
+    const fits = (x: number, z: number) => {
       const td = map.trackDist(x, z)
-      if (td < 22 || td > 70 || !dry(x, z, 10) || bigRock(x, z, 14) || !propClear(x, z, Math.max(spanX, back) + 4)) return false
-      const rot = toTrackPt(x, z), sn = Math.sin(rot), cs = Math.cos(rot)
+      if (td < 22 || td > 90 || fromSpawn(x, z) < 400 || !dry(x, z, 8)) return false
+      const rot = toTrackPt(x, z), l = { x, z, rot } as Landmark, { wx, wz } = caveFrame(l)
+      if (!farFrom(wx(f.cx, f.cz), wz(f.cx, f.cz), Math.max(f.rx, f.rz) + 20)) return false
       let lo = Infinity, hi = -Infinity
-      for (let lz = 0; lz >= -back; lz -= 8) for (let lx = -spanX; lx <= spanX; lx += 8) {
-        const px = x + lx * cs + lz * sn, pz = z - lx * sn + lz * cs, h = H(px, pz)
-        if (map.trackDist(px, pz) < 8 || mask(px, pz)[2] > 0.45 || map.waterLevel(px, pz) !== null || map.bridgeAt(px, pz) !== null) return false
-        lo = Math.min(lo, h); hi = Math.max(hi, h)
+      for (let lz = f.cz - f.rz; lz <= f.cz + f.rz; lz += 12) for (let lx = -f.rx; lx <= f.rx; lx += 12) {
+        if (!inCaveFoot(cave, lx, lz)) continue
+        const px = wx(lx, lz), pz = wz(lx, lz)
+        if (Math.abs(px) > half - 40 || Math.abs(pz) > half - 40) return false
+        if (lz < -6 && map.trackDist(px, pz) < 10) return false
+        if (map.waterLevel(px, pz) !== null || map.bridgeAt(px, pz) !== null || mask(px, pz)[2] > 0.55) return false
+        const h = H(px, pz); lo = Math.min(lo, h); hi = Math.max(hi, h)
       }
-      return hi - lo < 14
+      if (hi - lo > 24) return false
+      const { local } = caveFrame(l)
+      return big.every((p) => { const [lx, lz] = local(p.x, p.z); return !inCaveFoot(cave, lx, lz, 4) })
+    }
+    pick(48, 1, 400, fits, (x, z) => {
+      const rot = toTrackPt(x, z), l = { x, z, rot } as Landmark, { wx, wz } = caveFrame(l), cx = wx(f.cx, f.cz), cz = wz(f.cx, f.cz)
+      return -relief(cx, cz, 90) * 0.35 - Math.abs(map.trackDist(x, z) - 45) / 15 + mask(cx, cz)[3] * 2
     }, (x, z) => {
-      // (best where the land already climbs behind it — the hill joins a slope — and where there's forest about)
-      const rot = toTrackPt(x, z), bx = x - Math.sin(rot) * 30, bz = z - Math.cos(rot) * 30
-      return Math.min(H(bx, bz) - H(x, z), 8) * 0.6 + mask(x, z)[3] * 2 - relief(x, z, 8) * 0.5 - Math.abs(map.trackDist(x, z) - 35) / 20
-    }, (x, z) => {
-      const rot = toTrackPt(x, z), sn = Math.sin(rot), cs = Math.cos(rot)
-      const y0 = H(x, z), g = (lx: number, lz: number) => H(x + lx * cs + lz * sn, z - lx * sn + lz * cs) - y0
-      const land = cavernLand(style, seed, g), sp = land.spec
-      add('grotto', x, z, rot, 12, 0, { name, style, dark: { z0: 0, z1: land.zc, r: Math.max(sp.Rx, sp.Rz) + 1, top: land.yc + sp.Ry + 6, sky: sp.sky ? sp.sky * 1.2 : undefined } })
+      const rot = toTrackPt(x, z), l = { x, z, rot } as Landmark, { wx, wz } = caveFrame(l)
+      // (its dark in two reaches — the mouth to the skylight, the skylight to the far chamber and the loop — each 62 m
+      //  wide: inside the hill, never out over the land beside it; the first ~26 m of the way in still in daylight)
+      add('cave', x, z, rot, 24, 0, {
+        dark: { z0: 0, z1: cave.sky[1], x1: cave.sky[0], r: 62, top: cave.dark.top, sky: cave.sky[2] * 1.3, fade: 26 },
+        dark2: cave.sky2 ? { x0: cave.sky[0], z0: cave.sky[1], x1: cave.sky2[0], z1: cave.sky2[1], r: 62, top: cave.dark.top, fade: 9, sky: cave.sky2[2] * 1.3 }
+          : { x0: cave.sky[0], z0: cave.sky[1], x1: 40, z1: cave.sky[1] - 40, r: 62, top: cave.dark.top, fade: 9 },
+        ...(cave.haven ? { dark3: { x0: cave.sky[0], z0: cave.sky[1], x1: cave.haven[0], z1: cave.haven[2], r: 40, top: cave.dark.top, fade: 9 } } : {}),
+      })
       keep.pop()
-      // (what stood in the passage and the chamber goes; what stood on the hill is lifted onto it: dressHills)
-      for (let t = 18; t >= land.zc + sp.Rz; t -= 3) keep.push([x + sn * t, z + cs * t, sp.aw + (t > 0 ? 4 : 3)]) // (its approach clear too)
-      for (let t = land.zc + sp.Rz * 0.6; t >= land.zc - sp.Rz * 0.6; t -= sp.Rz * 0.4) keep.push([x + sn * t, z + cs * t, Math.max(sp.Rx, sp.Rz * 0.6) + 2])
+      // (everything on its ground goes — the trees on the hill are planted again on its top: dressHills; the way to its
+      //  mouth clear too)
+      for (let lz = f.cz - f.rz + 20; lz <= f.cz + f.rz - 10; lz += 20) for (let lx = -f.rx + 15; lx <= f.rx - 15; lx += 20) {
+        if (inCaveFoot(cave, lx, lz, -8)) keep.push([wx(lx, lz), wz(lx, lz), 16])
+      }
+      for (let t = 4; t <= 26; t += 4) keep.push([wx(0, t), wz(0, t), 6])
+      // (the hill takes the whole apron: nothing else on it)
+      taken.push({ id: -1, kind: 'cave', name: '', rot, y: 0, r: Math.max(f.rx, f.rz), x: wx(f.cx, f.cz), z: wz(f.cx, f.cz) })
     })
   }
   // ---- THE HOLLOW HOUSE: deep in the forest, as far from the tracks as the map will say (≥ 40 m), flat enough
@@ -326,82 +294,102 @@ export function regrowPads(map: MapData, landmarks: Landmark[]): void {
   map.trailTex.needsUpdate = true
 }
 
-/** The caves' DARK for this world (Atmosphere caveK): each tunnel / grotto's line, radius and roof; none in the desert. */
+/** The caves' DARK for this world (Atmosphere caveK): each cave's line (mouth → its far point), radius, roof, how far in
+ *  from the mouth it comes on; none in the desert. */
 export function caveUniforms(atmos: Atmosphere, landmarks: Landmark[], cam?: { x: number; z: number }): void {
   const u = atmos.uniforms
   const A = [u.uCaveA0.value, u.uCaveA1.value, u.uCaveA2.value], B = [u.uCaveB0.value, u.uCaveB1.value, u.uCaveB2.value]
   for (const v of B) v.set(0, 0, 0, 0)
   // (the shader has three: the three nearest the camera — every frame, a handful of places)
-  const caves = landmarks.filter((l) => l.dark)
-  if (cam && caves.length > A.length) caves.sort((p, q) => (p.x - cam.x) ** 2 + (p.z - cam.z) ** 2 - (q.x - cam.x) ** 2 - (q.z - cam.z) ** 2)
+  const caves = landmarks.flatMap((l) => [l.dark ? [l, l.dark] : null, l.dark2 ? [l, l.dark2] : null, l.dark3 ? [l, l.dark3] : null].filter((e) => e !== null)) as [Landmark, NonNullable<Landmark['dark']>][]
+  if (cam && caves.length > A.length) caves.sort(([p], [q]) => (p.x - cam.x) ** 2 + (p.z - cam.z) ** 2 - (q.x - cam.x) ** 2 - (q.z - cam.z) ** 2)
   for (let i = 0; i < Math.min(A.length, caves.length); i++) {
-    const l = caves[i], sn = Math.sin(l.rot), cs = Math.cos(l.rot), d = l.dark!
-    A[i].set(l.x + sn * d.z0, l.z + cs * d.z0, l.x + sn * d.z1, l.z + cs * d.z1)
-    B[i].set(d.r, l.y + d.top, l.kind === 'grotto' ? 1 : 0, d.sky ?? 0)
+    const [l, d] = caves[i], sn = Math.sin(l.rot), cs = Math.cos(l.rot)
+    const x0 = d.x0 ?? 0, x1 = d.x1 ?? 0
+    A[i].set(l.x + x0 * cs + sn * d.z0, l.z - x0 * sn + cs * d.z0, l.x + x1 * cs + sn * d.z1, l.z - x1 * sn + cs * d.z1)
+    // (B.z: the far end closed (> 0) and the fade in from the mouth, its metres / 9)
+    B[i].set(d.r, l.y + d.top, (d.fade ?? 9) / 9, d.sky ?? 0)
   }
 }
 
-/** THE TUNNEL'S HILL DRESSED (2026-11-06): the trees and bushes that stood where its hill now is lifted onto it (a
- *  tree's foot back on the turf, not buried), and a few more pines / bushes on its crest from the kinds that grow round
- *  it — the land over the cave reads as land. Returns the new arrays (same strides). */
-export function dressHills(map: MapData, sites: Landmark[], trees: Float32Array, TS: number, bushes: Float32Array, BS: number): { trees: Float32Array; bushes: Float32Array } {
-  const tl = Array.from(trees), bl = Array.from(bushes)
+/** THE CAVE'S HILL DRESSED (2026-11-07 — CaveWorld.ts; the user: "on top of it some trees; inside, grass and some
+ *  pine trees where the light gets"): what stood on its ground is gone (World.build's keep — and here every tree and
+ *  bush in its apron, to the last), and on its TOP new ones of the kinds growing round it — in a few stands, never on
+ *  its bare steep, none where it's under ~2.5 m (its foot: the field's own trees reach it there); in the GARDEN under
+ *  the skylight, young pines and a few bushes on the cave's floor. Heights as CaveWorld lays it: the land's + its own.
+ *  Returns the new arrays (same strides). */
+export function dressHills(map: MapData, sites: Landmark[], trees: Float32Array, TS: number, bushes: Float32Array, BS: number, cave: CaveMeta | null = null): { trees: Float32Array; bushes: Float32Array } {
+  let tl = Array.from(trees), bl = Array.from(bushes)
   for (const l of sites) {
-    if (l.kind !== 'tunnel' && l.kind !== 'grotto') continue
-    const cr = Math.cos(l.rot), sr = Math.sin(l.rot)
-    const g = (lx: number, lz: number) => map.height(l.x + lx * cr + lz * sr, l.z - lx * sr + lz * cr) - l.y
-    const cave = l.kind === 'grotto' ? cavernLand((l.style ?? 'hall') as CaveStyle, (l.id * 7919 + 13) >>> 0, g) : null
-    const hill = cave ? { X: cave.X, Z: -cave.zb, Zp: -cave.zc, y: cave.y } : tunnelHill(l.dark ? l.dark.z1 - l.dark.z0 - 2 : 30, g)
-    const local = (x: number, z: number) => { const dx = x - l.x, dz = z - l.z; return [dx * cr - dz * sr, dx * sr + dz * cr] }
-    const R2 = (hill.X + hill.Z) ** 2
-    const lift = (a: number[], S: number, sink: (i: number) => number) => {
-      const near: number[] = []
+    if (l.kind !== 'cave' || !cave) continue
+    const { wx, wz, local } = caveFrame(l), f = cave.foot
+    const cx = wx(f.cx, f.cz), cz = wz(f.cx, f.cz), R2 = (Math.max(f.rx, f.rz) + 40) ** 2
+    // (the kinds round it: what grows within 60 m of its apron)
+    const nearT: number[] = [], nearB: number[] = []
+    const strip = (a: number[], S: number, near: number[]) => {
+      const out: number[] = []
       for (let i = 0; i < a.length; i += S) {
-        if ((a[i] - l.x) ** 2 + (a[i + 2] - l.z) ** 2 > R2) continue
-        near.push(i)
-        const [lx, lz] = local(a[i], a[i + 2]), y = hill.y(lx, lz)
-        if (y === null || y - g(lx, lz) < 0.2) continue
-        a[i + 1] = l.y + y - sink(i)
+        const d2 = (a[i] - cx) ** 2 + (a[i + 2] - cz) ** 2
+        if (d2 < R2) {
+          const [lx, lz] = local(a[i], a[i + 2])
+          if (inCaveFoot(cave, lx, lz)) continue
+          if (inCaveFoot(cave, lx, lz, 60)) near.push(out.length)
+        }
+        for (let k = 0; k < S; k++) out.push(a[i + k])
       }
-      return near
+      return out
     }
-    const nearT = lift(tl, TS, () => 0.3), nearB = lift(bl, BS, (i) => 0.12 * bl[i + 3])
-    // more on the crest, of the kinds round it (none where none grow)
+    tl = strip(tl, TS, nearT); bl = strip(bl, BS, nearB)
     let s = (l.id * 2654435761) >>> 0
     const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
-    const spot = (minX: number) => {
-      for (let t = 0; t < 12; t++) {
-        const lx = (rnd() < 0.5 ? -1 : 1) * (minX + (16 - minX) * rnd()), lz = cave ? cave.zb * 0.15 + (cave.zc - cave.zb * 0.15) * 2 * rnd() : (rnd() - 0.5) * 2 * (hill.Zp + 4), y = hill.y(lx, lz)
-        if (y !== null && y - g(lx, lz) > 2) return { x: l.x + lx * cr + lz * sr, z: l.z - lx * sr + lz * cr, y: l.y + y }
-      }
-      return null
+    // a spot on its top: high enough, not steep
+    const onTop = (lx: number, lz: number) => {
+      const h = caveTop(cave, lx, lz), hx = caveTop(cave, lx + 2, lz), hz = caveTop(cave, lx, lz + 2)
+      if (h === null || hx === null || hz === null || h < 2.5 || Math.hypot(hx - h, hz - h) / 2 > 0.55) return null
+      const x = wx(lx, lz), z = wz(lx, lz)
+      return { x, z, y: map.height(x, z) + h }
     }
-    const pines = nearT.filter((i) => tl[i + 5] < 2)
-    const fromT = pines.length ? pines : nearT
-    // (pines on top whatever grows round it — the reference's; spruce 11–16 m where there are none to copy)
-    for (let k = 0; k < 6; k++) {
-      const p = spot(2.5), src = fromT.length ? fromT[Math.floor(rnd() * fromT.length)] : -1
-      if (!p) continue
-      tl.push(p.x, p.y - 0.3, p.z, src >= 0 ? tl[src + 3] * (0.7 + 0.3 * rnd()) : 11 + 5 * rnd(), rnd() * 6.283, src >= 0 ? tl[src + 5] : 0, rnd(), rnd())
-    }
-    for (let k = 0; nearB.length && k < 14; k++) {
-      const p = spot(1.5), src = nearB[Math.floor(rnd() * nearB.length)]
-      if (!p) continue
-      const size = bl[src + 3]
-      bl.push(p.x, p.y - 0.12 * size, p.z, size, rnd() * 6.283, bl[src + 5], bl[src + 6])
-    }
-    // THE SKYLIGHT'S GARDEN: young pines and ferny bushes on the chamber's floor in the shaft of light
-    if (cave && cave.spec.sky > 0) {
-      const R = cave.spec.sky * 0.9, at = (lx: number, lz: number) => ({ x: l.x + lx * cr + lz * sr, z: l.z - lx * sr + lz * cr })
-      for (let k = 0; k < 3; k++) {
-        const a = rnd() * 6.283, d = R * Math.sqrt(rnd()), p = at(Math.sin(a) * d, cave.zc + Math.cos(a) * d)
-        tl.push(p.x, map.height(p.x, p.z) - 0.3, p.z, 3.5 + 3.5 * rnd(), rnd() * 6.283, 0, rnd(), rnd())
+    // STANDS (the user: "put pine trees and all"): 11 groups of 4–10 trees on the top — mostly PINES (spruce), the
+    //  kinds round it among them — and bushes about them
+    for (let g = 0; g < 11; g++) {
+      let c: { lx: number; lz: number } | null = null
+      for (let t = 0; t < 40 && !c; t++) { const lx = (rnd() * 2 - 1) * f.rx * 0.75, lz = f.cz + (rnd() * 2 - 1) * f.rz * 0.75; if (onTop(lx, lz)) c = { lx, lz } }
+      if (!c) continue
+      const n = 4 + Math.floor(rnd() * 7)
+      for (let k = 0; k < n; k++) {
+        const a = rnd() * 6.283, d = 3 + rnd() * 14, p = onTop(c.lx + Math.cos(a) * d, c.lz + Math.sin(a) * d)
+        if (!p) continue
+        const src = nearT.length && rnd() < 0.25 ? nearT[Math.floor(rnd() * nearT.length)] : -1
+        tl.push(p.x, p.y - 0.3, p.z, src >= 0 ? tl[src + 3] * (0.7 + 0.35 * rnd()) : 9 + 7 * rnd(), rnd() * 6.283, src >= 0 ? tl[src + 5] : 0, rnd(), rnd())
       }
-      const kinds = nearB.length ? nearB : []
-      for (let k = 0; kinds.length && k < 6; k++) {
-        const a = rnd() * 6.283, d = R * 1.2 * Math.sqrt(rnd()), p = at(Math.sin(a) * d, cave.zc + Math.cos(a) * d), src = kinds[Math.floor(rnd() * kinds.length)], size = bl[src + 3] * 0.8
-        bl.push(p.x, map.height(p.x, p.z) - 0.12 * size, p.z, size, rnd() * 6.283, bl[src + 5], bl[src + 6])
+      for (let k = 0; nearB.length && k < 6; k++) {
+        const a = rnd() * 6.283, d = 2 + rnd() * 16, p = onTop(c.lx + Math.cos(a) * d, c.lz + Math.sin(a) * d)
+        if (!p) continue
+        const src = nearB[Math.floor(rnd() * nearB.length)], size = bl[src + 3]
+        bl.push(p.x, p.y - 0.12 * size, p.z, size, rnd() * 6.283, bl[src + 5], bl[src + 6])
       }
+    }
+    // THE GARDEN: young pines on the cave's floor in the light, a few bushes
+    for (const [lx, ly, lz] of cave.pines) {
+      const x = wx(lx, lz), z = wz(lx, lz)
+      tl.push(x, map.height(x, z) + ly - 0.3, z, 4 + 3 * rnd(), rnd() * 6.283, 0, rnd(), rnd())
+    }
+    // TREES INSIDE (the user: "trees — like a different place"): where it's tall enough, most spruce, some birch and aspen
+    for (const [lx, ly, lz, room] of cave.innerTrees ?? []) {
+      const x = wx(lx, lz), z = wz(lx, lz), k = rnd(), sp = k < 0.6 ? 0 : k < 0.8 ? 3 : k < 0.93 ? 4 : 5
+      tl.push(x, map.height(x, z) + ly - 0.3, z, Math.min(room, (sp === 0 ? 8 : 7) + 6 * rnd()), rnd() * 6.283, sp, rnd(), rnd())
+    }
+    // THE CAVE'S FLOOR (the user: "add some bushes — make the cave inside beautifully full"): bushes on its spots (the
+    //  first CAVE_PROPS hold its broken things and bones — CaveWorld)
+    for (const [lx, ly, lz] of (cave.floorBushes ?? []).slice(CAVE_PROPS)) {
+      if (!nearB.length) break
+      const x = wx(lx, lz), z = wz(lx, lz), src = nearB[Math.floor(rnd() * nearB.length)], size = bl[src + 3] * (0.75 + 0.4 * rnd())
+      bl.push(x, map.height(x, z) + ly - 0.12 * size, z, size, rnd() * 6.283, bl[src + 5], bl[src + 6])
+    }
+    for (let k = 0; nearB.length && k < 5; k++) {
+      const [lx, ly, lz] = cave.tufts[Math.floor(rnd() * cave.tufts.length)], x = wx(lx, lz), z = wz(lx, lz)
+      const src = nearB[Math.floor(rnd() * nearB.length)], size = bl[src + 3] * 0.75
+      bl.push(x, map.height(x, z) + ly - 0.12 * size, z, size, rnd() * 6.283, bl[src + 5], bl[src + 6])
     }
   }
   return { trees: new Float32Array(tl), bushes: new Float32Array(bl) }

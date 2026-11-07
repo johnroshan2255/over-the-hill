@@ -1,3 +1,4 @@
+import { grovesOf } from './Groves'
 import * as GFX from './gfx'
 import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
@@ -455,13 +456,14 @@ vec3 treeAlbedo(float species, float fol, float j) {
   // (the spruce: the user's OTH reference — a clear deep green; a gold larch; ss2's aspens: gold, orange, red, a few
   //  still green)
   //  (× PLANT_VALUE, paint.ts: the leaves and needles a touch darker; the bark above keeps its own)
-  if (species < 0.5) return mix(vec3(0.03, 0.085, 0.04), vec3(0.11, 0.3, 0.12), 0.5 + j * 0.35) * PLANT_VALUE;
+  // (2026-11-07, the user: "a darker green to the trees, not the grass" — the spruce ~28 % deeper, the same hue)
+  if (species < 0.5) return mix(vec3(0.022, 0.062, 0.03), vec3(0.078, 0.215, 0.088), 0.5 + j * 0.35) * PLANT_VALUE;
   if (species < 1.5) return mix(vec3(0.6, 0.33, 0.04), vec3(0.95, 0.66, 0.12), 0.55 + j * 0.4) * PLANT_VALUE;
   // (2026-11-06, in the valley's colours: the aspen ORANGE to gold, a deep red-orange only at one end of its range —
   //  the near-pure red was the strongest colour in the valley; the birch a clean gold, not a mustard)
   if (species < 3.5) return mix(vec3(0.7, 0.42, 0.05), vec3(0.92, 0.67, 0.11), 0.5 + j * 0.8) * PLANT_VALUE;
   if (species < 4.5) return mix(vec3(0.62, 0.15, 0.03), vec3(0.9, 0.5, 0.08), 0.5 + j * 0.9) * PLANT_VALUE;
-  return mix(vec3(0.08, 0.2, 0.04), vec3(0.2, 0.34, 0.06), 0.5 + j * 0.8) * PLANT_VALUE;
+  return mix(vec3(0.06, 0.15, 0.03), vec3(0.15, 0.26, 0.045), 0.5 + j * 0.8) * PLANT_VALUE; // (the green broadleaf deeper too)
 }
 `
 
@@ -916,6 +918,14 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
         if (hash01(x + 0.71, z - 0.29) < 0.11) H = Math.max(H, 26 + 10 * hash01(x - 0.53, z + 0.17))
       }
       out.push(x, y - 0.3, z, H, rnd() * Math.PI * 2, species, rnd(), rnd())
+    }
+  }
+  // THE GROVES (Groves.ts — 2026-11-07, the user: "some places with a group of trees, 5–10 together, and bushes, like a
+  //  natural place"): after the rest, each on its own seed — no tree above moves
+  for (const gv of grovesOf(map, rocks)) {
+    for (const [x, z, h, species] of gv.trees) {
+      const k = hash01(x + 0.13, z - 0.41)
+      out.push(x, map.height(x, z) - 0.3, z, h, k * Math.PI * 2, species, hash01(x - 0.27, z + 0.61), hash01(x + 0.83, z + 0.07))
     }
   }
 }

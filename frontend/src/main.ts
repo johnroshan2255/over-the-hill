@@ -16,7 +16,7 @@ import { fullscreenButton } from './ui/fullscreen'
  */
 const url = new URLSearchParams(location.search)
 const status = document.getElementById('status')!
-const direct = ['tier', 'play', 'drive', 'x', 'z', 'hour'].some((k) => url.has(k)) || continueRequested()
+const direct = ['tier', 'play', 'drive', 'x', 'z', 'hour', 'at'].some((k) => url.has(k)) || continueRequested() // (?at=cave: straight in, before the cave)
 
 const MAP = '/oth/valley'
 const MAP_FILES = ['meta.json', 'height.bin', 'far.bin', 'mask.bin', 'trail.bin', 'mud.bin']
