@@ -27,6 +27,8 @@ const R = 96, r = 44, LIP = 1.25 // (outer / inner radius in the 200-unit box; a
 
 export const ICONS = {
   menu: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 3v5.5M12 15.5V21M3 12h5.5M15.5 12H21',
+  /** a flag on its pole (BUILD: mark your land) */
+  flag: 'M6 21V3 M6 4h11l-2.5 4L17 12H6',
   pause: 'M8 5v14M16 5v14',
   map: 'M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z M9 4v13.5M15 6.5V20',
   radar: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 12l6-5 M12 7.5a4.5 4.5 0 1 0 0.01 0',

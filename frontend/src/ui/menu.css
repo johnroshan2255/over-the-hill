@@ -131,3 +131,21 @@
   .oh-tabs { order: 3; flex-basis: 100%; }
   .oh-tab { flex: 1; padding-left: 8px; padding-right: 8px; }
 }
+
+/* CO-OP: the name and code boxes, the join button, the worlds (who's in, their codes) */
+.oh-in { width: 190px; padding: 5px 10px 4px; background: rgba(244, 239, 230, 0.08); border: 2px solid var(--oh-line); color: inherit; font: 700 18px var(--oh-ui); letter-spacing: 0.08em; text-transform: uppercase; outline: none; user-select: text; -webkit-user-select: text; }
+.oh-in:focus { border-color: var(--oh-accent); background: rgba(244, 239, 230, 0.14); }
+.oh-in-code { width: 120px; text-align: center; letter-spacing: 0.24em; }
+.oh-row.sel .oh-in { color: var(--oh-sel-ink); border-color: rgba(11, 11, 13, 0.35); background: rgba(11, 11, 13, 0.06); }
+.oh-row.sel .oh-in:focus { border-color: var(--oh-accent); }
+.oh-btn { padding: 6px 14px 5px; background: var(--oh-accent); color: var(--oh-accent-ink); font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.oh-sub { padding: 12px 16px 6px; font-size: 13px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--oh-accent); border-bottom: 1px solid var(--oh-line); }
+.oh-world small { font-size: 0.7em; color: var(--oh-dim); letter-spacing: 0.1em; }
+.oh-world.sel small { color: rgba(11, 11, 13, 0.55); }
+.oh-online { font-style: normal; font-size: 13px; letter-spacing: 0.12em; color: var(--oh-dim); margin-right: 10px; }
+.oh-online.on { color: #6fbf73; }
+.oh-world.sel .oh-online { color: rgba(11, 11, 13, 0.6); }
+.oh-world.sel .oh-online.on { color: #2f7a33; }
+.oh-code { min-width: 0 !important; letter-spacing: 0.2em; }
+.oh-bigcode { display: inline-block; margin: 2px 0 14px; padding: 6px 16px 4px; background: var(--oh-accent); color: var(--oh-accent-ink); font-family: var(--oh-title); font-size: clamp(30px, 3.4vw, 44px); letter-spacing: 0.18em; user-select: text; -webkit-user-select: text; }
+.oh-err { color: #ff7a5c !important; }

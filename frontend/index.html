@@ -247,6 +247,53 @@
       .oth-region { position: fixed; left: 0; right: 0; top: 26%; text-align: center; color: #f4efe6; font: 400 clamp(38px, 7vw, 86px)/1 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .05em; text-transform: uppercase; -webkit-text-stroke: 1.5px rgba(8, 8, 10, .6); text-shadow: 0 3px 0 rgba(8, 8, 10, .35), 0 0 28px rgba(8, 8, 10, .5); opacity: 0; transform: translateY(10px); transition: opacity 1.2s, transform 1.2s; pointer-events: none; z-index: 6; }
       .oth-region small { display: table; margin: 0 auto 12px; padding: 3px 12px 2px; background: rgba(8, 8, 10, .72); -webkit-text-stroke: 0; text-shadow: none; color: #f2a93b; font: 700 clamp(14px, 1.6vw, 20px) 'Barlow Condensed', system-ui; letter-spacing: .32em; }
       .oth-region.on { opacity: 1; transform: none; }
+      /* CO-OP (oth/Coop.ts, Remotes.ts): the chip under the coins — the world, its code, who's in, the ping; a name tag
+         over each other player (their colour, the distance); their arrows on the minimap */
+      .oth-coop { position: fixed; right: calc(14px + env(safe-area-inset-right)); top: calc(104px + env(safe-area-inset-top)); z-index: 4; display: flex; align-items: baseline; gap: 10px; padding: 4px 12px 3px 0; background: rgba(8, 8, 10, .6); color: #f4efe6; font: 700 14px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; pointer-events: none; white-space: nowrap; }
+      .oth-coop b { align-self: stretch; display: flex; align-items: center; padding: 0 8px; background: #f2a93b; color: #120c04; font-weight: 700; }
+      .oth-coop small { color: rgba(244, 239, 230, .55); font-size: 12px; }
+      .oth-coop.off b { background: #b8452e; color: #f4efe6; }
+      body.touch .oth-coop { top: calc(92px + env(safe-area-inset-top)); font-size: 12px; gap: 7px; }
+      .oth-tags { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+      .oth-tag { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; transform-origin: 50% 100%; will-change: transform; }
+      .oth-tag span { padding: 3px 10px 2px; background: rgba(8, 8, 10, .72); border-bottom: 3px solid var(--c, #f2a93b); color: #f4efe6; font: 700 16px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+      .oth-tag small { margin-top: 2px; color: #f4efe6; font: 700 12px 'Barlow Condensed', system-ui; letter-spacing: .08em; text-shadow: 0 1px 2px rgba(0, 0, 0, .8); }
+      .oth-tag small:empty { display: none; }
+      .oth-tag::after { content: ''; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 7px solid var(--c, #f2a93b); }
+      .oth-coop i { font-style: normal; padding-left: 10px; border-left: 1px solid rgba(244, 239, 230, .25); color: #f2a93b; }
+      /* BUILD MODE (oth/Build.ts): what the brush does, its size, why not; the keys (buttons on a touch screen) */
+      .oth-build { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 5; display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: min(640px, calc(100vw - 24px)); color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; }
+      .oth-build-head { display: flex; align-items: stretch; background: rgba(8, 8, 10, .78); }
+      .oth-build-head b { display: flex; align-items: center; padding: 6px 14px 5px; background: #f2a93b; color: #120c04; font: 400 20px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .06em; }
+      .oth-build-head span { display: flex; align-items: center; padding: 0 14px; font-size: 18px; }
+      .oth-build-head em { display: flex; align-items: center; margin-left: auto; padding: 0 14px; font-style: normal; color: #9fd98f; }
+      .oth-build-head em.no { color: #ff8a6a; }
+      .oth-build-head em:empty::after { content: 'Ready — click to plant your flag'; color: #9fd98f; }
+      .oth-build-keys { display: flex; flex-wrap: wrap; gap: 4px; }
+      .oth-build-keys button { display: flex; align-items: center; gap: 6px; padding: 4px 10px 3px; background: rgba(8, 8, 10, .62); color: rgba(244, 239, 230, .85); font: inherit; font-size: 13px; letter-spacing: .1em; border: 0; cursor: pointer; }
+      .oth-build-keys kbd { padding: 1px 6px 0; background: #f4efe6; color: #0b0b0d; font: 700 12px 'Barlow Condensed', system-ui; }
+      body.oth-build #drive .help, body.oth-build .oth-prompt { display: none !important; }
+      /* (a touch screen: the driving pads, the door and the camp out of the way while building; the build's own buttons) */
+      body.touch.oth-build .oth-touch, body.touch.oth-build .oth-door, body.touch.oth-build .oth-campbtn, body.touch.oth-build #drive, body.touch.oth-build .oth-gears, body.touch.oth-build .oth-sprint, body.touch.oth-build .oth-stick { display: none !important; }
+      body.touch .oth-build { min-width: 0; left: 12px; right: 12px; transform: none; bottom: calc(14px + env(safe-area-inset-bottom)); }
+      body.touch .oth-build-head { flex-wrap: wrap; }
+      body.touch .oth-build-head span { font-size: 16px; padding: 6px 12px; }
+      body.touch .oth-build-head em { flex-basis: 100%; margin: 0; padding: 4px 12px 7px; font-size: 13px; }
+      body.touch .oth-build-head em:empty::after { content: 'Ready — tap plant flag'; }
+      .oth-build-keys.touch { display: grid; grid-template-columns: 1fr 52px 52px; gap: 4px; }
+      .oth-build-keys.touch button { justify-content: center; min-height: 46px; font-size: 15px; letter-spacing: .12em; background: rgba(8, 8, 10, .72); color: #f4efe6; }
+      .oth-build-keys.touch button.go { background: #f2a93b; color: #120c04; font: 400 20px 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .06em; }
+      .oth-build-keys.touch button.sz { font-size: 24px; }
+      .oth-build-keys.touch button:nth-child(4), .oth-build-keys.touch button:nth-child(5) { grid-column: span 1; }
+      .oth-build-keys.touch button:nth-child(4) { grid-column: 1 / 2; }
+      .oth-build-keys.touch button:nth-child(5) { grid-column: 2 / 4; }
+      /* (the co-op chip on a phone: short — no world name — clear of the compass's line and the signpost) */
+      body.touch .oth-coop span:first-of-type { display: none; }
+      @media (orientation: portrait) { body.touch .oth-coop { top: auto; right: auto; left: calc(12px + env(safe-area-inset-left)); bottom: calc(196px + env(safe-area-inset-bottom)); max-width: calc(100vw - 120px); flex-wrap: wrap; row-gap: 2px; padding: 3px 10px 3px 0; } body.touch .oth-coop i { flex-basis: 100%; padding-left: 8px; border: 0; } }
+      body.oth-build canvas { cursor: crosshair; }
+      .oth-radar-other { position: absolute; left: 0; top: 0; width: 14px; height: 17px; will-change: transform; }
+      .oth-radar-other::before { content: ''; position: absolute; inset: 0; background: #fff; clip-path: polygon(50% 0, 100% 100%, 50% 74%, 0 100%); }
+      .oth-radar-other::after { content: ''; position: absolute; inset: 2.5px 3px 2px; background: var(--c, #2f7fb8); clip-path: polygon(50% 0, 100% 100%, 50% 72%, 0 100%); }
     </style>
   </head>
   <body>

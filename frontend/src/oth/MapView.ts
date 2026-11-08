@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
-import { bakedChart, type Chart, drawGate, drawPin, drawPlace, drawRoute, drawTracks, foundIn, ICON, label, ROUTE } from './Chart'
+import { bakedChart, type Chart, type ClaimMark, claimTag, drawClaim, drawGate, drawPin, drawPlace, drawRoute, drawTracks, foundIn, ICON, label, ROUTE } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { Landmark, MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, type Waypoint, worldMeta } from './Nav'
@@ -36,7 +36,15 @@ export interface MapViewOptions {
   myCamp: () => Camp | null
   /** PerfMarks.ts (F9): the spots where the frame rate fell — red ✕ with their fps (empty when the tool is off) */
   perfMarks?: () => readonly { world: string; cx: number; cz: number; fps: number; kind: string }[]
+  /** (co-op) the other players in this world */
+  others?: () => readonly Other[]
+  /** (co-op) the land claimed in this world */
+  claims?: () => readonly ClaimMark[]
 }
+
+/** (co-op) another player: where, which way, their colour, their name. */
+export interface Other { x: number; z: number; heading: number; colour: string; name: string }
+
 
 export class MapView {
   private readonly root: HTMLDivElement
@@ -413,6 +421,21 @@ export class MapView {
     if (w?.world === this.tab) {
       const [wx, wy] = P(w.x, w.z)
       drawPin(g, wx, wy, k)
+    }
+    // (co-op) the land claimed: each circle in its owner's colour, its flag, whose it is
+    if (here) for (const c of this.o.claims?.() ?? []) {
+      const [cx, cy] = P(c.x, c.z), [ex] = P(c.x + c.r, c.z)
+      drawClaim(g, cx, cy, Math.max(10 * k, ex - cx), c.colour, k * 1.35, c.mine)
+      claimTag(g, c.name, cx, cy - 13 * k * 1.35 - 4 * k, c.colour, k)
+    }
+    // (co-op) the other players: an arrow in their colour, their name under it
+    if (here) for (const o of this.o.others?.() ?? []) {
+      const [ox, oy] = P(o.x, o.z)
+      g.save(); g.translate(ox, oy); g.rotate(-o.heading)
+      g.fillStyle = o.colour; g.strokeStyle = '#fff'; g.lineWidth = 2 * k
+      g.beginPath(); g.moveTo(0, -10 * k); g.lineTo(6.5 * k, 7 * k); g.lineTo(0, 3.5 * k); g.lineTo(-6.5 * k, 7 * k); g.closePath(); g.fill(); g.stroke()
+      g.restore()
+      label(g, o.name, ox, oy + 17 * k, '#16120d', Math.round(11 * k), false)
     }
     // the car
     if (here) {

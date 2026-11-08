@@ -2,6 +2,10 @@ use std::path::PathBuf;
 
 use tracing_subscriber::EnvFilter;
 
+// (mimalloc: the many small allocations of a busy server — frames, events — faster than the system allocator)
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();

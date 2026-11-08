@@ -4,6 +4,7 @@
 |---|---|
 | `frontend/` | the game: Vite + TypeScript + three r186 + Rapier (`src/oth/` the world, `src/ui/` the menus, `src/main.ts` entry) |
 | `backend/` | the server (Rust): multiplayer rooms + save API — the client uses localStorage until it switches over |
+| `proto/wire.json` | the game ↔ server wire, one schema both read (`backend/src/wire.rs`, `frontend/src/net/wire.ts`); a change must pass `cargo test --test golden` (`GOLDEN=update` to rewrite) and `npm run test:wire` |
 | `docs/ARCHITECTURE.md` | read first: the world, the renderer, the front end, the saves |
 | `docs/MULTIPLAYER.md` | **the shared valley: claim land, gather, haul, build, raid — the plan and its order; the server's API in `backend/README.md`** |
 | `docs/NEXT.md` | **the hand-off: the valley's places and caves — what's done, the caves' rock fix, what's next** |

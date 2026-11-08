@@ -4,6 +4,7 @@ import { PAINTS, VEHICLES, type VehicleDef } from '../gameplay/vehicle/catalogue
 import { loadJournal, paintOwned, paintPrice, saveJournal, type Journal } from '../journal'
 import { loadProgress, type Progress } from '../save'
 import { DEFAULTS, loadSettings, saveSettings, type CarId, type RideId, type Settings } from '../settings'
+import { type Account, ApiError, createWorld, joinWorld, listWorlds, loadAccount, signIn, type WorldRow } from '../net/api'
 import './menu.css'
 
 /**
@@ -29,6 +30,8 @@ export interface MenuHandlers {
   onVehicle?: (ride: RideId, car: CarId) => void
   /** Pause: a setting changed — the game takes what it can at once (main.ts applySettings); key: which one. */
   onSettings?: (s: Settings, key: keyof Settings) => void
+  /** Title: into co-op world `world` (the CO-OP screen). */
+  onCoop?: (world: string) => void
   /** Camp: its name and what you can do there. */
   heading?: string
   items?: MenuItem[]
@@ -36,7 +39,7 @@ export interface MenuHandlers {
 
 export interface MenuItem { label: string; note?: string; disabled?: boolean; go: () => void }
 
-type Screen = 'main' | 'garage' | 'settings' | 'journal'
+type Screen = 'main' | 'garage' | 'settings' | 'journal' | 'coop'
 interface Opt<T> { v: T; label: string }
 interface Choice<K extends keyof Settings = keyof Settings> { key: K; label: string; help: string; options: Opt<Settings[K]>[] }
 
@@ -63,7 +66,7 @@ const AUDIO: Choice[] = [
 
 const KEYS: [string, string][] = [
   ['W A S D', 'Drive and steer · on foot: move'], ['F', 'Get out / get in'], ['Space', 'Handbrake · on foot: jump'], ['Shift', 'Boost · on foot: sprint'], ['X / Z', 'Gear up / down (manual)'], ['E', 'Winch'], ['R', 'Reset the car'],
-  ['C', 'Camp: pitch / rest'], ['1 / 2', 'G500 4×4² / BMW E30'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Q', 'Action wheel'], ['Esc', 'Pause'],
+  ['C', 'Camp: pitch / rest'], ['B', 'Build (co-op): mark your land'], ['1 / 2', 'G500 4×4² / BMW E30'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Q', 'Action wheel'], ['Esc', 'Pause'],
 ]
 
 /** THE GARAGE's vehicles (2026-11-05, the user: "car to bike must be chosen where we choose the jeep and the BMW"):
@@ -74,7 +77,7 @@ const RIDES: Ride[] = [
   { ride: 'moto', name: 'Motorbike', line: '450 cm³ · ~80 hp · 5 gears', blurb: 'A motocross bike: 310 mm of travel, ~180 km/h, climbs faces to 70°. Wheelies (↓ + throttle), stoppies, jumps and flips. Your car waits where you take it out.' },
 ]
 
-const TABS: Record<Exclude<Screen, 'main'>, string[]> = { garage: ['Vehicle', 'Paint', 'Driving'], settings: ['Graphics', 'Audio', 'Controls'], journal: ['Journal'] }
+const TABS: Record<Exclude<Screen, 'main'>, string[]> = { garage: ['Vehicle', 'Paint', 'Driving'], settings: ['Graphics', 'Audio', 'Controls'], journal: ['Journal'], coop: ['Worlds'] }
 
 export class Menu {
   readonly root = document.createElement('div')
@@ -122,6 +125,7 @@ export class Menu {
     // (a panel fills the top right: the full-screen button steps aside — index.html)
     document.body.classList.toggle('oh-panel-open', this.screen !== 'main')
     if (this.screen === 'main') this.view.replaceChildren(...(this.mode === 'title' ? [this.brand()] : this.mode === 'camp' ? [this.brand(this.h.heading ?? 'Camp', 'Camp')] : []), this.mainList(), this.hints(['Enter', 'Select'], ...(this.mode !== 'title' ? [['Esc', this.mode === 'camp' ? 'Leave' : 'Resume'] as [string, string]] : [])))
+    else if (this.screen === 'coop') this.view.replaceChildren(this.panel(), this.hints(['↑ ↓', 'Choose'], ['Enter', 'Select'], ['Esc', 'Back']))
     else this.view.replaceChildren(this.panel(), this.hints(['↑ ↓', 'Choose'], ['← →', 'Change'], ['Q E', 'Tabs'], ['Esc', 'Back']))
   }
 
@@ -148,7 +152,7 @@ export class Menu {
       { label: 'Garage', go: () => this.open('garage') },
       { label: 'Settings', go: () => this.open('settings') },
       { label: 'Journal', note: `${this.j.coins} ◆`, go: () => this.open('journal') },
-      { label: 'Co-op', note: 'soon', disabled: true, go: () => {} },
+      { label: 'Co-op', note: 'with friends', go: () => this.openCoop() },
     ]
   }
 
@@ -175,7 +179,7 @@ export class Menu {
     const scr = this.screen as Exclude<Screen, 'main'>
     const tabs = TABS[scr]
     const head = el('div', 'oh-head', [
-      el('h2', '', [scr === 'garage' ? 'Garage' : scr === 'journal' ? 'Journal' : 'Settings']),
+      el('h2', '', [scr === 'garage' ? 'Garage' : scr === 'journal' ? 'Journal' : scr === 'coop' ? 'Co-op' : 'Settings']),
       el('div', 'oh-tabs', tabs.map((t, i) => {
         const b = el('button', 'oh-tab' + (i === this.tab ? ' sel' : ''), [t])
         b.addEventListener('click', () => { this.tab = i; this.sel = 0; this.render() })
@@ -194,6 +198,7 @@ export class Menu {
     if (t === 'Vehicle') return this.cars()
     if (t === 'Paint') return this.paints()
     if (t === 'Journal') return this.journal()
+    if (t === 'Worlds') return this.coop()
     if (t === 'Controls') return [el('div', 'oh-list', [el('div', 'oh-side', [el('div', 'oh-keys', KEYS.flatMap(([k, d]) => [el('kbd', '', [k]), el('span', '', [d])]))])]), el('div', 'oh-side', [el('h4', '', ['Controls']), el('p', '', ['Keyboard, or the on-screen pads on a touch screen. The round button top right (Q) opens the action wheel: pause, map, minimap, bike, winch, reset, lights, time, weather, sound. A gamepad comes later.'])])]
     const rows = t === 'Driving' ? DRIVING : t === 'Graphics' ? GRAPHICS : AUDIO
     this.sel = Math.min(this.sel, rows.length - 1)
@@ -303,6 +308,155 @@ export class Menu {
       el('div', 'oh-side', [el('h4', '', ['The Valley']), el('p', '', ['Supply crates hide behind the landmarks, at the ends of the trails, by the river and out in the meadows. Signposts at the junctions name where the trails go. Camps let you rest, wait out the rain and save.'])])]
   }
 
+  // ---------------------------------------------------------------------------------------------------- co-op
+  /** THE CO-OP SCREEN (docs/MULTIPLAYER.md): your name, HOST a new world, JOIN with a friend's code, your worlds (who's
+   *  in, their codes to share). The server's API (net/api.ts); the account is kept in this browser. */
+  private co = { account: null as Account | null, worlds: [] as WorldRow[], name: '', code: '', busy: '', msg: '', err: false, fresh: null as WorldRow | null }
+
+  private openCoop(): void {
+    const a = loadAccount()
+    this.co.account = a
+    this.co.name ||= a?.name ?? `Driver ${Math.floor(10 + Math.random() * 90)}`
+    this.co.msg = ''
+    this.open('coop')
+    void this.coopRun('Connecting', async () => {
+      if (!this.co.account) return
+      this.co.worlds = await listWorlds(this.co.account)
+    })
+  }
+
+  /** Runs a server step with a busy line; its error shown in the side panel. */
+  private async coopRun(busy: string, f: () => Promise<void>): Promise<void> {
+    this.co.busy = busy; this.co.msg = ''; this.co.err = false
+    this.render()
+    try { await f() } catch (e) {
+      this.co.err = true
+      this.co.msg = e instanceof Error ? e.message : 'Something went wrong'
+      if (e instanceof ApiError && e.status === 401) this.co.account = null
+    }
+    this.co.busy = ''
+    if (this.screen === 'coop') this.render()
+  }
+
+  private async coopAccount(): Promise<Account> {
+    const name = this.co.name.trim()
+    if (!name) throw new Error('Type your name first')
+    this.co.account = await signIn(name)
+    return this.co.account
+  }
+
+  private coopHost(): void {
+    void this.coopRun('Making your world', async () => {
+      const a = await this.coopAccount()
+      const w = await createWorld(a, `${a.name}'s valley`.slice(0, 32))
+      this.co.worlds = await listWorlds(a)
+      this.sel = 3 + Math.max(0, this.co.worlds.findIndex((x) => x.id === w.id))
+      this.co.fresh = this.co.worlds.find((x) => x.id === w.id) ?? w
+      this.co.msg = `Made. Your friends join with the code ${w.code}.`
+    })
+  }
+
+  private coopJoin(): void {
+    const code = this.co.code.trim().toUpperCase()
+    if (code.length !== 6) { this.co.msg = 'A code is 6 letters and numbers.'; this.co.err = true; this.render(); return }
+    void this.coopRun('Joining', async () => {
+      const a = await this.coopAccount()
+      const w = await joinWorld(a, code)
+      this.co.code = ''
+      this.co.worlds = await listWorlds(a)
+      this.sel = 3 + Math.max(0, this.co.worlds.findIndex((x) => x.id === w.id))
+      this.co.fresh = this.co.worlds.find((x) => x.id === w.id) ?? w
+      this.co.msg = `You're in ${w.name}. Enter to drive in.`
+    })
+  }
+
+  private coopPlay(w: WorldRow): void {
+    void this.coopRun('Starting', async () => {
+      await this.coopAccount()
+      this.h.onCoop?.(w.id)
+    })
+  }
+
+  private coopRows(): number { return 3 + this.co.worlds.length }
+
+  private coopGo(i: number): void {
+    if (this.co.busy) return
+    if (i === 0) (this.view.querySelector('.oh-in-name') as HTMLInputElement | null)?.focus()
+    else if (i === 1) this.coopHost()
+    else if (i === 2) { if (this.co.code.trim().length === 6) this.coopJoin(); else (this.view.querySelector('.oh-in-code') as HTMLInputElement | null)?.focus() }
+    else { const w = this.co.worlds[i - 3]; if (w) this.coopPlay(w) }
+  }
+
+  private coop(): [HTMLElement, HTMLElement] {
+    const co = this.co
+    this.sel = Math.min(this.sel, this.coopRows() - 1)
+    const pick = (i: number, e: HTMLElement) => {
+      e.addEventListener('pointerenter', () => { if (this.sel !== i && document.activeElement?.tagName !== 'INPUT') { this.sel = i; this.render() } })
+      return e
+    }
+    const input = (cls: string, value: string, ph: string, max: number, set: (v: string) => void) => {
+      const i = document.createElement('input')
+      i.className = 'oh-in ' + cls
+      i.value = value; i.placeholder = ph; i.maxLength = max; i.spellcheck = false; i.autocomplete = 'off'
+      i.addEventListener('input', () => set(i.value))
+      i.addEventListener('click', (e) => e.stopPropagation())
+      return i
+    }
+    const nameIn = input('oh-in-name', co.name, 'Your name', 20, (v) => (co.name = v))
+    const codeIn = input('oh-in-code', co.code, 'ABC123', 6, (v) => (co.code = v.toUpperCase()))
+    const joinB = el('button', 'oh-btn', ['Join'])
+    joinB.addEventListener('click', (e) => { e.stopPropagation(); this.coopJoin() })
+    const rows: HTMLElement[] = [
+      pick(0, el('div', 'oh-row' + (this.sel === 0 ? ' sel' : ''), [el('span', '', ['Your name']), el('span', 'oh-val', [nameIn])])),
+      pick(1, el('button', 'oh-row' + (this.sel === 1 ? ' sel' : ''), [el('span', '', ['Host a new world']), el('span', 'oh-val', [el('b', '', ['The Valley'])])])),
+      pick(2, el('div', 'oh-row' + (this.sel === 2 ? ' sel' : ''), [el('span', '', ['Join with a code']), el('span', 'oh-val', [codeIn, joinB])])),
+      el('div', 'oh-sub', [co.account ? (co.worlds.length ? 'Your worlds' : 'No worlds yet — host one, or join a friend') : 'Host a world or join a friend to begin']),
+      ...co.worlds.map((w, k) => pick(3 + k, el('button', 'oh-row oh-world' + (this.sel === 3 + k ? ' sel' : ''), [
+        el('span', '', [w.name, el('small', '', [` · ${w.map}`])]),
+        el('span', 'oh-val', [el('em', 'oh-online' + (w.online ? ' on' : ''), [w.online ? `${w.online} in` : 'empty']), el('b', 'oh-code', [w.code])]),
+      ]))),
+    ]
+    rows[1].addEventListener('click', () => { this.sel = 1; this.coopGo(1) })
+    co.worlds.forEach((_, k) => rows[4 + k].addEventListener('click', () => { this.sel = 3 + k; this.coopGo(3 + k) }))
+    // (the world picked — or the one just hosted / joined: its code is what you need now)
+    const w = this.sel >= 3 ? co.worlds[this.sel - 3] : co.fresh
+    const side = el('div', 'oh-side', [
+      ...(w ? [el('h4', '', [w.name]), el('div', 'oh-bigcode', [w.code]), el('p', '', [`Share this code: your friends type it under JOIN WITH A CODE. ${w.online ? `${w.online} playing now.` : 'Nobody in right now.'} Enter to drive in.`])]
+        : this.sel === 2 ? [el('h4', '', ['Join a friend']), el('p', '', ["Type the 6-letter code from a friend's CO-OP screen. Their world stays on your list."])]
+        : this.sel === 1 ? [el('h4', '', ['Host a world']), el('p', '', ['A valley of your own on the server. Mark your land, build, and bring friends in with its code. It keeps going when you leave.'])]
+        : [el('h4', '', ['Co-op']), el('p', '', ["Drive the valley with friends: everyone sees everyone. Mark your land with your flag and build on it — while you're on it, nobody can take your things."])]),
+      ...(co.busy ? [el('p', 'oh-note', [`${co.busy}…`])] : co.msg ? [el('p', co.err ? 'oh-note oh-err' : 'oh-note', [co.msg])] : []),
+    ])
+    return [el('div', 'oh-list', rows), side]
+  }
+
+  private coopKey(e: KeyboardEvent): void {
+    const c = e.code, typing = (e.target as HTMLElement | null)?.tagName === 'INPUT'
+    // (in a box: letters go to it — the window's capture listener stops the event, not its typing; Enter acts here, as
+    //  the box's own listener never hears it)
+    if (typing && (c === 'Enter' || c === 'NumpadEnter')) {
+      const box = e.target as HTMLInputElement
+      box.blur()
+      if (box.classList.contains('oh-in-code')) this.coopJoin()
+      else this.render()
+      e.preventDefault()
+      return
+    }
+    if (typing && c !== 'ArrowDown' && c !== 'ArrowUp' && c !== 'Escape') return
+    if (c === 'Escape' || (c === 'Backspace' && !typing)) {
+      if (typing) { (e.target as HTMLElement).blur(); e.preventDefault(); return }
+      this.screen = 'main'; this.sel = Math.max(0, this.mainItems().findIndex((it) => it.label === 'Co-op')); this.render(); e.preventDefault(); return
+    }
+    if (c === 'ArrowDown' || c === 'KeyS') { this.sel = (this.sel + 1) % this.coopRows() }
+    else if (c === 'ArrowUp' || c === 'KeyW') { this.sel = (this.sel + this.coopRows() - 1) % this.coopRows() }
+    else if (c === 'Enter' || c === 'Space') { this.coopGo(this.sel); e.preventDefault(); return }
+    else return
+    if (typing) (e.target as HTMLElement).blur()
+    e.preventDefault()
+    this.render()
+  }
+
+
   private hints(...h: [string, string][]): HTMLElement {
     return el('footer', 'oh-hints', h.map(([k, t]) => {
       const b = el('button', '', [el('kbd', '', [k]), t])
@@ -316,6 +470,7 @@ export class Menu {
     const c = e.code
     if (this.view.querySelector('.oh-loading')) return
     e.stopPropagation() // (the game doesn't see keys while a menu is open)
+    if (this.screen === 'coop') { this.coopKey(e); return }
     if (this.screen === 'main') {
       const items = this.mainItems()
       if (c === 'ArrowDown' || c === 'KeyS') this.sel = nextEnabled(items, this.sel, 1)

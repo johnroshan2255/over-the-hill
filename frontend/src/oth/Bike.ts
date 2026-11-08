@@ -735,6 +735,26 @@ function buildBikeView(G: MtbGeometry, O: ViewOpts) {
       })
     }
 
+    /** (co-op) ANOTHER PLAYER'S BIKE, posed from the network (Remotes.ts): no physics — the parts at rest, the whole
+     *  turned and leant as it came; its contact shadow on the ground under it. */
+    puppet(x: number, y: number, z: number, qx: number, qy: number, qz: number, qw: number, heading: number): void {
+      this.pos.set(x, y, z)
+      this.root.position.copy(this.pos)
+      this.root.quaternion.set(qx, qy, qz, qw)
+      this.root.updateMatrixWorld(true)
+      this.root.visible = true
+      this.restPose()
+      const sp = this.shadow.geometry.attributes.position as GFX.BufferAttribute
+      const a = sp.array as Float32Array, base = this.shadowBase, cs = Math.cos(heading), sn = Math.sin(heading)
+      for (let i = 0; i < sp.count; i++) {
+        const lx = base[i * 3] * 0.9, lz = base[i * 3 + 2] * 2.1
+        const px = x + lx * cs + lz * sn, pz = z - lx * sn + lz * cs
+        a[i * 3] = px; a[i * 3 + 1] = this.map.height(px, pz) + 0.03; a[i * 3 + 2] = pz
+      }
+      sp.needsUpdate = true
+      this.shadow.visible = y - this.map.height(x, z) < 2
+    }
+
     /** (harness) the bike standing at (x, z), heading h, every part at rest — no physics. */
     showAt(x: number, z: number, h: number): void {
       this.root.position.set(x, this.map.height(x, z), z)

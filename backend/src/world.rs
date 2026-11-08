@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use axum::extract::ws::Utf8Bytes;
+
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -29,6 +29,7 @@ use crate::{
     map::{Ground, Maps},
     proto::{self, ClientMsg, Entity, Envelope, ShapeOp, Store},
     util::{finite, now_ms, rand_id},
+    wire,
 };
 
 // ---- how far, how much
@@ -49,6 +50,9 @@ const MAX_EDIT: f32 = 8.0;
 /// Messages a second (and the burst).
 const MSG_RATE: f32 = 30.0;
 const MSG_BURST: f32 = 60.0;
+/// Poses: players within NEAR m of each other every tick (20 Hz); beyond, every FAR_EVERY ticks (5 Hz).
+const NEAR: f32 = 300.0;
+const FAR_EVERY: u32 = 4;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(default)]
@@ -208,18 +212,32 @@ pub struct PlayerView<'a> {
     pub name: &'a str,
 }
 
+/// A stump as the clients see it (no clock).
+#[derive(Serialize)]
+pub struct StumpView {
+    pub tree: u32,
+    pub x: f32,
+    pub z: f32,
+}
+
+#[derive(Serialize)]
+pub struct NodeView<'a> {
+    pub key: &'a str,
+    pub left: u32,
+}
+
 #[derive(Serialize)]
 pub struct StateView<'a> {
-    players: Vec<PlayerView<'a>>,
-    claims: Vec<&'a Claim>,
-    guards: Vec<(&'a str, bool)>,
-    cells: Vec<(&'a str, Vec<[i32; 3]>)>,
-    paint: Vec<(&'a str, &'a Vec<Stroke>)>,
-    pieces: Vec<&'a Piece>,
-    drops: Vec<&'a Loose>,
-    stumps: Vec<&'a Stump>,
-    nodes: Vec<&'a Node>,
-    ponds: Vec<&'a Pond>,
+    pub players: Vec<PlayerView<'a>>,
+    pub claims: Vec<&'a Claim>,
+    pub guards: Vec<(&'a str, bool)>,
+    pub cells: Vec<(&'a str, Vec<[i32; 3]>)>,
+    pub paint: Vec<(&'a str, &'a Vec<Stroke>)>,
+    pub pieces: Vec<&'a Piece>,
+    pub drops: Vec<&'a Loose>,
+    pub stumps: Vec<StumpView>,
+    pub nodes: Vec<NodeView<'a>>,
+    pub ponds: Vec<&'a Pond>,
 }
 
 #[derive(Serialize)]
@@ -250,10 +268,13 @@ pub enum Ev<'a> {
     PondGone { id: &'a str },
     Ok { req: u32 },
     Err { req: Option<u32>, msg: &'a str },
+    Pong { n: u32 },
 }
 
 pub enum Out {
-    Text(Utf8Bytes),
+    /// An event (never dropped: a client that can't keep up is let go).
+    Event(Bytes),
+    /// A poses frame (dropped when the client's queue is full).
     Bin(Bytes),
     Close(String),
 }
@@ -277,6 +298,10 @@ struct Member {
     last: Option<(Instant, [f32; 3])>,
     budget: f32,
     budget_at: Instant,
+    /// Its pose's version: one more for each pose taken (0: none yet).
+    ver: u32,
+    /// Each other player's `ver` last sent to this one.
+    seen: HashMap<u32, u32>,
 }
 
 type R = Result<(), String>;
@@ -385,10 +410,14 @@ impl World {
                     let _ = reply.send(Err("the world is full".into()));
                     return;
                 }
-                let sid = self.next_sid;
-                self.next_sid += 1;
+                // (a session id fits in 16 bits on the wire: the next free one, round again after 65535)
+                let mut sid = self.next_sid;
+                while self.members.contains_key(&sid) {
+                    sid = sid % 65535 + 1;
+                }
+                self.next_sid = sid % 65535 + 1;
                 let now = Instant::now();
-                self.members.insert(sid, Member { pid, name, tx, ents: vec![], last: None, budget: MSG_BURST, budget_at: now });
+                self.members.insert(sid, Member { pid, name, tx, ents: vec![], last: None, budget: MSG_BURST, budget_at: now, ver: 0, seen: HashMap::new() });
                 self.online.store(self.members.len() as u32, Ordering::Relaxed);
                 let m = &self.members[&sid];
                 let welcome = Ev::Welcome {
@@ -428,6 +457,10 @@ impl World {
     fn leave(&mut self, sid: u32) {
         if self.members.remove(&sid).is_some() {
             self.online.store(self.members.len() as u32, Ordering::Relaxed);
+            // (its session id may be given again: nobody remembers this one's poses)
+            for m in self.members.values_mut() {
+                m.seen.remove(&sid);
+            }
             self.all(&Ev::Left { sid });
             self.refresh_guards(None);
         }
@@ -469,8 +502,8 @@ impl World {
             paint: self.paint.iter().map(|(k, v)| (k.as_str(), v)).collect(),
             pieces: self.pieces.values().collect(),
             drops: self.drops.values().collect(),
-            stumps: self.stumps.values().collect(),
-            nodes: self.nodes.values().collect(),
+            stumps: self.stumps.values().map(|s| StumpView { tree: s.tree, x: s.x, z: s.z }).collect(),
+            nodes: self.nodes.values().map(|n| NodeView { key: &n.key, left: n.left }).collect(),
             ponds: self.ponds.values().collect(),
         }
     }
@@ -481,53 +514,80 @@ impl World {
         let Some(m) = self.members.get(&sid) else { return };
         match m.tx.try_send(out) {
             Ok(()) => {}
-            // (a pose frame dropped is nothing: the next is 50 ms away)
+            // (a pose frame dropped is nothing: the next is 50 ms away — an event dropped would leave the client wrong)
             Err(mpsc::error::TrySendError::Full(Out::Bin(_))) => {}
             Err(_) => self.kicks.borrow_mut().push(sid),
         }
     }
 
-    fn enc(ev: &Ev) -> Utf8Bytes {
-        serde_json::to_string(ev).expect("event").into()
+    fn enc(ev: &Ev) -> Bytes {
+        Bytes::from(wire::encode_ev(ev))
     }
 
     fn to(&self, sid: u32, ev: &Ev) {
-        self.send(sid, Out::Text(Self::enc(ev)));
+        self.send(sid, Out::Event(Self::enc(ev)));
     }
 
     fn all(&self, ev: &Ev) {
         let t = Self::enc(ev);
         for sid in self.members.keys() {
-            self.send(*sid, Out::Text(t.clone()));
+            self.send(*sid, Out::Event(t.clone()));
         }
     }
 
     fn others(&self, not: u32, ev: &Ev) {
         let t = Self::enc(ev);
         for sid in self.members.keys().filter(|s| **s != not) {
-            self.send(*sid, Out::Text(t.clone()));
+            self.send(*sid, Out::Event(t.clone()));
         }
     }
 
+    /// 20 a second, each player their own frame: every OTHER player whose pose changed since this one last heard of
+    /// it — every tick within NEAR m, every FAR_EVERY ticks beyond (a far car is a few pixels; it still arrives where
+    /// it stopped: what was last sent is remembered per player, `seen`). Nobody moved: no frame at all.
     fn send_poses(&mut self) {
         self.tick = self.tick.wrapping_add(1);
-        if self.members.len() < 2 {
-            return;
-        }
-        let n: usize = self.members.values().map(|m| m.ents.len()).sum();
-        let mut b = Vec::with_capacity(7 + n * (4 + proto::ENTITY_BYTES));
-        b.push(proto::TAG_POSES);
-        b.extend_from_slice(&self.tick.to_le_bytes());
-        b.extend_from_slice(&(n as u16).to_le_bytes());
-        for (sid, m) in &self.members {
-            for e in &m.ents {
-                b.extend_from_slice(&sid.to_le_bytes());
-                proto::write_entity(&mut b, e);
+        let far_tick = self.tick.is_multiple_of(FAR_EVERY);
+        let mut b: Vec<u8> = Vec::with_capacity(512);
+        let sids: Vec<u32> = self.members.keys().copied().collect();
+        for r in &sids {
+            let me = self.ent(*r, 0).map(|e| e.p);
+            b.clear();
+            b.push(proto::TAG_POSES);
+            b.extend_from_slice(&self.tick.to_le_bytes());
+            b.push(0);
+            let mut n = 0u8;
+            let mut sent: Vec<(u32, u32)> = vec![];
+            {
+                let rm = &self.members[r];
+                for (sid, m) in &self.members {
+                    if sid == r || m.ver == 0 || rm.seen.get(sid) == Some(&m.ver) || n == 255 {
+                        continue;
+                    }
+                    let near = match (me, m.ents.iter().find(|e| e.slot == 0)) {
+                        (Some(a), Some(e)) => (a[0] - e.p[0]).hypot(a[2] - e.p[2]) < NEAR,
+                        _ => true,
+                    };
+                    if !near && !far_tick && rm.seen.contains_key(sid) {
+                        continue;
+                    }
+                    b.extend_from_slice(&(*sid as u16).to_le_bytes());
+                    b.push(m.ents.len() as u8);
+                    for e in &m.ents {
+                        b.extend_from_slice(&e.raw);
+                    }
+                    n += 1;
+                    sent.push((*sid, m.ver));
+                }
             }
-        }
-        let b = Bytes::from(b);
-        for sid in self.members.keys() {
-            self.send(*sid, Out::Bin(b.clone()));
+            if n == 0 {
+                continue;
+            }
+            b[5] = n;
+            self.send(*r, Out::Bin(Bytes::copy_from_slice(&b)));
+            if let Some(rm) = self.members.get_mut(r) {
+                rm.seen.extend(sent);
+            }
         }
     }
 
@@ -644,6 +704,7 @@ impl World {
             m.last = Some((now, e.p));
         }
         m.ents = ents;
+        m.ver = m.ver.wrapping_add(1);
         let pid = m.pid.clone();
         if self.claims.values().any(|c| c.owner == pid) {
             self.refresh_guards(Some(&pid));
@@ -699,6 +760,10 @@ impl World {
             ClientMsg::Shape { op, x, z, r, strength, y } => self.shape(sid, op, x, z, r, strength, y),
             ClientMsg::Pave { mat, x, z, r } => self.pave(sid, mat, x, z, r),
             ClientMsg::Pond { x, z, r, depth } => self.pond(sid, x, z, r, depth),
+            ClientMsg::Ping { n } => {
+                self.to(sid, &Ev::Pong { n });
+                Ok(())
+            }
         }
     }
 
@@ -1219,9 +1284,9 @@ mod tests {
     }
 
     fn at(w: &mut World, sid: u32, x: f32, z: f32, trailer: bool) {
-        let mut e = vec![Entity { slot: 0, kind: 1, flags: proto::FLAG_TELEPORT, p: [x, 0.0, z], q: [0.0, 0.0, 0.0, 1.0] }];
+        let mut e = vec![Entity::new(0, 1, proto::FLAG_TELEPORT, [x, 0.0, z], [0.0, 0.0, 0.0, 1.0])];
         if trailer {
-            e.push(Entity { slot: 2, kind: proto::KIND_TRAILER, flags: 0, p: [x, 0.0, z - 5.0], q: [0.0, 0.0, 0.0, 1.0] });
+            e.push(Entity::new(2, proto::KIND_TRAILER, 0, [x, 0.0, z - 5.0], [0.0, 0.0, 0.0, 1.0]));
         }
         w.handle(Cmd::Pose { sid, ents: e });
     }
@@ -1304,8 +1369,62 @@ mod tests {
         let mut w = world();
         let (a, _ra) = join(&mut w, "a");
         at(&mut w, a, 0.0, 0.0, false);
-        let jump = vec![Entity { slot: 0, kind: 1, flags: 0, p: [900.0, 0.0, 0.0], q: [0.0, 0.0, 0.0, 1.0] }];
+        let jump = vec![Entity::new(0, 1, 0, [900.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])];
         w.handle(Cmd::Pose { sid: a, ents: jump });
         assert_eq!(w.ent(a, 0).unwrap().p[0], 0.0, "a 900 m jump in a frame is ignored");
+    }
+
+    /// The poses frames `rx` got since last asked: [(sid, x of its player entity)] each.
+    fn frames(rx: &mut mpsc::Receiver<Out>) -> Vec<Vec<(u16, f32)>> {
+        let mut out = vec![];
+        while let Ok(o) = rx.try_recv() {
+            if let Out::Bin(b) = o
+                && b[0] == proto::TAG_POSES
+            {
+                out.push(proto::parse_poses(&b).unwrap().1.into_iter().map(|(s, e)| (s, e[0].p[0])).collect());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn poses_near_far_no_echo() {
+        let mut w = world();
+        let (a, mut ra) = join(&mut w, "a");
+        let (b, mut rb) = join(&mut w, "b");
+        let (c, mut rc) = join(&mut w, "c");
+        at(&mut w, a, 0.0, 0.0, false);
+        at(&mut w, b, 50.0, 0.0, false); // near a
+        at(&mut w, c, 1000.0, 0.0, false); // far from both
+        w.send_poses();
+        // the first frame: everyone else, never yourself
+        let fa = frames(&mut ra);
+        assert_eq!(fa.len(), 1);
+        let mut s: Vec<u16> = fa[0].iter().map(|(s, _)| *s).collect();
+        s.sort();
+        assert_eq!(s, [b as u16, c as u16]);
+        assert!(frames(&mut rb)[0].iter().all(|(s, _)| *s as u32 != b));
+        assert!(frames(&mut rc)[0].iter().all(|(s, _)| *s as u32 != c));
+        // nobody moves: no frames at all
+        w.send_poses();
+        assert!(frames(&mut ra).is_empty() && frames(&mut rb).is_empty() && frames(&mut rc).is_empty());
+        // b and c drive on for 8 ticks: a hears b every tick, c every 4th — and c's last move, once it stops
+        let mut got_c = vec![];
+        for k in 1..=8 {
+            at(&mut w, b, 50.0 + k as f32, 0.0, false);
+            at(&mut w, c, 1000.0 + k as f32, 0.0, false);
+            w.send_poses();
+            let f = frames(&mut ra);
+            assert!(f[0].iter().any(|(s, x)| *s as u32 == b && *x == 50.0 + k as f32), "b each tick");
+            got_c.extend(f[0].iter().filter(|(s, _)| *s as u32 == c).map(|(_, x)| *x));
+        }
+        assert_eq!(got_c.len(), 2, "c at a quarter of the rate: {got_c:?}");
+        at(&mut w, c, 1009.5, 0.0, false);
+        for _ in 0..4 {
+            w.send_poses();
+            got_c.extend(frames(&mut ra).iter().flatten().filter(|(s, _)| *s as u32 == c).map(|(_, x)| *x));
+        }
+        assert_eq!(got_c.last(), Some(&1009.5), "where c stopped arrives");
+        let _ = frames(&mut rc);
     }
 }

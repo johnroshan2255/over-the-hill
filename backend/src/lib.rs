@@ -6,6 +6,7 @@ pub mod http;
 pub mod map;
 pub mod proto;
 pub mod util;
+pub mod wire;
 pub mod world;
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -35,6 +36,10 @@ pub async fn start(cfg: Config) -> anyhow::Result<Server> {
     let listener = tokio::net::TcpListener::bind(cfg.addr).await?;
     let addr = listener.local_addr()?;
     let router = http::router(app.clone());
+    // (TCP_NODELAY: a 60-byte pose frame goes now, not held ~40 ms by Nagle waiting for more)
+    let listener = axum::serve::ListenerExt::tap_io(listener, |tcp: &mut tokio::net::TcpStream| {
+        let _ = tcp.set_nodelay(true);
+    });
     let task = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, router).await {
             tracing::error!("server: {e}");

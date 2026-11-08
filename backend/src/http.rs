@@ -22,7 +22,7 @@ use crate::{
     App, catalog,
     db::PlayerRow,
     map::MAPS,
-    proto::{self, Envelope},
+    proto, wire,
     util::{clean_name, hex, rand_code, rand_hex32, rand_id},
     world::{Cmd, Out, Rules, WorldHandle, WorldInfo},
 };
@@ -225,29 +225,41 @@ async fn conn(socket: WebSocket, world: WorldHandle, p: PlayerRow) {
         }
         Err(_) => return,
     };
-    loop {
+    'conn: loop {
         tokio::select! {
-            out = out_rx.recv() => match out {
-                Some(Out::Text(t)) => if sink.send(Message::Text(t)).await.is_err() { break },
-                Some(Out::Bin(b)) => if sink.send(Message::Binary(b)).await.is_err() { break },
-                Some(Out::Close(why)) => {
-                    let _ = sink.send(Message::Close(Some(axum::extract::ws::CloseFrame { code: 4001, reason: why.into() }))).await;
-                    break;
+            out = out_rx.recv() => {
+                // (everything queued goes out in one write: feed them all, flush once)
+                let mut next = out;
+                loop {
+                    match next {
+                        Some(Out::Event(b) | Out::Bin(b)) => if sink.feed(Message::Binary(b)).await.is_err() { break 'conn },
+                        Some(Out::Close(why)) => {
+                            let _ = sink.send(Message::Close(Some(axum::extract::ws::CloseFrame { code: 4001, reason: why.into() }))).await;
+                            break 'conn;
+                        }
+                        None => break 'conn,
+                    }
+                    match out_rx.try_recv() {
+                        Ok(o) => next = Some(o),
+                        Err(_) => break,
+                    }
                 }
-                None => break,
+                if sink.flush().await.is_err() { break }
             },
             msg = stream.next() => match msg {
-                Some(Ok(Message::Text(t))) => match serde_json::from_str::<Envelope>(&t) {
-                    Ok(env) => if world.tx.send(Cmd::Msg { sid, env }).await.is_err() { break },
-                    Err(e) => {
-                        let err = json!({ "t": "err", "req": null, "msg": format!("bad message: {e}") }).to_string();
-                        if sink.send(Message::Text(err.into())).await.is_err() { break }
-                    }
-                },
                 Some(Ok(Message::Binary(b))) => {
-                    if let Some(ents) = proto::parse_pose(&b)
-                        && world.tx.send(Cmd::Pose { sid, ents }).await.is_err() { break }
+                    if b.first() == Some(&proto::TAG_POSE) {
+                        if let Some(ents) = proto::parse_pose(&b)
+                            && world.tx.send(Cmd::Pose { sid, ents }).await.is_err() { break }
+                    } else if let Some(env) = wire::decode_intent(&b) {
+                        if world.tx.send(Cmd::Msg { sid, env }).await.is_err() { break }
+                    } else {
+                        let e = wire::encode_ev(&json!({ "t": "err", "req": null, "msg": "a message the server can't read — update the game" }));
+                        if sink.send(Message::Binary(e.into())).await.is_err() { break }
+                    }
                 }
+                // (text: not spoken here — everything is binary)
+                Some(Ok(Message::Text(_))) => {}
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                 Some(Ok(_)) => {}
             },

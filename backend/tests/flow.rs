@@ -8,6 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 use overhill_server::{
     Config, Server,
     proto::{self, Entity},
+    wire,
     start,
 };
 use serde_json::{Value, json};
@@ -71,11 +72,10 @@ impl Client {
         let t = t.to_string();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if let Message::Text(s) = self.ws.next().await.expect("closed").expect("ws") {
-                    let v: Value = serde_json::from_str(&s).unwrap();
-                    if v["t"] == t {
-                        return v;
-                    }
+                if let Some(v) = self.next_event().await
+                    && v["t"] == t
+                {
+                    return v;
                 }
             }
         })
@@ -83,11 +83,22 @@ impl Client {
         .unwrap_or_else(|_| panic!("no {t} event"))
     }
 
+    /// The next frame as an event (None: a poses frame, skipped).
+    async fn next_event(&mut self) -> Option<Value> {
+        match self.ws.next().await.expect("closed").expect("ws") {
+            Message::Binary(b) if b.first() != Some(&proto::TAG_POSES) => Some(wire::decode_ev(&b).expect("an event the schema reads")),
+            Message::Text(_) => panic!("the server sent text"),
+            _ => None,
+        }
+    }
+
     /// The next poses frame.
-    async fn poses(&mut self) -> Vec<(u32, Entity)> {
+    async fn poses(&mut self) -> Vec<(u16, Vec<Entity>)> {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if let Message::Binary(b) = self.ws.next().await.expect("closed").expect("ws") {
+                if let Message::Binary(b) = self.ws.next().await.expect("closed").expect("ws")
+                    && b.first() == Some(&proto::TAG_POSES)
+                {
                     return proto::parse_poses(&b).expect("poses frame").1;
                 }
             }
@@ -101,11 +112,10 @@ impl Client {
         self.req += 1;
         let req = self.req;
         msg["req"] = json!(req);
-        self.ws.send(Message::Text(msg.to_string().into())).await.unwrap();
+        self.ws.send(Message::Binary(wire::encode_intent(&msg).unwrap().into())).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                if let Message::Text(s) = self.ws.next().await.expect("closed").expect("ws") {
-                    let v: Value = serde_json::from_str(&s).unwrap();
+                if let Some(v) = self.next_event().await {
                     if v["req"] == json!(req) {
                         return if v["t"] == "ok" { Ok(()) } else { Err(v["msg"].as_str().unwrap_or("").to_string()) };
                     }
@@ -118,9 +128,9 @@ impl Client {
     }
 
     async fn at(&mut self, x: f32, z: f32, trailer: bool) {
-        let mut e = vec![Entity { slot: 0, kind: 1, flags: proto::FLAG_TELEPORT, p: [x, 0.0, z], q: [0.0, 0.0, 0.0, 1.0] }];
+        let mut e = vec![Entity::new(0, 1, proto::FLAG_TELEPORT, [x, 0.0, z], [0.0, 0.0, 0.0, 1.0])];
         if trailer {
-            e.push(Entity { slot: 2, kind: proto::KIND_TRAILER, flags: 2, p: [x, 0.0, z - 5.0], q: [0.0, 0.0, 0.0, 1.0] });
+            e.push(Entity::new(2, proto::KIND_TRAILER, 2, [x, 0.0, z - 5.0], [0.0, 0.0, 0.0, 1.0]));
         }
         self.ws.send(Message::Binary(proto::pose_frame(&e).into())).await.unwrap();
     }
@@ -169,7 +179,7 @@ async fn two_players_build_and_raid() {
     cb.at(300.0, 300.0, false).await;
     let seen = loop {
         let p = cb.poses().await;
-        if let Some((_, e)) = p.iter().find(|(s, e)| *s == ca.sid && e.slot == 2) {
+        if let Some(e) = p.iter().filter(|(s, _)| *s as u32 == ca.sid).flat_map(|(_, es)| es).find(|e| e.slot == 2) {
             break *e;
         }
     };
@@ -181,7 +191,7 @@ async fn two_players_build_and_raid() {
     let drop = cb.until("drop").await["drop"].clone();
     assert_eq!(drop["qty"], 6);
     ca.ask(json!({ "t": "pick", "drop": drop["id"], "to": "trailer" })).await.unwrap();
-    assert_eq!(cb.ask(json!({ "t": "cut_tree", "tree": 41, "x": 152.0, "z": 100.0 })).await.unwrap_err(), "that tree is already down");
+    assert_eq!(cb.ask(json!({ "t": "cut_tree", "tree": 41, "x": 152.0, "z": 100.0, "h": 16.0 })).await.unwrap_err(), "that tree is already down");
 
     // ---- claim, stock, build
     ca.at(100.0, 100.0, true).await;
@@ -189,30 +199,30 @@ async fn two_players_build_and_raid() {
     let claim = cb.until("claim").await["claim"].clone();
     let cid = claim["id"].as_str().unwrap().to_string();
     assert_eq!(claim["owner_name"], "Asha");
-    ca.ask(json!({ "t": "deposit", "claim": cid, "from": "trailer", "bag": { "wood": 6 } })).await.unwrap();
-    ca.ask(json!({ "t": "place", "kind": "wall_log", "x": 104.0, "y": 0.0, "z": 100.0, "rot": 1.57 })).await.unwrap();
+    ca.ask(json!({ "t": "deposit", "claim": cid, "from": "trailer", "bag": { "wood": 6, "stone": 0, "metal": 0 } })).await.unwrap();
+    ca.ask(json!({ "t": "place", "kind": "wall_log", "x": 104.0, "y": 0.0, "z": 100.0, "rot": 1.57, "variant": 0 })).await.unwrap();
     let piece = cb.until("piece").await["piece"].clone();
     assert_eq!(piece["kind"], "wall_log");
     ca.ask(json!({ "t": "pave", "mat": "dirt", "x": 100.0, "z": 96.0, "r": 2.0 })).await.unwrap();
-    ca.ask(json!({ "t": "shape", "op": "flatten", "x": 96.0, "z": 100.0, "r": 4.0, "y": 0.5 })).await.unwrap();
+    ca.ask(json!({ "t": "shape", "op": "flatten", "x": 96.0, "z": 100.0, "r": 4.0, "strength": 1.0, "y": 0.5 })).await.unwrap();
     assert!(!cb.until("cells").await["cells"].as_array().unwrap().is_empty());
 
     // ---- the guard: ravi can't take while asha is home; she drives off; he raids
     cb.at(110.0, 110.0, false).await;
-    let e = cb.ask(json!({ "t": "take", "claim": cid, "to": "carry", "bag": { "wood": 2 } })).await.unwrap_err();
+    let e = cb.ask(json!({ "t": "take", "claim": cid, "to": "carry", "bag": { "wood": 2, "stone": 0, "metal": 0 } })).await.unwrap_err();
     assert!(e.contains("guarded"), "{e}");
     ca.at(800.0, 800.0, true).await;
     // (the first guard event is the claim's own: on)
     while cb.until("guard").await["on"] != false {}
-    cb.ask(json!({ "t": "take", "claim": cid, "to": "carry", "bag": { "wood": 2 } })).await.unwrap();
+    cb.ask(json!({ "t": "take", "claim": cid, "to": "carry", "bag": { "wood": 2, "stone": 0, "metal": 0 } })).await.unwrap();
     let raid = ca.until("raid").await;
     assert_eq!(raid["by_name"], "Ravi");
     assert_eq!(raid["bag"]["wood"], 2);
-    assert_eq!(cb.ask(json!({ "t": "take", "claim": cid, "to": "carry", "bag": { "wood": 1 } })).await.unwrap_err(), "the stockpile is empty");
+    assert_eq!(cb.ask(json!({ "t": "take", "claim": cid, "to": "carry", "bag": { "wood": 1, "stone": 0, "metal": 0 } })).await.unwrap_err(), "the stockpile is empty");
     cb.ask(json!({ "t": "cut_tree", "tree": 42, "x": 112.0, "z": 110.0, "h": 8.0 })).await.unwrap();
     let logs = cb.until("drop").await["drop"]["id"].clone();
     cb.ask(json!({ "t": "pick", "drop": logs, "to": "carry" })).await.unwrap(); // (2 in hand + the tree's 2: full)
-    assert_eq!(cb.ask(json!({ "t": "mine", "node": "rock:9", "x": 110.0, "z": 112.0 })).await.unwrap_err(), "your hands are full");
+    assert_eq!(cb.ask(json!({ "t": "mine", "node": "rock:9", "x": 110.0, "z": 112.0, "size": 4 })).await.unwrap_err(), "your hands are full");
 
     // ---- restart: it's all still there
     drop_clients(ca, cb).await;

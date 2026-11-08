@@ -20,8 +20,11 @@ export default defineConfig({
   resolve: { alias: [{ find: /^playcanvas$/, replacement: pcBuild }] },
   // (each build its own pre-bundled copy: two dev servers, one of each, never serve each other's)
   cacheDir: process.env.PCDEBUG === '1' ? 'node_modules/.vite-dbg' : 'node_modules/.vite',
-  server: { https },
-  preview: { https },
+  // THE SERVER (backend/, Rust — docs/MULTIPLAYER.md): /v1 (its API and the worlds' WebSockets) passed through to it, so
+  // the game talks to the page's own origin (a phone on the LAN too); OVERHILL_SERVER= another address
+  server: { https, proxy: { '/v1': { target: process.env.OVERHILL_SERVER ?? 'http://127.0.0.1:5280', ws: true, changeOrigin: true } }, fs: { allow: ['..'] } },
+  preview: { https, proxy: { '/v1': { target: process.env.OVERHILL_SERVER ?? 'http://127.0.0.1:5280', ws: true, changeOrigin: true } } },
+
   build: {
     target: 'es2022',
     chunkSizeWarningLimit: 2500,

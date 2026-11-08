@@ -184,6 +184,40 @@ export function drawGate(g: CanvasRenderingContext2D, x: number, y: number, k: n
 }
 
 /** A map label with a pale halo (legible on any ground). */
+/** (co-op) a claim on a map: its circle tinted and edged dashed in its owner's colour, a little flag at its middle. */
+export function drawClaim(g: CanvasRenderingContext2D, x: number, y: number, rPx: number, colour: string, k: number, mine: boolean): void {
+  g.save()
+  g.globalAlpha = 0.22
+  g.fillStyle = colour
+  g.beginPath(); g.arc(x, y, rPx, 0, Math.PI * 2); g.fill()
+  g.globalAlpha = 1
+  g.strokeStyle = colour; g.lineWidth = (mine ? 2.6 : 2) * k
+  g.setLineDash([5 * k, 3.5 * k])
+  g.stroke()
+  g.setLineDash([])
+  // the flag: a pole and a pennant
+  g.strokeStyle = '#16120d'; g.lineWidth = 1.6 * k
+  g.beginPath(); g.moveTo(x, y + 6 * k); g.lineTo(x, y - 9 * k); g.stroke()
+  g.fillStyle = colour; g.strokeStyle = '#fff'; g.lineWidth = 1.2 * k
+  g.beginPath(); g.moveTo(x, y - 9 * k); g.lineTo(x + 9 * k, y - 6 * k); g.lineTo(x, y - 3 * k); g.closePath(); g.fill(); g.stroke()
+  g.restore()
+}
+
+/** (co-op) whose land it is, over its flag: a dark tag with the owner's colour down its left edge (the HUD's look). */
+export function claimTag(g: CanvasRenderingContext2D, t: string, x: number, y: number, colour: string, k: number): void {
+  g.save()
+  g.font = `700 ${Math.round(11.5 * k)}px 'Barlow Condensed', system-ui`
+  const w = g.measureText(t.toUpperCase()).width + 12 * k, h = 15 * k
+  g.fillStyle = 'rgba(8, 8, 10, 0.82)'; g.fillRect(x - w / 2, y - h, w, h)
+  g.fillStyle = colour; g.fillRect(x - w / 2, y - h, 3 * k, h)
+  g.fillStyle = '#f4efe6'; g.textAlign = 'center'; g.textBaseline = 'middle'
+  g.fillText(t.toUpperCase(), x + 1.5 * k, y - h / 2 + 0.5 * k)
+  g.restore()
+}
+
+/** (co-op) a claim as the maps get it. */
+export interface ClaimMark { x: number; z: number; r: number; colour: string; name: string; mine: boolean }
+
 export function label(g: CanvasRenderingContext2D, t: string, x: number, y: number, color: string, size: number, italic: boolean): void {
   g.font = `${italic ? 'italic ' : ''}600 ${size}px 'Barlow Condensed', system-ui`
   g.textAlign = 'center'; g.textBaseline = 'middle'

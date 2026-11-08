@@ -39,6 +39,10 @@ import { caveUniforms } from './Sites'
 import { Fsr } from './Fsr'
 import { initMouseLook, lockMouse, lookBlocked, mouseLocked, onMouseLook, releaseMouse } from './mouseLook'
 import { PerfMarks, type PerfSnap } from './PerfMarks'
+import { carKind, Coop, type Local } from './Coop'
+import { coopRequested, loadAccount, requestCoop } from '../net/api'
+import { Kind } from '../net/pose'
+import { Session } from '../net/Session'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -81,7 +85,9 @@ async function boot() {
   document.body.appendChild(renderer.domElement)
 
   // THE WORLD to start in (World.ts): the valley, or where the saved journey was (CONTINUE), or ?world=
-  const saved = continueRequested() ? loadProgress() : null
+  // CO-OP (docs/MULTIPLAYER.md — the title's CO-OP screen, or ?coop=<world>): joined below, once the world is built
+  const coopWorld = coopRequested()
+  const saved = continueRequested() && !coopWorld ? loadProgress() : null
   requestContinue(false)
   const startId: WorldId = q.get('world') === 'desert' || (!q.has('world') && saved?.map === 'desert') ? 'desert' : 'valley'
   const loading = (f: number) => (status.textContent = `Loading ${WORLDS[startId].name}… ${Math.round(f * 100)}%`)
@@ -344,6 +350,23 @@ async function boot() {
     get body() { return onFoot ? (hero.rigid as typeof car.sim.body | undefined) : riding ? two.sim?.body : car.sim?.body },
     grounded: (): boolean => (onFoot ? hero.isGrounded() : riding ? two.grounded() : car.grounded()),
   }
+  // (B in solo play: building is co-op's — a world on the server holds the land)
+  addEventListener('keydown', (e: KeyboardEvent) => { if (e.code === 'KeyB' && !e.repeat && !coop && !pause && !document.querySelector('.oh-front')) toast('Building needs a co-op world — CO-OP on the title screen', 3500) })
+  // CO-OP: the session (null: playing alone), and what we are this frame for it — Coop.ts
+  let coop: Coop | null = null
+  const coopQ = new GFX.Quaternion(), coopUp = new GFX.Vector3(0, 1, 0)
+  const coopLocal: Local = { kind: Kind.Jeep, p: new GFX.Vector3(), q: new GFX.Quaternion(), parked: null }
+  const coopParked = { kind: Kind.Jeep as Kind, p: new GFX.Vector3(), q: new GFX.Quaternion() }
+  const localNow = (): Local => {
+    const L = coopLocal
+    const out = onFoot || riding
+    if (onFoot) { L.kind = Kind.Foot; L.p.copy(hero.pos); L.q.copy(coopQ.setFromAxisAngle(coopUp, hero.heading)) }
+    else if (riding) { L.kind = Kind.Moto; L.p.copy(two.root.position); L.q.copy(two.root.quaternion) }
+    else { L.kind = carKind(car.id); L.p.copy(car.root.position); L.q.copy(car.root.quaternion) }
+    if (out && car.sim) { coopParked.kind = carKind(car.id); coopParked.p.copy(car.root.position); coopParked.q.copy(car.root.quaternion); L.parked = coopParked }
+    else L.parked = null
+    return L
+  }
   // the tyres' dust and the exhaust smoke
   const dust = new Dust(map, atmos, tier)
   scene.add(dust.mesh)
@@ -367,7 +390,7 @@ async function boot() {
   const chartSize = isMobileDevice() ? 768 : 1024
   const charts = (w: World) => {
     const chart = new Chart(w.map, chartSize)
-    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp, perfMarks: () => (perf.on ? perf.marks : []) }
+    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp, perfMarks: () => (perf.on ? perf.marks : []), others: () => coop?.remotes.list ?? [], claims: () => coop?.claims.list ?? [] }
     const mapView = new MapView(o)
     return { chart, mapView, radar: q.get('radar') === '0' ? null : new Radar({ ...o, openMap: () => mapView.toggle() }) }
   }
@@ -814,7 +837,7 @@ async function boot() {
   if (myCamp) world.props.pitch(myCamp)
   const lastPos = new GFX.Vector3().copy(ride.pos)
   const save = () => {
-    if (Number.isNaN(safe.x) || !saving) return
+    if (Number.isNaN(safe.x) || !saving || coop) return
     saveProgress({ v: 1, map: map.meta.id, car: car.id, x: safe.x, z: safe.z, heading: safe.heading, hour: atmos.hour, travelled, playSeconds, savedAt: Date.now(), camp: myCamp, camps: { ...camps, [world.id]: myCamp } })
   }
   addEventListener('pagehide', save)
@@ -831,7 +854,7 @@ async function boot() {
       pause = new Menu('pause', {
         onResume: () => setPaused(false),
         onRestart: () => { save(); requestContinue(true); location.reload() },
-        onQuit: () => { save(); requestContinue(false); location.href = location.pathname },
+        onQuit: () => { save(); requestContinue(false); requestCoop(null); location.href = location.pathname },
         onVehicle: (r, carId) => { void applyRide(r, carId) },
         onSettings: (st, key) => applySettings(st, key),
       })
@@ -892,6 +915,7 @@ async function boot() {
       { id: 'winch', label: 'Winch', icon: ICONS.winch, key: 'E', run: press('KeyE'), show: () => driving && !riding && !onFoot },
       { id: 'reset', label: 'Reset', icon: ICONS.reset, key: 'R', run: () => { if (riding) two.reset(); else car.reset() }, show: () => driving && !onFoot },
       { id: 'lights', label: 'Lights', icon: ICONS.lights, key: 'L', run: press('KeyL'), show: () => !riding && !onFoot },
+      { id: 'build', label: 'Build', icon: ICONS.flag, key: 'B', run: () => { if (coop) coop.build.toggle(); else toast('Building needs a co-op world — CO-OP on the title screen', 3500) }, on: () => !!coop?.build.on },
       { id: 'time', label: 'Time', icon: ICONS.time, key: 'G', run: press('KeyG') },
       { id: 'weather', label: 'Weather', icon: ICONS.weather, key: 'Shift G', run: press('KeyG', true) },
       { id: 'sound', label: () => (audio.muted ? 'Sound off' : 'Sound'), icon: () => (audio.muted ? ICONS.mute : ICONS.sound), key: 'M', run: press('KeyM') },
@@ -1050,6 +1074,7 @@ async function boot() {
     car.update(physics.pw.alpha)
     moto.update(physics.pw.alpha, dt)
     hero.update(dt)
+    coop?.frame(dt, localNow())
     guide.update(dt, ride.pos.x, ride.pos.z)
     // the journey: distance driven (not the jumps of a reset / a car change), the last safe spot, the autosave
     playSeconds += dt
@@ -1146,6 +1171,7 @@ async function boot() {
     moto.cull(view, world.horizon)
     hero.cull(view, world.horizon)
     if (charHidden) hero.root.visible = hero.shadowMesh.visible = false
+    coop?.cull(view, world.horizon, camera)
     dust.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
     fsr?.begin()
@@ -1158,6 +1184,31 @@ async function boot() {
   renderer.onPostRender(() => fsr?.end())
   // PlayCanvas's frame loop: the game in its 'update', then it renders
   renderer.start(frame)
+  if (coopWorld) {
+    const acct = loadAccount()
+    status.textContent = 'Joining the co-op world…'
+    try {
+      if (!acct) throw new Error('no account here — open CO-OP on the title screen')
+      const session = await Session.connect(acct, coopWorld)
+      coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
+      coop.build.onToggle = (on) => { chase.aerial = on }
+      coop.build.obstacle = (x, z) => (world.trees.nearest(x, z, 4.5) ? 'Too close to a tree — its branches would hide your flag' : world.rocks.biggestNear(x, z, 1.5) ? 'Not on a boulder' : '')
+      // (each player 12 m on from the one before, along the start's track — back along it where it goes back, else on
+      //  ahead (the valley's start is the track's first point) — never all on the one spot; facing along the track)
+      const k = (session.me.sid - 1) % 8
+      if (k && car.sim && !onFoot && !riding) {
+        const L = map.meta.trails.lines[0]
+        let i = 0
+        for (let j = 1; j < L.length; j++) if ((L[j][0] - car.pos.x) ** 2 + (L[j][1] - car.pos.z) ** 2 < (L[i][0] - car.pos.x) ** 2 + (L[i][1] - car.pos.z) ** 2) i = j
+        const step = i > 0 ? -1 : 1
+        for (let d = 0, n = 0; n < 400 && i + step >= 0 && i + step < L.length - 5 && d < 12 * k; n++, i += step) d += Math.hypot(L[i + step][0] - L[i][0], L[i + step][1] - L[i][1])
+        const n = L[Math.min(L.length - 1, i + 4)]
+        car.placeAt(L[i][0], L[i][1], Math.atan2(-(n[0] - L[i][0]), -(n[1] - L[i][1])))
+      }
+    } catch (e) {
+      toast(`Co-op: ${e instanceof Error ? e.message : 'no connection'} — driving alone`, 6000)
+    }
+  }
   // THE WARM-UP behind the loading text (gfx/scene.ts): every shader and pipeline of the world made now, 12 a frame —
   // not a stall each time a new kind of thing first comes into view (2026-11-08, the perf marks). In play it goes on
   // at 2 a frame for what's added later (a crossing's world: compileAsync, a new car, a variant)
@@ -1195,6 +1246,8 @@ async function boot() {
     foot: () => (onFoot ? getIn() : getOut()),
     get onFoot() { return onFoot },
     get riding() { return riding },
+    /** (co-op) the session and the others as drawn (scripts/harness/coop.mjs) */
+    get coop() { return coop },
     /** (the harness's probes: offscreen bakes re-run, targets read back) */
     renderer,
     /** The drawn parts, each with `visible` (scripts/harness/ablate.mjs: the GPU's frame, system by system). */
@@ -1386,7 +1439,7 @@ function fadeThrough(mid: () => void): void {
 function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear: string; readonly sim: unknown }, twos: Bike[], hero: Character, onFoot: () => boolean, doAct: () => void): { update: (driving: boolean, time: string) => void; action: (label: string | null) => void } {
   const box = document.createElement('div')
   box.id = 'drive'
-  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · E winch · F get out · C camp · R reset · Tab map · Q menu · Esc pause</div>'
+  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · E winch · F get out · C camp · R reset · B build · Tab map · Q menu · Esc pause</div>'
   // THE GEARS (2026-11-08, the user: "the manual gear shift — arrows for it in game; on mobile a small gear section"):
   // with the Manual gearbox, a small box by the speed — ▲ up, the gear, ▼ down — clicked or tapped (the keys X / Z
   // shown beside them on a keyboard); hidden on the bike, on foot and with the automatic

@@ -1,4 +1,5 @@
 import { continueRequested, requestContinue } from './save'
+import { coopRequested, requestCoop } from './net/api'
 import { loadSettings } from './settings'
 import { Menu } from './ui/Menu'
 import { fullscreenButton } from './ui/fullscreen'
@@ -16,7 +17,7 @@ import { fullscreenButton } from './ui/fullscreen'
  */
 const url = new URLSearchParams(location.search)
 const status = document.getElementById('status')!
-const direct = ['tier', 'play', 'drive', 'x', 'z', 'hour', 'at'].some((k) => url.has(k)) || continueRequested() // (?at=cave: straight in, before the cave)
+const direct = ['tier', 'play', 'drive', 'x', 'z', 'hour', 'at', 'coop'].some((k) => url.has(k)) || continueRequested() || !!coopRequested() // (?at=cave: straight in, before the cave; ?coop=: into a co-op world)
 
 const MAP = '/oth/valley'
 const MAP_FILES = ['meta.json', 'height.bin', 'far.bin', 'mask.bin', 'trail.bin', 'mud.bin']
@@ -54,6 +55,6 @@ if (direct) {
   void start(continueRequested(), null)
 } else {
   status.style.visibility = 'hidden' // (the title screen shows the loading)
-  const menu: Menu = new Menu('title', { onPlay: (resume) => void start(resume, menu) })
+  const menu: Menu = new Menu('title', { onPlay: (resume) => { requestCoop(null); void start(resume, menu) }, onCoop: (world) => { requestCoop(world); void start(false, menu) } })
   preload()
 }

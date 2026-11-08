@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
-import { type Chart, drawGate, drawPin, drawPlace, drawRoute, drawTracks } from './Chart'
+import { type Chart, drawGate, drawPin, drawPlace, drawRoute, drawTracks, type ClaimMark, drawClaim } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, turnArrow } from './Nav'
@@ -30,6 +30,10 @@ export interface RadarOptions {
   myCamp: () => Camp | null
   /** Tapping the minimap: the full map. */
   openMap?: () => void
+  /** (co-op) the other players in this world */
+  others?: () => readonly { x: number; z: number; heading: number; colour: string }[]
+  /** (co-op) the land claimed in this world */
+  claims?: () => readonly ClaimMark[]
 }
 
 /** The car's place in the box (fractions of its width / height). */
@@ -62,6 +66,10 @@ export class Radar {
   private visible = false
   private readonly dir = new GFX.Vector3()
   private readonly off = new AbortController()
+  /** (co-op) an arrow per other player, placed each frame over the picture (they move; the picture redraws only as we do) */
+  private readonly otherEls: HTMLDivElement[] = []
+  /** (co-op) the claims drawn last (a change redraws the picture) */
+  private claimsKey = ''
 
   constructor(private readonly o: RadarOptions) {
     this.root = document.createElement('div')
@@ -129,6 +137,8 @@ export class Radar {
     const turned = Math.abs(Math.atan2(Math.sin(head - this.head0), Math.cos(head - this.head0)))
     const key = r ?? gd.waypoint
     const routeMoved = !!r && (this.routeT -= dt) <= 0
+    const cl = this.o.claims?.() ?? [], ck = cl.map((c) => `${c.x},${c.z},${c.r},${c.colour}`).join('|')
+    if (ck !== this.claimsKey) { this.claimsKey = ck; this.mpp0 = 0 }
     if (!this.mpp0 || Math.hypot(dx, dz) > 12 || Math.abs(this.mpp / this.mpp0 - 1) > 0.04 || turned > 0.07 || key !== this.routeKey || routeMoved || this.o.chart.ready !== this.chartWas) {
       this.redraw(p.x, p.z, head)
       this.routeKey = key
@@ -138,6 +148,22 @@ export class Radar {
     const tx = (p.x - this.x0) / this.mpp0, tz = (p.z - this.z0) / this.mpp0
     this.cv.style.transform = `rotate(${(-head).toFixed(4)}rad) translate(${(-tx).toFixed(2)}px, ${(-tz).toFixed(2)}px)`
     this.arrow.style.transform = `translate(-50%, -50%) rotate(${(-this.o.carHeading() - head).toFixed(4)}rad)`
+    // (co-op) everyone else: their arrows where they are, turned as they face; off the box's edge, hidden
+    const others = this.o.others?.() ?? []
+    const c = Math.cos(head), sn = Math.sin(head)
+    others.forEach((o, i) => {
+      let e = this.otherEls[i]
+      if (!e) { e = document.createElement('div'); e.className = 'oth-radar-other'; this.box.appendChild(e); this.otherEls.push(e) }
+      const vx = (o.x - p.x) / this.mpp, vz = (o.z - p.z) / this.mpp
+      const sx = vx * c + vz * sn, sy = -vx * sn + vz * c
+      const x = AX * this.W + sx, y = AY * this.H + sy
+      const inBox = x > 4 && x < this.W - 4 && y > 4 && y < this.H - 4
+      e.style.display = inBox ? '' : 'none'
+      if (!inBox) return
+      e.style.setProperty('--c', o.colour)
+      e.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -50%) rotate(${(-o.heading - head).toFixed(4)}rad)`
+    })
+    for (let i = others.length; i < this.otherEls.length; i++) this.otherEls[i].style.display = 'none'
     // N on the rim: north's direction on the screen, out to the box's edge
     const nx = -Math.sin(head), ny = -Math.cos(head)
     const ex = nx > 0 ? (1 - AX) * this.W - 9 : AX * this.W - 9, ey = ny > 0 ? (1 - AY) * this.H - 9 : AY * this.H - 9
@@ -176,6 +202,12 @@ export class Radar {
     for (const l of this.o.lm.list) if (inView(l.x, l.z)) { const [x, y] = P(l.x, l.z); up(x, y, () => drawPlace(g, l, this.o.lm.found.has(l.id), 0, 0, 0.62)) }
     const G = meta.gate
     if (G && inView(G.x, G.z)) { const [x, y] = P(G.x, G.z); drawGate(g, x, y, 0.62, G.heading, head) }
+    // (co-op) the land claimed: its circle and its flag (upright)
+    for (const c of this.o.claims?.() ?? []) {
+      if (c.x + c.r < view.x0 || c.x - c.r > view.x1 || c.z + c.r < view.z0 || c.z - c.r > view.z1) continue
+      const [x, y] = P(c.x, c.z)
+      g.save(); g.translate(x, y); g.rotate(head); drawClaim(g, 0, 0, c.r / mpp, c.colour, 0.75, c.mine); g.restore()
+    }
     const mine = this.o.myCamp()
     if (mine && inView(mine.x, mine.z)) {
       const [x, y] = P(mine.x, mine.z)

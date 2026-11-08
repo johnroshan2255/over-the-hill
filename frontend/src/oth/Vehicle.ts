@@ -859,3 +859,148 @@ function beamMaterial(): GFX.ShaderMaterial {
     side: GFX.DoubleSide,
   })
 }
+
+/**
+ * (co-op) ANOTHER PLAYER'S CAR — the same model and the same paint shader as ours (this file's VERT / FRAG), posed from
+ * the network (net/Session's smoothing — Remotes.ts); no physics, no keys. Their paint is their colour. The wheels roll
+ * by the distance it moves and steer by how fast it turns; its contact shadow and, at night, its lamps' glow. Three
+ * draws (body, glass, the wheels instanced) + the shadow, culled with its sphere and the hills.
+ */
+export class RemoteCar {
+  readonly root = new GFX.Group()
+  readonly shadow: GFX.Mesh
+  id = ''
+  private readonly uniforms: Record<string, GFX.IUniform>
+  private wheelMesh: GFX.InstancedMesh | null = null
+  private model: TruckModel | null = null
+  private readonly wheel = new GFX.Object3D()
+  private readonly e = new GFX.Euler()
+  private readonly shadowBase: Float32Array
+  private readonly shadowSize = new GFX.Vector3(2, 1, 4.5)
+  private spin = 0
+  private steer = 0
+  private lastYaw = NaN
+  private lamps: GFX.InstancedMesh | null = null
+  private readonly lampMat = glowMaterial(new GFX.Color(1, 0.9, 0.72))
+  private readonly viewSphere = new GFX.Sphere(new GFX.Vector3(), 6)
+  private readonly v = new GFX.Vector3()
+  /** The body's box in car space (centre, half size) — null until its model is in. */
+  box: { c: GFX.Vector3; h: GFX.Vector3 } | null = null
+
+  constructor(private readonly map: MapData, private readonly atmos: Atmosphere, shadow: TerrainShadow, farGrid: GFX.Vector4) {
+    this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 },
+      uCoat: { value: 0 }, uCoatColor: { value: new GFX.Color(0.55, 0.45, 0.33) }, uCarBase: { value: 0 } }
+    const sg = new GFX.PlaneGeometry(1, 1, 8, 8).rotateX(-Math.PI / 2)
+    this.shadow = new GFX.Mesh(sg, new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3,
+      uniforms: { uMist: atmos.uniforms.uMist },
+      vertexShader: /* glsl */ `out vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: /* glsl */ `layout(location = 0) out highp vec4 outColor; in vec2 vUv; uniform float uMist;
+        void main() { vec2 q = (vUv - 0.5) * 2.0; float d = length(q); outColor = vec4(0.06, 0.04, 0.05, 0.5 * (1.0 - smoothstep(0.35, 1.0, d)) * (1.0 - 0.75 * uMist * uMist)); }`,
+      transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+    }))
+    this.shadow.frustumCulled = false
+    this.shadow.renderOrder = 2
+    this.shadowBase = (sg.attributes.position.array as Float32Array).slice()
+    this.root.visible = this.shadow.visible = false
+  }
+
+  /** Car `id` (the catalogue's: gwagen, bmw) in `paint` — its model loaded once (loadModels caches it). */
+  async setCar(id: string, paint: string): Promise<void> {
+    if (id === this.id) { (this.uniforms.uPaint.value as GFX.Color).set(paint); return }
+    this.id = id
+    const def = vehicleDef(id)
+    const truck = await loadVehicle(def.id)
+    if (this.id !== id) return
+    this.model = truck
+    for (const c of [...this.root.children]) this.root.remove(c)
+    const u = this.uniforms
+    u.uMap.value = truck.map
+    u.uPaintMask.value = truck.paintMap
+    ;(u.uPaint.value as GFX.Color).set(paint)
+    const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45', ...(GRAIN_OFF ? { NO_GRAIN: '' } : {}) }
+    if (truck.map) defines.USE_MAP_OTH = ''
+    if (truck.paintMap) defines.USE_PAINTMAP = ''
+    const vc = (g: GFX.BufferGeometry) => !!g.attributes.color
+    const at = (geo: GFX.BufferGeometry, h: [number, number, number]) => geo.clone().translate(...h)
+    const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...truck.doors.map((d) => at(d.body, d.hinge))])
+    const glassGeo = mergeParts([truck.glass, ...truck.doors.flatMap((d) => (d.glass ? [at(d.glass, d.hinge)] : []))])
+    const body = new GFX.Mesh(bodyGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) }))
+    const glass = new GFX.Mesh(glassGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false }))
+    body.frustumCulled = glass.frustumCulled = false
+    glass.renderOrder = 3
+    this.wheelMesh = new GFX.InstancedMesh(truck.wheel, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) }), 4)
+    this.wheelMesh.frustumCulled = false
+    this.wheelMesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
+    // (the headlamps' glow — at night)
+    const head = truck.lamps.head, hz = truck.half
+    const h = head ? head.c : [hz.x * 0.7, 0.9, -hz.z]
+    this.lamps = new GFX.InstancedMesh(new GFX.PlaneGeometry(2, 2), this.lampMat, 2)
+    this.lamps.frustumCulled = false
+    this.lamps.renderOrder = 2
+    const m = new GFX.Matrix4(), back = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), Math.PI), hr = (head ? Math.max(0.06, Math.min(head.w, head.h)) : 0.1) * 3
+    for (let k = 0; k < 2; k++) { m.compose(new GFX.Vector3(Math.abs(h[0]) * (k ? 1 : -1), h[1], h[2] - 0.03), back, new GFX.Vector3(hr, hr, 1)); this.lamps.setMatrixAt(k, m) }
+    this.root.add(body, glass, this.wheelMesh, this.lamps)
+    this.shadowSize.set(truck.half.x * 2 + 1.0, 1, truck.half.z * 2 + 1.2)
+    this.viewSphere.radius = Math.hypot(truck.half.x, truck.half.z) + 1.5
+    // (its solid box for the others' physics — Remotes.ts: the body's bounds, car space)
+    bodyGeo.computeBoundingBox()
+    const bb = bodyGeo.boundingBox!
+    this.box = { c: bb.getCenter(new GFX.Vector3()), h: bb.getSize(new GFX.Vector3()).multiplyScalar(0.5) }
+  }
+
+  /** Posed at p, turned q (y up), moving at `speed` m/s; dt this frame. */
+  pose(p: readonly number[], q: readonly number[], speed: number, dt: number): void {
+    const tr = this.model
+    this.root.position.set(p[0], p[1], p[2])
+    this.root.quaternion.set(q[0], q[1], q[2], q[3])
+    if (!tr || !this.wheelMesh) return
+    // (which way it's going: forward is -z)
+    this.v.set(0, 0, -1).applyQuaternion(this.root.quaternion)
+    const yaw = Math.atan2(-this.v.x, -this.v.z)
+    const turn = Number.isNaN(this.lastYaw) ? 0 : Math.atan2(Math.sin(yaw - this.lastYaw), Math.cos(yaw - this.lastYaw))
+    this.lastYaw = yaw
+    const wb = Math.max(1.5, Math.abs(tr.wheelPos[0][2] - tr.wheelPos[2][2]))
+    // (the front wheels' angle from the turn rate and the speed — the bicycle model: tan d = L w / v)
+    const want = speed > 0.5 && dt > 0 ? Math.max(-0.6, Math.min(0.6, Math.atan((wb * (turn / dt)) / speed))) : this.steer * 0.9
+    this.steer += (want - this.steer) * Math.min(1, dt * 6)
+    const r = Math.max(0.25, tr.wheelPos[0][1])
+    this.spin += (speed * dt) / r
+    tr.wheelPos.forEach(([x, y, z], k) => {
+      const right = k === 1 || k === 3, front = k < 2
+      this.e.set(right ? this.spin : -this.spin, (right ? Math.PI : 0) - (front ? this.steer : 0), 0, 'YXZ')
+      this.wheel.position.set(x, y, z)
+      this.wheel.quaternion.setFromEuler(this.e)
+      this.wheel.updateMatrix()
+      this.wheelMesh!.setMatrixAt(k, this.wheel.matrix)
+    })
+    this.wheelMesh.instanceMatrix.needsUpdate = true
+    this.uniforms.uCarBase.value = this.map.height(p[0], p[2])
+    const night = this.atmos.uniforms.uNight.value
+    if (this.lamps) { this.lamps.visible = night > 0.25; this.lampMat.uniforms.uK.value = 5.5 }
+    // the contact shadow, laid on the ground under it (only while it's seen — last frame's cull)
+    if (!this.root.visible) return
+    const sp = this.shadow.geometry.attributes.position as GFX.BufferAttribute
+    const a = sp.array as Float32Array, base = this.shadowBase, cs = Math.cos(yaw), sn = Math.sin(yaw)
+    for (let i = 0; i < sp.count; i++) {
+      const lx = base[i * 3] * this.shadowSize.x, lz = base[i * 3 + 2] * this.shadowSize.z
+      const x = p[0] + lx * cs + lz * sn, z = p[2] - lx * sn + lz * cs
+      a[i * 3] = x; a[i * 3 + 1] = this.map.height(x, z) + 0.04; a[i * 3 + 2] = z
+    }
+    sp.needsUpdate = true
+  }
+
+  /** Drawn only in view and not behind the hills (as ours). */
+  cull(view: GFX.Frustum, horizon: Horizon, on: boolean): void {
+    const p = this.root.position
+    this.viewSphere.center.copy(p)
+    this.root.visible = on && !!this.model && view.intersectsSphere(this.viewSphere) && !horizon.hidden(p.x - 6, p.z - 6, p.x + 6, p.z + 6, p.y + 3)
+    this.shadow.visible = this.root.visible && p.y - this.map.height(p.x, p.z) < 3
+  }
+
+  dispose(): void {
+    this.root.removeFromParent()
+    this.shadow.removeFromParent()
+    this.shadow.geometry.dispose()
+  }
+}

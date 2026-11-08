@@ -770,6 +770,23 @@ export class Character {
     if (this.body) { this.physics.pw.world.removeRigidBody(this.body); this.body = null; this.col = null }
   }
 
+  /** (co-op) ANOTHER PLAYER'S WALKER, posed from the network (net/Session's smoothing — Remotes.ts): no controller,
+   *  no keys, no body in the physics; the locomotion blend by the speed they move at, turning as they turn. */
+  puppet(x: number, y: number, z: number, heading: number, speed: number, dt: number): void {
+    if (this.body) { this.physics.pw.world.removeRigidBody(this.body); this.body = null; this.col = null }
+    this.seat = null
+    this.ride = null
+    this.control = false
+    const turn = Math.atan2(Math.sin(heading - this.heading), Math.cos(heading - this.heading))
+    this.heading = heading
+    const k = Math.min(1, dt * 10)
+    this.turnRate += (turn / Math.max(dt, 1e-3) - this.turnRate) * k
+    this.speed += (Math.min(9, speed) - this.speed) * Math.min(1, dt * 8)
+    this.pos.set(x, y, z)
+    this.grounded = true
+    if (this.state !== 'move') { this.state = 'move'; this.root.visible = true; this.play('loco' as ClipName, { fade: 0.2 }) }
+  }
+
   /** Shown at a place without the controller (a scripted moment: getting in or out — main.ts moves it). */
   stage(x: number, y: number, z: number, heading: number): void {
     this.seat = null

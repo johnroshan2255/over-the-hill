@@ -16,11 +16,14 @@ let releasing = false
 
 export function onMouseLook(f: Look): void { subs.push(f) }
 
+/** Turn the cameras by (dx, dy) css px as the mouse would — BUILD mode's right-drag (Build.ts: the cursor is free there). */
+export function lookBy(dx: number, dy: number): void { for (const f of subs) f(dx, dy) }
+
 export function mouseLocked(): boolean { return !!canvas && document.pointerLockElement === canvas }
 
-/** Something over the game wants the cursor: a menu, the map, the action wheel. */
+/** Something over the game wants the cursor: a menu, the map, the action wheel, BUILD mode (its brush follows it). */
 export function lookBlocked(): boolean {
-  return !!document.querySelector('.oh-front, .oth-map.on') || document.body.classList.contains('oth-wheel-open')
+  return !!document.querySelector('.oh-front, .oth-map.on') || document.body.classList.contains('oth-wheel-open') || document.body.classList.contains('oth-build')
 }
 
 /** Ask for the lock (from a click or a key — the browser wants a user gesture; a refusal leaves the hover look). */

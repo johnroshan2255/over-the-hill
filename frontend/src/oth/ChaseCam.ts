@@ -93,6 +93,11 @@ export class ChaseCam {
   /** How far back it is (m, eased) — PerfMarks keeps it. */
   get distance(): number { return this.dist }
 
+  /** THE BUILDER'S VIEW (BUILD mode — Build.ts): up and back over the player — ~40° down, at least 34 m off — so a
+   *  brush 80 m across is in view; eased in and out. */
+  aerial = false
+  private aerialK = 0
+
   /** Zoom: the distance × k (< 1 closer), 3.5–40 m; the camera eases there. */
   zoom(k: number): void {
     this.distTo = GFX.MathUtils.clamp(this.distTo * k, 3.5, 40)
@@ -126,14 +131,18 @@ export class ChaseCam {
       if (this.idle > 1.5 && this.pitch < PITCH_LOW && Math.abs(this.car.sim.speed) > 2) this.pitch += (PITCH_LOW - this.pitch) * Math.min(1, dt * 1.8)
     }
     this.dist += (this.distTo - this.dist) * Math.min(1, dt * 8)
+    this.aerialK += ((this.aerial ? 1 : 0) - this.aerialK) * Math.min(1, dt * 3)
+    const ak = this.aerialK * this.aerialK * (3 - 2 * this.aerialK)
     const a = this.yaw + this.orbit
     const speed = Math.abs(this.car.sim.speed)
-    const dist = this.dist * (1 + Math.min(speed, 30) / 90)
+    const dist0 = this.dist * (1 + Math.min(speed, 30) / 90)
+    const dist = dist0 + (Math.max(dist0, 34) - dist0) * ak
     const p = this.car.pos
     this.look.set(p.x, p.y + this.lookH, p.z)
     // (rock close behind — the car backed against a wall: the camera rises over the car instead of coming in to it)
     const po = Math.max(this.pitch, PITCH_LOW), tilt = PITCH_LOW - Math.min(this.pitch, PITCH_LOW)
-    const pe = po + Math.max(0, 1.15 - po) * this.lift
+    const pe0 = po + Math.max(0, 1.15 - po) * this.lift
+    const pe = pe0 + (Math.max(pe0, 0.7) - pe0) * ak
     const ux = Math.sin(a) * Math.cos(pe), uy = Math.sin(pe), uz = Math.cos(a) * Math.cos(pe)
     let dd = dist
     if (this.obstruct) {
