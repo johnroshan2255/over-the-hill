@@ -2,7 +2,7 @@ import * as GFX from './gfx'
 import { isMobileDevice } from '../rendering/quality/DeviceProfile'
 import { loadJournal, REWARD, saveJournal } from '../journal'
 import { type Camp, continueRequested, loadProgress, requestContinue, saveProgress } from '../save'
-import { gameParams } from '../settings'
+import { gameParams, type Settings } from '../settings'
 import { Menu } from '../ui/Menu'
 import { Atmosphere } from './Atmosphere'
 import { Bike, MotoBike } from './Bike'
@@ -36,6 +36,9 @@ import { Winch } from './Winch'
 import { ActionWheel, ICONS } from './Wheel'
 import { liveMap, World, type WorldEnv, type WorldId, WORLDS } from './World'
 import { caveUniforms } from './Sites'
+import { Fsr } from './Fsr'
+import { initMouseLook, lockMouse, lookBlocked, mouseLocked, onMouseLook, releaseMouse } from './mouseLook'
+import { PerfMarks, type PerfSnap } from './PerfMarks'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -207,7 +210,9 @@ async function boot() {
   // (its feet on what's solid under them: the terrain or a slab's top)
   // (from the terrain's own height: the slab's top if one stands there, else the terrain — asked from above, it
   //  answered with the height it was asked from)
-  hero.ground = (x, z) => physics.surface(x, z, map.height(x, z))
+  // (from the hips down: the first solid thing under the foot — the cave's floor stands over the land; at the land's
+  //  height the feet reached down into it, 2026-11-07, the user: "inside, the human goes under the terrain")
+  hero.ground = (x, z, y0) => physics.surface(x, z, map.height(x, z), y0)
   scene.add(hero.root, hero.shadowMesh)
   let onFoot = false
   /** (?chardraw=0: the character never drawn — the cost A/B) */
@@ -221,18 +226,26 @@ async function boot() {
   let doorCam = 0
   const doorCamFrom = new GFX.Vector3(), doorCamLook = new GFX.Vector3()
   // FIRST PERSON (V): the eye in the head — the driver's in the car (his hands on the wheel in view), the rider's on a
-  // bike, the character's on foot; dragging looks round (in a vehicle it eases back ahead a moment after)
+  // bike, the character's on foot; the mouse (or a finger's drag) looks round (in a vehicle it eases back ahead a moment after)
   let fpp = false
   const look = { yaw: 0, pitch: 0, idle: 9, footYaw: 0 }
   {
     let dragId = -1, lx = 0, ly = 0
-    renderer.domElement.addEventListener('pointerdown', (e) => { if ((e.target as HTMLElement).closest?.('.oth-touch')) return; dragId = e.pointerId; lx = e.clientX; ly = e.clientY })
+    // (the mouse: just moving it — mouseLook.ts; a finger drags)
+    onMouseLook((dx, dy) => {
+      if (!fpp) return
+      const k = 0.0035
+      if (onFoot) look.footYaw -= dx * k; else look.yaw = Math.atan2(Math.sin(look.yaw - dx * k), Math.cos(look.yaw - dx * k))
+      look.pitch = Math.max(-1.2, Math.min(1.5, look.pitch - dy * k))
+      look.idle = 0
+    })
+    renderer.domElement.addEventListener('pointerdown', (e) => { if ((e.target as HTMLElement).closest?.('.oth-touch') || e.pointerType === 'mouse') return; dragId = e.pointerId; lx = e.clientX; ly = e.clientY })
     window.addEventListener('pointerup', (e) => { if (e.pointerId === dragId) dragId = -1 })
     window.addEventListener('pointermove', (e) => {
       if (!fpp || e.pointerId !== dragId) return
       const k = 0.0045
       if (onFoot) look.footYaw -= (e.clientX - lx) * k; else look.yaw -= (e.clientX - lx) * k
-      look.pitch = Math.max(-1.2, Math.min(1.1, look.pitch - (e.clientY - ly) * k))
+      look.pitch = Math.max(-1.2, Math.min(1.5, look.pitch - (e.clientY - ly) * k))
       look.idle = 0
       lx = e.clientX; ly = e.clientY
     })
@@ -354,7 +367,7 @@ async function boot() {
   const chartSize = isMobileDevice() ? 768 : 1024
   const charts = (w: World) => {
     const chart = new Chart(w.map, chartSize)
-    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp }
+    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp, perfMarks: () => (perf.on ? perf.marks : []) }
     const mapView = new MapView(o)
     return { chart, mapView, radar: q.get('radar') === '0' ? null : new Radar({ ...o, openMap: () => mapView.toggle() }) }
   }
@@ -484,7 +497,7 @@ async function boot() {
       two.park()
       riding = false
       const at = besides(p.x, p.z, h, [[-0.85, 0], [0.85, 0], [0, 1.2]], 0.35) ?? { x: p.x - Math.cos(h) * 0.85, z: p.z + Math.sin(h) * 0.85 }
-      hero.appear(at.x, at.z, h)
+      hero.appear(at.x, at.z, h, undefined, p.y + 1.5)
       onFoot = true
       footCam()
       return
@@ -497,19 +510,19 @@ async function boot() {
     if (!d || !hero.has('car_exit')) {
       const p = car.pos, half = car.half
       const at = besides(p.x, p.z, h, [[-(half.x + 0.8), 0], [half.x + 0.8, 0]], 0.4) ?? { x: p.x - Math.cos(h) * (half.x + 0.8), z: p.z + Math.sin(h) * (half.x + 0.8) }
-      hero.appear(at.x, at.z, h); onFoot = true; footCam(); return
+      hero.appear(at.x, at.z, h, undefined, p.y + 1.5); onFoot = true; footCam(); return
     }
     // the clip starts seated: its hips put on the driver's seat; it climbs out to the left (out of the door)
     const seat = toWorld(d.seat), [hx, hy, hz] = hero.hipsAt('car_exit', 0)
     const [ox, oz] = rot(hx, hz, h), x0 = seat.x - ox, z0 = seat.z - oz, y0 = seat.y - hy
     const e = hero.hipsAt('car_exit', 1), [ex, ez] = rot(e[0], e[2], h)
-    const gy = physics.surface(x0 + ex, z0 + ez, map.height(x0 + ex, z0 + ez))
+    const gy = physics.surface(x0 + ex, z0 + ez, map.height(x0 + ex, z0 + ez), car.pos.y + 1.5)
     hero.stage(x0, y0, z0, h)
     onFoot = true
     chase.frame(4.8, 1.4)
     hero.play('car_exit', { fade: 0, rate: 1.3, then: () => {
       const tr = hero.travel(), [tx, tz] = rot(tr.dx, tr.dz, h)
-      hero.appear(x0 + tx, z0 + tz, h + tr.yaw)
+      hero.appear(x0 + tx, z0 + tz, h + tr.yaw, undefined, car.pos.y + 1.5)
       doorTo = car.doorOpen = 0
       // (then he turns to face along the car — GTA's: the camera comes round behind him down its flank, never into it)
       cut = (dt) => {
@@ -598,7 +611,7 @@ async function boot() {
     const lie = hero.lieOf(name, t0)
     const h = Math.hypot(head.x, head.z) > 0.25 ? Math.atan2(-head.x, -head.z) - lie.headYaw : two.heading
     const [ox, oz] = rot(lie.hips[0], lie.hips[2], h)
-    const x0 = bl.x - ox, z0 = bl.z - oz, y0 = physics.surface(x0, z0, map.height(x0, z0))
+    const x0 = bl.x - ox, z0 = bl.z - oz, y0 = physics.surface(x0, z0, map.height(x0, z0), bl.y + 1.5)
     riding = false
     onFoot = true
     rising = true
@@ -609,7 +622,7 @@ async function boot() {
       rising = false
       cut = null
       const tr = hero.travel(), [tx, tz] = rot(tr.dx, tr.dz, h)
-      hero.appear(x0 + tx, z0 + tz, h + tr.yaw)
+      hero.appear(x0 + tx, z0 + tz, h + tr.yaw, undefined, bl.y + 1.5)
       look.footYaw = hero.heading
       chase.frame(4.2, 1.45)
     }
@@ -765,12 +778,12 @@ async function boot() {
     if (riding) bringCar(false) // (the car was left in the other world: it comes along, parked by the road)
   }
 
-  const baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100 // (?maxdpr=: the pixel-ratio cap, cost tests)
+  let baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100 // (?maxdpr=: the pixel-ratio cap, cost tests)
   let dprScale = 1, dprT = performance.now() + 4000, dprFrames = 0, dprSlow = 0, dprGood = 0, dprWait = 8, sinceUp = 99
   // (EVERY device now — 2026-11-07, the user: "do all optimization works, so that even a Chromebook …" — it was phones
   //  only, "turn it off on PC / laptop". It acts only on a SLOW machine: a PC at 500 fps never comes near 52 fps, so its
   //  resolution never moves. The Resolution setting at a fixed % (?dpr=fixed) or ?adaptive=0 turns it off; ?adaptive=1 on)
-  const adaptive = q.get('adaptive') === '1' || (q.get('dpr') !== 'fixed' && q.get('adaptive') !== '0')
+  let adaptive = q.get('adaptive') === '1' || (q.get('dpr') !== 'fixed' && q.get('adaptive') !== '0')
   const size = () => {}
   window.addEventListener('resize', () => {
     renderer.setSize(innerWidth, innerHeight)
@@ -814,19 +827,50 @@ async function boot() {
     if (on === !!pause) return
     if (on) {
       save()
+      releaseMouse()
       pause = new Menu('pause', {
         onResume: () => setPaused(false),
         onRestart: () => { save(); requestContinue(true); location.reload() },
         onQuit: () => { save(); requestContinue(false); location.href = location.pathname },
         onVehicle: (r, carId) => { void applyRide(r, carId) },
+        onSettings: (st, key) => applySettings(st, key),
       })
     } else {
       pause?.close()
       pause = null
+      // (Quality / Anti-aliasing changed: the world rebuilt with them — saved, and back right here)
+      if (restartPending) { save(); requestContinue(true); location.reload(); return }
       clock.getDelta() // (no jump: the paused time never reaches the physics)
+      perf.hold(3000)
+      lockMouse() // (Resume was a click: the mouse turns the camera again at once)
       last = performance.now()
     }
   }
+  // SETTINGS CHANGED IN PLAY (2026-11-08, the user: "we can press Escape and change settings but it doesn't take
+  // effect in the game"): taken at once — the gearbox, the aids, the off-road assist (the car being driven), the paint,
+  // the sound, the FPS overlay, the resolution, FSR; Quality and Anti-aliasing build the world differently: the game
+  // restarts right here when you resume. (The page's own URL switches still win, as at boot — the harnesses.)
+  let restartPending = false
+  const applySettings = (st: Settings, key: keyof Settings) => {
+    const url = new URLSearchParams(location.search)
+    if (key === 'gearbox' || key === 'aids' || key === 'offroadAssist') car.setDriving({ manual: st.gearbox === 'manual', aids: st.aids, offroadAssist: st.offroadAssist })
+    else if (key === 'paint') car.setPaint(st.paint)
+    else if (key === 'sound') audio.muted = !st.sound
+    else if (key === 'fpsOverlay') { showStats = st.fpsOverlay; renderer.showStats(showStats) }
+    else if (key === 'resolution' && !url.has('scale')) {
+      baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * (st.resolution === 'auto' ? 100 : Number(st.resolution)) / 100
+      adaptive = st.resolution === 'auto' && url.get('adaptive') !== '0'
+      dprScale = 1
+      renderer.setPixelRatio(baseDpr)
+    } else if (key === 'upscale' && !url.has('fsr')) {
+      const k = { off: 1, quality: 0.77, balanced: 0.67, performance: 0.5 }[st.upscale]
+      if (k >= 0.99) { fsr?.dispose(); fsr = null }
+      else if (fsr) fsr.scale = k
+      else fsr = new Fsr(renderer, k)
+    } else if (key === 'quality' || key === 'antialias') restartPending = true
+  }
+  // MOUSE LOOK (mouseLook.ts): the lock lost to Esc pauses — the browser keeps that Esc, the keydown below never sees it
+  initMouseLook(renderer.domElement, () => { if (!pause) setPaused(true) })
   window.addEventListener('keydown', (e) => {
     if (e.code !== 'Escape' || pause || document.querySelector('.oth-map.on')) return
     e.preventDefault()
@@ -944,11 +988,22 @@ async function boot() {
     toast(`Note found · ${read.size} / ${world.places.filter((q) => q.note).length}`, 2800)
   }
 
+  // PERF MARKS (PerfMarks.ts — F9, ?perfmark=1): the spots where the frame rate falls, marked as you play, with why
+  const perf = new PerfMarks((m, merged) => toast(`FPS drop ${merged ? 'again ' : ''}marked · ${m.fps} fps (usual ${m.baseFps})${m.kind === 'hitch' ? ' · a stall' : ''}`, 2200))
+  if (perf.on) renderer.gpuTime() // (the GPU's timestamps on — the marks keep the GPU's share where the browser has them)
+  const perfSnap = (): PerfSnap => ({
+    world: world.id, camera, ground: map.height(camera.position.x, camera.position.z), player: ride.pos,
+    mode: !driving ? 'fly' : fpp ? 'fpp' : onFoot ? 'foot' : riding ? 'bike' : 'chase', cpuMs,
+    gpu: () => renderer.gpuTime(), hour: atmos.hour, weather: atmos.weather, zoom: !fpp && driving ? chase.distance : undefined,
+    drawn: () => ({ draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: world.terrain.patches, blades: world.grass.blades, trees: world.trees.drawn.slice(), bushes: world.bushes.drawn.slice(), rocks: world.rocks.count, dpr: +(baseDpr * dprScale).toFixed(2), fsr: fsr?.scale ?? 1 }),
+  })
+
   const frame = () => {
     renderer.drawing = !pause
     if (pause) return
     const now = performance.now()
     frameMs += (now - last - frameMs) * 0.1
+    perf.frame(now, now - last, lookBlocked, perfSnap, camera.position)
     // ADAPTIVE RESOLUTION (PlayCanvas guidelines: device pixel ratio at runtime): once a second, the second's AVERAGE
     // frame (its time over its frames — a garbage-collection stall or one hitch barely moves it, as the old smoothed
     // frame did) — slow (> 19 ms ≈ under 52 fps) TWO seconds running lowers the pixel ratio 15 % (down to half the
@@ -1047,6 +1102,9 @@ async function boot() {
       else if (fpp) { if (doorCam > 0) doorCam = 0; placeFpp(dt) }
       else { if (doorCam > 0) doorCam = 0; chase.update(dt) }
     } else fly.update(dt)
+    // (the mouse turns the camera in use only; a menu, the map or the wheel takes the cursor back — mouseLook.ts)
+    chase.enabled = driving && !fpp; fly.enabled = !driving
+    if (mouseLocked() && lookBlocked()) releaseMouse()
     // (first person: the head out of the way, the near plane close — the cabin's insides at arm's length)
     const inFpp = fpp && driving && !cut
     hero.hideHead = inFpp && (onFoot || hero.seated || riding)
@@ -1090,11 +1148,30 @@ async function boot() {
     if (charHidden) hero.root.visible = hero.shadowMesh.visible = false
     dust.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
+    fsr?.begin()
     renderer.prepare(scene, camera)
     cpuMs += (performance.now() - t0 - cpuMs) * 0.1
   }
+  // FSR 1 (Fsr.ts — the Upscaling setting / ?fsr=0.77 | 0.67 | 0.5): the world drawn smaller, upscaled to the canvas
+  const fsrK = num('fsr', 1)
+  let fsr = fsrK > 0.3 && fsrK < 0.99 ? new Fsr(renderer, fsrK) : null
+  renderer.onPostRender(() => fsr?.end())
   // PlayCanvas's frame loop: the game in its 'update', then it renders
   renderer.start(frame)
+  // THE WARM-UP behind the loading text (gfx/scene.ts): every shader and pipeline of the world made now, 12 a frame —
+  // not a stall each time a new kind of thing first comes into view (2026-11-08, the perf marks). In play it goes on
+  // at 2 a frame for what's added later (a crossing's world: compileAsync, a new car, a variant)
+  {
+    status.textContent = `Loading ${WORLDS[startId].name}… shaders`
+    GFX.warm.perFrame = 12
+    const t0 = performance.now()
+    await new Promise<void>((res) => {
+      let n = 0
+      const tick = () => { n++; if ((n > 3 && GFX.warm.pending === 0) || performance.now() - t0 > 20000) res(); else requestAnimationFrame(tick) }
+      requestAnimationFrame(tick)
+    })
+    GFX.warm.perFrame = 1
+  }
   status.remove()
   dispatchEvent(new Event('overhill:started')) // (the title screen closes)
 
@@ -1164,6 +1241,10 @@ async function boot() {
     physics,
     gpuTime: () => renderer.gpuTime(),
     backend: renderer.backend,
+    /** (PerfMarks.ts) the spots marked where the frame rate fell — the harness reads them back */
+    perfMarks: () => perf.marks,
+    /** (gfx/scene.ts) the shader warm-up: layouts warmed, still waiting */
+    warm: () => ({ total: GFX.warm.total, pending: GFX.warm.pending }),
     stats: () => ({ fps: 1000 / frameMs, cpuMs, draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: world.terrain.patches, blades: world.grass.blades, rocks: world.rocks.count, trees: world.trees.drawn.slice(), bushes: world.bushes.drawn.slice(), culled: { terrainPatches: world.terrain.occluded, treeTiles: world.trees.occluded, rocks: { ...world.rocks.culled }, horizonBuilds: world.horizon.builds }, pos: camera.position.toArray().map((v) => +v.toFixed(1)), ground: +map.height(camera.position.x, camera.position.z).toFixed(1) }),
     height: (x: number, z: number) => map.height(x, z),
     rockNear: (x: number, z: number, r: number) => world.rocks.biggestNear(x, z, r),
@@ -1306,8 +1387,18 @@ function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear:
   const box = document.createElement('div')
   box.id = 'drive'
   box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · E winch · F get out · C camp · R reset · Tab map · Q menu · Esc pause</div>'
+  // THE GEARS (2026-11-08, the user: "the manual gear shift — arrows for it in game; on mobile a small gear section"):
+  // with the Manual gearbox, a small box by the speed — ▲ up, the gear, ▼ down — clicked or tapped (the keys X / Z
+  // shown beside them on a keyboard); hidden on the bike, on foot and with the automatic
+  const gears = document.createElement('div')
+  gears.className = 'oth-gears'
+  gears.innerHTML = '<button data-g="KeyX" title="Shift up (X)">▲<kbd>X</kbd></button><b>N</b><button data-g="KeyZ" title="Shift down (Z)">▼<kbd>Z</kbd></button>'
+  for (const b of gears.querySelectorAll('button')) b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); window.dispatchEvent(new KeyboardEvent('keydown', { code: (b as HTMLElement).dataset.g })); window.dispatchEvent(new KeyboardEvent('keyup', { code: (b as HTMLElement).dataset.g })) })
+  box.prepend(gears)
   document.body.appendChild(box)
-  const spd = box.querySelector('b')!, gear = box.querySelector('i')!, clk = box.querySelector('em')!, help = box.querySelector('.help') as HTMLElement
+  const gearNow = gears.querySelector('b')!
+  let gearsOn = false, gearsTxt = ''
+  const spd = box.querySelector('.spd b')!, gear = box.querySelector('.spd i')!, clk = box.querySelector('em')!, help = box.querySelector('.help') as HTMLElement
   const CAR_HELP = help.textContent ?? ''
   const MOTO_HELP = 'W throttle · S brake · A D steer · ↓ wheelie · ↑ stoppie · ↑ ↓ flips · Space jump · R back on · F off · Q menu · Esc pause'
   const FOOT_HELP = 'W A S D move · Shift sprint · Ctrl walk · Space jump · F get in · Q menu · Esc pause'
@@ -1318,11 +1409,14 @@ function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear:
     // the game gets the screen
     document.body.classList.add('touch')
     help.style.display = 'none'
+    // (the gear box on the page itself, above the pedals: the HUD plate is centred with a transform — a fixed box inside
+    //  it was placed against the plate, mid-screen)
+    document.body.appendChild(gears)
     pad = document.createElement('div')
     pad.className = 'oth-touch'
     // (only what you drive with: the rest — winch, bike, reset, map, pause … — is in the action wheel, Wheel.ts)
-    pad.innerHTML = '<button data-k="left">◀</button><button data-k="right">▶</button><button data-k="brake">BRAKE</button><button data-k="gas">GAS</button><button data-k="hop" class="bk">HOP</button><button data-k="leanF" class="bk">▲</button><button data-k="leanB" class="bk">▼</button>' +
-      (car.driving.manual ? '<button data-k="up" data-key="KeyX">▲</button><button data-k="down" data-key="KeyZ">▼</button>' : '')
+    // (the manual gears: the HUD's gear box, .oth-gears — shown when the setting is Manual, even if changed in play)
+    pad.innerHTML = '<button data-k="left">◀</button><button data-k="right">▶</button><button data-k="brake">BRAKE</button><button data-k="gas">GAS</button><button data-k="hop" class="bk">HOP</button><button data-k="leanF" class="bk">▲</button><button data-k="leanB" class="bk">▼</button>'
     document.body.appendChild(pad)
     // THE STICK (on foot — 2026-11-05: "think as a game developer"): the left thumb steers the walk from the camera's
     // view; a little = walk, most = run, to the rim = sprint. It lives where the steering pads are (hidden on foot).
@@ -1390,6 +1484,10 @@ function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear:
       const s = ride.speedKmh.toFixed(0)
       if (s !== spdTxt) { spdTxt = s; spd.textContent = s }
       if (ride.gear !== gearTxt) { gearTxt = ride.gear; gear.textContent = gearTxt }
+      // (the gear box: the car, driven, with the Manual gearbox — the setting can change while playing)
+      const gOn = car.driving.manual && !onFoot() && !twos.some((b) => !!b.sim)
+      if (gOn !== gearsOn) { gearsOn = gOn; gears.classList.toggle('on', gOn) }
+      if (gOn) { const g = ride.gear.replace(/^[MD]/, ''); if (g !== gearsTxt) { gearsTxt = g; gearNow.textContent = g || 'N' } }
       const on = onFoot() ? 2 : twos.some((b) => !!b.sim) ? 1 : -1 // (1 the motorbike, 2 on foot, −1 the car)
       if (on !== onBike) {
         onBike = on

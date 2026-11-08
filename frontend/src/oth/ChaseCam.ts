@@ -1,5 +1,6 @@
 import * as GFX from './gfx'
 import type { MapData } from './MapData'
+import { onMouseLook } from './mouseLook'
 
 /** What the camera follows (main.ts: the car, or the bike while riding): its place, and its heading and speed when there. */
 export interface ChaseTarget {
@@ -9,10 +10,16 @@ export interface ChaseTarget {
 
 /**
  * The CHASE CAMERA: behind and above the car, swinging round after its heading with a little lag (so a slide shows),
- * pulled back a touch with speed. Drag (mouse / finger) orbits it; it eases back behind the car 1.5 s after you let
- * go. ZOOM (3.5–40 m, eased): the mouse wheel, a two-finger pinch, the + / − keys and the on-screen + / − buttons
+ * pulled back a touch with speed. The MOUSE turns it just by moving (mouseLook.ts: pointer lock, a whole 360); a finger
+ * drags it; it eases back behind the car 1.5 s after the last turn. ZOOM (3.5–40 m, eased): the mouse wheel, a two-finger pinch, the + / − keys and the on-screen + / − buttons
  * (`zoom`). Never under the ground.
  */
+/** The lowest the camera goes round the car (its angle over the look point); turned on down past it, the camera stays
+ *  there and its AIM tilts up instead — to the sky, ~88° at PITCH_MIN (2026-11-08, the user: "it still can't see the
+ *  sky, I need to look 90° up"). */
+const PITCH_LOW = -0.1
+const PITCH_MIN = PITCH_LOW - 1.6
+
 export class ChaseCam {
   private yaw = 0
   private orbit = 0
@@ -40,7 +47,7 @@ export class ChaseCam {
 
   constructor(readonly camera: GFX.PerspectiveCamera, private readonly map: MapData, private readonly car: ChaseTarget, dom: HTMLElement) {
     dom.addEventListener('pointerdown', (e) => {
-      if ((e.target as HTMLElement).closest?.('.oth-touch')) return
+      if ((e.target as HTMLElement).closest?.('.oth-touch') || e.pointerType === 'mouse') return
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
       this.drag = this.touches.size === 1; this.lx = e.clientX; this.ly = e.clientY
       if (this.touches.size === 2) this.pinch = this.spread()
@@ -64,8 +71,16 @@ export class ChaseCam {
       }
       if (!this.drag) return
       this.orbit -= (e.clientX - this.lx) * 0.006
-      this.pitch = GFX.MathUtils.clamp(this.pitch + (e.clientY - this.ly) * 0.004, -0.1, 1.2)
+      this.pitch = GFX.MathUtils.clamp(this.pitch + (e.clientY - this.ly) * 0.004, PITCH_MIN, 1.2)
       this.lx = e.clientX; this.ly = e.clientY
+      this.idle = 0
+    })
+    onMouseLook((dx, dy) => {
+      if (!this.enabled) return
+      // (kept within ±π: round and round, the ease back behind the car takes the short way)
+      const o = this.orbit - dx * 0.005
+      this.orbit = Math.atan2(Math.sin(o), Math.cos(o))
+      this.pitch = GFX.MathUtils.clamp(this.pitch + dy * 0.0035, PITCH_MIN, 1.2)
       this.idle = 0
     })
     dom.addEventListener('wheel', (e) => { if (this.enabled) this.zoom(e.deltaY > 0 ? 1.12 : 0.89) }, { passive: true })
@@ -74,6 +89,9 @@ export class ChaseCam {
       if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.zoom(1.18)
     })
   }
+
+  /** How far back it is (m, eased) — PerfMarks keeps it. */
+  get distance(): number { return this.dist }
 
   /** Zoom: the distance × k (< 1 closer), 3.5–40 m; the camera eases there. */
   zoom(k: number): void {
@@ -102,8 +120,10 @@ export class ChaseCam {
     d = Math.atan2(Math.sin(d), Math.cos(d))
     this.yaw += d * Math.min(1, dt * 3.2)
     if (!this.drag) {
-      this.idle += dt
+      this.idle += dt // (the mouse look zeroes it as it turns)
       if (this.idle > 1.5) this.orbit *= Math.max(0, 1 - dt * 1.8)
+      // (a look at the sky eases back down once you drive on; stopped, it stays)
+      if (this.idle > 1.5 && this.pitch < PITCH_LOW && Math.abs(this.car.sim.speed) > 2) this.pitch += (PITCH_LOW - this.pitch) * Math.min(1, dt * 1.8)
     }
     this.dist += (this.distTo - this.dist) * Math.min(1, dt * 8)
     const a = this.yaw + this.orbit
@@ -112,7 +132,8 @@ export class ChaseCam {
     const p = this.car.pos
     this.look.set(p.x, p.y + this.lookH, p.z)
     // (rock close behind — the car backed against a wall: the camera rises over the car instead of coming in to it)
-    const pe = this.pitch + Math.max(0, 1.15 - this.pitch) * this.lift
+    const po = Math.max(this.pitch, PITCH_LOW), tilt = PITCH_LOW - Math.min(this.pitch, PITCH_LOW)
+    const pe = po + Math.max(0, 1.15 - po) * this.lift
     const ux = Math.sin(a) * Math.cos(pe), uy = Math.sin(pe), uz = Math.cos(a) * Math.cos(pe)
     let dd = dist
     if (this.obstruct) {
@@ -135,6 +156,12 @@ export class ChaseCam {
     let cy = p.y + this.lookH + uy * dd
     cy = Math.max(cy, this.map.height(cx, cz) + 0.75 * this.lookH)
     this.camera.position.set(cx, cy, cz)
+    if (tilt > 0.001) {
+      // (looking up: the line to the car raised by the tilt, kept short of straight up — lookAt's up vector)
+      const lx = this.look.x - cx, ly = this.look.y - cy, lz = this.look.z - cz, lh = Math.hypot(lx, lz) || 1e-4
+      const el = Math.min(Math.atan2(ly, lh) + tilt, 1.54), ce = Math.cos(el)
+      this.look.set(cx + (lx / lh) * ce, cy + Math.sin(el), cz + (lz / lh) * ce)
+    }
     this.camera.lookAt(this.look)
     this.camera.updateMatrixWorld()
   }

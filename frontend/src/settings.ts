@@ -21,6 +21,8 @@ export interface Settings {
   antialias: 'auto' | 'off'
   /** The rendering resolution: 'auto' = full (phones lower it when slow), or a fixed % of full. */
   resolution: 'auto' | '100' | '75' | '50'
+  /** FSR 1 upscaling (oth/Fsr.ts): the world drawn at 77 / 67 / 50 % each way, upscaled and sharpened — 'off': none. */
+  upscale: 'off' | 'quality' | 'balanced' | 'performance'
   fpsOverlay: boolean
   sound: boolean
 }
@@ -35,6 +37,7 @@ export const DEFAULTS: Settings = {
   quality: 'auto',
   antialias: 'auto',
   resolution: 'auto',
+  upscale: 'off',
   fpsOverlay: false,
   sound: true,
 }
@@ -68,6 +71,7 @@ export function gameParams(): URLSearchParams {
   if (s.quality !== 'auto') p.set('tier', s.quality)
   if (s.antialias === 'off') p.set('aa', '0')
   if (s.resolution !== 'auto') { p.set('dpr', 'fixed'); p.set('scale', s.resolution) }
+  if (s.upscale !== 'off') p.set('fsr', { quality: '0.77', balanced: '0.67', performance: '0.5' }[s.upscale])
   if (s.fpsOverlay) p.set('stats', '1')
   p.set('gearbox', s.gearbox)
   p.set('aids', s.aids)

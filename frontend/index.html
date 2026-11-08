@@ -26,6 +26,20 @@
       #drive .spd span { font-size: 15px; margin-left: 4px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; opacity: .8; }
       #drive .spd i { display: block; font-style: normal; font-size: 15px; font-weight: 700; letter-spacing: .14em; opacity: .85; }
       #drive .spd em { display: block; font-style: normal; font-size: 14px; font-weight: 600; letter-spacing: .14em; opacity: .7; }
+      /* THE GEARS (Manual gearbox): a small plate left of the speed — ▲ up, the gear, ▼ down; clickable, its keys shown */
+      .oth-perftag { position: fixed; z-index: 6; left: 50%; top: 64px; transform: translateX(-50%); padding: 3px 8px; background: rgba(8, 8, 10, .7); color: #ff5a4a; font: 600 11px/1.2 var(--oh-ui, system-ui); letter-spacing: .08em; pointer-events: none; }
+      .oth-gears { display: none; vertical-align: bottom; margin-right: 6px; pointer-events: auto; background: rgba(8, 8, 10, .55); text-align: center; }
+      .oth-gears.on { display: inline-flex; flex-direction: column; align-items: stretch; }
+      .oth-gears b { display: block; padding: 0 10px; font-size: 26px; font-weight: 700; line-height: 1.05; color: #f2a93b; }
+      .oth-gears button { position: relative; width: 52px; height: 28px; padding: 0; border: 0; background: rgba(244, 239, 230, .1); color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui, sans-serif; cursor: pointer; }
+      .oth-gears button:hover { background: rgba(244, 239, 230, .2); }
+      .oth-gears button:active { background: #f2a93b; color: #120c04; }
+      .oth-gears kbd { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); font: 600 10px 'Barlow Condensed', system-ui, sans-serif; letter-spacing: .08em; opacity: .55; }
+      /* (touch: the gear box above the pedals, bigger thumbs, no key hints) */
+      body.touch .oth-gears { position: fixed; z-index: 5; right: calc(118px + env(safe-area-inset-right)); bottom: calc(98px + env(safe-area-inset-bottom)); margin: 0; color: #f4efe6; background: rgba(8, 8, 10, .35); }
+      body.touch .oth-gears button { width: 54px; height: 40px; font-size: 18px; }
+      body.touch .oth-gears b { font-size: 20px; }
+      body.touch .oth-gears kbd { display: none; }
       #drive .help { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 660px); padding: 3px 10px; background: rgba(8, 8, 10, .5); font-size: 12px; font-weight: 600; letter-spacing: .1em; line-height: 1.4; text-align: center; text-transform: uppercase; opacity: .85; }
       @media (max-width: 1080px) { #drive .help { display: none; } }
       /* the CONTROLS: round, light, see-through — easy to hit, easy to see past (the menus stay square) */
@@ -71,13 +85,9 @@
       .oth-touch [data-k=right] { left: calc(100px + env(safe-area-inset-left)); }
       .oth-touch [data-k=gas] { right: calc(16px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); width: 88px; height: 88px; font-size: 17px; }
       .oth-touch [data-k=brake] { right: calc(114px + env(safe-area-inset-right)); bottom: calc(14px + env(safe-area-inset-bottom)); width: 68px; height: 68px; font-size: 14px; }
-      .oth-touch [data-k=up], .oth-touch [data-k=down] { right: calc(126px + env(safe-area-inset-right)); width: 44px; height: 44px; font-size: 15px; }
-      .oth-touch [data-k=up] { bottom: calc(146px + env(safe-area-inset-bottom)); }
-      .oth-touch [data-k=down] { bottom: calc(94px + env(safe-area-inset-bottom)); }
       /* the BIKE: HOP over the pedals, LEAN ▲ ▼ beside the steering; no gears (it shifts itself) */
       .oth-touch .bk { display: none; }
       .oth-touch.bike .bk { display: grid; }
-      .oth-touch.bike [data-k=up], .oth-touch.bike [data-k=down] { display: none; }
       /* on FOOT: the STICK where the steering is, JUMP where the pedals are; no pedals, no lean, no gears */
       .oth-touch.foot [data-k=hop] { display: grid; right: calc(28px + env(safe-area-inset-right)); bottom: calc(30px + env(safe-area-inset-bottom)); width: 82px; height: 82px; font-size: 0; }
       .oth-touch.foot [data-k=hop]::after { content: 'JUMP'; font-size: 16px; }
@@ -131,9 +141,7 @@
         .oth-touch [data-k=right] { left: calc(84px + env(safe-area-inset-left)); }
         .oth-touch [data-k=gas] { right: calc(12px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); width: 76px; height: 76px; font-size: 15px; }
         .oth-touch [data-k=brake] { right: calc(96px + env(safe-area-inset-right)); bottom: calc(12px + env(safe-area-inset-bottom)); width: 60px; height: 60px; font-size: 13px; }
-        .oth-touch [data-k=up], .oth-touch [data-k=down] { right: calc(22px + env(safe-area-inset-right)); }
-        .oth-touch [data-k=up] { bottom: calc(156px + env(safe-area-inset-bottom)); }
-        .oth-touch [data-k=down] { bottom: calc(104px + env(safe-area-inset-bottom)); }
+        body.touch .oth-gears { right: calc(22px + env(safe-area-inset-right)); bottom: calc(100px + env(safe-area-inset-bottom)); }
         .oth-touch [data-k=hop] { right: calc(22px + env(safe-area-inset-right)); bottom: calc(104px + env(safe-area-inset-bottom)); width: 56px; height: 56px; }
         .oth-touch [data-k=leanF], .oth-touch [data-k=leanB] { left: calc(12px + env(safe-area-inset-left)); }
         .oth-touch [data-k=leanF] { bottom: calc(144px + env(safe-area-inset-bottom)); }

@@ -5,6 +5,7 @@ import { PAINT_GLSL } from './paint'
 import type { Tier } from './quality'
 import { HEIGHT_GLSL, SHAPE_GLSL, shapeDefines, type Terrain } from './Terrain'
 import { SHADOW_GLSL } from './TerrainShadow'
+import { PAVE_FRAME_GLSL } from './paveTex'
 
 /**
  * GRASS — the Over-the-Hill carpet: low-poly TUFTS of thick pointed blades (a quad + a tip, 5 vertices; the far ring a
@@ -56,10 +57,12 @@ export class Grass {
    *  height over the ground on a world-aligned grid (x0, z0, step, n — n 0: none); the blades stand on it. */
   private readonly hill: GFX.IUniform = { value: new GFX.DataTexture(new Float32Array(1), 1, 1, GFX.RedFormat, GFX.FloatType) }
   private readonly hillGrid: GFX.IUniform = { value: new GFX.Vector4(0, 0, 0, 0) }
-  setHill(tex: GFX.DataTexture, x0: number, z0: number, step: number, n: number): void {
+  /** (gpu false: the ground's heights already hold the hill — CaveWorld.intoTerrain — only the tiles' boxes lift;
+   *  cpu: the tiles' own lift over the land's CPU heights when it isn't the GPU's — the cave's floor) */
+  setHill(tex: GFX.DataTexture, x0: number, z0: number, step: number, n: number, gpu = true, cpu?: Float32Array): void {
     this.hill.value = tex
-    ;(this.hillGrid.value as GFX.Vector4).set(x0, z0, step, n)
-    this.hillCpu = { data: tex.image.data as Float32Array, x0, z0, step, n }
+    ;(this.hillGrid.value as GFX.Vector4).set(x0, z0, step, gpu ? n : 0)
+    this.hillCpu = { data: cpu ?? (tex.image.data as Float32Array), x0, z0, step, n }
     for (const r of this.rings) r.hi.fill(0x7fffffff) // (the kept corner heights: again, with the hill)
   }
   private hillCpu: { data: Float32Array; x0: number; z0: number; step: number; n: number } | null = null
@@ -73,7 +76,11 @@ export class Grass {
     return (d[j * n + i] * (1 - u) + d[j * n + i + 1] * u) * (1 - v) + (d[(j + 1) * n + i] * (1 - u) + d[(j + 1) * n + i + 1] * u) * v
   }
 
-  constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture, renderer: GFX.WebGLRenderer) {
+  /** cave: THE CAVE'S FLOOR's field (CaveWorld.grassFloor — 2026-11-07, the user: "why no grass here?"): the same blades
+   *  stood on the floor (the lift from the hill's top down to it), only where it grows (its footprint), the cave's dark
+   *  in their light, their colour the floor's own (Bridges' inside paint) */
+  constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture, renderer: GFX.WebGLRenderer, cave = false) {
+    const caveDef: Record<string, string> = cave ? { CAVE_GRASS: '' } : {}
     const R = tier.grassRadius, D0 = tier.grassDensity * AMOUNT
     const mg = map.meta.mask
     const t = terrain.uniforms
@@ -84,7 +91,6 @@ export class Grass {
       uShBox: t.uShBox, uShWorld: t.uShWorld, uShBoxGrid: t.uShBoxGrid, uShOn: t.uShOn,
       uTreeSh: t.uTreeSh, uTreeShGrid: t.uTreeShGrid, uTreeShOn: t.uTreeShOn,
       uMask: { value: map.maskTex },
-      uMud: { value: map.mudTex },
       uOwn: { value: map.waterTex },
       uRocks: { value: rockFootprint },
       uTrail: { value: map.trailTex },
@@ -96,8 +102,11 @@ export class Grass {
       uWidthK: { value: Math.max(1, Math.sqrt((REF_DENSITY * REF_FAN) / (tier.grassDensity * tier.grassFan))) },
       uCarBox: this.carBox, uCarHalf: this.carHalf,
       uHill: this.hill, uHillGrid: this.hillGrid,
+      // (the places' paving — the field grows a tuft between its stones now and then: Terrain.ts PAVE_GLSL's own)
+      uPave: t.uPave, uPave0: t.uPave0, uPave1: t.uPave1, uPave2: t.uPave2, uPave3: t.uPave3,
     }
-    this.field = new GrassField(renderer, R, uniforms, map.biomeDefines)
+    const paved = (terrain.mesh.material as GFX.ShaderMaterial).defines?.OTH_PAVE !== undefined && !cave
+    this.field = new GrassField(renderer, R, uniforms, { ...map.biomeDefines, ...caveDef, ...(paved ? { OTH_PAVE: '' } : {}) })
     Object.assign(uniforms, this.field.uniforms)
     // (2026-10-27, 400 fps at 1080p: each ring is built at its INNER edge's density and the rank cull thins it outward —
     //  the culled tufts still cost a vertex each; the near ring (to 0.25 R) split in two halves those: its outer half
@@ -117,7 +126,7 @@ export class Grass {
       const mat = new GFX.ShaderMaterial({
         glslVersion: GFX.GLSL3,
         uniforms: { ...uniforms, uBuild: { value: density }, uRin: { value: bounds[r] }, uRout: { value: bounds[r + 1] }, uFan: { value: blades[r] } },
-        defines: { ...map.biomeDefines, ...shapeDefines(), ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}) }, // (no specular: on blades of roughness 0.85 it never showed)
+        defines: { ...map.biomeDefines, ...shapeDefines(), ...caveDef, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}) }, // (no specular: on blades of roughness 0.85 it never showed)
         vertexShader: VERT,
         fragmentShader: FRAG,
         side: GFX.DoubleSide,
@@ -253,7 +262,6 @@ ${PAINT_GLSL}
 ${SHADOW_GLSL}
 ${SHAPE_GLSL}
 uniform sampler2D uMask;
-uniform sampler2D uMud;
 uniform sampler2D uNIn;
 uniform sampler2D uRocks;
 uniform sampler2D uTrail;
@@ -365,6 +373,10 @@ void main() {
   // the ground's light: its soft normal, leaning a little with the blade
   vN = normalize(N + vec3(dir.x, 0.0, dir.y) * 0.18);
   vSun = sunVisibility(root);
+#ifdef CAVE_GRASS
+  float ckG = caveK(vec3(root.x, h, root.y));
+  vSun *= 1.0 - ckG;
+#endif
   // THE LIGHT, PER VERTEX (2026-10-27, 400 fps at 1080p: the carpet is several blades deep — every pixel was lit 3–4
   // times over): a blade has one soft normal its whole length, so its light only varies along it — lit here at its
   // ~5 vertices (the sun, the sky, the headlights' paint, the back-lit tips, the haze) and interpolated; the pixel
@@ -379,6 +391,14 @@ void main() {
   c += headlight(albedo, vN, p);
   float back = pow(max(dot(-Vv, uSunDir), 0.0), 3.0);
   c += albedo * uSunColor * back * t * 0.16 * vSun; // (back-lit by a low sun, the tips glow: a soft rim)
+#ifdef CAVE_GRASS
+  // (in the cave: its dark and its own light from the openings — as on the floor under them, Bridges.ts)
+  if (ckG > 0.001) {
+    float dl = caveLit(p, vN);
+    c = c * (1.0 - 0.75 * ckG) + albedo * uAmbSky * ckG * (0.42 + 0.7 * dl);
+    c += albedo * (uSunColor * 0.3 + uAmbSky * 0.3) * caveBounce(p) * ckG * smoothstep(-0.05, 0.25, uSunDir.y) * (0.3 + 0.95 * dl);
+  }
+#endif
   vColor = applyAtmos(c, p);
   // a flower's head, lit the same way (only the flower blades pay for the second light; elsewhere it is the grass)
   vFlower = vColor;
@@ -495,7 +515,6 @@ ${HEIGHT_GLSL}
 ${PAINT_GLSL}
 ${SHADOW_GLSL}
 uniform sampler2D uMask;
-uniform sampler2D uMud;
 uniform sampler2D uOwn;
 uniform sampler2D uNIn;
 uniform sampler2D uRocks;
@@ -504,6 +523,9 @@ uniform float uTrailHW;
 uniform vec4 uMaskGrid;
 uniform vec4 uField;
 uniform vec4 uWin; // the window's first texel (x, z) now, and before
+#ifdef OTH_PAVE
+${PAVE_FRAME_GLSL}
+#endif
 layout(location = 0) out highp vec4 oA;
 layout(location = 1) out highp vec4 oB;
 
@@ -525,7 +547,16 @@ void main() {
   // gentle here — and grew grass all over the rock (2026-11-06, the user: "where ever the place is if its rock texture
   // then no grass must be there"). The same steepness, the same rock and scree: no blade where the ground shows stone
   vec3 N = unpackN(textureLod(uNIn, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0).rg);
-  float trail = textureLod(uTrail, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0).r * 8.0;
+  vec4 trailT = textureLod(uTrail, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0); // (R the track, B A the mud, flowers)
+  float trail = trailT.r * 8.0;
+#ifdef CAVE_GRASS
+  // (the cave's floor: not the hill's rock or slope over it — its footprint says where it grows — and its colour the
+  //  floor's own patches of green and gold, Bridges.ts' inside paint read at the same point)
+  {
+    // (the floor's skin takes its dryness from the mask, as the blades do: Terrain.skinMaterial)
+    m.r = 0.0; N = vec3(0.0, 1.0, 0.0); trail = 99.0; m.b = 0.0; m.a = 0.0;
+  }
+#endif
   // (the blade's colour is the FIELD's: painted without the track, so the blades at its edge don't take the earth)
   Ground g = groundPaint(root, m, h, 1.0 - N.y, paintNoise(root), 0.0, 99.0, uTrailHW, 0.0); // (no painted shrub dots under the grass: the bushes are real there)
   float tx = trail < uTrailHW + 3.5 ? trackEdge(root, trail) : trail; // (beyond its reach the edge changes nothing: exact)
@@ -543,7 +574,7 @@ void main() {
   float oasis = max(smoothstep(0.15, 0.5, m.a), smoothstep(0.45, 0.8, m.b / 0.85)) * smoothstep(0.15, 0.5, g.lawn); // (in its green patches only)
   grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * oasis * (1.0 - smoothstep(0.3, 0.6, onTrack));
 #endif
-  vec2 mudB = textureLod(uMud, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0).rg;
+  vec2 mudB = trailT.ba;
   float mud = mudB.r;
   // WILDFLOWERS (mud.bin G): where the field blossoms, one blade in ~5 is a flower — a grass blade in bloom at its
   // top (below), standing a little over the others
@@ -553,7 +584,24 @@ void main() {
   float under = (textureLod(uOwn, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0).g * 255.0 - 128.0) / 64.0;
   grow *= 1.0 - smoothstep(-0.02, 0.06, under);
   vec2 inUv = ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x;
+  float growBase = grow;
   grow *= 1.0 - smoothstep(0.0, 0.3, textureLod(uRocks, inUv, 0.0).r); // (none at a boulder's foot)
+  // GRASS BETWEEN THE STONES (2026-11-08, the user: "in between the rocks some random 1 or 2 grass — a more natural
+  // feel"): on a place's paving (Landmarks keeps the field off it) a tuft comes up here and there — in about one in 5
+  // patches of 0.6 m (more toward the paving's edge), only where the root is in a JOINT (the paving's texture, square
+  // to its place, as the terrain lays it — or at a stone's worn rim), short (its approach half)
+  float tuft = 0.0;
+#ifdef OTH_PAVE
+  vec4 PF;
+  float pv = paveFrame(root, PF) ? textureLod(uTrail, inUv, 0.0).g : 0.0;
+  if (pv > 0.05) {
+    vec2 cell = floor(root / 0.6);
+    float r = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+    float ph = textureLod(uPave, paveUv(root, PF), 0.0).r;
+    tuft = step(r, 0.16 + 0.14 * (1.0 - pv)) * (1.0 - smoothstep(0.35, 0.55, ph)) * smoothstep(0.05, 0.3, pv);
+    grow = max(grow, growBase * tuft * 0.85);
+  }
+#endif
   // SHORTER TOWARD BARE GROUND (the user: "when the grass comes to rock or the path, its height must reduce
   // gradually"): full height a few metres off, a tenth where it stops — the track by its ragged edge's distance (over
   // 2.5 m), terrain rock / scree by their fields read early (~2–6 m), a boulder by its footprint blurred a mip and a
@@ -562,6 +610,7 @@ void main() {
   approach = min(approach, (1.0 - g.rockNear) * (1.0 - g.screeNear));
   approach = min(approach, 1.0 - smoothstep(0.02, 0.45, textureLod(uRocks, inUv, 1.5).r));
   approach = max(approach * (1.0 - smoothstep(0.1, 0.3, mud)), smoothstep(0.08, 0.25, mud) * 1.15); // (REEDS: the marsh's edge tall)
+  approach = max(approach, tuft * 0.5); // (a tuft between the stones: short, but there)
   // (the desert's too, 2026-11-04: its blades take the ground's colour — the oasis floor's green, olive and khaki at its
   //  edge (paint.ts) — as the valley's do; they had a colour of their own over a red ground)
   vec3 col0 = g.col;

@@ -447,6 +447,85 @@ export class OrthographicCamera extends Camera {
   }
 }
 
+// ------------------------------------------------------------------------------------------------- the warm-up
+/**
+ * THE WARM-UP (2026-11-08 — the PERF MARKS drive, docs/PERF.md "first sight"): PlayCanvas makes a material's shader, and
+ * WebGPU its pipeline (a driver compile), the first time something with it is DRAWN — 30–60 ms each, so every new kind
+ * of thing coming into view (a place's props, a landmark, a rock set) was a stall: the "sudden drops" at places. The
+ * port's `compileAsync` did nothing. Now every mesh in the main scene — shown, hidden, out of view — is warmed once
+ * per material layout (the pipeline's key: the shader variant and the vertex format), 2 a frame: a throwaway mesh
+ * instance sharing its mesh, material and instancing buffer, drawn by a warm camera into the SAME target as the main
+ * camera (the same formats, the same MSAA: the same pipeline) through a 1-pixel viewport just before it — the main
+ * camera's clear wipes it. Nothing on screen changes; the compile happens at a time of our choosing, 2 at a time.
+ */
+const warmed = new WeakSet<object>()
+const warmNode = new pc.GraphNode('oth-warm')
+let warmLayer: pc.Layer | null = null
+let warmMis: pc.MeshInstance[] = []
+/** How many material layouts a frame warms; and how many wait (the harness / compileAsync). */
+export const warm = { perFrame: 2, pending: 0, total: 0, get layer(): pc.Layer { return warmLayerOf() }, get count(): number { return warmMis.length } }
+function warmLayerOf(): pc.Layer {
+  if (!warmLayer) {
+    warmLayer = new pc.Layer({ name: 'oth-warm', opaqueSortMode: pc.SORTMODE_NONE, transparentSortMode: pc.SORTMODE_NONE })
+    gfx().app.scene.layers.push(warmLayer)
+  }
+  return warmLayer
+}
+/**
+ * WebGPU: the warm draws COMPILE OFF THE THREAD. PlayCanvas makes a pipeline with the blocking createRenderPipeline —
+ * the GPU process compiles it there and then, and every command after waits (a big shader: ~1 s; measured at the
+ * crossing). In the warm layer the draw is replaced: the pipeline PlayCanvas would make is described as it would
+ * describe it, handed to createRenderPipelineAsync (Dawn compiles it on a worker) and kept alive; nothing is drawn and
+ * PlayCanvas caches nothing. When the real draw asks for the same pipeline, Dawn finds the finished one (it shares
+ * identical pipelines) — no stall. WebGL2 keeps the plain warm draw (its compile is the driver's).
+ */
+let asyncWarm = false
+const keepAlive: unknown[] = []
+export function installAsyncWarm(): void {
+  if (asyncWarm) return
+  asyncWarm = true
+  const G = gfx()
+  type Dev = { wgpu?: GPUDevice; draw: (...a: unknown[]) => void; renderPipeline: { get: (...a: unknown[]) => unknown; cache: Map<number, { pipeline: unknown }[]> }; shader: { ready: boolean; failed: boolean } | null; vertexBuffers: ({ format: unknown } | undefined)[]; renderTarget: unknown; bindGroupFormats: unknown; blendState: unknown; depthState: unknown; cullMode: unknown; stencilEnabled: unknown; stencilFront: unknown; stencilBack: unknown; frontFace: unknown; alphaToCoverage: unknown; clearVertexBuffer: () => void }
+  const dev = G.device as unknown as Dev
+  const wgpu = dev.wgpu
+  if (!wgpu) return
+  let warming = false
+  G.app.scene.on('prerender:layer', (_c: unknown, layer: pc.Layer) => { warming = layer === warmLayer })
+  G.app.scene.on('postrender:layer', () => { warming = false })
+  const draw = dev.draw.bind(dev), rp = dev.renderPipeline
+  dev.draw = (primitive: unknown, ib?: unknown, ...rest: unknown[]) => {
+    const indexBuffer = ib as { format: unknown } | undefined
+    if (!warming) { draw(primitive, indexBuffer, ...rest); return }
+    const last = rest[3] ?? true
+    if (dev.shader?.ready && !dev.shader.failed) {
+      const sync = wgpu.createRenderPipeline
+      let desc: GPURenderPipelineDescriptor | null = null
+      ;(wgpu as unknown as { createRenderPipeline: unknown }).createRenderPipeline = (d: GPURenderPipelineDescriptor) => { desc = d; return null }
+      try {
+        const vb0 = dev.vertexBuffers[0], vb1 = dev.vertexBuffers[1]
+        rp.get(primitive, vb0?.format, vb1?.format, indexBuffer?.format, dev.shader, dev.renderTarget, dev.bindGroupFormats, dev.blendState, dev.depthState, dev.cullMode, dev.stencilEnabled, dev.stencilFront, dev.stencilBack, dev.frontFace, dev.alphaToCoverage)
+      } finally { (wgpu as unknown as { createRenderPipeline: unknown }).createRenderPipeline = sync }
+      if (desc) {
+        // (the empty entry PlayCanvas just cached for it: gone — the real draw makes it, and finds Dawn's)
+        for (const [h, list] of rp.cache) {
+          const i = list.findIndex((e) => e.pipeline === null)
+          if (i >= 0) { list.splice(i, 1); if (!list.length) rp.cache.delete(h) }
+        }
+        wgpu.createRenderPipelineAsync(desc).then((p) => { keepAlive.push(p) }, () => { /* the real draw reports it */ })
+      }
+    }
+    if (last) dev.clearVertexBuffer()
+  }
+}
+
+/** (each main-scene sync) last frame's throwaways gone */
+function warmBegin(): void {
+  if (!warmMis.length) return
+  warmLayerOf().removeMeshInstances(warmMis)
+  for (const mi of warmMis) mi.destroy()
+  warmMis = []
+}
+
 // ------------------------------------------------------------------------------------------------- the scene
 export class Scene extends Object3D {
   readonly isScene = true
@@ -476,9 +555,30 @@ export class Scene extends Object3D {
     this.updateMatrixWorld()
     const id = ++syncs, add: pc.MeshInstance[] = []
     let calls = 0, tris = 0
+    // (the warm-up: the main scene only — the bakes' scenes draw at load)
+    const main = this.layer === gfx().world
+    let left = main ? warm.perFrame : 0, pending = 0
+    if (main) warmBegin()
+    const tryWarm = (o: Mesh) => {
+      const pk = o.pick
+      if (pk && warmed.has(pk.entry)) return
+      if (left <= 0) { pending++; return }
+      const g = o.gpu ?? prepare(o)
+      if (!g || !o.pick || warmed.has(o.pick.entry)) return
+      warmed.add(o.pick.entry)
+      warm.total++
+      left--
+      const pe = o.pick.entry
+      if (pe.pushed !== id) { pe.pushed = id; (o.material as ShaderMaterial).pushUniforms(pe) }
+      const mi = new pc.MeshInstance(g.pcMesh, pe.m, warmNode)
+      if (g.vb) { mi.setInstancing(g.vb, false); mi.instancingCount = 1 }
+      mi.cull = false
+      warmMis.push(mi)
+    }
     const walk = (o: Object3D, vis: boolean) => {
       const v = vis && o.visible
       if (o instanceof Mesh) {
+        if (main) tryWarm(o)
         // (hidden, already made, nothing disposed: only kept hidden — made ready again the frame it shows)
         if (!v && o.gpu && o.layer === this.layer && this.inLayer.has(o) && !o.geometry.disposed && !(o.material as ShaderMaterial).disposed) {
           o.seen = id
@@ -538,6 +638,7 @@ export class Scene extends Object3D {
       for (let i = 0; i < ch.length; i++) walk(ch[i], v)
     }
     walk(this, true)
+    if (main) { warm.pending = pending; if (warmMis.length) warmLayerOf().addMeshInstances(warmMis) }
     if (add.length) this.layer.addMeshInstances(add)
     const gone: pc.MeshInstance[] = []
     for (const m of this.inLayer) if (m.seen !== id) { this.inLayer.delete(m); if (m.gpu) gone.push(m.gpu.mi); m.layer = null }

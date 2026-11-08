@@ -26,12 +26,55 @@ import { C as KC } from './Kit'
 export interface LandmarkCollider { c: GFX.Vector3; h: GFX.Vector3; q: GFX.Quaternion; ground: boolean }
 
 const KEY = (id: string) => `oth.found.${id}`
+/** THE PAVED PLACES (2026-11-08, the user: "houses, broken houses — no grass there"): the ground each clears for its
+ *  floors and yards is laid with flagstones (Terrain.ts PAVE_GLSL; the paving in MapData.trailTex's G), running
+ *  PAVE_OUT m past it and thinning out into the field. `?pave=0`: none (the A/B). */
+const PAVED = new Set<Landmark['kind']>(['cabin', 'ruin', 'ghost', 'ranger', 'garage', 'hamlet', 'mine'])
+const PAVE_OUT = 3.6
+/** A smooth noise (m, ~±2) over the world: the paved places' grass edge pushed in and out (cells 7 m and 2.6 m). */
+function edgeNoise(x: number, z: number): number {
+  const h = (i: number, j: number) => { let n = Math.imul(i, 374761393) + Math.imul(j, 668265263) | 0; n = Math.imul(n ^ (n >>> 13), 1274126177); return ((n ^ (n >>> 16)) >>> 0) / 4294967296 * 2 - 1 }
+  const vn = (x: number, z: number) => {
+    const ix = Math.floor(x), iz = Math.floor(z), u = x - ix, v = z - iz, su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v)
+    return (h(ix, iz) * (1 - su) + h(ix + 1, iz) * su) * (1 - sv) + (h(ix, iz + 1) * (1 - su) + h(ix + 1, iz + 1) * su) * sv
+  }
+  return vn(x / 7, z / 7) * 1.6 + vn(x / 2.6 + 17.3, z / 2.6 + 5.1) * 0.5
+}
+/** A PAVED BOX (world centre x0, z0, turned a, half sizes hx, hz — m): the paving into MapData.trailTex's G (1 to the box's
+ *  edge, 0 PAVE_OUT m past it — Terrain.ts thins the stones out over that), and the grass kept off the footprint `fp`
+ *  (the box, and a ragged edge round it ~±2 m: the field comes back short among the last stones). Returns how far from
+ *  (ox, oz) the paving reaches (0: none — the desert, `?pave=0`). The landmarks' floors and yards; the meadows' small
+ *  ruins (World.build). The caller sets the textures' needsUpdate. */
+export function pavePatch(map: MapData, fp: Uint8Array, x0: number, z0: number, a: number, hx: number, hz: number, ox: number, oz: number): number {
+  if (map.desert || PAVE_OFF) return 0
+  const gi = map.inner, pv = map.trailTex.image.data as Uint8Array, ca = Math.cos(a), sa = Math.sin(a), R = Math.hypot(hx, hz) + 1 + PAVE_OUT
+  const i0 = Math.max(0, Math.floor((x0 - R - gi.origin) / gi.step)), i1 = Math.min(gi.n - 1, Math.ceil((x0 + R - gi.origin) / gi.step))
+  const j0 = Math.max(0, Math.floor((z0 - R - gi.origin) / gi.step)), j1 = Math.min(gi.n - 1, Math.ceil((z0 + R - gi.origin) / gi.step))
+  let reach = 0
+  for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+    const x = gi.origin + i * gi.step, z = gi.origin + j * gi.step, dx = x - x0, dz = z - z0
+    const e = Math.max(Math.abs(dx * ca - dz * sa) - hx, Math.abs(dx * sa + dz * ca) - hz), k = j * gi.n + i
+    // (the grass's edge ragged — pushed in and out by a smooth noise, never the box's straight line — but never into
+    //  the box itself: its floor stays clear)
+    const er = e + edgeNoise(x, z)
+    const v8 = Math.round(255 * Math.min(1, Math.max(0, Math.max(1 - (er - 0.3) / 1.4, 1 - e / 0.5))))
+    if (v8 > fp[k]) fp[k] = v8
+    const p8 = Math.round(255 * Math.min(1, Math.max(0, 1 - e / PAVE_OUT)))
+    if (p8 > pv[k * 4 + 1]) pv[k * 4 + 1] = p8
+    if (p8 > 0) reach = Math.max(reach, Math.hypot(x - ox, z - oz))
+  }
+  return reach
+}
+const PAVE_OFF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pave') === '0'
 
 export class Landmarks {
   readonly group = new GFX.Group()
   readonly list: Landmark[]
   readonly colliders: LandmarkCollider[] = []
   readonly found = new Set<number>()
+  /** The paved places (x, z, rot, the paving's reach each): the terrain lays each one's flagstones square to it, and
+   *  draws paving only within a reach (Terrain.setPaved). */
+  readonly paved: number[] = []
   /** Called when a landmark is first reached (main.ts: a toast, the map). */
   onDiscover: ((l: Landmark, found: number, total: number) => void) | null = null
   /** The hills' occlusion (main.ts). */
@@ -45,8 +88,11 @@ export class Landmarks {
     if (!this.list.length) return
     const b = new Builder(0x51a3c7), ranges: [number, number][] = []
     const fp = footprint?.image.data as Uint8Array | undefined, gi = map.inner
+    const pv = map.desert || PAVE_OFF ? null : (map.trailTex.image.data as Uint8Array) // (RGBA8: G the paving)
     this.reach = tier.rockReach + 100
     for (const l of this.list) {
+      const paved = !!pv && PAVED.has(l.kind)
+      let paveR = 0 // (how far from its centre its paving reaches: the terrain's gate)
       const from = b.count, cols: [GFX.Vector3, GFX.Vector3, boolean][] = []
       const col = (cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ground = false) => cols.push([new GFX.Vector3(cx, cy, cz), new GFX.Vector3(hx, hy, hz), ground])
       const S = SCALE[l.kind] ?? 1, cr = Math.cos(l.rot), sr = Math.sin(l.rot)
@@ -57,18 +103,20 @@ export class Landmarks {
       const clear = (cx: number, cz: number, hx: number, hz: number, rot = 0) => {
         if (!fp) return
         const x0 = wx(cx, cz), z0 = wz(cx, cz), a = l.rot + rot, ca = Math.cos(a), sa = Math.sin(a), R = Math.hypot(hx, hz) * S + 1
+        if (paved) { paveR = Math.max(paveR, pavePatch(map, fp, x0, z0, a, hx * S, hz * S, l.x, l.z)); return }
         const i0 = Math.max(0, Math.floor((x0 - R - gi.origin) / gi.step)), i1 = Math.min(gi.n - 1, Math.ceil((x0 + R - gi.origin) / gi.step))
         const j0 = Math.max(0, Math.floor((z0 - R - gi.origin) / gi.step)), j1 = Math.min(gi.n - 1, Math.ceil((z0 + R - gi.origin) / gi.step))
         for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
           const dx = gi.origin + i * gi.step - x0, dz = gi.origin + j * gi.step - z0
           const u = Math.abs(dx * ca - dz * sa) / S - hx, v = Math.abs(dx * sa + dz * ca) / S - hz
-          const v8 = Math.round(255 * Math.min(1, Math.max(0, 1 - Math.max(u, v) / 0.8)))
-          if (v8 > fp[j * gi.n + i]) fp[j * gi.n + i] = v8
+          const k = j * gi.n + i, v8 = Math.round(255 * Math.min(1, Math.max(0, 1 - Math.max(u, v) / 0.8)))
+          if (v8 > fp[k]) fp[k] = v8
         }
       }
       const ctx: Ctx = { b, g, col, clear, seed: (l.id * 7919 + 13) >>> 0 }
       if (PLACES[l.kind]) PLACES[l.kind]!(ctx, l, map)
       else KINDS[l.kind]?.(b, l, col, map) // (the desert's kinds: their shapes are Blender's — formations.glb)
+      if (paveR > 0) this.paved.push(l.x, l.z, l.rot, paveR + 2.5) // (+ the mask's bilinear reach)
       const m = new GFX.Matrix4().compose(new GFX.Vector3(l.x, l.y, l.z), new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), l.rot), new GFX.Vector3(S, S, S))
       b.transform(from, m)
       const q = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), l.rot)
@@ -77,6 +125,7 @@ export class Landmarks {
     }
     this.parts = splitMeshes(b, ranges, woodMaterial(atmos, shadow, tier, farGrid), this.group)
     if (footprint) footprint.needsUpdate = true
+    if (pv) map.trailTex.needsUpdate = true
   }
 
   /** Skip the landmarks the hills hide and (2026-11-06) the places past the tier's reach — the rocks' (900 m ULTRA …

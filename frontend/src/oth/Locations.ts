@@ -519,6 +519,7 @@ export function hamlet(c: Ctx): void {
   b.log(V(-1.1, wy + 1.6, 2), V(1.1, wy + 1.6, 2), 0.08, b.wood(0.8))
   for (const s of [-1, 1]) b.box(V(0, wy + 2.55, 2 + s * 0.45), X, V(0, 1, -s * 0.9).normalize(), Z, 1.3, 0.04, 0.6, C.shingleGrey)
   c.col(0, wy + 0.6, 2, 1.1, 0.6, 1.1)
+  c.clear(0, 2, 4.5, 4) // (the square round the well: paved — Landmarks PAVED)
   // the lane's fences, down here and there; a cart left in the lane
   fence(b, [[-18, 6], [-6, 7], [-2, 8]], g, 0.5); fence(b, [[4, 7.5], [9, 5], [16, 4]], g, 0.6)
   const cy = g(-3, 11)

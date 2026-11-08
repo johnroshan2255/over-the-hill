@@ -844,6 +844,25 @@ the light gets"; "naturally blended". One cave in the valley:
   within ~2.5 cm of another (two passes, offset 2 cm grids).
 - **The camera** stays in the cave: the chase camera tests its own line from the look point too (it went up through
   a low roof).
+- **The hill IS the ground** (round 5, 2026-11-07 — the user: "make sure the same terrain method covers the cave"):
+  `CaveWorld.intoTerrain` writes the hill's TOP (`topSoft`: at the outer foot a missing sample is the land, so it fades
+  on with no step) into the inner grid's R16UI heights and RG8 normals — the GPU's copy only; `map.height` / the physics
+  keep the land (the cave's trimesh is the hill's collider) — the normals' slope eased (×0.58, ×0.28 by the mouth: a
+  grassed dome, not scree). The terrain then draws the hill: its paint from the mask, its grass, rock, relief, light.
+  Where it opens (mouth, skylights) the 2 m cells are CUT: `Terrain.setHoles` (R32F clip heights; the patches touching
+  the cave's box drawn by a second instanced mesh with `OTH_HOLES` — nothing over the land's height + a margin is
+  drawn there; the rest of the ground pays no discard); the turf mesh is kept only on those rims (eased down into the
+  ground over ~8 m) and drawn in the GROUND's own material (`Terrain.meshMaterial`): no patch. Rock round the mouth
+  (the arch and the walls coming out of the face) goes into the mask by 3D distance (~7 m band); the walls' skirt
+  within ~2.5 m of the ground paints from the mask. Pyramid max heights raised (culling). Glow's horizon counts the
+  hill (`Glow.lift`). `?caveground=0`: the old separate turf.
+- **Inside, round 5**: the walls / roof / boulders rock (vCol.z 2), the floor turning to rock over ~4 m toward them
+  (`wallAt`), lit from the openings (`caveLit`: toward each reach's open end and down its skylight, wrapped) and the
+  relief ×1.8 deep inside; the FIELD'S GRASS on the floor — a second `Grass` (`cave`: lifted from the hill's top to the
+  floor, its footprint the floor's grassy cells thinning by the walls, the cave's dark in its light), drawn only in the
+  cave / within 30 m of an opening (`?cavegrass=0`); the ponds in `Water.poolMaterial`; the walker set on the first
+  solid thing under the car (`Physics.surface` `from`); the floor, arch and collider dipped ~0.55 m at the mouth so the
+  ground and its grass run in and the car doesn't jump a lip.
 - **Checks**: `scripts/harness/cavecheck.mjs` (where it went, shots outside and in), `cavedrive.mjs` (the round),
   `abq.mjs` views `caveFront`, `caveHall`, `caveAbove`.
 

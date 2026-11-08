@@ -247,6 +247,13 @@ export class Atmosphere {
     u.uFogRange.value.y = this.hazeLen * (1 - 0.1 * dk + 0.3 * vk) * (1 - 0.45 * u.uRain.value)
     // (…and the first 400 m clear: near and middle ground keep their colour, only the far layers melt into the haze)
     u.uFogRange.value.x = 130 + 270 * dk + 130 * vk
+    // THE VALLEY'S FOG (2026-11-08, the user: "we lack fog — put a simple fog, like a filter, no volumetric"): the air
+    // clear only ~35 m round you, then a soft distance fog — ~20 % at 300 m, half at 1 km, the far ranges pale layers
+    // (the haze's length × 0.33 here; `?fog=` scales its density: 0 the old clear air). The desert keeps its own.
+    if (FOG_K > 0) {
+      u.uFogRange.value.y = GFX.MathUtils.lerp(u.uFogRange.value.y, this.hazeLen * 0.33 / FOG_K * (1 - 0.45 * u.uRain.value), 1 - dk)
+      u.uFogRange.value.x = GFX.MathUtils.lerp(u.uFogRange.value.x, 35, 1 - dk)
+    }
     const amb = a.amb + (b.amb - a.amb) * f
     const night = GFX.MathUtils.smoothstep(-s, 0.06, 0.2)
     u.uNight.value = night
@@ -319,6 +326,8 @@ export class Atmosphere {
 }
 
 /** The valley's clearer air and deeper shade (2026-11-06): 1 on; `?light=0` 0 — as before (the A/B). */
+/** The valley's fog density (`?fog=`: 1 the default, 0 none — the old clear air — 2 twice as thick). */
+const FOG_K = typeof location !== 'undefined' ? Number(new URLSearchParams(location.search).get('fog') ?? 1) : 1
 const VALLEY_LIGHT = typeof location !== 'undefined' && new URLSearchParams(location.search).get('light') === '0' ? 0 : 1
 
 /** The desert's grade (Atmosphere.desert): colours of unit luminance-ish, scaled to the keyframe's brightness. */
@@ -375,6 +384,24 @@ float caveK(vec3 p) { return max(caveOne(p, uCaveA0, uCaveB0), max(caveOne(p, uC
 // 1 under the light, 0 by ~7 radii off (a cave without a skylight: 0)
 float caveBounceOne(vec3 p, vec4 A, vec4 B) { return B.x > 0.0 && B.w > 0.0 ? 1.0 - smoothstep(B.w, B.w * 7.0, length(p.xz - A.zw)) : 0.0; }
 float caveBounce(vec3 p) { return max(caveBounceOne(p, uCaveA0, uCaveB0), max(caveBounceOne(p, uCaveA1, uCaveB1), caveBounceOne(p, uCaveA2, uCaveB2))); }
+// THE CAVE'S OWN LIGHT (2026-11-07, the user: "inside, the wall — where is the shader? the real rock 3D thing we use on
+// the terrain"): the daylight comes in from a reach's open end (its mouth, or the skylight it starts at) and down its
+// skylight — a DIRECTION, so the rock's relief and its shapes read in there as under the sun (a flat fill drew the walls
+// as a smooth dark sheet). Wrapped, 0…1.
+vec3 caveLightOne(vec3 p, vec4 A, vec4 B) {
+  if (B.x <= 0.0) return vec3(0.0);
+  vec2 a = A.xy - p.xz;
+  float da = max(length(a), 1.0);
+  vec3 L = (vec3(a.x / da, 0.45, a.y / da)) / (1.0 + da * 0.02);
+  if (B.w > 0.0) { vec2 s = A.zw - p.xz; float ds = max(length(s), 1.0); L += vec3(s.x / ds * 0.5, 1.0, s.y / ds * 0.5) * 2.5 / (1.0 + ds * 0.04); }
+  return L * (caveOne(p, A, B) + 0.02);
+}
+float caveLit(vec3 p, vec3 N) {
+  vec3 L = caveLightOne(p, uCaveA0, uCaveB0) + caveLightOne(p, uCaveA1, uCaveB1) + caveLightOne(p, uCaveA2, uCaveB2);
+  float l = length(L);
+  float x = clamp(dot(N, l > 1e-4 ? L / l : vec3(0.0, 1.0, 0.0)) * 0.6 + 0.4, 0.0, 1.0);
+  return x * x;
+}
 uniform sampler2D uNoise;
 uniform float uNight;
 uniform float uRockFill;
@@ -517,13 +544,14 @@ float ggx(float NoH, float r) {
 
 // Surface light: wrapped diffuse (soft terminator, painterly), sky / bounce ambient, a GGX lobe.
 vec3 shade(vec3 albedo, vec3 N, vec3 V, float rough, float f0, float ao, float sunVis, float wrap) {
-  // WET (the rain): every surface darker, what faces up glossy — a sky sheen and a sharper sun glint
-  float wet = uWet * smoothstep(0.1, 0.8, N.y);
-  // (the sheen by the surface: rock and wood glossy, grass and earth hardly — a field doesn't turn to a mirror)
-  float gloss = wet * (0.12 + 0.88 * (1.0 - smoothstep(0.6, 0.95, rough)));
+  // WET (the rain): every surface darker; what faces up a touch glossier — rock, wood, metal only (rough < 0.75), never
+  // the leaves or the grass. NO SKY SHEEN (2026-11-07, the user: "when it rains you make it all white — no need: some
+  // water on the ground, droplets on the trees"): the sky mirrored on every wet face read as white; the water lies in
+  // the puddles (Terrain.ts) and on the leaves as droplets (Trees.ts)
+  float wet = uWet * smoothstep(0.1, 0.8, N.y) * (1.0 - smoothstep(0.65, 0.75, rough));
   albedo *= 1.0 - 0.28 * uWet;
-  rough = mix(rough, 0.2, wet * 0.85);
-  f0 = mix(f0, 0.05, wet);
+  rough = mix(rough, 0.35, wet * 0.6);
+  f0 = mix(f0, 0.04, wet);
   float NoL = dot(N, uSunDir);
   wrap *= 1.0 - uWrapCut;
   float diff = clamp((NoL + wrap) / (1.0 + wrap), 0.0, 1.0);
@@ -536,10 +564,6 @@ vec3 shade(vec3 albedo, vec3 N, vec3 V, float rough, float f0, float ao, float s
   float F = f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0);
   col += uSunColor * sunVis * ggx(NoH, rough) * F * max(NoL, 0.0) * 0.25;
 #endif
-  if (wet > 0.01) {
-    float fr = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
-    col += skyColor(reflect(-V, N)) * fr * gloss * 0.45;
-  }
   return col;
 }
 `

@@ -233,10 +233,19 @@ export class OthPhysics {
    *  is solid — the terrain, or a slab stack's slabs over it (Rocks.solidTop: from their outlines, so it holds before
    *  their colliders reach Rapier's queries). 2026-11-04: a reset or a camp's spawn at the terrain's height put the car
    *  INSIDE a slab where a stack stands on the slope — pinned in the rock. */
-  surface(x: number, z: number, y0: number): number {
+  surface(x: number, z: number, y0: number, from?: number): number {
     // (2.8 m: a gap under another slab lower than that fits no car — it was set into a 2 m one, wedged)
-    return this.rockSet.solidTop(x, z, Math.max(y0, this.map.height(x, z)), 2.8)
+    const s = this.rockSet.solidTop(x, z, Math.max(y0, this.map.height(x, z)), 2.8)
+    // FROM a height (the car's, the bike's — where the rider was): the first solid thing under it, the static meshes
+    //  too — the CAVE's floor stands over the land (2026-11-07, the user: "see, the human goes inside": got out in the
+    //  cave, he was put at the land's height, under its floor, and stayed in it)
+    if (from === undefined || from <= s) return s
+    const r = (this.downRay ??= new this.R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 }))
+    r.origin.x = x; r.origin.y = from; r.origin.z = z
+    const hit = this.pw.world.castRay(r, from - s + 0.5, false, undefined, group(0xffff, Groups.Static))
+    return hit ? Math.max(s, from - hit.timeOfImpact) : s
   }
+  private downRay: RAPIER.Ray | null = null
 
   /** One tile: TILE × TILE cells of the 2 m grid, a heightfield centred on its body (Rapier: heights[ix · V + iz]). */
   private buildTile(i: number, j: number): RAPIER.RigidBody {

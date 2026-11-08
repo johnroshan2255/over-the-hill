@@ -28,6 +28,8 @@ function wcut(): Record<string, string> {
 
 export class Water {
   readonly group = new GFX.Group()
+  /** The still water's material for a pond set in a cave (its depth per vertex: aUV.x). */
+  readonly poolMaterial: () => GFX.ShaderMaterial
 
   constructor(map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture) {
     const t = terrain.uniforms
@@ -50,6 +52,14 @@ export class Water {
       side: GFX.DoubleSide,
     })
     const still = material(false), flowing = material(true)
+    // THE CAVE'S PONDS (CaveWorld.addPools — 2026-11-07, the user: "the water must be like the outside water"): the
+    //  still water's own shader, its depth from the pond's shape (aUV.x: the ground under it is the hill's top), the
+    //  cave's dark on it
+    this.poolMaterial = () => new GFX.ShaderMaterial({
+      glslVersion: GFX.GLSL3, uniforms,
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...map.biomeDefines, CAVE_POOL: '' },
+      vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, side: GFX.DoubleSide,
+    })
     // the lake: a disc round its ellipse (the shore clips it); the PONDS and small lakes: a disc each, at its level —
     // all in ONE mesh (2026-11-02: a draw each, up to 17 in a view, most of them behind the hills); the parts under
     // the banks cost little: the water is drawn after the terrain, its depth test drops them before they're shaded
@@ -271,8 +281,15 @@ in vec3 vWorld;
 in vec2 vFlow;
 in vec4 vUV; // (ribbons: metres downstream, metres across, −1 … 1 across, 1 on a stream)
 
-const vec3 SHALLOW = vec3(0.2, 0.55, 0.52);
-const vec3 DEEP = vec3(0.02, 0.17, 0.2);
+// (2026-11-08: the shallows a deep clear green-teal — they're seen THROUGH, over the bed (stillLook's opacity); the pale
+//  0.2 0.55 0.52 at half opacity over the sand read as milk)
+const vec3 SHALLOW = vec3(0.06, 0.22, 0.2);
+const vec3 DEEP = vec3(0.02, 0.15, 0.18);
+// the waterline LAPPING: a few cm up and down, in its own time along the shore (m — added to the depth)
+float shoreLap(vec2 xz) {
+  float ph = uTime * 1.25 + dot(xz, vec2(0.23, 0.17)) + texture(uNoise, xz / 23.0).r * 7.0;
+  return 0.028 * sin(ph) + 0.012 * sin(ph * 2.3 + 1.7);
+}
 // the rapids (the reference ≈ sRGB 150 190 215 under the streaks, the foam ≈ 235 242 248)
 const vec3 RUN = vec3(0.26, 0.47, 0.64);
 const vec3 RUN_DEEP = vec3(0.1, 0.27, 0.42);
@@ -329,6 +346,7 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
   // sun glints
   vec3 H = normalize(uSunDir + V);
   c += uSunDisc * sun * pow(max(dot(N, H), 0.0), 220.0) * 2.5; // (the sun's own colour: its reflection)
+#ifdef OTH_DESERT
   // the shore line: a soft bright edge where it's a few cm deep
   // (a band in METRES from the waterline — shoreM — and a few cm deep at most: by depth alone a wide flat shallow was a
   //  white pane metres across — the lagoon over the ford in the user's screenshot)
@@ -336,6 +354,19 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
   if (foam > 0.0) foam *= 0.55 + 0.45 * texture(uNoise, xz / 1.7 + uTime * 0.05).b; // (its read only on the band)
   c = mix(c, vec3(0.9, 0.93, 0.95) * (ambient(vec3(0.0, 1.0, 0.0)) * 1.4 + uSunColor * 0.5 * sun), foam * 0.75);
   float alpha = clamp(smoothstep(0.0, 0.08, depth) * mix(0.55, 0.97, k) + F * 0.5 + foam * 0.5, 0.0, 1.0);
+#else
+  // THE SHORE (2026-11-08, the user's screenshot — a milky pale band along the beach: "the sides of the water must be
+  // properly shaded and look real good"): the water ABSORBS — clear at the edge, the bed showing through darkened and
+  // tinted green-teal, deepening to the dark teal (its opacity 1 − e^(−1.4 d): 13 % at 10 cm, 57 % at 60 cm, 94 % at
+  // 2 m), never a pale sheet; at the waterline a THIN broken foam line that LAPS in and out (the line's depth rising and
+  // falling a few cm, unevenly along the shore) — the bank's wet band is main()'s
+  float lap = shoreLap(xz);
+  float dl = depth + lap;
+  float foam = smoothstep(-0.004, 0.006, dl) * (1.0 - smoothstep(0.012, 0.04, dl)) * (1.0 - smoothstep(0.3, 0.9, shoreM));
+  if (foam > 0.0) foam *= (0.35 + 0.65 * smoothstep(0.25, 0.7, texture(uNoise, xz / 7.0 + vec2(uTime * 0.01, 0.0)).r)) * (1.0 - smoothstep(60.0, 140.0, dcam)); // (a soft line, thicker and thinner along the shore — never dashes)
+  c = mix(c, vec3(0.86, 0.9, 0.92) * (ambient(vec3(0.0, 1.0, 0.0)) * 1.3 + uSunColor * 0.5 * sun), foam * 0.8);
+  float alpha = clamp((1.0 - exp(-max(dl, 0.0) * 1.4)) * 0.97 + F * 0.45 * smoothstep(0.0, 0.05, dl) + foam * 0.6, 0.0, 1.0);
+#endif
   return vec4(c, alpha);
 }
 
@@ -347,13 +378,16 @@ void main() {
 #endif
 #ifdef WC_DEPTH
   float depth = 2.0;
+#elif defined(CAVE_POOL)
+  float depth = vUV.x;
 #else
   float depth = vWorld.y - terrainHeight(xz);
 #endif
-  if (depth < 0.0) discard;
   // the ground the still water owns (mapPrep.ts waterOwner): the lake and the ponds draw only there, the ribbons only
   // off it — and a ribbon's outer edge fades out (where its bank is under the water: never a straight cut)
   vec4 ow = texture(uOwn, ((xz - uOwnGrid.z) / uOwnGrid.y + 0.5) / uOwnGrid.x);
+// (the wet bank above the waterline: the TERRAIN draws it — Terrain.ts uShore; this sheet lies under the bank there)
+  if (depth < 0.0) discard;
   // (one or the other — the two looks are one at their seam; a cross-fade of two half-clear layers let the floor
   //  show through, a pale line across the river's mouth)
   float own = step(0.5, ow.r);
@@ -361,6 +395,8 @@ void main() {
   float keep = (1.0 - own) * (1.0 - smoothstep(0.8, 1.0, abs(vUV.z)));
   keep *= 1.0 - vUV.w * smoothstep(0.3, 0.9, ow.a); // (a stream fades out in the river it joins: never a second layer)
   keep *= smoothstep(0.0, 8.0, vUV.x); // (and every ribbon fades in from its source — over a creek running into it, at a fall's foot — never a square cut)
+#elif defined(CAVE_POOL)
+  float keep = 1.0;
 #else
   float keep = own;
 #endif
@@ -426,6 +462,12 @@ void main() {
   vec4 st = stillLook(xz, depth, V, sun, dcam, 1.0, shoreM);
   vec3 c = st.rgb;
   float alpha = st.a;
+#endif
+#ifdef CAVE_POOL
+  // (in the cave: its dark, as on the rock round it — the sky it mirrors is the roof's, but for the skylight's light)
+  float ck = caveK(vWorld);
+  c *= 1.0 - 0.8 * ck;
+  c += vec3(0.02, 0.05, 0.055) * uAmbSky * ck + vec3(0.05, 0.1, 0.1) * (uSunColor * 0.3 + uAmbSky * 0.3) * caveBounce(vWorld) * ck;
 #endif
 #ifdef WC_ATMOS
   gl_FragColor = vec4(c, alpha * keep);

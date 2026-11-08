@@ -9,7 +9,7 @@ import { Formations } from './Formations'
 import { Glow } from './Glow'
 import { Grass } from './Grass'
 import { Horizon } from './Horizon'
-import { Landmarks } from './Landmarks'
+import { Landmarks, pavePatch } from './Landmarks'
 import { type Landmark, MapData } from './MapData'
 import { gameParams } from '../settings'
 import { placeThings } from './Places'
@@ -60,6 +60,9 @@ export class World {
   readonly group = new GFX.Group()
   /** How long each step took to build (ms) — the dev stats, the crossing's budget. */
   readonly timings: Record<string, number> = {}
+  /** The cave's floor's grass (CaveWorld.grassFloor): its own field, drawn with the cave's inside. */
+  caveGrass: Grass | null = null
+
   private constructor(
     readonly id: WorldId,
     readonly map: MapData,
@@ -144,6 +147,8 @@ export class World {
     const open = (x: number, z: number) => plan.keep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r)
     const keepEvery = (a: ArrayLike<number>, stride: number) => { const o: number[] = []; for (let i = 0; i < a.length; i += stride) if (open(a[i], a[i + 2])) for (let k = 0; k < stride; k++) o.push(a[i + k]); return new Float32Array(o) }
     rocks.removeWithin(plan.keep)
+    // (the cave's hill: the land round it raised into its long flanks — before anything is placed on it)
+    { const cs = plan.sites.find((l) => l.kind === 'cave'); if (cs && caveMeta && gameParams().get('caveflanks') === '1') CaveWorld.spreadFoot(map, cs, caveMeta) } // (off: it made walls and creases — 2026-11-08)
     // (and the small things on it: pebbles, logs, stumps — never a crate, a sign, a camp's)
     placed.props = placed.props.filter((p) => !['stones', 'log', 'stump', 'logs'].includes(p.kind) || open(p.x, p.z))
     // (the tunnel's hill: the trees and bushes where it stands lifted onto it, a few more on its crest — Sites.dressHills)
@@ -167,6 +172,15 @@ export class World {
     const places = (map.meta.landmarks = [...(map.meta.landmarks ?? []), ...placed.camps, ...plan.sites])
     for (const l of places) if (!l.note && NOTES[l.name]) l.note = NOTES[l.name]
     const landmarks = await step('landmarks', () => new Landmarks(map, atmos, shadow, tier, env.farGrid, rocks.footprint))
+    // (and the meadows' small RUINS — Places.ts / Props.ts: a chimney among low walls, local x 0.4 … 6, z ±2.5 — paved
+    //  the same; before Props keeps its footprint's base)
+    for (const p of placed.props) if (p.kind === 'ruin') {
+      const s = p.s ?? 1, cs = Math.cos(p.rot), sn = Math.sin(p.rot), cx = 3.2 * s
+      const r = pavePatch(map, rocks.footprint.image.data as Uint8Array, p.x + cx * cs, p.z - cx * sn, p.rot, 3.4 * s, 3.0 * s, p.x, p.z)
+      if (r > 0) landmarks.paved.push(p.x, p.z, p.rot, r + 2.5)
+    }
+    rocks.footprint.needsUpdate = map.trailTex.needsUpdate = true
+    terrain.setPaved(landmarks.paved) // (the places' flagstones laid square to each)
     const props = await step('props', () => new Props(placed.props, places, placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner, map.desert))
     landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
     const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
@@ -178,12 +192,19 @@ export class World {
     // THE CAVE WORLD (cave.glb, Draco): laid on the land where Sites put it
     const caveSite = places.find((l) => l.kind === 'cave')
     const tCave = performance.now()
-    const cave = caveSite && caveMeta ? await CaveWorld.load(WORLDS[id].path, map, caveSite, caveMeta, atmos, shadow, tier, env.farGrid, rocks.footprint) : null
+    const cave = caveSite && caveMeta ? await CaveWorld.load(WORLDS[id].path, map, caveSite, caveMeta, atmos, shadow, tier, env.farGrid, rocks.footprint, terrain) : null
     if (cave) cave.grassOn(map, grass) // (the field's grass on its hill)
+    if (cave) cave.addPools(water.poolMaterial()) // (its ponds: the valley's water)
+    // (and the field's grass on its floor: the same blades, a field of their own — drawn only with the inside)
+    const floor = gameParams().get('cavegrass') === '0' ? null : cave?.grassFloor(map) // (?cavegrass=0: none — the A/B)
+    const caveGrass = floor ? await step('cave grass', () => { const g = new Grass(map, atmos, terrain, tier, floor.foot, env.renderer, true); g.setHill(floor.lift, floor.x0, floor.z0, 2, floor.n, true, floor.cpu); return g }) : null
+    if (cave && glow) glow.lift = (x, z) => cave.liftAt(x, z) // (no sun's glare through the hill)
     timings.cave = performance.now() - tCave
     const w = new World(id, map, terrain, rocks, grass, water, falls, trees, bushes, horizon, bridges, glow, landmarks, props, birds, formations, places, cave)
     w.farGrid.copy(farGrid)
     Object.assign(w.timings, timings)
+    w.caveGrass = caveGrass
+    if (caveGrass) w.group.add(caveGrass.group)
     w.group.add(props.group, landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group)
     if (glow) w.group.add(glow.group)
     if (birds) w.group.add(birds.mesh)
@@ -230,6 +251,7 @@ export class World {
     this.props.update(camera)
     this.formations?.update(camera)
     this.cave?.update(camera.position)
+    if (this.caveGrass) { const on = !!this.cave?.insideShown; this.caveGrass.group.visible = on; if (on) this.caveGrass.update(camera) }
     if (this.glow) this.glow.group.visible = !this.cave?.cameraInside // (no sun's glare through the hill)
     this.landmarks.cull(camera.position)
     this.bridges.cull()
@@ -254,10 +276,11 @@ export class World {
       }
     })
     const M = this.map
-    for (const t of [M.inner.tex, M.far.tex, M.inner.normalTex, M.far.normalTex, M.maskTex, M.trailTex, M.mudTex, M.waterTex, this.rocks.footprint]) take(t)
+    for (const t of [M.inner.tex, M.far.tex, M.inner.normalTex, M.far.normalTex, M.maskTex, M.trailTex, M.waterTex, this.rocks.footprint]) take(t)
     for (const t of textures) t.dispose()
     this.trees.atlas?.dispose()
     this.grass.dispose()
+    this.caveGrass?.dispose()
     this.terrain.dispose()
     this.glow?.dispose()
   }

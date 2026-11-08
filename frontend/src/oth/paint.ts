@@ -279,9 +279,9 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
     float lawnK = (1.0 - earth) * (1.0 - g.scree);
     if (lawnK > 0.01) {
       float patchV = smoothstep(0.25, 0.75, p.fine.b + (p.mid.g - 0.5) * 0.4);
-      float tuss = dotsAt(xz + vec2(1.7, 0.6), 4.0, 0.34, 1.5 * (0.75 + 0.5 * p.fine.r), max(0.25, foot * 0.45));
-      tuss = mix(tuss, 0.2, smoothstep(1.0, 3.0, foot));
-      col *= mix(1.0, (0.9 + 0.24 * patchV) * (1.0 - 0.2 * tuss) / 0.98, lawnK);
+      // (the TUSSOCKS — dark clumps ~1.5 m round — gone, 2026-11-07, the user: "these dark circles in the whole terrain, I
+      //  don't want that"; the patches kept, their mean as it was with them: 0.88 + 0.24 · ½ = 1)
+      col *= mix(1.0, 0.88 + 0.24 * patchV, lawnK);
     }
 #endif
     // SHRUB DOTS: small dark-green bushes scattered over the open slopes (thicker on the green, sparse on gold)

@@ -20,7 +20,7 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
  * the meadows, sand/gravel at the water, rock on rock.
  *
  * Controls — keys: W / S gas, brake → reverse, A / D steer, Space handbrake, Shift boost, R back on the wheels, 1 / 2 /
- * 3 the car. Touch: ◀ ▶ steer, GAS / BRAKE, ⟲. Mouse / finger drag on the view orbits the chase camera.
+ * 3 the car. Touch: ◀ ▶ steer, GAS / BRAKE, ⟲. The mouse (just moved) or a finger drag orbits the chase camera.
  */
 export class Vehicle {
   readonly root = new GFX.Group()
@@ -553,6 +553,21 @@ export class Vehicle {
 
   get speedKmh(): number { return this.sim ? Math.abs(this.sim.speed) * 3.6 : 0 }
   get gear(): string { return this.sim?.real?.gearLabel ?? '' }
+  /** The driving settings changed in play (the pause menu — main.ts): the gearbox, the aids, the off-road assist taken
+   *  by the car being driven at once (a new car takes them when it's built). */
+  /** The paint changed in play (the garage in the pause menu): the body's colour at once; null — this world's own. */
+  setPaint(hex: string | null): void {
+    this.paint = hex
+    const def = VEHICLES.find((v) => v.id === this.id)
+    ;(this.uniforms.uPaint.value as GFX.Color).set(hex ?? OTH_PAINT[this.id] ?? def?.stock.paint ?? '#b8452e')
+  }
+  setDriving(d: Vehicle['driving']): void {
+    this.driving = { ...d }
+    if (!this.sim) return
+    this.sim.offroadAssist = d.offroadAssist
+    const D = this.sim.drivetrain
+    if (D) { D.aids = d.aids === 'standard' ? 'std' : d.aids; D.manual = d.manual }
+  }
 }
 
 /** Parts merged into one geometry: each given the attributes the others have, as floats (a missing colour → white,

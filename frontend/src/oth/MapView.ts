@@ -34,6 +34,8 @@ export interface MapViewOptions {
   carHeading: () => number
   /** Your own camp in this world. */
   myCamp: () => Camp | null
+  /** PerfMarks.ts (F9): the spots where the frame rate fell — red ✕ with their fps (empty when the tool is off) */
+  perfMarks?: () => readonly { world: string; cx: number; cz: number; fps: number; kind: string }[]
 }
 
 export class MapView {
@@ -398,6 +400,14 @@ export class MapView {
       label(g, '⛺ Camp', sx, byGate ? sy - 20 * k : sy, '#3a2414', Math.round(10.5 * k), false)
       const mine = here ? this.o.myCamp() : null
       if (mine) { const [cx, cy] = P(mine.x, mine.z); label(g, '⛺ Your camp', cx, cy, '#5a2a14', Math.round(10.5 * k), false) }
+    }
+    // the FPS DROPS marked (PerfMarks.ts): a red ✕, its fps beside it (a stall: '!')
+    for (const m of this.o.perfMarks?.() ?? []) {
+      if (m.world !== this.tab) continue
+      const [mx, my] = P(m.cx, m.cz), r = 5 * k
+      g.strokeStyle = '#d0201a'; g.lineWidth = 2.5 * k
+      g.beginPath(); g.moveTo(mx - r, my - r); g.lineTo(mx + r, my + r); g.moveTo(mx + r, my - r); g.lineTo(mx - r, my + r); g.stroke()
+      label(g, (m.kind === 'hitch' ? '! ' : '') + m.fps, mx + 8 * k, my - 8 * k, '#d0201a', Math.round(10 * k), false)
     }
     // the waypoint
     if (w?.world === this.tab) {

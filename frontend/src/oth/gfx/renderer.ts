@@ -2,7 +2,7 @@ import * as pc from 'playcanvas'
 import { gfx, initGfx } from './core'
 import { CustomToneMapping, NoToneMapping, outputState, pushGlobals } from './material'
 import { Color, Quaternion, Vector3, Vector4 } from './math'
-import { type Camera, OrthographicCamera, PerspectiveCamera, type Scene } from './scene'
+import { type Camera, type Object3D, OrthographicCamera, PerspectiveCamera, type Scene, installAsyncWarm, warm } from './scene'
 import { FloatType, HalfFloatType, LinearFilter, LinearMipmapLinearFilter, NearestFilter, RGBAFormat, TargetTexture, UnsignedByteType } from './texture'
 
 /**
@@ -94,7 +94,25 @@ export class Renderer {
   setRenderTarget(rt: RenderTarget | null): void { this.target = rt }
   getRenderTarget(): RenderTarget | null { return this.target }
   /** (PlayCanvas compiles a shader the first time it's drawn) */
-  async compileAsync(..._: unknown[]): Promise<void> {}
+  /** A world's shaders and pipelines made before it's drawn (World.build: the crossing's world, built while another
+   *  plays): its group joins the scene HIDDEN, so the warm-up (scene.ts) takes its materials 2 a frame, and leaves when
+   *  nothing waits (≤ 15 s). Before the frame loop runs (the first world) there's nothing to wait on: the warm-up takes
+   *  it in play. */
+  async compileAsync(group: Object3D, _camera: Camera, scene: Scene): Promise<void> {
+    if (!this.running || group.parent) return
+    const was = group.visible
+    group.visible = false
+    scene.add(group)
+    const t0 = performance.now()
+    await new Promise<void>((res) => {
+      let n = 0
+      const tick = () => { n++; if ((n > 3 && warm.pending === 0 && warm.count === 0) || performance.now() - t0 > 15000) res(); else requestAnimationFrame(tick) }
+      requestAnimationFrame(tick)
+    })
+    scene.remove(group)
+    group.visible = was
+  }
+  private running = false
   initTexture(t: { pcTexture(): unknown }): void { t.pcTexture() }
 
   private entity(cam: Camera): pc.Entity {
@@ -114,12 +132,39 @@ export class Renderer {
   prepare(scene: Scene, camera: Camera): void {
     this.setup(scene, camera)
     if (this.offscreen && !this.target) this.active!.camera!.renderTarget = this.benchTarget()
+    // (FSR — oth/Fsr.ts: the world drawn into its smaller target, tone-mapped and sRGB as the canvas would get it; Fsr.end
+    //  upscales it to the canvas)
+    else if (this.mainTarget && !this.target) this.active!.camera!.renderTarget = this.mainTarget.pc
     this.main = this.active
+    this.warmCamera()
     this.info.render.calls = scene.info.calls
     this.info.render.triangles = scene.info.triangles
     this.info.render.frame++
   }
   private main: pc.Entity | null = null
+  /** THE WARM CAMERA (scene.ts "the warm-up"): this frame's throwaway mesh instances drawn into the main camera's own
+   *  target through a 1-pixel viewport, just before it (it clears — the canvas's depth is never loaded — and the main
+   *  camera clears again over it). Off when there's nothing to warm. */
+  private warmCam: pc.Entity | null = null
+  private warmCamera(): void {
+    const on = warm.count > 0 && !!this.main
+    if (!on) { if (this.warmCam) this.warmCam.enabled = false; return }
+    if (!this.warmCam) {
+      installAsyncWarm()
+      const e = this.warmCam = new pc.Entity('oth-warm-cam')
+      e.addComponent('camera', { clearColorBuffer: true, clearDepthBuffer: true, clearStencilBuffer: true, frustumCulling: false, priority: -10, layers: [warm.layer.id], rect: new pc.Vec4(0, 0, 0.0005, 0.0005), scissorRect: new pc.Vec4(0, 0, 0.0005, 0.0005) })
+      gfx().app.root.addChild(e)
+    }
+    const c = this.warmCam.camera!, m = this.main!.camera!
+    c.renderTarget = m.renderTarget
+    c.nearClip = m.nearClip; c.farClip = m.farClip; c.fov = m.fov; c.aspectRatio = m.aspectRatio
+    this.warmCam.setPosition(this.main!.getPosition()); this.warmCam.setRotation(this.main!.getRotation())
+    this.warmCam.enabled = true
+  }
+  /** (FSR) the target the frame's world is drawn into instead of the canvas; null: the canvas. */
+  mainTarget: RenderTarget | null = null
+  /** Run `f` after PlayCanvas has drawn each frame (FSR's upscale to the canvas). */
+  onPostRender(f: () => void): void { gfx().app.on('postrender', f) }
   /** (the harness's yardstick, ?bench=offscreen: the frame drawn into a target of the canvas's size and samples that
    *  is never shown — the GPU's own time for the work, without the browser's wait on the compositor round the
    *  canvas; scripts/harness/gpuprof.mjs) */
@@ -140,12 +185,15 @@ export class Renderer {
   render(scene: Scene, camera: Camera): void {
     const G = gfx()
     const main = this.main
+    const wc = this.warmCam?.enabled
+    if (wc) this.warmCam!.enabled = false // (a bake draws only its own camera)
     this.setup(scene, camera)
     if (main && main !== this.active) main.enabled = false
     G.device.frameStart()
     G.app.renderComposition(G.app.scene.layers)
     G.device.frameEnd()
     if (main && main !== this.active) { this.active!.enabled = false; main.enabled = true; this.active = main }
+    if (wc) this.warmCam!.enabled = true
   }
 
   /** PlayCanvas's own stats panel (MiniStats: frame time, FPS, draw calls, CPU / GPU timings, VRAM) — F3 / ?stats=1. */
@@ -217,6 +265,7 @@ export class Renderer {
     const app = gfx().app
     app.on('update', update)
     app.start()
+    this.running = true
   }
   /** (a paused game draws nothing) */
   set drawing(on: boolean) { gfx().app.autoRender = on }

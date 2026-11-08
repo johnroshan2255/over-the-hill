@@ -1,8 +1,9 @@
 import * as GFX from './gfx'
 import type { MapData } from './MapData'
+import { onMouseLook } from './mouseLook'
 
 /**
- * A free camera for looking at the world until the 4×4s drive in: drag (or pointer lock on click) to look, WASD to
+ * A free camera for looking at the world until the 4×4s drive in: the mouse looks (mouseLook.ts), WASD to
  * move, Space / C up and down, Shift fast, wheel = speed. Never below eye height over the ground. Touch: one finger
  * looks, two fingers move forward.
  * yaw: forward = (−sin yaw, 0, −cos yaw) — 0 looks north (−z).
@@ -16,12 +17,16 @@ export class FlyCam {
   private lx = 0
   private ly = 0
   private touches = 0
+  /** In use (main.ts: not while driving) — the mouse look only turns it then. */
+  enabled = true
 
   constructor(readonly camera: GFX.PerspectiveCamera, private readonly map: MapData, dom: HTMLElement) {
     window.addEventListener('keydown', (e) => this.keys.add(e.code))
     window.addEventListener('keyup', (e) => this.keys.delete(e.code))
     window.addEventListener('blur', () => this.keys.clear())
-    dom.addEventListener('pointerdown', (e) => { this.drag = true; this.lx = e.clientX; this.ly = e.clientY; this.touches++ })
+    // (the mouse looks just by moving — mouseLook.ts; a finger drags)
+    onMouseLook((dx, dy) => { if (this.enabled) this.look(dx, dy) })
+    dom.addEventListener('pointerdown', (e) => { this.touches++; if (e.pointerType === 'mouse') return; this.drag = true; this.lx = e.clientX; this.ly = e.clientY })
     window.addEventListener('pointerup', () => { this.drag = false; this.touches = Math.max(0, this.touches - 1) })
     window.addEventListener('pointercancel', () => { this.drag = false; this.touches = 0 })
     window.addEventListener('pointermove', (e) => {

@@ -619,6 +619,16 @@ void main() {
 #endif
   vec3 c = shade(albedo, N, V, 0.85, 0.03, mix(0.55, 1.0, vAo), vSun, 0.3);
   c += headlight(albedo, N, vWorld);
+  // RAIN DROPLETS on the needles and leaves (2026-11-07, the user: "trees all get white — put some water droplets
+  // instead"): small bright beads, sparse, on what faces up, near the camera only (far they'd shimmer)
+  if (uWet > 0.02) {
+    float dc = length(uCamPos - vWorld);
+    if (dc < 32.0) {
+      vec4 nz = texture(uNoise, vWorld.xz * 2.7 + vWorld.y * vec2(1.9, -1.3));
+      float drop = smoothstep(0.83, 0.9, nz.r * 0.65 + nz.b * 0.35) * uWet * (1.0 - smoothstep(14.0, 32.0, dc)) * smoothstep(-0.2, 0.5, N.y);
+      c += (uSunColor * 0.45 * vSun + uAmbSky * 1.1) * drop * 0.4;
+    }
+  }
   // back-lit by a low sun the needles glow (the larch most)
   float back = pow(max(dot(-V, uSunDir), 0.0), 3.0);
   c += albedo * uSunColor * back * (vSpecies > 0.5 ? 0.55 : 0.25) * vAo * vSun;

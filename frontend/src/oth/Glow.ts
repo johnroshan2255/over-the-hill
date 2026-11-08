@@ -159,6 +159,9 @@ export class Glow {
     }
   }
 
+  /** What stands on the land that the horizon must count (the cave's hill — CaveWorld.liftAt: its height over the land). */
+  lift: ((x: number, z: number) => number) | null = null
+
   update(camera: GFX.PerspectiveCamera, dt: number): void {
     const u = this.atmos.uniforms, sun = u.uSunDir.value, night = u.uNight.value, cloud = u.uCloud.value
     const day = (1 - night) * GFX.MathUtils.smoothstep(sun.y, -0.03, 0.03)
@@ -167,7 +170,9 @@ export class Glow {
     // the sun above the terrain's horizon from here? (32 steps along its bearing, 8 m … 3 km)
     const c = camera.position, hl = Math.hypot(sun.x, sun.z) || 1, ux = sun.x / hl, uz = sun.z / hl, el = sun.y / hl
     let hor = -1
-    for (let i = 0, d = 8; i < 32; i++, d *= 1.18) hor = Math.max(hor, (this.map.height(c.x + ux * d, c.z + uz * d) - c.y) / d)
+    // (the cave's hill too: 2026-11-07, the user — the sun's glare through it, from beside it and from inside)
+    const lift = this.lift
+    for (let i = 0, d = 8; i < 32; i++, d *= 1.18) { const x = c.x + ux * d, z = c.z + uz * d; hor = Math.max(hor, (this.map.height(x, z) + (lift ? lift(x, z) : 0) - c.y) / d) }
     const target = GFX.MathUtils.smoothstep(el - hor, -0.01, 0.025)
     this.vis += (target - this.vis) * Math.min(1, dt * 6)
     // (the skirt: still there while the sun is a few degrees behind the ridge — its glowing sky)

@@ -667,12 +667,12 @@ export class Character {
 
   // ============================================================================================ on foot
   /** Stand at (x, z) facing `heading`, on foot (a capsule in the world). */
-  appear(x: number, z: number, heading: number, y?: number): void {
+  appear(x: number, z: number, heading: number, y?: number, from?: number): void {
     this.ride = null
     this.seat = null
     const R = this.physics.pw.R, world = this.physics.pw.world
     this.physics.follow(x, z)
-    const gy = y ?? this.physics.surface(x, z, this.map.height(x, z))
+    const gy = y ?? this.physics.surface(x, z, this.map.height(x, z), from)
     if (!this.body) {
       this.body = world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x, gy + 0.9, z))
       // (the player meets the ground, the rocks, the trees, the props and the cars — never a bike: they skip Player)

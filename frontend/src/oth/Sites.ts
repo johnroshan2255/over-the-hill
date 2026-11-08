@@ -285,7 +285,7 @@ export function regrowPads(map: MapData, landmarks: Landmark[]): void {
       if (pd < 70) d = Math.min(d, pathD(x, z) + hw - 1.0)          // the path: ~2 m wide
       if (yr > 0) d = Math.min(d, Math.hypot(x - yx, z - yz) - yr + hw) // the yard
       const v = Math.round(Math.min(1, Math.max(0, d / 8)) * 255)
-      const k = j * g.n + i
+      const k = (j * g.n + i) * 4 // (R of the RGBA8: G the paving, B A the mud)
       // (on the old pad: the ground as worked out here; past it only the path and yard are added — whatever else the
       //  trail texture holds there stays)
       tex[k] = Math.hypot(x - l.x, z - l.z) < l.r + 7.5 ? v : Math.min(tex[k], v)
@@ -385,6 +385,17 @@ export function dressHills(map: MapData, sites: Landmark[], trees: Float32Array,
       if (!nearB.length) break
       const x = wx(lx, lz), z = wz(lx, lz), src = nearB[Math.floor(rnd() * nearB.length)], size = bl[src + 3] * (0.75 + 0.4 * rnd())
       bl.push(x, map.height(x, z) + ly - 0.12 * size, z, size, rnd() * 6.283, bl[src + 5], bl[src + 6])
+    }
+    // BUSHES ROUND THE MOUTH'S STONES (2026-11-08, the user: "grass, bushes — our goal is to hide all the patches"): a
+    //  cluster round the outside of the boulders at the mouth's foot, both sides, never on the car's way in
+    for (const [lx0, lz0] of [[-10.5, 9], [-8.5, 12], [-5.5, 12.6], [-12, 5.5], [-9.5, 3], [5.6, 12.6], [8.8, 12.4], [11.8, 12.2], [14.6, 12], [18.4, 11.4], [20, 8], [18.5, 4.5], [15.5, 2.5]]) {
+      if (!nearB.length) break
+      for (let q = 0; q < 2; q++) {
+        const lx = lx0 + (rnd() - 0.5) * 2.2, lz = lz0 + (rnd() - 0.5) * 2.2
+        if (Math.abs(lx) < 4.8) continue
+        const x = wx(lx, lz), z = wz(lx, lz), src = nearB[Math.floor(rnd() * nearB.length)], size = bl[src + 3] * (0.9 + 0.5 * rnd())
+        bl.push(x, map.height(x, z) - 0.1 * size, z, size, rnd() * 6.283, bl[src + 5], bl[src + 6])
+      }
     }
     for (let k = 0; nearB.length && k < 5; k++) {
       const [lx, ly, lz] = cave.tufts[Math.floor(rnd() * cave.tufts.length)], x = wx(lx, lz), z = wz(lx, lz)

@@ -143,13 +143,13 @@ export class MapData {
   readonly far: HeightGrid
   readonly mask: Uint8Array
   readonly maskTex: GFX.DataTexture
-  /** Distance to the nearest track's centre line (R8 on the box's 2 m grid, 0..8 m) — the ground paints the dirt, the
-   *  grass keeps off it. */
+  /** RGBA8 on the box's 2 m grid: R the distance to the nearest track's centre line (0..8 m) — the ground paints the
+   *  dirt, the grass keeps off it; G the PAVING (0 … 1: the places' stone floors — Landmarks stamps it, Terrain.ts lays
+   *  it); B A the mud and the wildflowers (`mud`, resampled). */
   readonly trailTex: GFX.DataTexture
   /** MUD over the box (the mask's 4 m grid, RG: R mud 0 … 1 — the ground paints it, the grass keeps off, the tyres
-   *  sink — G wildflowers: the grass blossoms). */
+   *  sink — G wildflowers: the grass blossoms). The GPU reads it in trailTex's B A. */
   readonly mud: Uint8Array
-  readonly mudTex: GFX.DataTexture
   /** The ground the still water owns (RGBA8 on the mask's 4 m grid, mapPrep.ts waterOwner): R — the lake and the ponds
    *  draw only on it, the river and the streams only off it; G — the depth under it (128 + 64 / m): no grass there;
    *  B — how near it is (a ribbon takes its look as it comes to it); A — the river's own water (a stream fades into it). */
@@ -182,20 +182,26 @@ export class MapData {
     this.maskTex.magFilter = GFX.LinearFilter
     this.maskTex.generateMipmaps = true
     this.maskTex.needsUpdate = true
-    const tn = meta.inner.n
-    this.trailTex = new GFX.DataTexture(trail, tn, tn, GFX.RedFormat, GFX.UnsignedByteType)
+    this.mud = mud.length === mn * mn * 2 ? mud : new Uint8Array(mn * mn * 2)
+    // (the trail, the paving, the mud and the flowers in ONE texture on the 2 m grid — the mud's 4 m grid read bilinear
+    //  at each point, as the GPU read it — 2026-11-08: the cave's terrain draw was at WebGPU's 16 textures a stage)
+    const tn = meta.inner.n, ig = meta.inner, mg = meta.mask, M = this.mud
+    const tex = new Uint8Array(tn * tn * 4)
+    for (let j = 0; j < tn; j++) {
+      const fz = Math.min(mn - 1.001, Math.max(0, (ig.origin + j * ig.step - mg.origin) / mg.step)), mj = Math.floor(fz), v = fz - mj
+      for (let i = 0; i < tn; i++) {
+        const k = j * tn + i
+        tex[k * 4] = trail[k]
+        const fx = Math.min(mn - 1.001, Math.max(0, (ig.origin + i * ig.step - mg.origin) / mg.step)), mi = Math.floor(fx), u = fx - mi
+        const a = (mj * mn + mi) * 2, b = a + mn * 2
+        for (let c = 0; c < 2; c++) tex[k * 4 + 2 + c] = Math.round((M[a + c] * (1 - u) + M[a + 2 + c] * u) * (1 - v) + (M[b + c] * (1 - u) + M[b + 2 + c] * u) * v)
+      }
+    }
+    this.trailTex = new GFX.DataTexture(tex, tn, tn, GFX.RGBAFormat, GFX.UnsignedByteType)
     this.trailTex.minFilter = GFX.LinearMipmapLinearFilter
     this.trailTex.magFilter = GFX.LinearFilter
     this.trailTex.generateMipmaps = true
-    this.trailTex.unpackAlignment = 1
     this.trailTex.needsUpdate = true
-    this.mud = mud.length === mn * mn * 2 ? mud : new Uint8Array(mn * mn * 2)
-    this.mudTex = new GFX.DataTexture(this.mud, mn, mn, GFX.RGFormat, GFX.UnsignedByteType)
-    this.mudTex.minFilter = GFX.LinearMipmapLinearFilter
-    this.mudTex.magFilter = GFX.LinearFilter
-    this.mudTex.generateMipmaps = true
-    this.mudTex.unpackAlignment = 1
-    this.mudTex.needsUpdate = true
     this.waterTex = new GFX.DataTexture(p.water, mn, mn, GFX.RGBAFormat, GFX.UnsignedByteType)
     this.waterTex.minFilter = this.waterTex.magFilter = GFX.LinearFilter
     this.waterTex.generateMipmaps = false
@@ -328,7 +334,7 @@ export class MapData {
     const g = this.inner
     const i = Math.round((x - g.origin) / g.step), j = Math.round((z - g.origin) / g.step)
     if (i < 0 || j < 0 || i >= g.n || j >= g.n) return 8
-    return ((this.trailTex.image.data as Uint8Array)[j * g.n + i] / 255) * 8
+    return ((this.trailTex.image.data as Uint8Array)[(j * g.n + i) * 4] / 255) * 8
   }
 
   /** The box's mask at x, z (0..1 each: rock, dryness, wet, forest), nearest 4 m cell; zeros outside the box. */

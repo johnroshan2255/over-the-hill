@@ -58,6 +58,68 @@ Next:
 - The lake / ponds are flat dark water: a reflection, a ripple.
 - Old saves: the places after it got new ids (the four caves became one) — a found-flag may point at the wrong place.
 
+Round 5 (2026-11-07, the user's screenshots: "a sticker, no transition at the entrance"; "make sure the same terrain
+method covers the cave — now it's separate"; "the wall inside — where is the rock shader?"; the sun's glare through the
+hill; "why no grass here"; the walker sinking into the floor; "the water must be like the outside water"; "these dark
+circles on the whole terrain"). ARCHITECTURE.md "The cave world" → "The hill IS the ground" has the how. Done:
+- the hill's top written into the GROUND's own heights / normals (GPU copy only), the openings CUT (Terrain.setHoles, a
+  second draw for the patches round the cave), the old turf kept only at the openings' rims — in the ground's own
+  material (Terrain.meshMaterial); the foot fades onto the land (no sawtooth);
+- rock round the whole mouth (arch + the walls coming out of the face) by 3D distance into the mask: the ground's own
+  rock→grass band; the inside floor turns to rock over ~4 m toward the walls; the walls plain rock (no moss / ledge
+  strips), lit FROM the openings (Atmosphere caveLit) so the relief reads;
+- the field's grass on the cave floor (a second Grass, `cave`), the ponds in the valley's water shader, the walker
+  set on what's under the car (Physics.surface `from`), no glare through the hill (Glow.lift), the floor's collider
+  dipped at the mouth with the drawn floor (the car jumped a lip), the field paint's tussocks removed everywhere.
+- Round 5b (the user played it): the walker's FEET found the land under the cave's floor and bent down into it
+  (main.ts hero.ground now rays down from the hips: Physics.surface `from`); the cave's shade fill 0.12 → 0.42 (the
+  ledges' undersides went black); the turf dipped at the mouth with the arch / floor (a crack of sky). THE RAIN, all
+  worlds: no sky sheen on wet faces (Atmosphere shade — it turned the rock and the trees white), puddles on flat bare
+  rock too (Terrain), droplet glints on the near trees (Trees.ts).
+- Round 6 (the user: "the cave a skeleton, the terrain its skin"): every cave surface — arch, walls, floor, garden, the
+  hill's surface by the openings — drawn in the GROUND'S OWN SHADER (Terrain.skinMaterial: OTH_SKIN, the mesh's normal,
+  `skin` = (inside, least rock); the cave's dark and caveLit in it). WebGPU gotcha: the skin's extra inputs must be
+  plain `varying` lines, never inside #ifdef (PlayCanvas numbers the varyings before the defines). The cut is CIRCLES
+  (mouth 22 m, skylights r + 9 m: tighter, the 2 m grid hangs as curtains into a shaft), the hill surface easing onto
+  the ground's over their last 6 m with the ground's normal; normals averaged across the parts' seams; triangles wound
+  to their normals; one-triangle holes in the model filled; the mouth's dip smooth in height; the old hand-made tufts
+  off (the field's grass grows in there); the skylights' shafts drawn from anywhere (they were white from afar), their
+  rims lit as the top (the dark fades over the top 9 m), the walls rock to the rim.
+  Round 7 (the skylights' tops): no ring of model turf — the GROUND draws the hill to each lip: its heights FILLED
+  across the hole (and over the rim's rock outcrops, where the top grid has no value) so no 2 m cell hangs into the
+  shaft; the hole CUT by holeK (uHole's second half of rows — WebGPU allows 16 samplers a stage and they were all
+  used: a 17th blacked the frame), 0 only within r + 1.5 m where the top is missing, bilinear; a two-sided rock SKIRT
+  down 12 m along that contour; the rock clamped under the ground near the lips; the model's rock where nothing lies
+  over it (outcrops on the hill) lit as outside (no cave dark — it showed black). A round cut (distance field) was
+  tried and is worse: the shafts aren't round.
+  STILL: the hole's edge follows the 2 m grid (a little polygonal); the hill's rock patches show the relief more
+  faintly than the valley's rock in the same framing (same shader — the eased normals / the light; look at it). The scratchpad tour (car placed in each chamber) put
+  the car inside the rock — place it from the lane's floor, not a ray from above.
+- Round 8 (the mouth's floor — the user: "terrain sheet showing", "two patches as cuts", "hollow space"): NO dip any
+  more; the GROUND is raised to the cave's floor (CPU g.h too — the physics' heightfield, map.height for what's placed
+  after) — under the floor / low turf in the mouth's circle just under it (cut over it), in front a ramp up to its edge
+  (level 3 m, down over 8). Played in a VISIBLE Chrome: drove in and out, no slab, lip or hole; from above no sky.
+  Left: faint 2 m steps where the turf hands over to the ground at the circle's right edge; small dark shards by the
+  exit; the car got airborne ~20 m out driving out at 58 km/h (the land's own slope? check).
+  The hill's rock patches: the relief IS drawn (?tcut=rdbg shows its strength 1 there) — it reads faint on the long
+  smooth faces (relief is per-pixel light only); the valley's rock looks the same in the same framing.
+- Round 9 (2026-11-08): the mouth's seams hidden under hand-placed rounded stones (SLABS in CaveWorld: picked off
+  the screen with a ray, draped on the ground, in the ground's skin, in the collider; low on the lane) and bushes
+  round them (Sites.dressHills); a little green round the mouth (mask G). TRIED AND OFF: stretching the hill's flanks
+  (CaveWorld.spreadFoot / spreadGrade, `?caveflanks=1`) — a grade limit on the land round the hill made vertical
+  walls and creases where the raised ground met the model; the right way is in Blender (caves.py: a wider, concave
+  foot fillet), not on the land at load.
+- A/B switches: `?caveground=0` (the hill its own turf mesh again), `?cavegrass=0`.
+- Cost (ULTRA 1080p, interleaved, before the last look rounds): the hill as ground ≈ 0 (±0.06 ms); the floor's grass
+  +0.26 ms at the mouth, ~0 to +0.3 in the hall (LOW +0.35) — drawn only in the cave / within 30 m of an opening. The
+  final run was taken while the user played on the same GPU (every variant tripled): RE-MEASURE `node
+  scripts/harness/abq.mjs "|caveground=0|cavegrass=0" caveFront,caveHall,caveAbove,spawn 4` (and TIER=low) on a quiet
+  machine, and on a phone.
+- Still to look at: the passage's floor near the mouth reads mottled grey / gold (the walls' band in a narrow way); a
+  few arch polygon points at its outer edge; the cave grass's cost on phones (a lower density there).
+- Check by PLAYING: `?at=cave`, drive in with the keys on the chase camera (a key-driving probe like the session's
+  drive.cjs) — the fixed views (cavecheck.mjs) missed the arch's teeth, the slivers and the jump.
+
 ## 1. DONE: the caves' rock read as cement, not as the terrain's rock (the user, 2026-11-06)
 
 The user's words: *"i asked u to change the rock part to the texture the outside and top where we used the normal terrain was really good, now it's like a cement building."*

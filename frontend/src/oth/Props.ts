@@ -256,7 +256,8 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
 
 const CELL = 128
 /** The grass cleared round each kind (m; a fence: three spots along it). */
-const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, crate: 1.8, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 5.5, well: 1.8, tent: 4.0, log: 1.1, stump: 0.9 }
+// (a ruin's 2 m: its ground is the paving's — World.build pavePatch, 2026-11-08; it was a bare 5.5 m disc)
+const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, crate: 1.8, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 2.0, well: 1.8, tent: 4.0, log: 1.1, stump: 0.9 }
 
 export interface PropCollider { x: number; y: number; z: number; rot: number; hx: number; hy: number; hz: number }
 

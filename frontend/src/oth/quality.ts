@@ -64,6 +64,9 @@ export interface Tier {
   msaaSamples?: number
   /** (pickTier) a weak GPU — an integrated / phone-class chip (DeviceProfile.ts isWeakGpu): drawn the phones' way */
   weakGpu?: boolean
+  /** (pickTier) THE PAVING's full look (Terrain.ts PAVE_GLSL — the places' flagstones): PCs (not phones, not a weak GPU);
+   *  else the texture alone. `?pave=2` / `?pave=1` force it either way (`?pave=0`: no paving — Landmarks). */
+  paveHi?: boolean
 }
 
 export const TIERS: Record<TierName, Tier> = {
@@ -118,5 +121,7 @@ export function pickTier(): Tier {
     Object.assign(out, { weakGpu: true, msaa: p.get('aa') !== '0', msaaSamples: Number(p.get('msaa')) || 2, groundCache: Math.min(out.groundCache, 512), dpr: Math.min(out.dpr, 1) })
     if (relief !== '1') out.rockRelief = false
   }
+  const pave = p.get('pave')
+  out.paveHi = pave === '2' || (pave !== '1' && !mobile && !out.weakGpu)
   return out
 }

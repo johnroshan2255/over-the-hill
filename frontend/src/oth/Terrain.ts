@@ -7,6 +7,11 @@ import type { Tier } from './quality'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 import { gameParams } from '../settings'
 import { GroundCache } from './GroundCache'
+import { createPaveTexture, PAVE_FRAME_GLSL } from './paveTex'
+
+/** The paving's texture (paveTex.ts): made once, shared by every world. */
+let paveTex: GFX.DataTexture | null = null
+const paveTexture = () => (paveTex ??= createPaveTexture())
 
 /**
  * THE GROUND — continuous distance-dependent LOD (CDLOD) on the GPU, the whole 16 km world in ONE instanced draw.
@@ -96,7 +101,6 @@ export class Terrain {
       uNIn: { value: map.inner.normalTex },
       uNFar: { value: map.far.normalTex },
       uMask: { value: map.maskTex },
-      uMud: { value: map.mudTex },
       uInGrid: { value: g(map.inner) },
       uFarGrid: { value: g(map.far) },
       uInScale: { value: sc(map.inner) },
@@ -112,16 +116,25 @@ export class Terrain {
       uTrailHW: { value: map.meta.trails.hw },
       uGrassR: { value: tier.grassRadius },
       uBushR: { value: tier.bushReach },
+      uPave: { value: paveTexture() },
+      // (the four paved places nearest the camera: x, z, rot, the paving's reach — Terrain.update; r 0: none)
+      uPave0: { value: new GFX.Vector4(0, 0, 0, 0) }, uPave1: { value: new GFX.Vector4(0, 0, 0, 0) },
+      uPave2: { value: new GFX.Vector4(0, 0, 0, 0) }, uPave3: { value: new GFX.Vector4(0, 0, 0, 0) },
+      // (the four still waters nearest the camera: x, z, reach, level — the wet bank, Terrain.update; reach 0: none)
+      uShore0: { value: new GFX.Vector4(0, 0, 0, 0) }, uShore1: { value: new GFX.Vector4(0, 0, 0, 0) },
+      uShore2: { value: new GFX.Vector4(0, 0, 0, 0) }, uShore3: { value: new GFX.Vector4(0, 0, 0, 0) },
     }
     const defines: Record<string, string> = { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...shapeDefines() }
     if (tier.groundCache > 0 && gameParams().get('gcache') !== '0') {
       this.cache = new GroundCache(renderer, tier.groundCache, 2 * map.farHalf, this.uniforms, defines, HEIGHT_GLSL, SURF_GLSL)
       Object.assign(this.uniforms, this.cache.uniforms)
     }
+    // (the places' paving — PAVE_GLSL: the valley's only; the full look on PCs, the texture alone on phones)
+    const pave: Record<string, string> = map.desert || gameParams().get('pave') === '0' ? {} : { OTH_PAVE: '', ...(tier.paveHi ? { OTH_PAVE_HI: '' } : {}) }
     const mat = new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms: this.uniforms,
-      defines: { ...defines, ...(this.cache?.defines ?? {}), ...tcut() },
+      defines: { ...defines, ...(this.cache?.defines ?? {}), ...tcut(), ...pave },
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
@@ -132,6 +145,68 @@ export class Terrain {
     // and the depth test then skips the ground's paint under them — drawn first, every pixel under the carpet was
     // painted and then covered
     this.mesh.renderOrder = 10
+    // (the patches round the cave's openings: the same ground, drawn with the cut — CaveWorld.intoTerrain; empty
+    //  until then, and the rest of the ground never pays for a discard)
+    this.uniforms.uHole = { value: new GFX.DataTexture(new Float32Array(1), 1, 1, GFX.RedFormat, GFX.FloatType) }
+    this.uniforms.uHoleGrid = { value: new GFX.Vector4(0, 0, 0, 0) }
+    for (let k = 0; k < 3; k++) this.uniforms[`uHoleC${k}`] = { value: new GFX.Vector4(0, 0, 0, 0) }
+    this.holeGeo = new GFX.InstancedBufferGeometry()
+    this.holeGeo.setAttribute('position', this.geo.getAttribute('position'))
+    this.holeGeo.setIndex(this.geo.index)
+    this.holeNodes = new GFX.InstancedBufferAttribute(new Float32Array(256 * 4), 4)
+    this.holeNodes.setUsage(GFX.DynamicDrawUsage)
+    this.holeGeo.setAttribute('aNode', this.holeNodes)
+    this.holeGeo.instanceCount = 0
+    // (the paving here too: the mud's map went into the trail texture to make room — WebGPU's 16 textures a stage, uHole)
+    const hm = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: this.uniforms, defines: { ...defines, ...(this.cache?.defines ?? {}), ...tcut(), ...pave, OTH_HOLES: '' }, vertexShader: VERT, fragmentShader: FRAG })
+    this.holeMesh = new GFX.Mesh(this.holeGeo, hm)
+    this.holeMesh.frustumCulled = false
+    this.holeMesh.matrixAutoUpdate = false
+    this.holeMesh.renderOrder = 10
+    this.holeMesh.visible = false
+    this.mesh.add(this.holeMesh)
+  }
+  private readonly holeGeo: GFX.InstancedBufferGeometry
+  private readonly holeNodes: GFX.InstancedBufferAttribute
+  private readonly holeMesh: GFX.Mesh
+  /** the cut's box (x0, z0, x1, z1) — a patch touching it is drawn by the hole mesh */
+  private holeBox: [number, number, number, number] | null = null
+
+  /** THE GROUND'S OWN MATERIAL for a mesh of world positions (CaveWorld: its hill's turf left by the openings, where
+   *  the ground is cut) — the same fragment shader, uniforms and defines as the ground: the same paint and light, so
+   *  it can't read as a patch of its own (2026-11-07, the user: "the terrain colour here is different — no patches"). */
+  meshMaterial(): GFX.ShaderMaterial {
+    return new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: this.uniforms, defines: { ...(this.mesh.material as GFX.ShaderMaterial).defines }, vertexShader: MESH_VERT, fragmentShader: FRAG })
+  }
+
+  /** THE GROUND AS A SKIN (2026-11-07, the user: "use the cave as just a skeleton and cover it with our terrain
+   *  textures — the terrain the skin"): the ground's own shader on any mesh — its normal the mesh's (attributes normal,
+   *  skin = (how far inside a cave 0…1, the least rock 0…1)), its rock from the mask and, inside, from its slope as the
+   *  ground's steep is painted; painted live (the ground cache is baked from above: a wall under the hill would take its
+   *  top's paint); the cave's dark and its openings' light on it (Atmosphere caveK / caveLit). */
+  skinMaterial(): GFX.ShaderMaterial {
+    const d = { ...(this.mesh.material as GFX.ShaderMaterial).defines, OTH_SKIN: '' } as Record<string, string>
+    for (const k of Object.keys(this.cache?.defines ?? {})) delete d[k]
+    return new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: this.uniforms, defines: d, vertexShader: SKIN_VERT, fragmentShader: FRAG.replace('in vec3 vWorld;\n', 'varying vec3 vWorld;\nvarying vec3 vSkinN;\nvarying vec2 vSkin;\n') })
+  }
+
+  /** THE CAVE'S HILL IN THE GROUND (CaveWorld.intoTerrain): its openings' clip heights — a 2 m cell each (R32F), from
+   *  (x0, z0) — and the patches' max heights raised to its top where it stands (the selection's culling boxes). */
+  setHoles(land: GFX.DataTexture, x0: number, z0: number, w: number, h: number, top: number, circles: [number, number, number][]): void {
+    this.uniforms.uHole.value = land
+    ;(this.uniforms.uHoleGrid.value as GFX.Vector4).set(x0, z0, w, h)
+    circles.slice(0, 3).forEach(([cx, cz, r], k) => (this.uniforms[`uHoleC${k}`].value as GFX.Vector4).set(cx, cz, r, 1))
+    const s = this.map.inner.step, x1 = x0 + w * s, z1 = z0 + h * s
+    // (the patches the cut's draw takes: those touching a circle)
+    // (the patches the cut's draw takes: all of the cave's — the skylights' holes are cut by holeK anywhere on it)
+    this.holeBox = [x0, z0, x1, z1]
+    this.holeMesh.visible = true
+    for (let L = 0; L <= this.levels; L++) {
+      const size = this.leaf * 2 ** L, c = 2 ** (this.levels - L), mx = this.maxH[L]
+      const a0 = Math.floor((x0 - this.origin) / size), a1 = Math.floor((x1 - this.origin) / size)
+      const b0 = Math.floor((z0 - this.origin) / size), b1 = Math.floor((z1 - this.origin) / size)
+      for (let j = Math.max(0, b0); j <= Math.min(c - 1, b1); j++) for (let i = Math.max(0, a0); i <= Math.min(c - 1, a1); i++) mx[j * c + i] = Math.max(mx[j * c + i], top)
+    }
   }
 
   /** Min / max heights per node, per level: the map's (computed with it in the loader's worker, mapPrep.ts). */
@@ -151,6 +226,34 @@ export class Terrain {
     const agl = Math.max(0, camera.position.y - this.map.height(this.cx, this.cz))
     this.agl2 = agl * agl
     this.uniforms.uAgl2.value = this.agl2
+    // (the wet banks: the four still waters nearest the camera — by their shore's distance)
+    // (both picked with nothing allocated — no arrays, no closures, no sorts each frame: garbage is a stall later,
+    //  docs/PERF.md "the garbage"; the PERF MARKS drive, 2026-11-08)
+    {
+      const W = this.map.meta.water, n = 1 + (W.ponds?.length ?? 0), sh = this.shoreSlot
+      sh.fill(-1); this.shoreD.fill(Infinity)
+      for (let i = 0; i < n; i++) {
+        const p = i === 0 ? W.lake : W.ponds![i - 1]
+        const d = Math.max(0, Math.hypot(p.cx - this.cx, p.cz - this.cz) - (Math.max(p.rx, p.rz) * 1.15 + 12))
+        nearest4(sh, this.shoreD, i, d)
+      }
+      for (let k = 0; k < 4; k++) {
+        const v = this.uniforms[`uShore${k}`].value as GFX.Vector4, i = sh[k]
+        const p = i < 0 ? null : i === 0 ? W.lake : W.ponds![i - 1]
+        if (p) v.set(p.cx, p.cz, Math.max(p.rx, p.rz) * 1.15 + 12, p.level); else v.set(0, 0, 0, 0)
+      }
+    }
+    // (the paving's frames: the four paved places nearest the camera — ~15 places, once a frame; past them, a few
+    //  hundred metres off, a place's paving is a few pixels: the ground's own colour there)
+    if (this.paved.length) {
+      const sl = this.paveSlot, P = this.paved
+      sl.fill(-1); this.paveD.fill(Infinity)
+      for (let i = 0; i < P.length; i += 4) nearest4(sl, this.paveD, i, (P[i] - this.cx) ** 2 + (P[i + 1] - this.cz) ** 2)
+      for (let k = 0; k < 4; k++) {
+        const v = this.uniforms[`uPave${k}`].value as GFX.Vector4, i = sl[k]
+        if (i < 0) v.set(0, 0, 0, 0); else v.set(P[i], P[i + 1], P[i + 2], P[i + 3])
+      }
+    }
     this.count = 0
     this.occluded = 0
     this.select(0, 0, this.levels)
@@ -168,15 +271,33 @@ export class Terrain {
       while (m >= 0 && P[ord[m] * 5 + 4] > key) { ord[m + 1] = ord[m]; m-- }
       ord[m + 1] = u
     }
-    const a = this.nodes.array as Float32Array
-    for (let n = 0; n < this.count; n++) { const o = ord[n] * 5; a[n * 4] = P[o]; a[n * 4 + 1] = P[o + 1]; a[n * 4 + 2] = P[o + 2]; a[n * 4 + 3] = P[o + 3] }
-    this.geo.instanceCount = this.count
-    this.nodes.addUpdateRange(0, this.count * 4)
+    const a = this.nodes.array as Float32Array, ha = this.holeNodes.array as Float32Array, hb = this.holeBox
+    let m = 0, hn = 0
+    for (let n = 0; n < this.count; n++) {
+      const o = ord[n] * 5, x0 = P[o], z0 = P[o + 1], sz = P[o + 2]
+      // (round the cave's openings: the cut's draw)
+      if (hb && hn < 256 && x0 < hb[2] && x0 + sz > hb[0] && z0 < hb[3] && z0 + sz > hb[1]) { ha[hn * 4] = x0; ha[hn * 4 + 1] = z0; ha[hn * 4 + 2] = sz; ha[hn * 4 + 3] = P[o + 3]; hn++; continue }
+      a[m * 4] = x0; a[m * 4 + 1] = z0; a[m * 4 + 2] = sz; a[m * 4 + 3] = P[o + 3]; m++
+    }
+    this.geo.instanceCount = m
+    this.nodes.addUpdateRange(0, m * 4)
     this.nodes.needsUpdate = true
+    if (hb) {
+      this.holeGeo.instanceCount = hn
+      if (hn) { this.holeNodes.addUpdateRange(0, hn * 4); this.holeNodes.needsUpdate = true }
+    }
     this.cache?.update(this.cx, this.cz)
   }
 
   /** (the world goes: the cache's atlas with it) */
+  /** The paved places (x, z, rot, the paving's reach each — Landmarks.paved): each one's flagstones laid square to it. */
+  setPaved(list: number[]): void { this.paved = list }
+  private paved: number[] = []
+  private readonly paveSlot = new Int32Array(4)
+  private readonly paveD = new Float64Array(4)
+  private readonly shoreSlot = new Int32Array(4)
+  private readonly shoreD = new Float64Array(4)
+
   dispose(): void { this.cache?.dispose() }
 
   private select(i: number, j: number, level: number): void {
@@ -279,6 +400,30 @@ float shapeLight(float rel, vec3 N, vec3 Nb, float sun) {
 #endif
 `
 
+/** (skinMaterial: the mesh's normal and its skin values too — plain declarations, no #ifdef round them: WebGPU's
+ *  varyings are given their locations before the defines are applied, 2026-11-07) */
+const SKIN_VERT = /* glsl */ `
+in vec2 skin;
+out vec3 vWorld;
+out vec3 vSkinN;
+out vec2 vSkin;
+void main() {
+  vWorld = position;
+  vSkinN = normal;
+  vSkin = skin;
+  gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
+}
+`
+
+/** (meshMaterial: a mesh already in world positions) */
+const MESH_VERT = /* glsl */ `
+out vec3 vWorld;
+void main() {
+  vWorld = position;
+  gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
+}
+`
+
 const VERT = /* glsl */ `
 ${ATMOS_GLSL}
 ${HEIGHT_GLSL}
@@ -323,10 +468,14 @@ void main() {
  * uBoxHalf (and, for the far ground, the noise: ATMOS_GLSL), then PAINT_GLSL, then this.
  */
 export const SURF_GLSL = /* glsl */ `
+#ifdef OTH_SKIN
+// (the skin's — Terrain.skinMaterial: set by the fragment shader before surfaceAt: the least rock, how far inside)
+float gSkinRock = 0.0;
+float gSkinIn = 0.0;
+#endif
 uniform sampler2D uNIn;
 uniform sampler2D uNFar;
 uniform sampler2D uMask;
-uniform sampler2D uMud;
 uniform sampler2D uTrail;
 uniform vec4 uMaskGrid;
 uniform float uTrailHW;
@@ -370,6 +519,11 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   vec4 m;
   if (box) {
     m = texture(uMask, gridUv(uMaskGrid, xz));
+#ifdef OTH_SKIN
+    // (inside a cave: its own rock; no water, earth or forest floor from the hill's top over it)
+    m.r = max(m.r, gSkinRock);
+    m.ba *= 1.0 - gSkinIn;
+#endif
   } else {
 #ifdef OTH_DESERT
     // (the far desert: sandstone where it's steep, sand everywhere else — loose in broad drifts; nothing grows)
@@ -381,7 +535,8 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
     m = vec4(clamp(rock, 0.0, 1.0), 0.6 + (p.big.g - 0.5) * 0.6, 0.0, forest);
 #endif
   }
-  float trail = box ? texture(uTrail, gridUv(uInGrid, xz)).r * 8.0 : 8.0;
+  vec4 trailT = box ? texture(uTrail, gridUv(uInGrid, xz)) : vec4(1.0, 0.0, 0.0, 0.0); // (R the track, B A the mud, flowers)
+  float trail = trailT.r * 8.0;
   Ground g = groundPaint(xz, m, h, steep, p, foot, trail, uTrailHW, farG ? 0.0 : farDots); // (painted shrub dots only beyond the real bushes)
   vec3 col = g.col;
   // (2026-11-04 — the user: "I can see lots of triangles instead of a smooth surface": no low-poly facets — the smooth
@@ -452,7 +607,7 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   rough = mix(rough, 0.45, g.snow);
   // MUD (the marsh, the tracks' mud holes, the slow banks — mud.bin): dark wet earth in soft painted patches, glossy,
   // dragged into streaks; the thickest of it holds standing water (the terrain, with the rain's puddles)
-  vec2 mudB = box ? texture(uMud, gridUv(uMaskGrid, xz)).rg : vec2(0.0);
+  vec2 mudB = trailT.ba;
   float mud = mudB.r;
   // WILDFLOWERS seen from beyond the grass (the blades draw them near): the field speckled with its drift's colour,
   // the speckle melting into a tint where it would shimmer — its amount here, the drift's colour mixed by the terrain
@@ -482,7 +637,7 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   s.trail = g.trail;
   // the puddles' inputs: the bog (thick mud: water at any weather) and the ruts' pools' noise (filled by the rain)
   s.bog = smoothstep(0.8, 0.92, mud + (texture(uNoise, xz * 0.05).g - 0.5) * 0.3);
-  s.pudN = pud && g.trail > 0.2 ? texture(uNoise, xz * 0.085).g + texture(uNoise, xz * 0.31).r * 0.16 : 0.0;
+  s.pudN = pud && (g.trail > 0.2 || g.rock > 0.3) ? texture(uNoise, xz * 0.085).g + texture(uNoise, xz * 0.31).r * 0.16 : 0.0;
   s.dots = g.dots;
   s.shape = 0.0;
   return s;
@@ -549,6 +704,71 @@ Surf gcSurface(vec2 xz, float Lf) {
 #endif
 `
 
+/**
+ * THE PAVING (2026-11-08, the user: "places like houses, broken houses — no grass there: change the terrain's shader
+ * there; on mobile just a texture, on PC something like [weathered flagstones]; the colour from the terrain's"; "don't
+ * change it so sudden — I need the transition"). Where a place cleared its ground (Landmarks PAVED: its floors and
+ * yards, MapData.trailTex G — 1 up to 0.6 m past the cleared box, 0 at 4 m) the ground is laid with the flagstones of
+ * `paveTex.ts`, drawn live over the surface (cached or not), never baked:
+ *  - THE EDGE, gradual: the stamped cover pushed in and out by the paint noise (blobs ~6 m, a finer fringe — no line,
+ *    no box), and as it falls the stones DROP OUT one by one (a stone is laid while the cover is over its id), the
+ *    ones left SINK (the dirt creeps over their rims, each shows smaller) and the joints' dark dirt fades to the
+ *    ground's own colour — paving, then broken paving, then a few stones in the dirt, then the field (the grass comes
+ *    back over the last of it, shorter: Landmarks' footprint);
+ *  - THE COLOUR from the ground under it: a stone grey with a third of the ground's hue (gold field → warm sandstone
+ *    grey, green → cool green-grey), each stone its own tone; the joints the ground's colour darkened (gold → amber
+ *    grit, green → moss);
+ *  - PHONES / weak GPUs (no OTH_PAVE_HI): the texture alone — one fetch (+ one for the edge's noise), its height, its
+ *    baked normal, its id; PCs (OTH_PAVE_HI) add the joints warped off the ruler, the ground's grime and dust in patches
+ *    on the stones, the moss creeping over their rims, fine pitting, the stone's lower roughness.
+ * k = the stone's share (0 … 1), returned: the grass's shade, its sheen, the rock relief and the shrub dots kept off.
+ */
+const PAVE_GLSL = /* glsl */ `
+#if defined(OTH_PAVE) && !defined(OTH_SKIN)
+${PAVE_FRAME_GLSL}
+float paveAt(vec2 xz, float mk, float foot, vec4 F, inout vec3 col, inout vec3 N, inout float rough) {
+  vec4 nb = texture(uNoise, xz * (1.0 / 6.1) + vec2(0.13, 0.71));
+  float cover = clamp(mk * 1.3 - 0.14 + (nb.r - 0.5) * 0.6 + (nb.b - 0.5) * 0.25, 0.0, 1.0);
+  if (cover < 0.005) return 0.0;
+  // laid square to its place (the nearer of the two): its own frame, from its centre
+  vec2 uv = paveUv(xz, F);
+#ifdef OTH_PAVE_HI
+  vec4 nw = texture(uNoise, xz * (1.0 / 2.3) + vec2(0.57, 0.29));
+  uv += (nw.rg - 0.5) * (0.1 / PAVE_TILE); // (the joints off the ruler: ±5 cm)
+#endif
+  vec4 t = texture(uPave, uv);
+  float h = t.r, id = t.a;
+  // (far off a texel averages several stones: no single stone to drop or sink — the cover alone)
+  float farK = smoothstep(0.05, 0.2, foot);
+  float laid = mix(smoothstep(-0.04, 0.04, cover - id), cover, farK);
+  float sink = (1.0 - cover) * 0.5 * (1.0 - farK);
+  float k = laid * smoothstep(sink + 0.03, sink + 0.14, h);
+  // the colour from the ground's: its hue (over a quarter of it) in a stone grey, each stone its own tone
+  float lum = max(dot(col, vec3(0.3, 0.55, 0.15)), 1e-4);
+  vec3 tint = clamp(col / lum, vec3(0.0), vec3(3.0));
+  float tone = fract(id * 37.7);
+  vec3 stone = vec3(0.128, 0.128, 0.13) * mix(vec3(1.0), tint, 0.28) * (0.76 + 0.42 * tone);
+  stone *= mix(0.78, 1.0, smoothstep(0.25, 0.7, h)); // (the worn rims a little darker)
+  // the joints: the ground's colour, dulled and darkened into grit (its own colour again toward the paving's edge)
+  vec3 joint = mix(col, mix(col, vec3(lum), 0.35) * 0.4 + vec3(0.008, 0.006, 0.004), cover);
+#ifdef OTH_PAVE_HI
+  float nearK = 1.0 - smoothstep(0.02, 0.09, foot);
+  // the ground's grime and dust in patches, the moss / straw creeping over the rims, fine pitting
+  stone = mix(stone, col * 0.85, smoothstep(0.55, 0.85, nb.g) * 0.3);
+  stone = mix(stone, joint, (1.0 - smoothstep(0.25, 0.5, h)) * smoothstep(0.4, 0.7, nw.b) * 0.6);
+  stone *= mix(1.0, 0.9 + 0.2 * texture(uNoise, xz * (1.0 / 0.37) + vec2(0.31, 0.83)).r, nearK);
+  rough = mix(rough, 0.68, k);
+#endif
+  col = mix(joint, stone, k);
+  // the stones' bevels and tilts in the light (the texture's normal: none far off, none where the dirt covers a rim)
+  vec2 nt = (t.gb - 0.5) * 2.0;
+  nt = vec2(nt.x * F.z + nt.y * F.w, -nt.x * F.w + nt.y * F.z); // (back from its place's frame)
+  N = normalize(N + vec3(nt.x, 0.0, nt.y) * laid * (1.0 - farK) * smoothstep(sink, sink + 0.1, h));
+  return k;
+}
+#endif
+`
+
 const FRAG = /* glsl */ `
 ${FRAG_OUT}
 ${ATMOS_GLSL}
@@ -562,18 +782,65 @@ ${SURF_GLSL}
 ${GC_READ_GLSL}
 ${SHADOW_GLSL}
 ${SHAPE_GLSL}
+${PAVE_GLSL}
 in vec3 vWorld;
 
 uniform float uGrassR;
 uniform float uBushR;
+uniform vec4 uShore0; // (the wet bank: the four still waters nearest the camera — x, z, reach, level)
+uniform vec4 uShore1;
+uniform vec4 uShore2;
+uniform vec4 uShore3;
+#ifdef OTH_HOLES
+// THE CAVE'S OPENINGS (CaveWorld.intoTerrain — only in the draw of the patches round it): its hill is the ground's own
+// heights, so across its mouth and skylights the ground would span from the hill's top to the land below — cut there:
+// in such a 2 m cell nothing over the land (the cell's clip height, + a margin that grows with the distance for the
+// coarser levels) is drawn; the cave's own surface fills the opening
+uniform highp sampler2D uHole;  // the land's heights round the cave (its 2 m grid points)
+uniform vec4 uHoleGrid;         // x0, z0, points across, points down
+// (uHole's rows h…2h−1: holeK — 0 over a skylight's hole, 1 on the hill; read bilinear: a smooth edge)
+uniform vec4 uHoleC0;           // the circles: x, z, r, on
+uniform vec4 uHoleC1;
+uniform vec4 uHoleC2;
+bool inHoleC(vec2 p, vec4 c) { vec2 d = p - c.xy; return c.w > 0.5 && dot(d, d) < c.z * c.z; }
+#endif
 
 void main() {
+#ifdef OTH_HOLES
+  {
+    {
+      vec2 kc = (vWorld.xz - uHoleGrid.xy) / uInGrid.y;
+      if (kc.x >= 0.0 && kc.y >= 0.0 && kc.x < uHoleGrid.z - 1.001 && kc.y < uHoleGrid.w - 1.001) {
+        ivec2 ki = ivec2(floor(kc)) + ivec2(0, int(uHoleGrid.w + 0.5));
+        vec2 kw = kc - vec2(ki);
+        float k = mix(mix(texelFetch(uHole, ki, 0).r, texelFetch(uHole, ki + ivec2(1, 0), 0).r, kw.x), mix(texelFetch(uHole, ki + ivec2(0, 1), 0).r, texelFetch(uHole, ki + ivec2(1, 1), 0).r, kw.x), kw.y);
+        if (k < 0.3) discard;
+      }
+    }
+    if (inHoleC(vWorld.xz, uHoleC0) || inHoleC(vWorld.xz, uHoleC1) || inHoleC(vWorld.xz, uHoleC2)) {
+      vec2 hc = clamp((vWorld.xz - uHoleGrid.xy) / uInGrid.y, vec2(0.0), uHoleGrid.zw - 1.001);
+      ivec2 hi = ivec2(floor(hc));
+      vec2 hw = hc - vec2(hi);
+      float land = mix(mix(texelFetch(uHole, hi, 0).r, texelFetch(uHole, hi + ivec2(1, 0), 0).r, hw.x), mix(texelFetch(uHole, hi + ivec2(0, 1), 0).r, texelFetch(uHole, hi + ivec2(1, 1), 0).r, hw.x), hw.y);
+      if (vWorld.y > land + 0.3 + 0.003 * length(vWorld - uCamPos)) discard;
+    }
+  }
+#endif
 #ifdef TC_FLAT
   gl_FragColor = vec4(applyAtmos(vec3(0.12, 0.13, 0.06), vWorld), 1.0);
 #else
   vec2 xz = vWorld.xz;
   bool box = inTheBox(xz);
+#ifdef OTH_SKIN
+  // (the skin: the mesh's own normal; inside, what's steep is rock as the ground's steep would be — gradual, the
+  //  paint's noise breaking it)
+  vec3 Ns = normalize(vSkinN);
+  gSkinIn = vSkin.x;
+  gSkinRock = max(vSkin.y, smoothstep(0.2, 0.5, 1.0 - Ns.y) * vSkin.x);
+  float ckS = caveK(vWorld) * vSkin.x;
+#else
   vec3 Ns = groundNormal(xz, box);
+#endif
   vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld);
   float dcam = length(vWorld.xz - uCamPos.xz);
   bool farG = dcam > 2000.0;
@@ -599,9 +866,43 @@ void main() {
     s = surfaceAt(xz, vWorld.y, Ns, abs(Nf.y), foot, farG, box, farDots, beyond, uWet > 0.05);
   }
   vec3 col = s.col;
+  vec3 N = Ns;
+#if defined(OTH_PAVE) && !defined(OTH_SKIN)
+  // THE PAVING (PAVE_GLSL): the places' flagstones, live over the ground — where the paving's mask reaches
+  // (only within a near paved place's reach — an ALU test first, no texture read elsewhere)
+  vec4 PF;
+  if (box && paveFrame(xz, PF)) {
+    float pmk = texture(uTrail, gridUv(uInGrid, xz)).g;
+    if (pmk > 0.004) {
+      float pk = paveAt(xz, pmk, foot, PF, col, N, s.rough);
+      s.dots *= 1.0 - pk; s.flower *= 1.0 - pk; s.under *= 1.0 - pk; s.grassy *= 1.0 - pk; s.relief *= 1.0 - pk;
+    }
+  }
+#endif
+#ifndef OTH_SKIN
+  // THE WET BANK (2026-11-08, the user: "the sides of the water — properly shaded, real good"): round a lake or a pond
+  // (the four nearest — uShore: x, z, reach, level) the ground from its waterline to ~30 cm above it darkened and a
+  // little glossy, its top edge ragged — the bed under the water as wet (the water's own sheet can't draw it: the bank
+  // stands over its plane)
+  if (box) {
+    vec4 S0 = uShore0, S1 = uShore1, S2 = uShore2, S3 = uShore3;
+    float lv = -1e6;
+    if (dot(xz - S0.xy, xz - S0.xy) < S0.z * S0.z) lv = S0.w;
+    else if (dot(xz - S1.xy, xz - S1.xy) < S1.z * S1.z) lv = S1.w;
+    else if (dot(xz - S2.xy, xz - S2.xy) < S2.z * S2.z) lv = S2.w;
+    else if (dot(xz - S3.xy, xz - S3.xy) < S3.z * S3.z) lv = S3.w;
+    float up = vWorld.y - lv;
+    if (up < 0.5) {
+      float rag = texture(uNoise, xz * (1.0 / 3.3)).g;
+      float wet = 1.0 - smoothstep(0.1 + 0.12 * rag, 0.3 + 0.14 * rag, up);
+      col *= 1.0 - 0.36 * wet * (1.0 - s.rock * 0.4);
+      s.rough = mix(s.rough, 0.5, wet * 0.7);
+      s.grassy *= 1.0 - wet;
+    }
+  }
+#endif
   col = mix(col, SHRUB, s.dots);
   if (s.flower > 0.002) col = mix(col, flowerColor(xz, 0.5), s.flower);
-  vec3 N = Ns;
   float cav = 1.0;
 #ifdef OTH_DESERT
   if (cached) {
@@ -616,6 +917,10 @@ void main() {
 #if defined(OTH_ROCK_RELIEF) && !defined(TC_RELIEF)
   N = rockRelief(vWorld, N, s.relief, dpx, dpy, cav);
 #endif
+#ifdef TC_RDBG
+  // (?tcut=rdbg: R the relief's strength, G how much survives the pixel's size, B cached)
+  gl_FragColor = vec4(s.relief, reliefShow(max(length(dpx), length(dpy))), cached ? 1.0 : 0.0, 1.0); return;
+#endif
 
   float wrap = mix(0.62, 0.45, s.rock); // (rock's light softer at its edge too)
   float ao = s.aoB * cav;
@@ -626,6 +931,8 @@ void main() {
   vec2 outward = Ns.xz / max(length(Ns.xz), 1e-3);
 #ifdef TC_SUN
   float sun = 1.0;
+#elif defined(OTH_SKIN)
+  float sun = sunVisibility(xz) * (1.0 - ckS);
 #else
   float sun = sunVisibility(xz + outward * 6.0 * wallK);
 #endif
@@ -641,7 +948,11 @@ void main() {
 #ifdef OTH_SHAPE
   // the small shapes' light: the hollows, and the bumps' slopes against the hill's (its normal ~30 m across)
   vec3 Nb = box ? unpackN(texture(uNIn, gridUv(uInGrid, xz), 4.0).rg) : Ns;
+#ifdef OTH_SKIN
+  lit *= mix(shapeLight(s.shape, Ns, Nb, sun), 1.0, vSkin.x); // (outside as the ground; none in the cave)
+#else
   lit *= shapeLight(s.shape, Ns, Nb, sun);
+#endif
 #endif
 #ifdef TC_SHADE
   vec3 c = lit * (0.4 + 0.6 * max(dot(N, uSunDir), 0.0));
@@ -650,14 +961,30 @@ void main() {
   vec3 c = shade(lit, N, V, s.rough, 0.04, ao, sun, wrap);
 #endif
   c += rockFill(lit, N) * s.rock * ao;
+#ifdef OTH_SKIN
+  // IN THE CAVE (as Bridges' cave surfaces were lit): dim, never black, lit FROM its openings, the skylight's daylight
+  if (ckS > 0.001) {
+    c -= rockFill(lit, N) * s.rock * ao * 0.6 * ckS;
+    c *= 1.0 - 0.75 * ckS;
+    float dl = caveLit(vWorld, N);
+    c += lit * uAmbSky * ckS * (0.42 + 0.7 * dl);
+    c += lit * (uSunColor * 0.3 + uAmbSky * 0.3) * caveBounce(vWorld) * ckS * smoothstep(-0.05, 0.25, uSunDir.y) * (0.3 + 0.95 * dl);
+  }
+#endif
   c += headlight(lit, N, vWorld);
   // PUDDLES (the rain): pools in the tracks' ruts and dips, a still dark mirror of the sky, spreading as it gets wetter
 #ifdef TC_PUD
   if (false) {
 #else
-  if ((uWet > 0.05 && s.trail > 0.2) || s.bog > 0.0) {
+  // (and on bare FLAT rock — 2026-11-07, the user: "just some water on the ground": where the rain lies and shows; the
+  //  grass hides its own)
+  float pudOn = max(s.trail, s.rock * smoothstep(0.955, 0.985, Ns.y));
+  if ((uWet > 0.05 && pudOn > 0.2) || s.bog > 0.0) {
 #endif
-    float pud = smoothstep(0.71, 0.76, s.pudN + (uWet - 1.0) * 0.35) * s.trail * step(0.05, uWet);
+    float pud = smoothstep(0.71, 0.76, s.pudN + (uWet - 1.0) * 0.35) * pudOn * step(0.05, uWet);
+#ifdef OTH_SKIN
+    pud *= 1.0 - smoothstep(0.1, 0.4, ckS); // (no rain in a cave)
+#endif
     pud = max(pud, s.bog * 0.85);
     float fr = 0.12 + 0.6 * pow(1.0 - max(V.y, 0.0), 4.0);
     // (dark muddy water: the bed shows through, the sky in it at a glance; the bed LIT — at night the water dark too)
@@ -677,3 +1004,11 @@ void main() {
   #include <colorspace_fragment>
 }
 `
+
+/** Keep the 4 nearest: `slot` (ids, −1 empty) and `dist` sorted near → far; `id` at `d` goes in its place (if nearer). */
+function nearest4(slot: Int32Array, dist: Float64Array, id: number, d: number): void {
+  if (d >= dist[3]) return
+  let k = 3
+  while (k > 0 && dist[k - 1] > d) { dist[k] = dist[k - 1]; slot[k] = slot[k - 1]; k-- }
+  dist[k] = d; slot[k] = id
+}

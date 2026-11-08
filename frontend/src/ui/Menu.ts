@@ -12,8 +12,9 @@ import './menu.css'
  * closes; nothing of it runs while playing. Keyboard (↑ ↓ choose, ← → change, Enter, Esc back, Q / E tabs), mouse and
  * touch.
  *
- * Settings are saved as they change (settings.ts); the game reads them when it starts — in the pause menu a change
- * applies with APPLY & RESTART (the game saves where you are and comes back there).
+ * Settings are saved as they change (settings.ts); the game reads them when it starts — in the pause menu a change is
+ * taken AT ONCE (onSettings → main.ts applySettings, 2026-11-08: the user changed them in play and nothing happened);
+ * the few that need the world rebuilt (Quality, Anti-aliasing) restart it right here when you resume.
  */
 export interface MenuHandlers {
   /** Title: start the game (resume = from the saved progress). */
@@ -26,6 +27,8 @@ export interface MenuHandlers {
   onQuit?: () => void
   /** Pause: the GARAGE's pick taken at once (the car, or a two-wheeler) — the game swaps you onto it. */
   onVehicle?: (ride: RideId, car: CarId) => void
+  /** Pause: a setting changed — the game takes what it can at once (main.ts applySettings); key: which one. */
+  onSettings?: (s: Settings, key: keyof Settings) => void
   /** Camp: its name and what you can do there. */
   heading?: string
   items?: MenuItem[]
@@ -41,7 +44,7 @@ interface Choice<K extends keyof Settings = keyof Settings> { key: K; label: str
 const SWATCHES: { name: string; hex: string | null }[] = [{ name: 'Valley colour', hex: null }, ...PAINTS]
 
 const DRIVING: Choice[] = [
-  { key: 'gearbox', label: 'Gearbox', help: 'Automatic shifts for you. Manual: X up, Z down (keyboard).', options: [{ v: 'auto', label: 'Automatic' }, { v: 'manual', label: 'Manual' }] },
+  { key: 'gearbox', label: 'Gearbox', help: 'Automatic shifts for you. Manual: the ▲ ▼ gear box by the speed (tap or click), or X up / Z down on a keyboard.', options: [{ v: 'auto', label: 'Automatic' }, { v: 'manual', label: 'Manual' }] },
   { key: 'aids', label: 'Driving aids', help: 'Full: cornering and traction help, smooth like GTA. Standard: ABS and traction only. Off: the raw machine.', options: [{ v: 'full', label: 'Full' }, { v: 'standard', label: 'Standard' }, { v: 'off', label: 'Off' }] },
   { key: 'offroadAssist', label: 'Off-road assist', help: 'On: more torque on steep ground, climbs up to 70°. Off: only what the real car can do.', options: [{ v: true, label: 'On' }, { v: false, label: 'Off' }] },
 ] as Choice[]
@@ -50,6 +53,7 @@ const GRAPHICS: Choice[] = [
   { key: 'quality', label: 'Quality', help: 'How much the world draws: grass, trees, draw distance. Auto picks the best for this device.', options: [{ v: 'auto', label: 'Auto' }, { v: 'low', label: 'Low' }, { v: 'medium', label: 'Medium' }, { v: 'high', label: 'High' }, { v: 'ultra', label: 'Ultra' }] },
   { key: 'antialias', label: 'Anti-aliasing', help: 'Smooth edges (MSAA). Off is faster on weak GPUs, with sharper stair-steps.', options: [{ v: 'auto', label: 'Auto' }, { v: 'off', label: 'Off' }] },
   { key: 'resolution', label: 'Resolution', help: 'Auto: full resolution (a phone lowers it only when it slows down). A fixed scale renders fewer pixels: faster, softer.', options: [{ v: 'auto', label: 'Auto' }, { v: '100', label: '100%' }, { v: '75', label: '75%' }, { v: '50', label: '50%' }] },
+  { key: 'upscale', label: 'Upscaling (FSR)', help: 'AMD FSR 1: the world drawn at fewer pixels, then upscaled and sharpened. Helps when the GPU is the limit (phones, Chromebooks, 4K screens). Quality 77%, Balanced 67%, Performance 50%.', options: [{ v: 'off', label: 'Off' }, { v: 'quality', label: 'Quality' }, { v: 'balanced', label: 'Balanced' }, { v: 'performance', label: 'Perf' }] },
   { key: 'fpsOverlay', label: 'FPS overlay', help: 'Frame rate, frame time and draw counts in the corner (also F3 in game).', options: [{ v: false, label: 'Off' }, { v: true, label: 'On' }] },
 ] as Choice[]
 
@@ -195,7 +199,7 @@ export class Menu {
     this.sel = Math.min(this.sel, rows.length - 1)
     const list = el('div', 'oh-list', rows.map((c, i) => this.row(c, i)))
     const c = rows[this.sel]
-    const side = el('div', 'oh-side', [el('h4', '', [c.label]), el('p', '', [c.help]), ...(this.mode === 'pause' ? [el('p', '', ['Applies with APPLY & RESTART (you come back right here).'])] : [])])
+    const side = el('div', 'oh-side', [el('h4', '', [c.label]), el('p', '', [c.help]), ...(this.mode === 'pause' ? [el('p', '', [c.key === 'quality' || c.key === 'antialias' ? 'Applies when you resume: the game restarts right here.' : 'Applies at once.'])] : [])])
     return [list, side]
   }
 
@@ -216,6 +220,7 @@ export class Menu {
     const next = c.options[(cur + d + c.options.length) % c.options.length]
     ;(this.s as unknown as Record<string, unknown>)[c.key] = next.v
     saveSettings(this.s)
+    this.h.onSettings?.(this.s, c.key)
     this.render()
   }
 
@@ -274,6 +279,7 @@ export class Menu {
     }
     this.s.paint = p.hex
     saveSettings(this.s)
+    this.h.onSettings?.(this.s, 'paint')
     this.render()
   }
 

@@ -372,7 +372,8 @@ vec3 caveRockPaint(vec3 p, vec3 N) {
   vec3 w = pow(abs(N), vec3(4.0)); w /= w.x + w.y + w.z;
   vec4 f = texture(uNoise, p.zy * (1.0 / 13.0) + vec2(0.71, 0.13)) * w.x + texture(uNoise, p.xz * (1.0 / 13.0) + vec2(0.71, 0.13)) * w.y + texture(uNoise, p.xy * (1.0 / 13.0) + vec2(0.71, 0.13)) * w.z;
   vec4 gr = texture(uNoise, p.zy * (1.0 / 3.7) + vec2(0.23, 0.91)) * w.x + texture(uNoise, p.xz * (1.0 / 3.7) + vec2(0.23, 0.91)) * w.y + texture(uNoise, p.xy * (1.0 / 3.7) + vec2(0.23, 0.91)) * w.z;
-  vec3 rk = mix(SLAB_DEEP, SLAB, 0.74 + (f.g - 0.5) * 0.35 + (gr.r - 0.5) * 0.14);
+  // (the terrain's slab: a wall's grey a step deeper than a ledge's — paint.ts: - steep · 0.35)
+  vec3 rk = mix(SLAB_DEEP, SLAB, 0.74 + (f.g - 0.5) * 0.35 + (gr.r - 0.5) * 0.14 - (1.0 - abs(N.y)) * 0.3);
   return rk * (1.0 - 0.1 * smoothstep(0.66, 0.8, gr.a)) * (0.9 + 0.16 * f.a);
 }
 `
@@ -451,8 +452,11 @@ void main() {
     }
     // (the edge between grass and rock RAGGED at a metre or two, never a clean outline — the "sticker")
     float edge = (p.fine.g - 0.5) * 0.3 + (p.grain.r - 0.5) * 0.22 + (p.micro.b - 0.5) * 0.08;
-    float dry = vCol.x, rz, moss = 0.0;
-    if (vCol.y > -0.5 && uMaskGrid.x > 0.5 && vCol.z > -0.05) {
+    float dry = vCol.x, rz = vCol.z + edge + (p.mid.b - 0.5) * 0.12, moss = 0.0;
+    // (vCol.y: 0 outside … −1 inside, eased through the mouth's first metres — the two paints MIXED there, never a line)
+    float inK = clamp(-vCol.y, 0.0, 1.0);
+    bool outside = uMaskGrid.x > 0.5 && vCol.z > -0.05 && inK < 0.999;
+    if (outside) {
       // THE HILL PAINTED AS THE TERRAIN (2026-11-07, the user: "on top, like the normal terrain — rock won't have grass,
       // green has green grass, yellow has yellow grass; a gradual, smooth transition, not a sticker"): from the land's
       // MASK where it stands — G its dryness, R its rock (CaveWorld.grassOn writes the hill's into it, smooth) — the
@@ -460,20 +464,23 @@ void main() {
       vec4 m = texture(uMask, ((vWorld.xz - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x);
       // (green into gold in interlocking clumps a few metres across — the terrain's meadows' edge, never a line)
       dry = m.g + (p.fine.r - 0.5) * 0.3 + (p.grain.g - 0.5) * 0.18;
-      rz = max(m.r + (p.mid.b - 0.5) * 0.25, vCol.z) + edge;
-    } else if (vCol.y < -0.5) {
+      // (on the TERRAIN's threshold — paint.ts g.rock, smoothstep(0.42, 0.58) of R — so the cave's turf by an opening
+      //  and the ground beside it agree: no soil band or specks where the ground shows grass, 2026-11-07)
+      rz = max(m.r * 1.6 - 0.45 + (p.mid.b - 0.5) * 0.3, vCol.z) + edge * 0.5;
+    }
+    if (inK > 0.001) {
       // INSIDE (the user: "most of it green; a proper, smooth transition to the rock"): per pixel, from how the surface
       // faces — what faces up grows grass (the floor, the ledges' tops), the walls and the roof rock, MOSS on the rock
       // in soft patches where it leans out; the part's own cap (vCol.z: the garden 0, the floor 0.3, the walls 1.3).
       // The grass in broad patches of green and gold.
+      // (2026-11-07, the user: "don't need the black random lines — the real rock": no moss on the walls, and a ledge's
+      //  top the floor's grass, not a dark green strip along the rock)
       float up = smoothstep(0.3, 0.85, N.y + (p.mid.b - 0.5) * 0.25);
-      rz = min(1.05 - up, vCol.z) + edge;
-      moss = smoothstep(-0.35, 0.2, N.y) * smoothstep(0.42, 0.62, p.mid.r + (p.fine.b - 0.5) * 0.3);
-      dry = clamp(0.5 + (p.mid.g - 0.5) * 1.8 + (p.big.r - 0.5) * 0.6, 0.05, 0.95);
-      // (up on the walls — a ledge's top, a boulder's — it's moss-green, never a gold strip across the rock)
-      dry = mix(dry, 0.08, smoothstep(0.6, 1.1, vCol.z));
-    } else {
-      rz = vCol.z + edge + (p.mid.b - 0.5) * 0.12;
+      // (vCol.z: the part's cap — ≥ 2 rock whichever way it faces; on the floor 0.3 far from a wall, rising toward one:
+      //  rock by it, the soil band and the gravel over the last metres — gradual, the user: "so sudden")
+      float rzI = max(min(1.05 - up, max(vCol.z, 0.3)), max(vCol.z - 1.0, vCol.z * 1.2 - 0.45)) + edge;
+      float dryI = clamp(0.5 + (p.mid.g - 0.5) * 1.8 + (p.big.r - 0.5) * 0.6, 0.05, 0.95);
+      if (outside) { dry = mix(dry, dryI, inK); rz = mix(rz, rzI, inK); } else { dry = dryI; rz = rzI; }
     }
     fillK = smoothstep(0.34, 0.8, rz);
     // (each paint only where it shows — the rock's triplanar is six fetches, and most of the hill is grass, most of the
@@ -496,7 +503,9 @@ void main() {
 #ifdef OTH_ROCK_RELIEF
     if (fillK > 0.0) {
       float cav;
-      N = rockRelief(vWorld, N, fillK, dpx, dpy, cav);
+      // (deeper inside, where the light is low and from one side: the creases must still read — the terrain's rock
+      //  has the sun for it)
+      N = rockRelief(vWorld, N, fillK * (1.0 + 0.8 * inK), dpx, dpy, cav);
       ao = cav; // (fades with fillK)
     }
 #endif
@@ -504,17 +513,27 @@ void main() {
     // (GRASS ON A STEEP BANK is lit through its blades, which stand up — not as the bare slope under them: the shading
     //  normal bent toward the sky, so a cave's grassy face reads as the field round it, never a dark olive sheet;
     //  eased out over the rock's edge — a switch there drew a line)
-    N = normalize(N + vec3(0.0, 1.6 * (1.0 - smoothstep(0.15, 0.75, fillK)), 0.0));
+    // (the hill's turf by an opening: bent as the ground beside it is lit — its eased normals — not a blade field's)
+    float bend = inK < 0.5 && vCol.z > -0.05 && uMaskGrid.x > 0.5 ? 0.7 : 1.6;
+    N = normalize(N + vec3(0.0, bend * (1.0 - smoothstep(0.15, 0.75, fillK)), 0.0));
     rough = mix(0.95, 0.62, fillK); wrap = mix(0.35, 0.45, fillK);
   }
   // (a cave's dark never on TURF — it's always the outside: the hill over a cave, its mouth's face — 2026-11-07: the
   //  dark's cylinder reached up through the hill and darkened the grass over it brown)
-  float sun = sunVisibility(vWorld.xz), ck = surf > 6.5 && surf < 7.5 && vCol.y > -0.5 ? 0.0 : caveK(vWorld);
+  float sun = sunVisibility(vWorld.xz), ck = caveK(vWorld);
+  if (surf > 6.5 && surf < 7.5) ck *= clamp(-vCol.y, 0.0, 1.0);
   vec3 c = shade(albedo, N, V, rough, 0.03, ao, sun * (1.0 - ck), wrap);
   c += rockFill(albedo, N) * fillK * (1.0 - 0.6 * ck); // (the rock's sky fill: as the terrain's rock reads)
   c *= 1.0 - 0.75 * ck; // (in a cave: Sites.ts)
-  c += albedo * uAmbSky * 0.6 * ck; // (a cave's walls: dim, never pitch black)
-  c += albedo * (uSunColor * 0.3 + uAmbSky * 0.3) * caveBounce(vWorld) * ck * smoothstep(-0.05, 0.25, uSunDir.y); // (the skylight's daylight about it)
+  if (ck > 0.001) {
+    // (a cave's walls: dim, never pitch black — and lit FROM somewhere: its openings — so the rock's relief and shapes
+    //  read in there as under the sun; Atmosphere caveLit)
+    float dl = caveLit(vWorld, N);
+    // (2026-11-07, round 2 — the user: "remove that black thing from the rock": the ledges' undersides went black at a
+    //  12 % fill; the terrain's rock is never near black in its shade — rockFill — so neither is the cave's)
+    c += albedo * uAmbSky * ck * (0.42 + 0.7 * dl);
+    c += albedo * (uSunColor * 0.3 + uAmbSky * 0.3) * caveBounce(vWorld) * ck * smoothstep(-0.05, 0.25, uSunDir.y) * (0.3 + 0.95 * dl); // (the skylight's daylight about it)
+  }
   // LAMPS that burn day and night (a cave's crystals and lanterns): their own colour, bright, a slow breath
   if (surf > 4.5 && surf < 5.5) c = vCol * (2.2 + 0.4 * sin(uTime * 1.3 + dot(vWorld, vec3(0.7, 0.3, 0.5))));
   // the GHOST HOUSE's window (dusk to dawn): a cold pale light that gutters — out, back, a stutter — never steady
