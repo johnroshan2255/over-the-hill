@@ -25,7 +25,17 @@ const side = (dist, hh, ang) => p.evaluate(([dist, hh, ang]) => {
   const cx = hp.x + (fx * Math.cos(ang) - fz * Math.sin(ang)) * dist, cz = hp.z + (fz * Math.cos(ang) + fx * Math.sin(ang)) * dist
   o.view(cx, cz, hp.y + hh - o.world.map.height(cx, cz), Math.atan2(-(hp.x - cx), -(hp.z - cz)), -0.08)
 }, [dist, hh, ang])
+// close on a hand (a bone of his: the camera dist m off it, round from his facing by ang, dy over it)
+const hand = (bone, dist, ang, dy) => p.evaluate(([bone, dist, ang, dy]) => {
+  const o = window.__oth, m = o.camera.matrixWorld.clone()
+  if (!o.hero.boneWorld(bone, m)) return
+  const x = m.elements[12], y = m.elements[13], z = m.elements[14], hd = o.riding ? o.moto.heading : o.onFoot ? o.hero.heading : o.car.sim.heading
+  const fx = -Math.sin(hd), fz = -Math.cos(hd)
+  const cx = x + (fx * Math.cos(ang) - fz * Math.sin(ang)) * dist, cz = z + (fz * Math.cos(ang) + fx * Math.sin(ang)) * dist, cy = y + dy
+  o.view(cx, cz, cy - o.world.map.height(cx, cz), Math.atan2(-(x - cx), -(z - cz)), Math.atan2(y - cy, Math.hypot(x - cx, z - cz)))
+}, [bone, dist, ang, dy])
 await side(3.6, 1.7, -1.25); await shot('noon_driver')
+await hand('LeftHand', 0.55, -0.9, 0.25); await shot('noon_driver_hand')
 await p.evaluate(() => window.__oth.foot())
 await p.waitForFunction(() => window.__oth.onFoot && window.__oth.hero.control, { timeout: 30000, polling: 200 }).catch(() => {})
 await sleep(1500)
@@ -33,6 +43,7 @@ await p.evaluate(() => window.__oth.ride())
 await p.waitForFunction(() => window.__oth.riding, { timeout: 30000, polling: 200 }).catch(() => {})
 await sleep(2500)
 await side(3.4, 1.2, -1.4); await shot('noon_bike')
+await hand('RightHand', 0.5, 1.2, 0.2); await shot('noon_bike_hand')
 // (off the bike puts it back on the car and him at the wheel: out again)
 await p.evaluate(() => window.__oth.ride())
 await p.waitForFunction(() => !window.__oth.riding, { timeout: 30000, polling: 200 }).catch(() => {})
@@ -57,6 +68,7 @@ for (const hour of [12, 18.4]) {
     }, [ang, dist, hh, pitch])
     await shot(`${tag}_${nm}`)
   }
+  await hand('RightHand', 0.45, 0.9, 0.05); await shot(`${tag}_hand`)
   // walking, then running, on the chase camera
   await p.evaluate(() => window.__oth.drive(true))
   await p.keyboard.down('KeyW'); await p.keyboard.down('ControlLeft'); await sleep(2200); await shot(`${tag}_walk`)

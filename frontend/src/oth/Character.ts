@@ -14,7 +14,9 @@ import skinNormalUrl from '../assets/models/human/character_n.webp?url'
  * of the car by opening the door, on and off the bikes"), animated by Mixamo's clips. THE MODEL (2026-11-09, the user:
  * "a guy who has a good jaw line and perfect body … wearing pants and a shirt … his body must show"): Quaternius's CC0
  * Superhero male, dressed on his own body by scripts/oth/hero.py → assets/models/human/character.glb + character.webp
- * (colour) + character_n.webp (normals: his muscles, the cloth's weave). (Before him: the Meshy-made Trail Warden —
+ * (colour) + character_n.webp (normals: his muscles, the cloth's weave); then FITTED to a man's anatomy by
+ * scripts/oth/hero_fit.py (2026-11-09: the arms, the head, the waist, the boots, the stance — and 30 finger bones, curled
+ * here: HAND_POSES; .claude/skills/human-anatomy). (Before him: the Meshy-made Trail Warden —
  * scripts/oth/character.py — then Rocketbox's avatars, scripts/oth/rocketbox.py.)
  *
  *   DRAWN     ONE draw: the skinned mesh, 4 bones a vertex, the bones' poses (3 × 4, model space × the inverse bind)
@@ -39,7 +41,27 @@ interface Channel { bone: number; path: 'translation' | 'rotation'; times: Float
 interface Clip { name: string; dur: number; loop: boolean; speed: number; channels: Channel[] }
 interface Bone { name: string; parent: number; t: Float32Array; r: Float32Array; ibm: Float32Array }
 
-const NB_MAX = 32
+/** (2026-11-09: 52 — the 22 Mixamo bones and the 30 fingers' (scripts/oth/hero_fit.py); 3 vec4 a bone, 168 of the
+ *  vertex shader's uniforms: WebGL 2 guarantees 256) */
+const NB_MAX = 56
+
+/** THE HANDS (2026-11-09, the user: "to grab things we may need finger bones"): each finger's three joints and the
+ *  thumb's three CURLED by the game — the clips have no fingers — each about the axis across it (its direction × the
+ *  palm's normal, measured in the bind pose: the T-pose, the palms down, the thumb hanging under the palm), eased
+ *  toward the pose of what he's doing: OPEN (falling, getting up), RELAXED (standing, moving: the natural cascade, the
+ *  little finger the most curled), GRIP (the wheel, the bars, the axe, the pick, a load, a ledge — the thumb wrapped
+ *  over the fingers: checked on a 3 cm bar in hero_fit.py's preview), FIST. Degrees, the knuckle (MCP) → the tip. */
+type HandPose = 'open' | 'relaxed' | 'grip' | 'fist'
+const DIGITS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'] as const
+const HAND_POSES: Record<HandPose, number[][]> = {
+  open: [[0, 0, 0], [3, 4, 2], [3, 4, 2], [3, 4, 2], [3, 4, 2]],
+  relaxed: [[10, 12, 8], [12, 18, 10], [15, 22, 12], [18, 26, 14], [22, 30, 16]],
+  grip: [[45, 35, 25], [58, 72, 42], [62, 76, 45], [64, 78, 47], [66, 80, 50]],
+  fist: [[50, 45, 35], [85, 100, 60], [87, 102, 62], [88, 104, 63], [90, 105, 65]],
+}
+/** The palm's normal (model space, the bind pose): the fingers curl toward it; the thumb toward the little finger's side
+ *  and up into the palm. */
+const PALM_N = [0, -1, 0], THUMB_N = [0, 0.4, 1]
 const VERT = /* glsl */ `
 in vec4 aJoints;
 in vec4 aWeights;
@@ -261,6 +283,12 @@ export class Character {
   /** THE EYES (first person's camera): between them, just behind their surface, in the head bone's frame — found on the
    *  mesh at load (the nose's tip, the eyes 3.8 cm over it: rider.py's face marks). */
   private readonly eyeLocal = new Float32Array([0, 0.1, -0.08])
+  /** THE FINGERS (see HAND_POSES): each digit bone, its curl axis in its own frame, its hand (0 left, 1 right), digit
+   *  (0 the thumb … 4 the little finger) and joint (0 the knuckle … 2 the tip's). */
+  private readonly digits: { b: number; ax: number; ay: number; az: number; hand: number; d: number; j: number }[] = []
+  /** Each hand's curl now (degrees, eased toward its pose): [digit × 3 + joint]. */
+  private readonly curl = [new Float32Array(15), new Float32Array(15)]
+  private dtPose = 0
 
   constructor(private readonly map: MapData, private readonly physics: OthPhysics, atmos: Atmosphere, shadow: TerrainShadow, farGrid: GFX.Vector4) {
     this.uniforms = {
@@ -322,6 +350,10 @@ export class Character {
         dur = Math.max(dur, times[times.length - 1])
         channels.push({ bone: b, path: c.target.path, times, values })
       }
+      // (every clip from 0: hero_fit.py's export starts them a frame in — a held first frame, a loop's seam stutter)
+      let t0 = Infinity
+      for (const ch of channels) t0 = Math.min(t0, ch.times[0])
+      if (t0 > 0 && t0 < Infinity) { for (const ch of channels) for (let i = 0; i < ch.times.length; i++) ch.times[i] -= t0; dur -= t0 }
       // the JUMPS and the landing are played where the controller puts the body: their hips' own travel and rise taken
       // out (the clip's 0.56 m on top of the physics' — the user: "the jump is like Superman"), their crouch kept
       if (a.name === 'jump' || a.name === 'jump_run' || a.name === 'land') {
@@ -345,6 +377,27 @@ export class Character {
     // THE LOCOMOTION BLEND: a clip of its own ('loco', sampled from walk / run / sprint / idle by the speed)
     this.clips.set('loco', { name: 'loco', dur: 1, loop: true, speed: 0, channels: [] })
     this.bones.forEach((b, i) => { this.bi[b.name.replace(/^.*:/, '')] = i; this.post.push(null) })
+    // THE FINGERS' AXES: the bind pose's FK; each digit bone's direction (to the next joint; the tip's, from the last)
+    // × the palm's normal, into the bone's own frame (its bind turn's columns)
+    for (let b = 0; b < this.bones.length; b++) { this.lt2.set(this.bones[b].t, b * 3); this.lr2.set(this.bones[b].r, b * 4) }
+    this.fk(this.lt2, this.lr2)
+    for (let hand = 0; hand < 2; hand++) {
+      DIGITS.forEach((dg, d) => {
+        const pre = (hand ? 'RightHand' : 'LeftHand') + dg
+        for (let j = 0; j < 3; j++) {
+          const b = this.bi[pre + (j + 1)]
+          if (b === undefined) return
+          const nx = this.bi[pre + (j + 2)], pv = j > 0 ? this.bi[pre + j] : undefined
+          const p = this.wpos(b), q = nx !== undefined ? this.wpos(nx) : null, o = pv !== undefined ? this.wpos(pv) : null
+          const dir = q ? [q[0] - p[0], q[1] - p[1], q[2] - p[2]] : o ? [p[0] - o[0], p[1] - o[1], p[2] - o[2]] : [hand ? 1 : -1, 0, 0]
+          const n = d === 0 ? THUMB_N : PALM_N
+          let a = [dir[1] * n[2] - dir[2] * n[1], dir[2] * n[0] - dir[0] * n[2], dir[0] * n[1] - dir[1] * n[0]]
+          const al = Math.hypot(a[0], a[1], a[2]) || 1; a = a.map((v) => v / al)
+          const w = this.world[b], cl = (c: number) => Math.hypot(w[c], w[c + 1], w[c + 2]) || 1
+          this.digits.push({ b, hand, d, j, ax: (w[0] * a[0] + w[1] * a[1] + w[2] * a[2]) / cl(0), ay: (w[4] * a[0] + w[5] * a[1] + w[6] * a[2]) / cl(4), az: (w[8] * a[0] + w[9] * a[1] + w[10] * a[2]) / cl(8) })
+        }
+      })
+    }
     for (const n of ['walk', 'run', 'sprint']) {
       const c = this.clips.get(n)
       if (!c) continue
@@ -493,6 +546,7 @@ export class Character {
   private pose(dt: number): void {
     const cur = this.cur
     if (!cur) return
+    this.dtPose = dt
     // (the stride phase: a cycle per stride length at the speed moved — the feet don't slide)
     {
       const w = this.locoW(this.locoSpeed()), st = (n: string) => this.stride.get(n) ?? 2
@@ -569,6 +623,7 @@ export class Character {
     // FOOT IK (on uneven ground): each foot's ground under it against the root's; the pelvis down for the lower one
     const legs = [['LeftUpLeg', 'LeftLeg', 'LeftFoot'], ['RightUpLeg', 'RightLeg', 'RightFoot']].map((l) => l.map((n) => B[n]))
     this.ikW += ((free && this.grounded ? 1 : 0) - this.ikW) * 0.2
+    this.fingers()
     this.fk(this.lt, this.lr)
     const d: number[] = [0, 0]
     if (this.ikW > 0.01) legs.forEach(([, , f], i) => { const a = this.wpos(f); d[i] = Math.max(-0.45, Math.min(0.35, this.groundAt(a[0], a[2]) - this.pos.y)) * this.ikW })
@@ -597,6 +652,41 @@ export class Character {
       this.fk(this.lt, this.lr, true)
     }
     this.skinRest()
+  }
+
+  /** What each hand does now (left, right): a grip on whatever he holds or drives, open to break a fall or push up. */
+  private handTarget(): [HandPose, HandPose] {
+    if (this.seat || (this.ride && !this.ride.bail())) return ['grip', 'grip']
+    const p = this.progress
+    switch (this.cur?.clip.name) {
+      case 'chop': case 'mine': case 'carry': case 'grab_ledge': case 'climb_ledge': return ['grip', 'grip']
+      case 'pickup': return p > 0.35 ? ['grip', 'grip'] : ['open', 'open']
+      case 'open_door': return p > 0.2 && p < 0.75 ? ['grip', 'grip'] : ['relaxed', 'relaxed']
+      case 'fall': case 'getup_back': case 'getup_front': return ['open', 'open']
+    }
+    if (this.holding || this.upper?.clip.name === 'carry') return ['grip', 'grip']
+    return ['relaxed', 'relaxed']
+  }
+
+  /** The fingers curled (the local turns: each digit's own, about its axis), eased toward the hands' poses. */
+  private fingers(): void {
+    if (!this.digits.length) return
+    const tg = this.handTarget(), k = Math.min(1, this.dtPose * 12)
+    for (let h = 0; h < 2; h++) {
+      const P = HAND_POSES[tg[h]], c = this.curl[h]
+      for (let d = 0; d < 5; d++) for (let j = 0; j < 3; j++) c[d * 3 + j] += (P[d][j] - c[d * 3 + j]) * k
+    }
+    const R = this.lr
+    for (const g of this.digits) {
+      const ang = (this.curl[g.hand][g.d * 3 + g.j] * Math.PI) / 180
+      if (Math.abs(ang) < 1e-4) continue
+      const s = Math.sin(ang / 2), qx = g.ax * s, qy = g.ay * s, qz = g.az * s, qw = Math.cos(ang / 2)
+      const o = g.b * 4, x = R[o], y = R[o + 1], z = R[o + 2], w = R[o + 3]
+      R[o] = w * qx + x * qw + y * qz - z * qy
+      R[o + 1] = w * qy - x * qz + y * qw + z * qx
+      R[o + 2] = w * qz + x * qy - y * qx + z * qw
+      R[o + 3] = w * qw - x * qx - y * qy - z * qz
+    }
   }
 
   /** TWO-BONE IK (model space): the chain u → l → f's end brought to T, bending in the plane it bends in now; its
