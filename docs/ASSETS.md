@@ -50,6 +50,12 @@ Hill's screenshots were only looked at for reference — none are in the repo.
 |---|---|---|
 | Title-screen key art | `key-art.jpg`, `key-art-sm.jpg` | DARK's landing image (its origin isn't recorded in DARK's asset list) |
 
+## Design references — `docs/reference/` (not shipped: targets to model toward)
+
+| Image | File | Source | Use |
+|---|---|---|---|
+| Lifted boxy off-roader: snorkel, roof rack, bull bar, five-spoke wheels, matte grey, chunky simplified forms | `offroad_truck_target.png` | supplied by the user (2026-11-09); an AI render (it carries an image-generator's sparkle mark, bottom right) | the look for the car the user models next: thick parts, chunky chamfers, pale solid glass, no near-black, one strong light from above |
+
 ## Sound — `frontend/public/oth/audio/` (all CC0 — public domain; credit not required, given anyway)
 
 Played by `src/oth/Audio.ts`. The engine, the rain and the ridge wind are synthesized (no recordings).
