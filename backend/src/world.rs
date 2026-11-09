@@ -67,6 +67,8 @@ pub struct Rules {
     pub claim_min_r: f32,
     pub claim_max_r: f32,
     pub claims_per_player: u32,
+    /// A creative world: building costs nothing (trying the kit out; off by default).
+    pub creative: bool,
 }
 
 impl Default for Rules {
@@ -79,6 +81,7 @@ impl Default for Rules {
             claim_min_r: 12.0,
             claim_max_r: 40.0,
             claims_per_player: 1,
+            creative: false,
         }
     }
 }
@@ -760,6 +763,7 @@ impl World {
             ClientMsg::Shape { op, x, z, r, strength, y } => self.shape(sid, op, x, z, r, strength, y),
             ClientMsg::Pave { mat, x, z, r } => self.pave(sid, mat, x, z, r),
             ClientMsg::Pond { x, z, r, depth } => self.pond(sid, x, z, r, depth),
+            ClientMsg::Stow { from, to, bag } => self.stow(sid, from, to, bag),
             ClientMsg::Ping { n } => {
                 self.to(sid, &Ev::Pong { n });
                 Ok(())
@@ -900,6 +904,25 @@ impl World {
         Ok(())
     }
 
+    /// Your own things between your hands and your trailer — by the trailer (within 6 m of it).
+    fn stow(&mut self, sid: u32, from: Store, to: Store, bag: Bag) -> R {
+        if from == to || bag.is_empty() {
+            return Err("nothing to move".into());
+        }
+        let p = self.ent(sid, 0).map(|e| e.p).ok_or("where are you? (no position yet)")?;
+        self.trailer_near(sid, p[0], p[2], 6.0)?;
+        let (_, inv) = self.inv_mut(sid);
+        if inv.bag(to).total() + bag.total() > cap(to) {
+            return Err(if to == Store::Carry { "you can't carry that much".into() } else { "that won't fit in the trailer".into() });
+        }
+        if !inv.bag(from).take(&bag) {
+            return Err(format!("you don't have {}", bag.describe()));
+        }
+        inv.bag(to).add(&bag);
+        self.inv_changed(sid);
+        Ok(())
+    }
+
     fn deposit(&mut self, sid: u32, cid: &str, from: Store, bag: Bag) -> R {
         let c = self.claims.get(cid).cloned().ok_or("no such land")?;
         if bag.is_empty() {
@@ -1035,8 +1058,9 @@ impl World {
         if self.pieces.values().filter(|p| p.claim == c.id).count() >= MAX_PIECES {
             return Err("your land is full".into());
         }
+        let creative = self.info.rules.creative;
         let cl = self.claims.get_mut(&c.id).expect("claim");
-        if !cl.stock.take(&def.cost) {
+        if !creative && !cl.stock.take(&def.cost) {
             return Err(format!("you need {} more in your stockpile", cl.stock.short_of(&def.cost).describe()));
         }
         let (stock, cl) = (cl.stock, cl.clone());
@@ -1172,8 +1196,9 @@ impl World {
         if self.paint.get(&c.id).is_some_and(|v| v.len() >= MAX_STROKES) {
             return Err("that's a lot of paving — no more here".into());
         }
+        let creative = self.info.rules.creative;
         let cl = self.claims.get_mut(&c.id).expect("claim");
-        if !cl.stock.take(&cost) {
+        if !creative && !cl.stock.take(&cost) {
             return Err(format!("you need {} more in your stockpile", cl.stock.short_of(&cost).describe()));
         }
         let (stock, cl) = (cl.stock, cl.clone());
@@ -1203,21 +1228,26 @@ impl World {
             return Err("that's enough ponds".into());
         }
         let depth = depth.clamp(0.5, 3.0);
-        // (a bowl: deepest in the middle)
+        // (the water stands just under the lowest point of the rim — on a slope that's the downhill side)
+        let mut rim = f32::INFINITY;
+        for k in 0..32 {
+            let a = k as f32 / 32.0 * std::f32::consts::TAU;
+            let (px, pz) = (x + a.cos() * r, z + a.sin() * r);
+            rim = rim.min(self.ground.height(px, pz) + self.edit_at(&c.id, px, pz));
+        }
+        let level = rim - 0.25;
+        // (a BOWL under that level: deepest in the middle, its floor easing up to the waterline at the rim — dug down to
+        //  it wherever the ground stands higher, a steep bank on the uphill side; never raised)
         let g = self.ground.clone();
         self.edit_ground(&c, x, z, r, |h, _, (i, j), _| {
             let (cx, cz) = g.cell_pos(i, j);
             let t = (cx - x).hypot(cz - z) / r;
-            h - depth * (1.0 - t * t).max(0.0)
+            if t >= 1.0 {
+                return h;
+            }
+            h.min(level - depth * (1.0 - t * t))
         });
-        // (the water stands just under the lowest point of the rim)
-        let mut level = f32::INFINITY;
-        for k in 0..24 {
-            let a = k as f32 / 24.0 * std::f32::consts::TAU;
-            let (px, pz) = (x + a.cos() * r, z + a.sin() * r);
-            level = level.min(self.ground.height(px, pz) + self.edit_at(&c.id, px, pz));
-        }
-        let p = Pond { id: rand_id(10), claim: c.id.clone(), x, z, r, level: level - 0.25 };
+        let p = Pond { id: rand_id(10), claim: c.id.clone(), x, z, r, level };
         self.put("pond", &p.id, &p);
         self.all(&Ev::Pond { pond: &p });
         self.ponds.insert(p.id.clone(), p);
@@ -1360,8 +1390,9 @@ mod tests {
         assert!(act(&mut w, a, ClientMsg::Shape { op: ShapeOp::Raise, x: 40.0, z: 0.0, r: 6.0, strength: 1.0, y: None }).is_err());
         act(&mut w, a, ClientMsg::Pond { x: 0.0, z: 0.0, r: 6.0, depth: 2.0 }).unwrap();
         let p = w.ponds.values().next().unwrap();
-        assert!((w.edit_at(&cid, 0.0, 0.0) + 2.0).abs() < 0.01, "the bowl's bottom");
-        assert!(p.level < 0.0 && p.level > -2.0);
+        // (flat ground: the water 25 cm under the rim, the bowl's bottom its depth under that)
+        assert!((p.level + 0.25).abs() < 0.01, "the waterline");
+        assert!((w.edit_at(&cid, 0.0, 0.0) - (p.level - 2.0)).abs() < 0.01, "the bowl's bottom");
     }
 
     #[test]

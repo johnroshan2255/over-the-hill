@@ -209,6 +209,21 @@ export class Terrain {
     }
   }
 
+  /** THE CLAIMS' GROUND EDITS (GroundEdits.ts): the patches over (x0, z0) … (x1, z1) widened to hold heights lo … hi
+   *  (their bounds only grow — a patch's box a little loose after a dig back, never too tight). */
+  widen(x0: number, z0: number, x1: number, z1: number, lo: number, hi: number): void {
+    for (let L = 0; L <= this.levels; L++) {
+      const size = this.leaf * 2 ** L, c = 2 ** (this.levels - L), mn = this.minH[L], mx = this.maxH[L]
+      const a0 = Math.floor((x0 - this.origin) / size), a1 = Math.floor((x1 - this.origin) / size)
+      const b0 = Math.floor((z0 - this.origin) / size), b1 = Math.floor((z1 - this.origin) / size)
+      for (let j = Math.max(0, b0); j <= Math.min(c - 1, b1); j++) for (let i = Math.max(0, a0); i <= Math.min(c - 1, a1); i++) {
+        const k = j * c + i
+        if (lo < mn[k]) mn[k] = lo
+        if (hi > mx[k]) mx[k] = hi
+      }
+    }
+  }
+
   /** Min / max heights per node, per level: the map's (computed with it in the loader's worker, mapPrep.ts). */
   private buildPyramid(): void {
     const P = this.map.pyramid

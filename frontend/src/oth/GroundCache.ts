@@ -114,6 +114,10 @@ export class GroundCache {
     if (!first) { r.setRenderTarget(target); r.autoClear = auto }
   }
 
+  /** The ground changed (GroundEdits.ts — a claim shaped, paved): the finer levels baked again (the far tile's 16 m
+   *  texels and the coarsest levels hardly see a yard's edit; one full bake of the rest at the next update). */
+  invalidateNear(levels = 6): void { for (let L = 0; L < Math.min(levels, GC_LEVELS); L++) { this.wx[L] = Number.NaN; this.wz[L] = Number.NaN } }
+
   /** Forget every window (the next update bakes them all again). */
   invalidate(): void { this.wx.fill(Number.NaN); this.wz.fill(Number.NaN); this.far = false }
 

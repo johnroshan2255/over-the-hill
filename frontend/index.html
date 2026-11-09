@@ -261,6 +261,15 @@
       .oth-tag small:empty { display: none; }
       .oth-tag::after { content: ''; width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 7px solid var(--c, #f2a93b); }
       .oth-coop i { font-style: normal; padding-left: 10px; border-left: 1px solid rgba(244, 239, 230, .25); color: #f2a93b; }
+      /* GATHERING (oth/Gather.ts): what's in his hands, under the co-op chip; on a touch screen E's pill (GTA's contextual button) */
+      .oth-hands { position: fixed; right: calc(14px + env(safe-area-inset-right)); top: calc(136px + env(safe-area-inset-top)); z-index: 4; display: none; align-items: baseline; gap: 10px; padding: 4px 12px 3px 0; background: rgba(8, 8, 10, .6); color: #f4efe6; font: 700 14px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; pointer-events: none; white-space: nowrap; }
+      .oth-hands.on { display: flex; }
+      .oth-hands b { align-self: stretch; display: flex; align-items: center; padding: 0 8px; background: #f4efe6; color: #120c04; font-weight: 700; }
+      .oth-hands small { color: rgba(244, 239, 230, .55); font-size: 12px; }
+      body.touch .oth-hands { top: calc(122px + env(safe-area-inset-top)); font-size: 12px; gap: 7px; }
+      .oth-gatherbtn { display: none; }
+      body.touch .oth-gatherbtn.on { display: grid; place-items: center; position: fixed; z-index: 5; left: 50%; transform: translateX(-50%); bottom: calc(100px + env(safe-area-inset-bottom)); height: 40px; padding: 0 22px; border-radius: 20px; border: 2px solid rgba(255, 255, 255, .6); background: rgba(242, 169, 59, .55); color: #fff; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .14em; text-transform: uppercase; touch-action: none; }
+      @media (orientation: portrait) { body.touch .oth-gatherbtn.on { bottom: calc(186px + env(safe-area-inset-bottom)); } }
       /* BUILD MODE (oth/Build.ts): what the brush does, its size, why not; the keys (buttons on a touch screen) */
       .oth-build { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 5; display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: min(640px, calc(100vw - 24px)); color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; }
       .oth-build-head { display: flex; align-items: stretch; background: rgba(8, 8, 10, .78); }

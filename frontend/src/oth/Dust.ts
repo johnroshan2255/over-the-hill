@@ -81,6 +81,18 @@ export class Dust {
     st[o + 10] = r; st[o + 11] = g; st[o + 12] = b; st[o + 13] = a
   }
 
+  /** A BURST (the builder's — GroundEdits / Pieces: the ground dug or heaped, a piece set down): n puffs thrown out
+   *  round (x, y, z) across a ring of radius r, low and rolling, earth-coloured (or `col`), settling in ~1.5 s. */
+  puff(x: number, y: number, z: number, r: number, n: number, col: [number, number, number] = [0.36, 0.29, 0.21]): void {
+    for (let k = 0; k < n; k++) {
+      const a = this.rnd() * Math.PI * 2, d = r * (0.35 + 0.65 * Math.sqrt(this.rnd())), c = Math.cos(a), s = Math.sin(a)
+      const px = x + c * d, pz = z + s * d, gy = Math.max(y, this.map.height(px, pz))
+      const sp = 0.6 + this.rnd() * 1.1, sz = Math.max(0.5, Math.min(2.2, r * 0.32))
+      const tone = 0.85 + this.rnd() * 0.3
+      this.spawn(px, gy + 0.15, pz, c * sp, 0.35 + this.rnd() * 0.6, s * sp, 1.1 + this.rnd() * 0.9, sz * 0.5, sz * (1.4 + this.rnd() * 0.6), col[0] * tone, col[1] * tone, col[2] * tone, 0.42)
+    }
+  }
+
   /** One frame: the car's tyres and tailpipes emit, every puff drifts, grows and fades. */
   update(dt: number, car: Vehicle): void {
     if (dt <= 0) return

@@ -145,6 +145,7 @@ pub const PIECES: &[PieceDef] = &[
     p("chimney_stone", "Stone chimney", "roof", s(5)),
     // porch and yard
     p("porch_deck", "Porch deck", "yard", w(3)),
+    p("porch_roof", "Porch roof", "yard", w(3)),
     p("porch_post", "Porch post", "yard", w(1)),
     p("fence_rail", "Rail fence", "yard", w(1)),
     p("fence_gate", "Fence gate", "yard", Bag::new(1, 0, 1)),

@@ -610,8 +610,11 @@ export class Scene extends Object3D {
             const s = o.frustumCulled ? o.cullSphere() : null
             if (n >= 0 || s) {
               if (s && s.radius >= 0) {
-                const c = _v.copy(s.center).applyMatrix4(o.matrixWorld), r = s.radius * o.matrixWorld.getMaxScaleOnAxis()
-                // (set only when it moved: PlayCanvas re-derives its bounds from it each time it's set)
+                // (in the mesh's OWN space: PlayCanvas carries a custom box through the node's world transform itself
+                //  — given in world space it was moved twice, and a mesh placed anywhere but the origin was culled
+                //  where it isn't: a player's pond drawn at twice its place, never seen — 2026-11-09)
+                const c = s.center, r = s.radius
+                // (set only when it changed: PlayCanvas re-derives its bounds from it each time it's set)
                 const b = g.box
                 if (b[0] !== c.x || b[1] !== c.y || b[2] !== c.z || b[3] !== r) {
                   b[0] = c.x; b[1] = c.y; b[2] = c.z; b[3] = r

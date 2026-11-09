@@ -79,6 +79,9 @@ export class Grass {
   /** cave: THE CAVE'S FLOOR's field (CaveWorld.grassFloor — 2026-11-07, the user: "why no grass here?"): the same blades
    *  stood on the floor (the lift from the hill's top down to it), only where it grows (its footprint), the cave's dark
    *  in their light, their colour the floor's own (Bridges' inside paint) */
+  /** The footprint changed (Rocks.mark): the field re-baked at the next frame. */
+  refresh(): void { this.field.refresh() }
+
   constructor(private readonly map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture, renderer: GFX.WebGLRenderer, cave = false) {
     const caveDef: Record<string, string> = cave ? { CAVE_GRASS: '' } : {}
     const R = tier.grassRadius, D0 = tier.grassDensity * AMOUNT
@@ -482,6 +485,9 @@ class GrassField {
     mesh.frustumCulled = false
     this.scene.add(mesh)
   }
+
+  /** Re-bake the whole window at the next update (the footprint changed under it — Rocks.mark). */
+  refresh(): void { this.wx = NaN }
 
   /** Keep the window on the camera: re-bake what a move uncovered (nothing while it stays within 2 m). */
   update(cx: number, cz: number): void {

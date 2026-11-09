@@ -40,6 +40,9 @@ import { Fsr } from './Fsr'
 import { initMouseLook, lockMouse, lookBlocked, mouseLocked, onMouseLook, releaseMouse } from './mouseLook'
 import { PerfMarks, type PerfSnap } from './PerfMarks'
 import { carKind, Coop, type Local } from './Coop'
+import { Gather } from './Gather'
+import { GroundEdits } from './GroundEdits'
+import { Trailer } from './Trailer'
 import { coopRequested, loadAccount, requestCoop } from '../net/api'
 import { Kind } from '../net/pose'
 import { Session } from '../net/Session'
@@ -354,8 +357,14 @@ async function boot() {
   addEventListener('keydown', (e: KeyboardEvent) => { if (e.code === 'KeyB' && !e.repeat && !coop && !pause && !document.querySelector('.oh-front')) toast('Building needs a co-op world — CO-OP on the title screen', 3500) })
   // CO-OP: the session (null: playing alone), and what we are this frame for it — Coop.ts
   let coop: Coop | null = null
+  /** Gathering on foot (Gather.ts) — a co-op world's. */
+  let gather: Gather | null = null
+  let ground: GroundEdits | null = null
   const coopQ = new GFX.Quaternion(), coopUp = new GFX.Vector3(0, 1, 0)
-  const coopLocal: Local = { kind: Kind.Jeep, p: new GFX.Vector3(), q: new GFX.Quaternion(), parked: null }
+  const coopLocal: Local = { kind: Kind.Jeep, p: new GFX.Vector3(), q: new GFX.Quaternion(), parked: null, trailer: null }
+  /** Our trailer (Trailer.ts) — a co-op world's: hauling what's gathered. */
+  let trailer: Trailer | null = null
+  let towCam = false
   const coopParked = { kind: Kind.Jeep as Kind, p: new GFX.Vector3(), q: new GFX.Quaternion() }
   const localNow = (): Local => {
     const L = coopLocal
@@ -365,6 +374,7 @@ async function boot() {
     else { L.kind = carKind(car.id); L.p.copy(car.root.position); L.q.copy(car.root.quaternion) }
     if (out && car.sim) { coopParked.kind = carKind(car.id); coopParked.p.copy(car.root.position); coopParked.q.copy(car.root.quaternion); L.parked = coopParked }
     else L.parked = null
+    L.trailer = trailer?.pose() ?? null
     return L
   }
   // the tyres' dust and the exhaust smoke
@@ -1070,11 +1080,17 @@ async function boot() {
       const cd = camera.getWorldDirection(new GFX.Vector3())
       hero.camYaw = Math.atan2(-cd.x, -cd.z)
     }
-    physics.pw.advance(dt, (fdt) => { car.fixed(fdt); moto.fixed(fdt); hero.fixed(fdt); winch.fixed(fdt) })
+    physics.pw.advance(dt, (fdt) => { car.fixed(fdt); moto.fixed(fdt); hero.fixed(fdt); winch.fixed(fdt); trailer?.fixed(fdt) })
     car.update(physics.pw.alpha)
     moto.update(physics.pw.alpha, dt)
     hero.update(dt)
     coop?.frame(dt, localNow())
+    trailer?.update(dt)
+    // (towing: the chase camera further back and higher — the trailer in view behind the car, not filling it)
+    const towing = !!trailer?.hitched && !onFoot && !riding && driving
+    if (towing !== towCam) { towCam = towing; if (!onFoot && !riding) chase.frame(towing ? 12.5 : 9, towing ? 2.0 : 1.6) }
+    gather?.update(dt)
+    ground?.update(dt)
     guide.update(dt, ride.pos.x, ride.pos.z)
     // the journey: distance driven (not the jumps of a reset / a car change), the last safe spot, the autosave
     playSeconds += dt
@@ -1099,7 +1115,7 @@ async function boot() {
       hudTick = 0; signHud(); noteHud()
       const c = canCamp() ? campHere() : null, act = actionNow()
       // (on foot by a vehicle: "F Get in" — GTA's; else the camp's)
-      readouts.prompt(onFoot && act ? ['F', act] : canCamp() ? ['C', c ? `Rest at ${c.name}` : 'Pitch camp'] : null)
+      readouts.prompt(onFoot && act ? ['F', act] : gather?.prompt ?? (canCamp() ? ['C', c ? `Rest at ${c.name}` : 'Pitch camp'] : null))
       ui.action(act)
     }
     dust.update(dt, car)
@@ -1192,8 +1208,27 @@ async function boot() {
       const session = await Session.connect(acct, coopWorld)
       coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
       coop.build.onToggle = (on) => { chase.aerial = on }
+      coop.worldParts = () => ({ rocks: world.rocks, grass: world.grass })
       coop.build.obstacle = (x, z) => (world.trees.nearest(x, z, 4.5) ? 'Too close to a tree — its branches would hide your flag' : world.rocks.biggestNear(x, z, 1.5) ? 'Not on a boulder' : '')
-      // (each player 12 m on from the one before, along the start's track — back along it where it goes back, else on
+      gather = new Gather(session, () => ({ id: world.id, map: world.map, trees: world.trees, rocks: world.rocks, grass: world.grass }), physics, hero, atmos, shadow, env.farGrid, toast,
+        () => onFoot && driving && !cut && !pause && !coop?.build.on, () => trailer)
+      scene.add(gather.group)
+      // THE CLAIMS' GROUND (GroundEdits.ts — step 5: shaped, paved, ponds)
+      ground = new GroundEdits(session, () => world, physics)
+      coop.ground = ground
+      ground.onSettle = (x0, z0, x1, z1) => coop?.claims.reground(x0, z0, x1, z1)
+      // THE BUILDER'S WORK SEEN: he swings the pick into the ground he shapes, stoops to lay paving or a piece; the
+      // dust where the ground moves and where a piece lands (Pieces.ts animates it in)
+      coop.build.onWork = (kind, x, z, r) => {
+        gather?.work(kind, x, z, () => {})
+        dust.puff(x, world.map.height(x, z), z, Math.min(r, 6), kind === 'dig' ? Math.round(6 + r * 1.5) : 4, kind === 'dig' ? [0.34, 0.27, 0.2] : [0.42, 0.4, 0.37])
+      }
+      if (coop.build.builder) coop.build.builder.onPlace = (pl) => gather?.work('lay', pl.x, pl.z, () => {})
+      coop.pieces.onDust = (x, y, z, r, soil) => dust.puff(x, y, z, r, soil ? 5 : Math.round(5 + r * 3), soil ? [0.3, 0.24, 0.18] : [0.46, 0.43, 0.38])
+      // THE TRAILER (Trailer.ts): behind the car, hitched, from the start
+      const tr = new Trailer(physics, () => world.map, car)
+      tr.onMessage = (m) => toast(m, 2200)
+      void tr.load(atmos, shadow, env.farGrid).then(() => { scene.add(tr.model.root); trailer = tr; tr.spawnBehind() })      // (each player 12 m on from the one before, along the start's track — back along it where it goes back, else on
       //  ahead (the valley's start is the track's first point) — never all on the one spot; facing along the track)
       const k = (session.me.sid - 1) % 8
       if (k && car.sim && !onFoot && !riding) {
@@ -1244,10 +1279,16 @@ async function boot() {
     hero,
     /** F: out of the vehicle / back in. */
     foot: () => (onFoot ? getIn() : getOut()),
+    /** the foot camera snapped behind him (a harness's walk: W then goes the way he faces) */
+    footCam,
     get onFoot() { return onFoot },
     get riding() { return riding },
     /** (co-op) the session and the others as drawn (scripts/harness/coop.mjs) */
     get coop() { return coop },
+    /** (co-op) gathering on foot (scripts/harness/gathertest.mjs) */
+    get gather() { return gather },
+    /** (co-op) our trailer (scripts/harness/trailertest.mjs) */
+    get trailer() { return trailer },
     /** (the harness's probes: offscreen bakes re-run, targets read back) */
     renderer,
     /** The drawn parts, each with `visible` (scripts/harness/ablate.mjs: the GPU's frame, system by system). */

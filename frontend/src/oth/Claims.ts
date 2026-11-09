@@ -16,7 +16,7 @@ import type { Claim } from '../net/wire'
 /**
  * THE LAND PLAYERS HAVE MADE THEIR OWN (docs/MULTIPLAYER.md §2 — the user: "mark a territory … mark a flag there"):
  * every claim in the session drawn where it is —
- *  - THE FLAG at its centre: a stone cairn, a steel pole (6.5 m) with a brass finial, and a CLOTH in the owner's colour
+ *  - THE FLAG near its edge (`flagSpot`: the middle is left for building — a house went up round the pole): a stone cairn, a steel pole (6.5 m) with a brass finial, and a CLOTH in the owner's colour
  *    with a pale emblem, streaming down the wind and waving (its own shader, lit as everything is: the sun, the sky,
  *    the terrain's shadow, the haze); the pole solid (a car stops at it);
  *  - THE BOUNDS: a stake every ~9 m round the edge, each topped in the owner's colour, a rope between them sagging
@@ -27,6 +27,23 @@ import type { Claim } from '../net/wire'
  * one; built once when the claim comes, dropped when it goes.
  */
 const POLE_H = 6.5
+
+/** Where claim c's flag stands (world x, z): in from the edge (the middle left free to build on), on the flattest of
+ *  eight bearings round from one its id picks (every client works out the same spot from the same map). */
+export function flagSpot(c: Claim, map: MapData): [number, number] {
+  const d = Math.max(c.r * 0.6, c.r - 4), a0 = ((hash(c.id) % 360) / 360) * Math.PI * 2
+  let best: [number, number] = [c.x + Math.cos(a0) * d, c.z + Math.sin(a0) * d], bs = Infinity
+  for (let k = 0; k < 8; k++) {
+    const a = a0 + (k / 8) * Math.PI * 2, x = c.x + Math.cos(a) * d, z = c.z + Math.sin(a) * d
+    if (map.waterLevel(x, z, false) !== null) continue
+    // (the map's own ground — the same spot before and after the claim's ground is shaped)
+    const y = map.baseHeight(x, z)
+    let s = 0
+    for (const [u, v] of [[1.5, 0], [-1.5, 0], [0, 1.5], [0, -1.5]]) s += Math.abs(map.baseHeight(x + u, z + v) - y)
+    if (s < bs - 0.05) { bs = s; best = [x, z] }
+  }
+  return best
+}
 const CLOTH_W = 2.2, CLOTH_H = 1.4
 
 const CLOTH_VERT = /* glsl */ `
@@ -136,18 +153,19 @@ export class Claims {
     const y0 = map.height(c.x, c.z)
     const g: Ground = (x, z) => map.height(c.x + x, c.z + z) - y0
     const b = new Builder(hash(c.id))
+    const [fx0, fz0] = flagSpot(c, map), fx = fx0 - c.x, fz = fz0 - c.z, fy = g(fx, fz)
     // THE CAIRN: field stones piled round the pole's foot
     for (let k = 0; k < 9; k++) {
       const a = (k / 9) * Math.PI * 2 + b.rnd() * 0.4, rr = k < 6 ? 0.55 : 0.25
       const s = k < 6 ? 0.28 + b.rnd() * 0.12 : 0.22 + b.rnd() * 0.08
-      const x = Math.cos(a) * rr, z = Math.sin(a) * rr
+      const x = fx + Math.cos(a) * rr, z = fz + Math.sin(a) * rr
       rock(b, V(x, g(x, z) + (k < 6 ? s * 0.45 : 0.42), z), V(s, s * 0.75, s * (0.8 + b.rnd() * 0.4)), b.rnd() * 6.28, shade([0.25, 0.248, 0.245], 0.85 + b.rnd() * 0.3), hash(c.id) + k, 0)
     }
     // THE POLE: dark steel, a brass ball on top
     b.setSurf(2)
-    b.log(V(0, g(0, 0) - 0.3, 0), V(0, POLE_H, 0), 0.055, [0.09, 0.09, 0.095])
-    b.log(V(0, POLE_H, 0), V(0, POLE_H + 0.05, 0), 0.075, [0.09, 0.09, 0.095])
-    rock(b, V(0, POLE_H + 0.16, 0), V(0.1, 0.1, 0.1), 0, [0.42, 0.3, 0.1], 7, 1, true)
+    b.log(V(fx, fy - 0.3, fz), V(fx, fy + POLE_H, fz), 0.055, [0.09, 0.09, 0.095])
+    b.log(V(fx, fy + POLE_H, fz), V(fx, fy + POLE_H + 0.05, fz), 0.075, [0.09, 0.09, 0.095])
+    rock(b, V(fx, fy + POLE_H + 0.16, fz), V(0.1, 0.1, 0.1), 0, [0.42, 0.3, 0.1], 7, 1, true)
     b.setSurf(2)
     // THE BOUNDS: a stake every ~9 m, its top in the owner's colour; a rope between, sagging
     const n = Math.max(8, Math.round((2 * Math.PI * c.r) / 9))
@@ -187,7 +205,7 @@ export class Claims {
       vertexShader: CLOTH_VERT, fragmentShader: CLOTH_FRAG, side: GFX.DoubleSide,
     }))
     cloth.frustumCulled = false
-    cloth.position.set(0, POLE_H - 0.12, 0)
+    cloth.position.set(fx, fy + POLE_H - 0.12, fz)
     root.add(cloth)
     this.group.add(root)
     // THE EDGE on the ground (shown near)
@@ -201,12 +219,23 @@ export class Claims {
     return { claim: c, root, mesh, cloth, edge, body: null, sphere: new GFX.Sphere(new GFX.Vector3(c.x, y0 + 2, c.z), c.r + 2) }
   }
 
+  /** The ground under (x0, z0) … (x1, z1) changed (GroundEdits.ts): the claims there built again on it (the cairn,
+   *  the stakes and the rope on the ground as it is now). */
+  reground(x0: number, z0: number, x1: number, z1: number): void {
+    for (const [id, m] of this.made) {
+      const c = m.claim
+      if (c.x + c.r < x0 || c.x - c.r > x1 || c.z + c.r < z0 || c.z - c.r > z1) continue
+      this.drop(m); this.made.delete(id)
+    }
+  }
+
   /** The pole made solid (a cylinder through the cairn) — once nothing of ours is in the way. */
   private solid(m: Made, blockers: GFX.Vector3[]): void {
     const c = m.claim
-    for (const b of blockers) if (Math.hypot(b.x - c.x, b.z - c.z) < 3.2) return
-    const pw = this.physics.pw, y0 = this.map().height(c.x, c.z)
-    m.body = pw.world.createRigidBody(pw.R.RigidBodyDesc.fixed().setTranslation(c.x, y0, c.z))
+    const [x, z] = flagSpot(c, this.map())
+    for (const b of blockers) if (Math.hypot(b.x - x, b.z - z) < 3.2) return
+    const pw = this.physics.pw, y0 = this.map().height(x, z)
+    m.body = pw.world.createRigidBody(pw.R.RigidBodyDesc.fixed().setTranslation(x, y0, z))
     pw.world.createCollider(pw.R.ColliderDesc.cylinder(1.2, 0.45).setTranslation(0, 0.6, 0).setCollisionGroups(group(Groups.Static, 0xffff)), m.body)
   }
 

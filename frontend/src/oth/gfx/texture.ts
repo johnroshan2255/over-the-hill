@@ -124,6 +124,27 @@ export class Texture {
     return t
   }
 
+  /**
+   * Re-uploads only rows y0 … y1 of a DATA texture already on the GPU (the claims' ground edits: a few rows of the
+   * 2049² height and normal grids, not their 8 MB each) — WebGL 2's texSubImage2D, the mips rebuilt on the GPU.
+   * Anywhere else (WebGPU, not yet uploaded): the whole, at its next use.
+   */
+  updateRows(y0: number, y1: number): void {
+    const t = this.pc, img = this.image as { data?: ArrayBufferView | null; width: number; height: number }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dev = gfx().device as any, impl = (t as any)?.impl
+    if (!t || this.uploaded !== this.version || !img.data || !dev.gl || !impl?._glTexture) { this.needsUpdate = true; return }
+    y0 = Math.max(0, Math.floor(y0)); y1 = Math.min(img.height - 1, Math.ceil(y1))
+    if (y1 < y0) return
+    const gl = dev.gl as WebGL2RenderingContext, d = img.data as unknown as { length: number; BYTES_PER_ELEMENT: number; buffer: ArrayBuffer; byteOffset: number; constructor: new (b: ArrayBuffer, o: number, l: number) => ArrayBufferView }
+    const per = d.length / img.height
+    const rows = new d.constructor(d.buffer, d.byteOffset + y0 * per * d.BYTES_PER_ELEMENT, (y1 - y0 + 1) * per)
+    dev.bindTextureOnUnit(t, 0)
+    dev.setUnpackFlipY(false); dev.setUnpackPremultiplyAlpha(false); dev.setUnpackAlignment(1)
+    gl.texSubImage2D(impl._glTarget, 0, 0, y0, img.width, y1 - y0 + 1, impl._glFormat, impl._glPixelType, rows)
+    if (t.mipmaps) gl.generateMipmap(impl._glTarget)
+  }
+
   dispose(): void {
     this.pc?.destroy()
     this.pc = null

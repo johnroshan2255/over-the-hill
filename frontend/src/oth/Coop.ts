@@ -1,3 +1,5 @@
+import { Builder } from './Builder'
+import { Pieces } from './Pieces'
 import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import type { Horizon } from './Horizon'
@@ -9,7 +11,7 @@ import { Claims } from './Claims'
 import type { Tier } from './quality'
 import type { Bag } from '../net/wire'
 import type { TerrainShadow } from './TerrainShadow'
-import { type Ent, FLAG_TELEPORT, Kind, Slot } from '../net/pose'
+import { type Ent, FLAG_HITCHED, FLAG_TELEPORT, Kind, Slot } from '../net/pose'
 import type { Session } from '../net/Session'
 
 /**
@@ -26,6 +28,8 @@ export interface Local {
   q: GFX.Quaternion
   /** Our car, while we're not in it. */
   parked: { kind: Kind; p: GFX.Vector3; q: GFX.Quaternion } | null
+  /** Our trailer (Trailer.ts), hitched or standing. */
+  trailer: { p: GFX.Vector3; q: GFX.Quaternion; hitched: boolean } | null
 }
 
 const SEND_EVERY = 0.05
@@ -36,8 +40,14 @@ export class Coop {
   /** The land claimed in this world (flags, bounds) and BUILD mode (B: the brush). */
   readonly claims: Claims
   readonly build: Build
+  /** What's built (Pieces.ts) and the piece builder (Builder.ts: Build's second mode). */
+  readonly pieces: Pieces
+  /** The claims' ground (GroundEdits.ts: shaped, paved, ponds — main.ts makes it with the world). */
+  ground: import('./GroundEdits').GroundEdits | null = null
+  /** The world's rocks and grass (main.ts): what's built treads the ground. */
+  worldParts: (() => { rocks: { mark(id: string, x: number, z: number, r: number): void }; grass: { refresh(): void } }) | null = null
   private readonly chip: HTMLDivElement
-  private readonly last = { p: new GFX.Vector3(Infinity, 0, 0), q: new GFX.Quaternion(), kind: -1, parked: -1, t: 0 }
+  private readonly last = { p: new GFX.Vector3(Infinity, 0, 0), q: new GFX.Quaternion(), kind: -1, parked: -1, t: 0, tp: new GFX.Vector3(Infinity, 0, 0), th: false }
   private sinceSend = 0
   private hudT = 0
   private readonly names = new Map<number, string>()
@@ -62,6 +72,10 @@ export class Coop {
     this.claims = new Claims(session, map, physics, atmos, shadow, tier, farGrid, toast)
     scene.add(this.claims.group)
     this.build = new Build(session, this.claims, map, camera, scene, canvas, player, toast, () => this.blockers())
+    this.pieces = new Pieces(session, () => ({ id: map().meta.id, map: map(), ...(this.worldParts?.() ?? {}) }), physics, atmos, shadow, farGrid)
+    scene.add(this.pieces.group)
+    this.build.builder = new Builder(session, map, this.pieces, atmos, shadow, farGrid, toast)
+    scene.add(this.build.builder.ghost)
     for (const r of session.remotes.values()) this.names.set(r.sid, r.name)
     this.chip = document.createElement('div')
     this.chip.className = 'oth-coop'
@@ -104,18 +118,24 @@ export class Coop {
       S.update(dt)
       this.sinceSend += dt
       const moved = me.p.distanceToSquared(this.last.p) > 0.0004 || Math.abs(me.q.dot(this.last.q)) < 0.99999 || me.kind !== this.last.kind || (me.parked?.kind ?? -1) !== this.last.parked
+        || (!!me.trailer && (me.trailer.p.distanceToSquared(this.last.tp) > 0.0004 || me.trailer.hitched !== this.last.th))
       if ((moved && this.sinceSend >= SEND_EVERY) || this.sinceSend >= STILL_EVERY) {
         const jump = me.p.distanceTo(this.last.p) > 40
         const ents: Ent[] = [{ slot: Slot.Player, kind: me.kind, flags: jump ? FLAG_TELEPORT : 0, p: [me.p.x, me.p.y, me.p.z], q: [me.q.x, me.q.y, me.q.z, me.q.w] }]
         if (me.parked) ents.push({ slot: Slot.ParkedCar, kind: me.parked.kind, flags: 0, p: [me.parked.p.x, me.parked.p.y, me.parked.p.z], q: [me.parked.q.x, me.parked.q.y, me.parked.q.z, me.parked.q.w] })
+        const tr = me.trailer
+        if (tr) ents.push({ slot: Slot.Trailer, kind: Kind.Trailer, flags: (tr.hitched ? FLAG_HITCHED : 0) | (jump ? FLAG_TELEPORT : 0), p: [tr.p.x, tr.p.y, tr.p.z], q: [tr.q.x, tr.q.y, tr.q.z, tr.q.w] })
         S.sendPose(ents)
         this.last.p.copy(me.p); this.last.q.copy(me.q); this.last.kind = me.kind; this.last.parked = me.parked?.kind ?? -1
+        if (tr) { this.last.tp.copy(tr.p); this.last.th = tr.hitched }
         this.sinceSend = 0
       }
     }
     this.me = me
     this.claims.update(dt, this.player(), this.camera, this.ours())
     this.build.update(dt)
+    this.pieces.update(dt)
+    this.pieces.lod(this.camera.position)
     const t0 = performance.now()
     this.remotes.update(dt)
     this.updateMs += (performance.now() - t0 - this.updateMs) * 0.05

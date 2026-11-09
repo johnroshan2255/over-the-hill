@@ -89,6 +89,7 @@ fn intents() -> Vec<Value> {
         json!({ "t": "pave", "req": 13, "mat": "planks", "x": 1.0, "z": 2.0, "r": 1.5 }),
         json!({ "t": "pond", "req": 14, "x": 1.0, "z": 2.0, "r": 6.0, "depth": 1.5 }),
         json!({ "t": "ping", "req": null, "n": 99 }),
+        json!({ "t": "stow", "req": 15, "from": "carry", "to": "trailer", "bag": { "wood": 3, "stone": 1, "metal": 0 } }),
     ];
     v.into_iter().map(|j| json!({ "hex": hex(&wire::encode_intent(&j).unwrap_or_else(|e| panic!("{j}: {e}"))), "json": j })).collect()
 }

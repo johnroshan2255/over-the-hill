@@ -144,6 +144,30 @@ export class OthPhysics {
   }
 
   /** Keep the ground and the rocks round (x, z) built. */
+  /** A felled tree's trunk gone now (Gather.ts) — not when the player next crosses a cell. */
+  dropTrunk(i: number): void {
+    const c = this.trunks.get(i)
+    if (c) { this.pw.world.removeCollider(c, false); this.trunks.delete(i) }
+  }
+  /** THE GROUND EDITED (GroundEdits.ts) over (x0, z0) … (x1, z1): the heightfield tiles there rebuilt from the map's
+   *  heights now (a tile of 128 cells: ~2 ms — once an edit has settled, not while it eases). */
+  regroundTiles(x0: number, z0: number, x1: number, z1: number): void {
+    const g = this.map.inner, size = TILE * g.step
+    for (const [k, b] of [...this.tiles]) {
+      const i = Math.floor(k / 1024), j = k % 1024, tx0 = g.origin + i * size, tz0 = g.origin + j * size
+      if (tx0 > x1 + g.step || tx0 + size < x0 - g.step || tz0 > z1 + g.step || tz0 + size < z0 - g.step) continue
+      this.pw.world.removeRigidBody(b)
+      this.tiles.set(k, this.buildTile(i, j))
+    }
+  }
+  /** Rocks moved (GroundEdits.ts — the ground under them shaped): their hulls rebuilt at the next follow. */
+  dropRocks(list: number[]): void {
+    for (const i of list) { const cs = this.rocks.get(i); if (cs) { for (const c of cs) this.pw.world.removeCollider(c, false); this.rocks.delete(i) } }
+    this.lastRockCell = Number.NaN
+  }
+  /** Trees back (regrown): the trunks rebuilt at the next follow. */
+  trunksDirty(): void { this.lastRockCell = Number.NaN }
+
   follow(x: number, z: number): void {
     const g = this.map.inner
     const ti = Math.floor((x - g.origin) / (TILE * g.step)), tj = Math.floor((z - g.origin) / (TILE * g.step))
@@ -216,6 +240,7 @@ export class OthPhysics {
         for (let i = 0; i < t.count; i++) {
           const o = i * TREE_STRIDE
           if ((d[o] - x) ** 2 + (d[o + 2] - z) ** 2 > TRUNK_REACH * TRUNK_REACH) continue
+          if (t.gone.has(i)) continue // (felled: its trunk goes — the loop below removes it)
           near.add(i)
           if (this.trunks.has(i)) continue
           const H = d[o + 3], r = Math.max(0.22, 0.022 * H * (d[o + 5] === 2 ? 1.6 : 1)), hh = H * 0.2

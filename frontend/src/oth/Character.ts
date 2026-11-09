@@ -6,14 +6,20 @@ import type { MapData } from './MapData'
 import type { OthPhysics } from './Physics'
 import type { TerrainShadow } from './TerrainShadow'
 import { VEHICLE_FRAG_SRC } from './Vehicle'
+import skinUrl from '../assets/models/human/character.webp?url'
+import skinNormalUrl from '../assets/models/human/character_n.webp?url'
 
 /**
  * THE CHARACTER ON FOOT (2026-11-05, the user: "a skeleton and proper animation for walk, run, jump, grab … getting out
- * of the car by opening the door, on and off the bikes"): the Trail Warden (refer/char.png) rigged and animated in
- * Blender from Mixamo's clips (scripts/oth/character.py → assets/models/human/character.glb).
+ * of the car by opening the door, on and off the bikes"), animated by Mixamo's clips. THE MODEL (2026-11-09, the user:
+ * "a guy who has a good jaw line and perfect body … wearing pants and a shirt … his body must show"): Quaternius's CC0
+ * Superhero male, dressed on his own body by scripts/oth/hero.py → assets/models/human/character.glb + character.webp
+ * (colour) + character_n.webp (normals: his muscles, the cloth's weave). (Before him: the Meshy-made Trail Warden —
+ * scripts/oth/character.py — then Rocketbox's avatars, scripts/oth/rocketbox.py.)
  *
  *   DRAWN     ONE draw: the skinned mesh, 4 bones a vertex, the bones' poses (3 × 4, model space × the inverse bind)
- *             one uniform array — the car's and the bikes' surface shader, the world's light.
+ *             one uniform array — the car's and the bikes' surface shader, the world's light; the atlas sampled, its normal
+ *             map lit (USE_NORMALMAP_OTH).
  *   ANIMATED  the clips sampled on the CPU (22 bones, linear / slerp) and CROSS-FADED (0.2 s); a loop's playback rate
  *             follows the speed it's moved at (the feet don't slide); a one-off's travel (getting in or out of the car,
  *             climbing) is the hips' — at its end it's handed to the character's place and heading.
@@ -27,7 +33,7 @@ const RIDE_LEAN = 0
  *  bars, and a screen's lens is narrower than an eye: the bars would be under the view. */
 const FPP_SIT_UP = -0.4
 
-export type ClipName = 'idle' | 'walk' | 'run' | 'sprint' | 'jump' | 'jump_run' | 'fall' | 'land' | 'pickup' | 'grab_ledge' | 'climb_ledge' | 'open_door' | 'car_enter' | 'car_exit' | 'sit_drive' | 'turn_left' | 'turn_right' | 'getup_back' | 'getup_front'
+export type ClipName = 'idle' | 'walk' | 'run' | 'sprint' | 'jump' | 'jump_run' | 'fall' | 'land' | 'pickup' | 'grab_ledge' | 'climb_ledge' | 'open_door' | 'car_enter' | 'car_exit' | 'sit_drive' | 'turn_left' | 'turn_right' | 'getup_back' | 'getup_front' | 'chop' | 'mine' | 'carry'
 
 interface Channel { bone: number; path: 'translation' | 'rotation'; times: Float32Array; values: Float32Array }
 interface Clip { name: string; dur: number; loop: boolean; speed: number; channels: Channel[] }
@@ -54,7 +60,7 @@ void main() {
   vWorld = w.xyz;
   vLocal = b;
   vN = normalize(mat3(modelMatrix) * bn);
-  vUv = vec2(0.0);
+  vUv = uv;
 #ifdef USE_COLOR
   vCol = color;
 #else
@@ -134,6 +140,22 @@ function yawOf(q: Q, o = 0): number {
 }
 
 // ------------------------------------------------------------------------------------------------- the GLB's skin + clips
+/** THE SKIN (2026-11-09: the hero's atlas — his body and clothes, his hair, his eyes — beside the GLB as WebP, colour and
+ *  normals, scripts/oth/hero.py): decoded once, shared by ours and every co-op player's walker. */
+let skinTex: Promise<[GFX.Texture, GFX.Texture]> | null = null
+async function webpTexture(url: string, srgb: boolean): Promise<GFX.Texture> {
+  const bmp = await createImageBitmap(await (await fetch(url)).blob(), { imageOrientation: 'none', premultiplyAlpha: 'none', colorSpaceConversion: 'none' } as ImageBitmapOptions)
+  const t = new GFX.Texture(bmp)
+  t.flipY = false
+  if (srgb) t.colorSpace = GFX.SRGBColorSpace
+  t.anisotropy = 4
+  t.needsUpdate = true
+  return t
+}
+/** The skin's colour and its normal map (linear). */
+function skinTexture(): Promise<[GFX.Texture, GFX.Texture]> {
+  return (skinTex ??= Promise.all([webpTexture(skinUrl, true), webpTexture(skinNormalUrl, false)]))
+}
 async function readGlb(url: string): Promise<{ json: any; bin: ArrayBuffer }> {
   const buf = await (await fetch(url)).arrayBuffer()
   const dv = new DataView(buf)
@@ -242,7 +264,7 @@ export class Character {
 
   constructor(private readonly map: MapData, private readonly physics: OthPhysics, atmos: Atmosphere, shadow: TerrainShadow, farGrid: GFX.Vector4) {
     this.uniforms = {
-      ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null },
+      ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uNormalMap: { value: null }, uPaintMask: { value: null },
       uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 }, uCoat: { value: 0 }, uCoatColor: { value: new GFX.Color(0.8, 0.6, 0.42) }, uCarBase: { value: 0 },
       'uBones[0]': { value: this.bonesU },
     }
@@ -271,7 +293,7 @@ export class Character {
 
   /** The mesh (Draco, via the game's loader) and the skin + clips (read here: the loader keeps neither). */
   async load(url: string): Promise<void> {
-    const [{ json, bin }, gltf] = await Promise.all([readGlb(url), new GFX.GLTFLoader().setDRACOLoader(new GFX.DRACOLoader().setDecoderPath('/draco/')).loadAsync(url)])
+    const [{ json, bin }, gltf, tex] = await Promise.all([readGlb(url), new GFX.GLTFLoader().setDRACOLoader(new GFX.DRACOLoader().setDecoderPath('/draco/')).loadAsync(url), skinTexture()])
     const skin = json.skins[0], joints: number[] = skin.joints
     const ibm = floats(json, bin, skin.inverseBindMatrices)
     const nodeToBone = new Map<number, number>(joints.map((n, i) => [n, i]))
@@ -340,22 +362,19 @@ export class Character {
     }
     // (Mixamo's fast run travels less than it runs: its stride at least a sprinter's)
     this.stride.set('sprint', Math.max(this.stride.get('sprint') ?? 0, (this.stride.get('run') ?? 3.5) * 1.25))
-    // the mesh: every primitive merged, its material's colour per vertex, joints / weights as floats
-    const pos: number[] = [], nor: number[] = [], colr: number[] = [], jn: number[] = [], wt: number[] = [], idx: number[] = []
+    // the mesh: every primitive merged (its UVs into the skin), joints / weights as floats
+    const pos: number[] = [], nor: number[] = [], uvs: number[] = [], jn: number[] = [], wt: number[] = [], idx: number[] = []
     gltf.scene.updateMatrixWorld(true)
     gltf.scene.traverse((o: GFX.Object3D) => {
       const m = o as GFX.Mesh
       if (!m.isMesh) return
-      const g = m.geometry, P = g.attributes.position, N = g.attributes.normal, Jn = g.attributes.joints_0, W = g.attributes.weights_0, AO = g.attributes.color
+      const g = m.geometry, P = g.attributes.position, N = g.attributes.normal, UV = g.attributes.uv, Jn = g.attributes.joints_0, W = g.attributes.weights_0
       if (!Jn || !W) return
-      const c = ((Array.isArray(m.material) ? m.material[0] : m.material) as GFX.MeshStandardMaterial)?.color ?? new GFX.Color(1, 1, 1)
       const base = pos.length / 3
       for (let i = 0; i < P.count; i++) {
         pos.push(P.getX(i), P.getY(i), P.getZ(i))
         nor.push(N.getX(i), N.getY(i), N.getZ(i))
-        // (the baked ambient occlusion, softened: the folds and pockets darker, never black)
-        const ao = AO ? 0.4 + 0.6 * AO.getX(i) : 1
-        colr.push(c.r * ao, c.g * ao, c.b * ao)
+        uvs.push(UV ? UV.getX(i) : 0, UV ? UV.getY(i) : 0)
         jn.push(Jn.getX(i), Jn.getY(i), Jn.getZ(i), Jn.getW(i))
         const s = W.getX(i) + W.getY(i) + W.getZ(i) + W.getW(i) || 1
         wt.push(W.getX(i) / s, W.getY(i) / s, W.getZ(i) / s, W.getW(i) / s)
@@ -366,12 +385,15 @@ export class Character {
     const geo = new GFX.BufferGeometry()
     geo.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
     geo.setAttribute('normal', new GFX.Float32BufferAttribute(nor, 3))
-    geo.setAttribute('color', new GFX.Float32BufferAttribute(colr, 3))
+    geo.setAttribute('uv', new GFX.Float32BufferAttribute(uvs, 2))
     geo.setAttribute('aJoints', new GFX.Float32BufferAttribute(jn, 4))
     geo.setAttribute('aWeights', new GFX.Float32BufferAttribute(wt, 4))
     geo.setIndex(idx)
     geo.computeBoundingSphere()
-    const mat = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: this.uniforms, defines: { OTH_SPEC: '', MIST_K: '0.45', NO_GRAIN: '' }, vertexShader: VERT, fragmentShader: VEHICLE_FRAG_SRC(), vertexColors: true })
+    this.uniforms.uMap.value = tex[0]
+    this.uniforms.uNormalMap.value = tex[1]
+    // (USE_NORMALMAP_OTH: his muscles and the cloth's weave lit)
+    const mat = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: this.uniforms, defines: { OTH_SPEC: '', MIST_K: '0.45', NO_GRAIN: '', USE_MAP_OTH: '', USE_NORMALMAP_OTH: '' }, vertexShader: VERT, fragmentShader: VEHICLE_FRAG_SRC() })
     this.mesh = new GFX.Mesh(geo, mat)
     this.mesh.frustumCulled = false
     this.root.add(this.mesh)
@@ -867,7 +889,9 @@ export class Character {
     this.jumpHeld = wantJump
     if (this.takeoff > 0 && (this.takeoff -= dt) <= 0) { this.takeoff = 0; this.vy = 4.8; this.grounded = false }
     this.vy -= 18 * dt
-    if (this.grounded && this.vy < 0) this.vy = -2
+    // (grounded: a light press only — the controller's snap keeps him on the ground; a hard one projected onto a slope
+    //  slid him back down it, a 32° stair walked at a fifth of the pace)
+    if (this.grounded && this.vy < 0) this.vy = -0.3
     const t = this.body.translation()
     const desired = { x: fx * this.speed * dt, y: this.vy * dt, z: fz * this.speed * dt }
     this.cc.computeColliderMovement(this.col, desired, undefined, group(Groups.Player, Groups.Terrain | Groups.Static | Groups.Vehicle | Groups.VehicleMesh))
@@ -897,8 +921,12 @@ export class Character {
       // (the standing jump's landing played out, unless moving off)
       if (this.state === 'jump' && this.takeoff === 0 && this.grounded && (mag > 0.05 || this.progress > 0.88)) this.state = 'move'
     }
-    // LOCOMOTION: the clip by the speed, played as fast as the feet must go
-    if (this.state === 'move' && this.upper) this.layer(null)
+    // LOCOMOTION: the clip by the speed, played as fast as the feet must go — the arms CARRYING (Gather.ts: something in
+    // his hands — the clip's arms over whatever the legs do) or free
+    if (this.state === 'move') {
+      if (this.holding && this.clips.has('carry')) { if (this.upper?.clip.name !== 'carry') this.layer('carry', 0.92) }
+      else if (this.upper) this.layer(null)
+    }
     // LOCOMOTION: the one blend (idle / walk / run / sprint by the speed, on one stride phase — Character.sampleLoco)
     if (this.state === 'move') this.play('loco' as ClipName, { fade: 0.25 })
   }
@@ -907,6 +935,16 @@ export class Character {
   private layer(name: ClipName | null, w = 0.7): void {
     const c = name ? this.clips.get(name) : null
     this.upper = c ? { clip: c, t: this.upper?.clip === c ? this.upper.t : 0, w } : null
+  }
+
+  /** Something in his hands (Gather.ts): the arms carry it while he moves. */
+  holding = false
+  /** A bone's world matrix (Gather.ts: the tool in his hand, the load in his arms). False if there's no such bone. */
+  boneWorld(name: string, out: GFX.Matrix4): boolean {
+    const b = this.bi[name]
+    if (b === undefined) return false
+    out.fromArray(this.world[b]).premultiply(this.root.matrixWorld)
+    return true
   }
 
   /** A one-off (picking something up, a grab): the controller still, the clip played, then free again. */

@@ -9,7 +9,7 @@
   "types": {
     "bag": { "obj": [["wood", "var"], ["stone", "var"], ["metal", "var"]] },
     "player": { "obj": [["sid", "var"], ["id", "str"], ["name", "str"]] },
-    "rules": { "obj": [["offline_guard", "bool"], ["regrow_min", "var"], ["refill_min", "var"], ["max_players", "var"], ["claim_min_r", "f32"], ["claim_max_r", "f32"], ["claims_per_player", "var"]] },
+    "rules": { "obj": [["offline_guard", "bool"], ["regrow_min", "var"], ["refill_min", "var"], ["max_players", "var"], ["claim_min_r", "f32"], ["claim_max_r", "f32"], ["claims_per_player", "var"], ["creative", "bool"]] },
     "world": { "obj": [["id", "str"], ["code", "str"], ["name", "str"], ["map", "str"], ["owner", "str"], ["rules", "rules"]] },
     "claim": { "obj": [["id", "str"], ["owner", "str"], ["owner_name", "str"], ["x", "f32"], ["z", "f32"], ["r", "f32"], ["y", "f32"], ["stock", "bag"], ["created", "u64"]] },
     "piece": { "obj": [["id", "str"], ["kind", "str"], ["owner", "str"], ["claim", "str"], ["x", "f32"], ["y", "f32"], ["z", "f32"], ["rot", "f32"], ["variant", "u8"]] },
@@ -75,6 +75,6 @@
     "shape": [21, [["op", "op"], ["x", "f32"], ["z", "f32"], ["r", "f32"], ["strength", "f32"], ["y", "f32n"]]],
     "pave": [22, [["mat", "pave"], ["x", "f32"], ["z", "f32"], ["r", "f32"]]],
     "pond": [23, [["x", "f32"], ["z", "f32"], ["r", "f32"], ["depth", "f32"]]],
-    "ping": [24, [["n", "var"]]]
+    "ping": [24, [["n", "var"]]], "stow": [25, [["from", "store"], ["to", "store"], ["bag", "bag"]]]
   }
 }

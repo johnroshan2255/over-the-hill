@@ -54,7 +54,14 @@ export function woodMaterial(atmos: Atmosphere, shadow: TerrainShadow, tier: Tie
 /** The surfaces a Builder's pieces can take (setSurf): the props' / landmarks' one material shades each its own way. */
 export const SURF = { wood: 0, stone: 1, metal: 2, fabric: 3, plain: 4, lamp: 5, eerie: 6, turf: 7, cliff: 8 } as const
 
+/** A MODELLED thing offered in place of what a Kit function would build (Landmarks — Buildings.ts / places.py): its
+ *  model's name, where (the builder's frame), turned rot; tint its BODY paint, tilt (about its own x, z), scale. True:
+ *  taken (it's drawn as the model — build nothing). */
+export type ModelSink = (name: string, x: number, y: number, z: number, rot: number, o?: { tint?: readonly number[]; tiltX?: number; tiltZ?: number; scale?: [number, number, number] }) => boolean
+
 export class Builder {
+  /** Where modelled props go (Landmarks sets it while it builds a place with models; null: built here). */
+  sink: ModelSink | null = null
   private readonly pos: number[] = []
   private readonly nor: number[] = []
   private readonly col: number[] = []

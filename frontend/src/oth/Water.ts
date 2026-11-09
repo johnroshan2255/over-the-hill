@@ -30,6 +30,9 @@ export class Water {
   readonly group = new GFX.Group()
   /** The still water's material for a pond set in a cave (its depth per vertex: aUV.x). */
   readonly poolMaterial: () => GFX.ShaderMaterial
+  private readonly still: GFX.ShaderMaterial
+  /** The players' ponds (GroundEdits.ts): a disc each, at its level (eased up as it fills). */
+  private readonly dug = new Map<string, GFX.Mesh>()
 
   constructor(map: MapData, atmos: Atmosphere, terrain: Terrain, tier: Tier, rockFootprint: GFX.Texture) {
     const t = terrain.uniforms
@@ -52,6 +55,7 @@ export class Water {
       side: GFX.DoubleSide,
     })
     const still = material(false), flowing = material(true)
+    this.still = still
     // THE CAVE'S PONDS (CaveWorld.addPools — 2026-11-07, the user: "the water must be like the outside water"): the
     //  still water's own shader, its depth from the pond's shape (aUV.x: the ground under it is the hill's top), the
     //  cave's dark on it
@@ -96,6 +100,29 @@ export class Water {
     const lips = (map.meta.water.falls ?? []).map((F) => fallLip(map, F)).filter((p) => p !== null)
     const streams = (map.meta.water.streams ?? []).map((S) => intoRiver(trimAtLips(S, lips), r))
     this.group.add(ribbons([{ ...r, widen: RIVER_WIDEN, stream: false }, ...(out ? [{ ...out, widen: RIVER_WIDEN, stream: false }] : []), ...streams.map((S) => ({ ...S, widen: STREAM_WIDEN, stream: true }))].filter((L) => L.x.length > 1).map(downstreamFirst).map(smooth).map((L) => meetStill(L, map)), flowing))
+  }
+
+  /** A PLAYER'S POND (GroundEdits.ts — dug in a claim): the still water's disc at (x, z), r across, its surface at y
+   *  (moved as it fills: `setDugLevel`). The ground it owns is MapData.addPond's. */
+  addDug(id: string, x: number, z: number, r: number, y: number): void {
+    this.removeDug(id)
+    const g = new GFX.CircleGeometry(r * 1.06, 48)
+    g.rotateX(-Math.PI / 2)
+    const n = g.attributes.position.count
+    g.setAttribute('aFlow', new GFX.BufferAttribute(new Float32Array(n * 2), 2))
+    g.setAttribute('aUV', new GFX.BufferAttribute(new Float32Array(n * 4), 4))
+    g.computeBoundingSphere()
+    const m = new GFX.Mesh(g, this.still)
+    m.position.set(x, y, z)
+    m.renderOrder = 5
+    this.group.add(m)
+    this.dug.set(id, m)
+  }
+  setDugLevel(id: string, y: number): void { const m = this.dug.get(id); if (m) m.position.y = y }
+  removeDug(id: string): void {
+    const m = this.dug.get(id)
+    if (!m) return
+    this.group.remove(m); m.geometry.dispose(); this.dug.delete(id)
   }
 }
 
@@ -262,10 +289,10 @@ out vec3 vWorld;
 out vec2 vFlow;
 out vec4 vUV;
 void main() {
-  vWorld = position;
+  vWorld = (modelMatrix * vec4(position, 1.0)).xyz; // (identity but for the players' ponds: moved up as they fill)
   vFlow = aFlow;
   vUV = aUV;
-  gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
 }
 `
 

@@ -10,7 +10,7 @@ import WIRE from '../../../proto/wire.json'
 // ---- the shapes (the JSON shape of each message — as the server's serde makes them)
 export interface Bag { wood: number; stone: number; metal: number }
 export interface PlayerView { sid: number; id: string; name: string }
-export interface Rules { offline_guard: boolean; regrow_min: number; refill_min: number; max_players: number; claim_min_r: number; claim_max_r: number; claims_per_player: number }
+export interface Rules { offline_guard: boolean; regrow_min: number; refill_min: number; max_players: number; claim_min_r: number; claim_max_r: number; claims_per_player: number; creative: boolean }
 export interface WorldInfo { id: string; code: string; name: string; map: string; owner: string; rules: Rules }
 export interface Claim { id: string; owner: string; owner_name: string; x: number; z: number; r: number; y: number; stock: Bag; created: number }
 export interface Piece { id: string; kind: string; owner: string; claim: string; x: number; y: number; z: number; rot: number; variant: number }
@@ -70,6 +70,7 @@ export type Intent =
   | { t: 'pave'; mat: PaveMat; x: number; z: number; r: number }
   | { t: 'pond'; x: number; z: number; r: number; depth: number }
   | { t: 'ping'; n: number }
+  | { t: 'stow'; from: Store; to: Store; bag: Bag }
 
 // ---- the schema, compiled once
 type Ty =

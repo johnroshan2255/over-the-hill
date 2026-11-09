@@ -74,6 +74,8 @@ pub enum ClientMsg {
     Pond { x: f32, z: f32, r: f32, depth: f32 },
     /// The round trip: answered with `pong` at once.
     Ping { n: u32 },
+    /// Your own things between your hands and your trailer (by it).
+    Stow { from: Store, to: Store, bag: Bag },
 }
 
 pub const ENTITY_BYTES: usize = 17;

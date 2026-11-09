@@ -1,3 +1,4 @@
+import type { Bag } from './wire'
 import type { Rules, WorldInfo } from './wire'
 
 /**
@@ -65,6 +66,9 @@ export async function signIn(name: string): Promise<Account> {
   return keep(await call<Account>('POST', '/v1/players', { name }))
 }
 
+/** The build catalogue (backend catalog.rs): every piece, its name, its group, what it costs. */
+export interface PieceInfo { kind: string; name: string; group: string; cost: Bag }
+export const getCatalog = () => call<{ pieces: PieceInfo[]; carry: number }>('GET', '/v1/catalog')
 export const listWorlds = (a: Account) => call<WorldRow[]>('GET', '/v1/worlds', undefined, a.token)
 export const createWorld = (a: Account, name: string, map = 'valley', rules?: Partial<Rules>) => call<WorldRow>('POST', '/v1/worlds', { name, map, rules }, a.token)
 export const joinWorld = (a: Account, code: string) => call<WorldRow>('POST', '/v1/worlds/join', { code }, a.token)

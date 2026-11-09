@@ -207,6 +207,37 @@ export class Rocks {
     list.push(r)
   }
 
+  private footBase: Uint8Array | null = null
+  private readonly marks = new Map<string, [number, number, number]>()
+  /**
+   * A MARK on the footprint (Gather.ts: a pile, a stump, a stockpile — the ground there trodden, the grass kept off it,
+   * so what lies there shows): a soft disc of radius r at (x, z) under `id`; r 0 takes it off (the cells back as the
+   * placement left them). The grass re-bakes its field to see it (Grass.refresh).
+   */
+  mark(id: string, x: number, z: number, r: number): void {
+    const fp = this.footprint.image.data as Uint8Array
+    const base = (this.footBase ??= fp.slice())
+    const old = this.marks.get(id)
+    if (r > 0) this.marks.set(id, [x, z, r]); else if (!this.marks.delete(id)) return
+    const g = this.map.inner
+    const redo = (cx: number, cz: number, cr: number) => {
+      const i0 = Math.max(0, Math.floor((cx - cr - g.origin) / g.step)), i1 = Math.min(g.n - 1, Math.ceil((cx + cr - g.origin) / g.step))
+      const j0 = Math.max(0, Math.floor((cz - cr - g.origin) / g.step)), j1 = Math.min(g.n - 1, Math.ceil((cz + cr - g.origin) / g.step))
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const px = g.origin + i * g.step, pz = g.origin + j * g.step, k = j * g.n + i
+        let v = base[k]
+        for (const [mx, mz, mr] of this.marks.values()) {
+          const d = Math.hypot(px - mx, pz - mz) / mr
+          if (d < 1.3) v = Math.max(v, Math.round(255 * Math.min(1, Math.max(0, (1.3 - d) / 0.35))))
+        }
+        fp[k] = v
+      }
+    }
+    if (old) redo(old[0], old[1], old[2] + 2)
+    if (r > 0) redo(x, z, r + 2)
+    this.footprint.needsUpdate = true
+  }
+
   /** A rock's footprint (the grass keeps out of it; the trees and bushes are placed off it): a soft disc, its size. */
   private stampRock(fp: Uint8Array, r: Inst): void {
     const g = this.map.inner
@@ -354,6 +385,29 @@ export class Rocks {
   }
 
   /** The biggest rock within r m of (x, z) — the shot harness frames outcrops with it. */
+  private idx: Map<Inst, number> | null = null
+  /**
+   * THE NEAREST BOULDER to work with a pick (Gather.ts — docs/MULTIPLAYER.md §1): a rock between minS and maxS in size
+   * whose surface is within r of (x, z), and its index in `all` (the server's node "rock:<i>" — the placement is
+   * deterministic, the same on every client). From the 128 m grid: cheap enough per frame.
+   */
+  nearestBoulder(x: number, z: number, r: number, minS = 0.45, maxS = 4): { i: number; rock: Inst } | null {
+    let best: Inst | null = null, bd = Infinity
+    for (let j = Math.floor((z - r - maxS) / CELL); j <= Math.floor((z + r + maxS) / CELL); j++) for (let i = Math.floor((x - r - maxS) / CELL); i <= Math.floor((x + r + maxS) / CELL); i++) {
+      const list = this.grid.get(this.key(i, j))
+      if (!list) continue
+      for (const k of list) {
+        if (k.s < minS || k.s > maxS) continue
+        const d = Math.hypot(k.x - x, k.z - z) - k.s * 0.85
+        if (d < r && d < bd) { bd = d; best = k }
+      }
+    }
+    if (!best) return null
+    if (!this.idx) { this.idx = new Map(); this.all.forEach((k, n) => this.idx!.set(k, n)) }
+    const i = this.idx.get(best)
+    return i === undefined ? null : { i, rock: best }
+  }
+
   biggestNear(x: number, z: number, r: number): Inst | null {
     let best: Inst | null = null
     for (const list of this.grid.values()) for (const k of list) {
@@ -635,6 +689,20 @@ export class Rocks {
    * DISTANCE (the tier's reach), FRUSTUM (the cell's box against the view), OCCLUSION (the cell hidden behind the
    * hills: Horizon); per rock: DISTANCE again, and SMALL-FEATURE culling (a rock under ~2 px tall at its distance).
    */
+  /** THE GROUND EDITED (GroundEdits.ts) over (x0, z0) … (x1, z1): each rock there moved with it by dy(x, z) — sat on
+   *  the ground as it is now, not hanging over a dug pond. Returns the ones moved (Physics rebuilds their hulls). */
+  reground(x0: number, z0: number, x1: number, z1: number, dy: (x: number, z: number) => number): number[] {
+    const moved: number[] = []
+    for (let i = 0; i < this.all.length; i++) {
+      const r = this.all[i]
+      if (r.x < x0 || r.x > x1 || r.z < z0 || r.z > z1) continue
+      const v = dy(r.x, r.z)
+      if (Math.abs(v) > 0.005) { r.y += v; moved.push(i) }
+    }
+    if (moved.length) this.lastPos.set(1e9, 0, 0)
+    return moved
+  }
+
   update(camera: GFX.PerspectiveCamera): void {
     camera.getWorldDirection(this.dir)
     if (camera.position.distanceToSquared(this.lastPos) < 16 && this.dir.dot(this.lastDir) > 0.9985) return

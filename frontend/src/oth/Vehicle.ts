@@ -639,6 +639,9 @@ uniform vec4 uFarGrid;
 ${SHADOW_GLSL}
 uniform sampler2D uMap;
 uniform sampler2D uPaintMask;
+#ifdef USE_NORMALMAP_OTH
+uniform sampler2D uNormalMap;
+#endif
 uniform vec3 uPaint;
 uniform float uCoat;
 uniform vec3 uCoatColor;
@@ -666,6 +669,20 @@ float vehGrainH(vec3 p, vec3 w, float t1, float t2) { return vehGrain1(p.yz, w.x
 void main() {
   vec3 N = normalize(vN);
   if (!gl_FrontFacing) N = -N;
+#ifdef USE_NORMALMAP_OTH
+  // THE NORMAL MAP (the character's: his muscles, the cloth's weave — scripts/oth/hero.py; OpenGL's +y), its tangent
+  // frame from the screen-space derivatives (no tangents in the mesh). (Checked lit at noon, 2026-11-09: y as stored —
+  // negated, his face was lit from below.)
+  {
+    vec3 nm = texture(uNormalMap, vUv).xyz * 2.0 - 1.0;
+    vec3 dp1 = dFdx(vWorld), dp2 = dFdy(vWorld);
+    vec2 du1 = dFdx(vUv), du2 = dFdy(vUv);
+    vec3 dp2p = cross(dp2, N), dp1p = cross(N, dp1);
+    vec3 T = dp2p * du1.x + dp1p * du2.x, B = dp2p * du1.y + dp1p * du2.y;
+    float im = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-24));
+    N = normalize(T * (im * nm.x) + B * (im * nm.y) + N * nm.z);
+  }
+#endif
   vec3 V = normalize(uCamPos - vWorld);
   // (in the cave world: its dark — no sun under the hill, the light dimmed: Sites.caveUniforms)
   float ck = caveK(vWorld);
@@ -681,7 +698,11 @@ void main() {
 #else
   vec3 albedo = vCol;
 #ifdef USE_MAP_OTH
-  albedo *= texture(uMap, vUv).rgb;
+  vec4 tex = texture(uMap, vUv);
+#ifdef ALPHA_CUT
+  if (tex.a < 0.5) discard;
+#endif
+  albedo *= tex.rgb;
 #endif
   // the paint takes the panel's hue, keeps its shading; white = the model's own colours
   // (2 in the slot: a bike's unpainted BODYWORK — its plastics, its frame: the grain's dots, not the tint)

@@ -1,11 +1,12 @@
 import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
-import { Builder, type CullPart, cullHidden, splitMeshes, woodMaterial } from './Bridges'
+import { Builder, type CullPart, cullHidden, type ModelSink, splitMeshes, woodMaterial } from './Bridges'
 import type { Horizon } from './Horizon'
 import type { Landmark, MapData } from './MapData'
 import type { Tier } from './quality'
 import type { TerrainShadow } from './TerrainShadow'
 import { tentA as kitTentA } from './Kit'
+import { buildPlaces, FAR_M, hasPlace, loadPlaces, type PlaceInstance } from './Buildings'
 import {
   type Ctx, cabin, cabinYard, camp as campOf, type CampStyle, FIRE_AT, fishingHut, garage, ghostHouse, hamlet,
   houseRuin, mineSite, PAINTS, pondDock, rangerStation, researchCamp, riverShelter, wreck,
@@ -65,6 +66,8 @@ export function pavePatch(map: MapData, fp: Uint8Array, x0: number, z0: number, 
   }
   return reach
 }
+/** ?models=0: the valley's buildings as the boxes they were (an A/B). */
+const MODELS_OFF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('models') === '0'
 const PAVE_OFF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pave') === '0'
 
 export class Landmarks {
@@ -113,17 +116,35 @@ export class Landmarks {
           if (v8 > fp[k]) fp[k] = v8
         }
       }
-      const ctx: Ctx = { b, g, col, clear, seed: (l.id * 7919 + 13) >>> 0 }
+      const models: { name: string; x: number; y: number; z: number; r: number; o?: Parameters<ModelSink>[5] }[] = []
+      const ctx: Ctx = { b, g, col, clear, seed: (l.id * 7919 + 13) >>> 0, model: MODELS_OFF ? undefined : (name, x, z, r, y = 0) => { models.push({ name, x, y, z, r }) } }
+      // (the yards' props modelled too — Kit's barrels, woodpiles, pickups offer themselves: places.py's)
+      b.sink = MODELS_OFF ? null : (name, x, y, z, r, o) => { if (!hasPlace(name)) return false; models.push({ name, x, y, z, r, o }); return true }
       if (PLACES[l.kind]) PLACES[l.kind]!(ctx, l, map)
       else KINDS[l.kind]?.(b, l, col, map) // (the desert's kinds: their shapes are Blender's — formations.glb)
+      b.sink = null
       if (paveR > 0) this.paved.push(l.x, l.z, l.rot, paveR + 2.5) // (+ the mask's bilinear reach)
       const m = new GFX.Matrix4().compose(new GFX.Vector3(l.x, l.y, l.z), new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), l.rot), new GFX.Vector3(S, S, S))
       b.transform(from, m)
       const q = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), l.rot)
       for (const [c, h, ground] of cols) this.colliders.push({ c: c.applyMatrix4(m), h: h.multiplyScalar(S), q, ground })
+      // (its modelled buildings: placed in the landmark's frame — Buildings.ts draws them once loaded)
+      for (const { name, x, y, z, r, o } of models) {
+        const q = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), r)
+        if (o?.tiltZ) q.multiply(new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 0, 1), o.tiltZ))
+        if (o?.tiltX) q.multiply(new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(1, 0, 0), o.tiltX))
+        const sc = o?.scale ? new GFX.Vector3(...o.scale) : new GFX.Vector3(1, 1, 1)
+        this.placed.push({ name, li: this.list.indexOf(l), tint: o?.tint, m: m.clone().multiply(new GFX.Matrix4().compose(new GFX.Vector3(x, y, z), q, sc)) })
+      }
       ranges.push([from, b.count])
     }
     this.parts = splitMeshes(b, ranges, woodMaterial(atmos, shadow, tier, farGrid), this.group)
+    // (a modelled building's landmark culled by the building's bulk, not only what the builder drew there)
+    for (const it of this.placed) {
+      const box = this.parts[it.li]?.box, c = new GFX.Vector3().setFromMatrixPosition(it.m)
+      if (box) for (const [dx, dy, dz] of [[-8, -1, -8], [8, 9, 8]]) box.expandByPoint(new GFX.Vector3(c.x + dx, c.y + dy, c.z + dz))
+    }
+    if (this.placed.length) void loadPlaces(atmos, shadow, farGrid).then((p) => { this.buildings = buildPlaces(p, this.placed, this.group); this.placed.length = 0 }).catch((e) => console.warn('the places\' models', e))
     if (footprint) footprint.needsUpdate = true
     if (pv) map.trailTex.needsUpdate = true
   }
@@ -133,7 +154,7 @@ export class Landmarks {
    *  anywhere (once a frame; the view culls the rest). */
   cull(cam?: GFX.Vector3): void {
     cullHidden(this.parts, this.horizon)
-    if (!cam) return
+    if (cam) {
     const R2 = this.reach * this.reach
     for (let i = 0; i < this.parts.length; i++) {
       const p = this.parts[i], l = this.list[i]
@@ -141,8 +162,21 @@ export class Landmarks {
       const dx = (p.box.min.x + p.box.max.x) / 2 - cam.x, dz = (p.box.min.z + p.box.max.z) / 2 - cam.z
       if (dx * dx + dz * dz > R2) p.obj.visible = false
     }
+    }
+    // (the modelled buildings with their landmark)
+    // (the modelled buildings with their landmark — near, the full models; past FAR_M, their far LOD)
+    if (this.buildings) for (const [li, g] of this.buildings) {
+      g.visible = this.parts[li]?.obj.visible ?? true
+      if (!g.visible || !cam || g.children.length < 2) continue
+      const c = g.userData.c as GFX.Vector3, far = (c.x - cam.x) ** 2 + (c.z - cam.z) ** 2 + (c.y - cam.y) ** 2 > FAR_M * FAR_M
+      g.children[0].visible = !far; g.children[1].visible = far
+    }
   }
   private reach = 900
+  /** The modelled buildings to place (Buildings.ts), then each landmark's group of them. */
+  private readonly placed: PlaceInstance[] = []
+  /** (read by scripts/harness/placecost.mjs) */
+  buildings: Map<number, GFX.Group> | null = null
 
   /** Discover what the car (x, z) has reached (checked twice a second). */
   update(dt: number, x: number, z: number): void {
@@ -431,10 +465,10 @@ const LIT = 2.25 // (a window's centre: floor 0.5 + 1.75)
 const PLACES: Partial<Record<Landmark['kind'], (c: Ctx, l: Landmark, map: MapData) => void>> = {
   cabin(c, l) {
     const story = l.style ?? (l.name.startsWith('Trapper') ? 'trapper' : l.name.startsWith('Pond') ? 'pond' : l.name.startsWith('Birch') ? 'birch' : l.name.startsWith('Old') ? 'ruin' : ['trapper', 'pond', 'birch', 'ruin'][l.id % 4])
-    if (story === 'trapper') cabin(c, { walls: 'log', roof: KC.shingle, state: 'lived', chimney: 'stone' })
-    else if (story === 'pond') cabin(c, { walls: 'clap', paint: PAINTS.red, trim: KC.trim, roof: KC.shingleGrey, state: 'lived', shutters: PAINTS.green, chimney: 'pipe' })
-    else if (story === 'birch') cabin(c, { walls: 'batten', paint: PAINTS.slate, trim: PAINTS.white, roof: KC.greenRoof, tin: true, state: 'lived', chimney: 'stone', shutters: PAINTS.mustard })
-    else cabin(c, { walls: 'clap', paint: PAINTS.mustard, trim: KC.trim, roof: KC.shingleGrey, state: 'ruin', chimney: 'stone' })
+    if (story === 'trapper') cabin(c, { walls: 'log', roof: KC.shingle, state: 'lived', chimney: 'stone', model: 'cabin_trapper' })
+    else if (story === 'pond') cabin(c, { walls: 'clap', paint: PAINTS.red, trim: KC.trim, roof: KC.shingleGrey, state: 'lived', shutters: PAINTS.green, chimney: 'pipe', model: 'cabin_pond' })
+    else if (story === 'birch') cabin(c, { walls: 'batten', paint: PAINTS.slate, trim: PAINTS.white, roof: KC.greenRoof, tin: true, state: 'lived', chimney: 'stone', shutters: PAINTS.mustard, model: 'cabin_birch' })
+    else cabin(c, { walls: 'clap', paint: PAINTS.mustard, trim: KC.trim, roof: KC.shingleGrey, state: 'ruin', chimney: 'stone', model: 'cabin_ruin' })
     cabinYard(c, story as 'trapper' | 'pond' | 'birch' | 'ruin')
     if (story !== 'ruin') l.lights = [[-2.2, LIT, 3.6], [4.6, LIT, -0.6], [-4.6, LIT, -0.6]]
     // (their chimneys smoke: the stone one's top, the pond cabin's stovepipe)

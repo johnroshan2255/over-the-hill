@@ -213,8 +213,26 @@ export class MapData {
 
   /** Which lake / pond owns each 4 m cell (mapPrep.ts waterOwner: 0 none, 1 the lake, 2 + i pond i). */
   private readonly waterBody: Uint8Array
+  /** THE PLAYERS' PONDS (GroundEdits.ts — dug in their claims): x, z, r, the surface. */
+  readonly dug = new Map<string, { x: number; z: number; r: number; level: number }>()
+  /** The box's heights as the map made them, where a claim's ground has been edited (GroundEdits.ts: k → m). */
+  readonly baseH = new Map<number, number>()
+  /** The map's own height at (x, z) — under any claim's edits (what's placed by the map's own rules reads this). */
+  baseHeight(x: number, z: number): number {
+    if (!this.baseH.size || !this.inBox(x, z)) return this.height(x, z)
+    const g = this.inner, n = g.n, fx = (x - g.origin) / g.step, fz = (z - g.origin) / g.step, i = fx | 0, j = fz | 0, tx = fx - i, tz = fz - j
+    const at = (k: number) => this.baseH.get(k) ?? g.h[k], k = j * n + i
+    const a = at(k) + (at(k + 1) - at(k)) * tx, b = at(k + n) + (at(k + n + 1) - at(k + n)) * tx
+    return a + (b - a) * tz
+  }
+  private dugAt(x: number, z: number): number | null {
+    for (const p of this.dug.values()) if ((p.x - x) ** 2 + (p.z - z) ** 2 < p.r * p.r) return p.level
+    return null
+  }
+
   /** The surface of the lake or pond that owns (x, z) — where it draws (mapPrep.ts waterOwner) — or null. */
   stillLevel(x: number, z: number): number | null {
+    if (this.dug.size) { const d = this.dugAt(x, z); if (d !== null) return d }
     const g = this.meta.mask
     const i = Math.round((x - g.origin) / g.step), j = Math.round((z - g.origin) / g.step)
     if (i < 0 || j < 0 || i >= g.n || j >= g.n) return null
@@ -231,7 +249,8 @@ export class MapData {
 
   /** The WATER's surface at (x, z) (m), or null on dry ground: the lake, a pond, else the nearest river / stream point
    *  where the mask says open water (the splashes, the drag on a car fording it). */
-  waterLevel(x: number, z: number): number | null {
+  waterLevel(x: number, z: number, dug = true): number | null {
+    if (dug && this.dug.size) { const d = this.dugAt(x, z); if (d !== null) return d }
     const mk = this.maskAt(x, z, this._wk)
     if (mk[2] < 0.86) return null
     const W = this.meta.water, L = W.lake

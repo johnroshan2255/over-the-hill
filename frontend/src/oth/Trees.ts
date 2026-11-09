@@ -102,11 +102,11 @@ export class Trees {
     // pass, depth test EQUAL, no discard: only the leaf the pre-pass kept, at each sample, is shaded — once. The two
     // passes run the same vertex shader (the same depth, bit for bit). ?treepre=0: the one pass, as before.
     const pre = gameParams().get('treepre') !== '0'
-    const leafMat = (pass: 'one' | 'depth' | 'shade') => new GFX.ShaderMaterial({
+    const leafMat = (pass: 'one' | 'depth' | 'shade', extraDefs: Record<string, string> = {}, extraUni: Record<string, GFX.IUniform> = {}) => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
-      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU, uSee: this.see, uSeeD: this.seeD, uSeeK: this.seeK },
+      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU, uSee: this.see, uSeeD: this.seeD, uSeeK: this.seeK, ...extraUni },
       vertexColors: true,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines, ...(pass === 'depth' ? { TREE_DEPTH: '' } : pass === 'shade' ? { TREE_SHADE: '' } : {}) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines, ...(pass === 'depth' ? { TREE_DEPTH: '' } : pass === 'shade' ? { TREE_SHADE: '' } : {}), ...extraDefs },
       vertexShader: VERT,
       fragmentShader: FRAG,
       side: GFX.DoubleSide,
@@ -116,6 +116,7 @@ export class Trees {
       depthWrite: pass !== 'shade',
       depthEqual: pass === 'shade',
     })
+    this.leafMat = (defs, uni) => leafMat('one', defs, uni)
     const mat = leafMat(pre ? 'shade' : 'one')
     const depthMat = pre ? leafMat('depth') : null
     this.impMat = new GFX.ShaderMaterial({
@@ -164,6 +165,98 @@ export class Trees {
   }
 
   private key(i: number, j: number): number { return (i + 512) * 1024 + (j + 512) }
+
+  // ============================================================================================ felling (co-op)
+  /** FELLED (docs/MULTIPLAYER.md §1 — Gather.ts): these trees aren't drawn and have no trunk (Physics skips them). */
+  readonly gone = new Set<number>()
+  private leafMat!: (defs: Record<string, string>, uni: Record<string, GFX.IUniform>) => GFX.ShaderMaterial
+  private readonly fallers: { mesh: GFX.Mesh; geo: GFX.InstancedBufferGeometry; u: { value: GFX.Vector4 }; t: number; dx: number; dz: number; landed: boolean; onLand?: () => void }[] = []
+  fell(i: number): void { if (!this.gone.has(i)) { this.gone.add(i); this.lastPos.set(1e9, 0, 0) } }
+  restore(i: number): void { if (this.gone.delete(i)) this.lastPos.set(1e9, 0, 0) }
+  /** THE GROUND EDITED (GroundEdits.ts) over (x0, z0) … (x1, z1): each tree there moved up / down by dy(x, z) — it
+   *  stays standing in the ground, not floating over a dug pond or buried in a raised yard. Returns the ones moved. */
+  reground(x0: number, z0: number, x1: number, z1: number, dy: (x: number, z: number) => number): number[] {
+    const d = this.data, moved: number[] = []
+    for (let j = Math.floor(z0 / TILE); j <= Math.floor(z1 / TILE); j++) for (let i = Math.floor(x0 / TILE); i <= Math.floor(x1 / TILE); i++) {
+      for (const t of this.tiles.get(this.key(i, j)) ?? []) {
+        const o = t * TREE_STRIDE, x = d[o], z = d[o + 2]
+        if (x < x0 || x > x1 || z < z0 || z > z1) continue
+        const v = dy(x, z)
+        if (Math.abs(v) > 0.005) { d[o + 1] += v; moved.push(t) }
+      }
+    }
+    if (moved.length) this.lastPos.set(1e9, 0, 0)
+    return moved
+  }
+  /** Tree i: where it stands, how tall, its species. */
+  treeAt(i: number): { x: number; y: number; z: number; h: number; species: number } {
+    const o = i * TREE_STRIDE, d = this.data
+    return { x: d[o], y: d[o + 1], z: d[o + 2], h: d[o + 3], species: d[o + 5] }
+  }
+  /** The nearest STANDING tree to (x, z) within r (its index; −1 none) — from the 64 m tiles, cheap enough per frame. */
+  nearestIndex(x: number, z: number, r: number, minH = 2): number {
+    let best = -1, bd = r * r
+    const d = this.data
+    for (let j = Math.floor((z - r) / TILE); j <= Math.floor((z + r) / TILE); j++) for (let i = Math.floor((x - r) / TILE); i <= Math.floor((x + r) / TILE); i++) {
+      const list = this.tiles.get(this.key(i, j))
+      if (!list) continue
+      for (const t of list) {
+        if (this.gone.has(t)) continue
+        const o = t * TREE_STRIDE
+        if (d[o + 3] < minH) continue
+        const q = (d[o] - x) ** 2 + (d[o + 2] - z) ** 2
+        if (q < bd) { bd = q; best = t }
+      }
+    }
+    return best
+  }
+  /**
+   * A TREE FALLS (2026-11-09): drawn on its own while it goes — its near LOD and the trees' own shader (TREE_FALL: the
+   * whole tree turned about its foot, toward (dx, dz)), the way a cut trunk goes: slowly at first, then all at once
+   * (the angle ∝ t^2.2 over 2.4 s), a bounce where the crown hits, a moment on the ground, then gone (shrunk into
+   * its foot in 0.4 s) — `onLand` when it lands (the logs, the dust). Its standing self is hidden at once.
+   */
+  fall(i: number, dx: number, dz: number, onLand?: () => void): void {
+    const o = i * TREE_STRIDE, d = this.data, sp = d[o + 5]
+    this.fell(i)
+    const L = Math.hypot(dx, dz) || 1
+    const src = this.lods[family(sp) * 2].geo
+    const geo = new GFX.InstancedBufferGeometry()
+    for (const n of ['position', 'normal', 'color', 'leaf']) geo.setAttribute(n, src.getAttribute(n))
+    geo.setIndex(src.getIndex())
+    const a0 = new GFX.InstancedBufferAttribute(new Float32Array([d[o], d[o + 1], d[o + 2], d[o + 3]]), 4)
+    const a1 = new GFX.InstancedBufferAttribute(new Float32Array([d[o + 4], sp, d[o + 6], 1]), 4)
+    geo.setAttribute('aT0', a0); geo.setAttribute('aT1', a1)
+    geo.instanceCount = 1
+    const u = { value: new GFX.Vector4(dx / L, dz / L, 0, 1) }
+    const mat = this.leafMat({ TREE_FALL: '' }, { uFall: u })
+    const mesh = new GFX.Mesh(geo, mat)
+    mesh.frustumCulled = false
+    mesh.matrixAutoUpdate = false
+    this.group.add(mesh)
+    this.fallers.push({ mesh, geo, u, t: 0, dx: dx / L, dz: dz / L, landed: false, onLand })
+  }
+  /** Once a frame: the falling trees. */
+  updateFalls(dt: number): void {
+    const T = 2.4, A = Math.PI / 2 - 0.06
+    for (let k = this.fallers.length - 1; k >= 0; k--) {
+      const f = this.fallers[k]
+      f.t += dt
+      const t = f.t
+      let ang = A, scale = 1
+      if (t < T) ang = A * Math.pow(t / T, 2.2)
+      else if (t < T + 0.5) { const v = (t - T) / 0.5; ang = A - 0.09 * Math.sin(Math.PI * v) * (1 - v) }
+      if (t >= T && !f.landed) { f.landed = true; f.onLand?.() }
+      if (t > T + 1.6) scale = Math.max(0, 1 - (t - T - 1.6) / 0.4)
+      f.u.value.z = ang; f.u.value.w = scale
+      if (scale <= 0) {
+        this.group.remove(f.mesh)
+        f.geo.deleteAttribute('aT0'); f.geo.deleteAttribute('aT1')
+        ;(f.mesh.material as GFX.ShaderMaterial).dispose()
+        this.fallers.splice(k, 1)
+      }
+    }
+  }
 
 
   /**
@@ -268,6 +361,7 @@ export class Trees {
       if (!this.frustum.intersectsBox(this.box)) continue
       if (this.horizon?.hidden(x0 - 6, z0 - 6, x0 + TILE + 6, z0 + TILE + 6, this.box.max.y)) { this.occluded++; continue } // (behind a hill)
       for (const t of list) {
+        if (this.gone.has(t)) continue
         const o = t * TREE_STRIDE
         const dx = d[o] - cx, dz = d[o + 2] - cz, dist = Math.sqrt(dx * dx + dz * dz)
         if (dist > reach) continue
@@ -478,6 +572,9 @@ in vec3 leaf; // a broadleaf leaf's disc coordinates + its tint (0 0 0 elsewhere
 uniform vec4 uSee;
 uniform vec4 uSeeD;
 uniform vec4 uSeeK;
+#ifdef TREE_FALL
+uniform vec4 uFall; // the fall's direction (x, z), its angle, the tree's scale
+#endif
 out vec3 vLeaf;
 out float vFol;
 out vec3 vWorld;
@@ -520,6 +617,15 @@ void main() {
   float h01 = color.b;
   float sw = sin(uTime * 1.1 + aT1.z * 31.0) * 0.6 + sin(uTime * 2.3 + aT1.z * 17.0) * 0.25;
   q.xz += vec2(0.8, 0.35) * sw * 0.012 * H * h01 * h01;
+#ifdef TREE_FALL
+  {
+    // turned about its foot, its top toward the fall (the axis: up × the direction)
+    vec3 k = normalize(vec3(uFall.y, 0.0, -uFall.x));
+    float ca = cos(uFall.z), sa = sin(uFall.z);
+    q = (q * ca + cross(k, q) * sa + k * dot(k, q) * (1.0 - ca)) * uFall.w;
+    n = n * ca + cross(k, n) * sa + k * dot(k, n) * (1.0 - ca);
+  }
+#endif
   vWorld = aT0.xyz + q;
   vN = n;
   vLeaf = leaf;

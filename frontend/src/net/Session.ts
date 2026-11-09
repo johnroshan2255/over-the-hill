@@ -1,6 +1,6 @@
 import { type Account, socketUrl } from './api'
 import { type Ent, FLAG_TELEPORT, Kind, poseFrame, readPoses } from './pose'
-import { type Claim, decodeEv, encodeIntent, type Ev, type Intent, type Inv, type Loose, type Piece, type PlayerView, type Pond, type WorldInfo } from './wire'
+import { type Claim, decodeEv, encodeIntent, type Ev, type Intent, type Inv, type Loose, type Piece, type PlayerView, type Pond, type Stroke, type WorldInfo } from './wire'
 
 /**
  * A CO-OP SESSION — one world's WebSocket (backend/README.md): the world as the server says it is (players, claims and
@@ -90,6 +90,14 @@ export class Session {
   readonly pieces = new Map<string, Piece>()
   readonly drops = new Map<string, Loose>()
   readonly ponds = new Map<string, Pond>()
+  /** Each claim's GROUND EDITS (the server's cells on the box's 2 m grid): `i * 4096 + j` → the height's change (cm). */
+  readonly cells = new Map<string, Map<number, number>>()
+  /** Each claim's PAVING, its strokes in order. */
+  readonly paint = new Map<string, Stroke[]>()
+  /** The trees felled (by their index in the map's tree list) — where each stood. */
+  readonly stumps = new Map<number, { x: number; z: number }>()
+  /** The rocks and scrap worked (by key, "rock:<i>" / "scrap:<place>"): what's left in each. */
+  readonly nodes = new Map<string, number>()
   /** The round trip (ms), from the pings. */
   rtt = 0
   /** Bytes in / out (the HUD's debug line). */
@@ -104,6 +112,12 @@ export class Session {
   /** Why the connection ended (shown to the player). */
   onClose: ((why: string) => void) | null = null
 
+  private setCells(claim: string, list: [number, number, number][]): void {
+    const m = this.cells.get(claim) ?? new Map<number, number>()
+    for (const [i, j, d] of list) { if (d) m.set(i * 4096 + j, d); else m.delete(i * 4096 + j) }
+    this.cells.set(claim, m)
+  }
+
   private constructor(private readonly ws: WebSocket, w: Extract<Ev, { t: 'welcome' }>) {
     this.world = w.world
     this.me = w.you
@@ -114,6 +128,10 @@ export class Session {
     for (const p of w.state.pieces) this.pieces.set(p.id, p)
     for (const d of w.state.drops) this.drops.set(d.id, d)
     for (const p of w.state.ponds) this.ponds.set(p.id, p)
+    for (const [id, list] of w.state.cells) this.setCells(id, list)
+    for (const [id, list] of w.state.paint) this.paint.set(id, [...list])
+    for (const t of w.state.stumps) this.stumps.set(t.tree, { x: t.x, z: t.z })
+    for (const n of w.state.nodes) this.nodes.set(n.key, n.left)
     ws.onmessage = (m) => this.message(new Uint8Array(m.data as ArrayBuffer))
     ws.onclose = (e) => this.ended(e.reason || 'The connection to the server was lost')
   }
@@ -230,7 +248,9 @@ export class Session {
       case 'pong': this.rtt = Math.max(0, (performance.now() * 10 - e.n) / 10); break
       case 'inv': this.inv = e.inv; break
       case 'claim': this.claims.set(e.claim.id, e.claim); break
-      case 'claim_gone': this.claims.delete(e.id); this.guards.delete(e.id); break
+      case 'claim_gone': this.claims.delete(e.id); this.guards.delete(e.id); this.cells.delete(e.id); this.paint.delete(e.id); for (const [k, p] of this.ponds) if (p.claim === e.id) this.ponds.delete(k); break
+      case 'cells': this.setCells(e.claim, e.cells); break
+      case 'pave': { const l = this.paint.get(e.claim) ?? []; l.push(e.stroke); this.paint.set(e.claim, l); break }
       case 'stock': { const c = this.claims.get(e.claim); if (c) c.stock = e.stock; break }
       case 'guard': this.guards.set(e.claim, e.on); break
       case 'piece': this.pieces.set(e.piece.id, e.piece); break
@@ -239,6 +259,10 @@ export class Session {
       case 'drop_gone': this.drops.delete(e.id); break
       case 'pond': this.ponds.set(e.pond.id, e.pond); break
       case 'pond_gone': this.ponds.delete(e.id); break
+      case 'tree_cut': this.stumps.set(e.tree, { x: e.x, z: e.z }); break
+      case 'tree_back': this.stumps.delete(e.tree); break
+      case 'node': this.nodes.set(e.key, e.left); break
+      case 'node_back': this.nodes.delete(e.key); break
     }
     for (const f of this.listeners) f(e)
   }

@@ -359,6 +359,7 @@ export function porch(b: Builder, w: number, z0: number, depth: number, floorY: 
 // ------------------------------------------------------------------------------------------------ outdoor things
 /** A WOODPILE: split logs stacked along `along` between two posts, against a wall or freestanding. */
 export function woodpile(b: Builder, c: GFX.Vector3, rot: number, len: number, rows: number, g: Ground): void {
+  if (b.sink?.('woodpile', c.x, g(c.x, c.z), c.z, rot, { scale: [len / 2.8, rows / 6, 1] })) return
   const u = V(Math.cos(rot), 0, -Math.sin(rot)), w = V(Math.sin(rot), 0, Math.cos(rot))
   const gy = g(c.x, c.z)
   for (let r = 0; r < rows; r++) {
@@ -389,6 +390,10 @@ export function mailbox(b: Builder, x: number, z: number, rot: number, g: Ground
 }
 /** A BARREL (standing, or lying along rot): staves and two hoops; `metal` an oil drum. */
 export function barrel(b: Builder, x: number, y: number, z: number, col: RGB, lying = false, rot = 0, metal = false): void {
+  // (modelled — places.py: staves and hoops, or a ribbed steel drum in its paint; lying: on its side along rot)
+  if (b.sink && (lying
+    ? b.sink(metal ? 'drum' : 'barrel', x - Math.cos(rot) * 0.45, y + 0.3, z + Math.sin(rot) * 0.45, rot, { tint: col, tiltZ: -Math.PI / 2 })
+    : b.sink(metal ? 'drum' : 'barrel', x, y, z, rot, { tint: col }))) return
   const a = lying ? V(x - Math.cos(rot) * 0.45, y + 0.3, z + Math.sin(rot) * 0.45) : V(x, y, z)
   const c2 = lying ? V(x + Math.cos(rot) * 0.45, y + 0.3, z - Math.sin(rot) * 0.45) : V(x, y + 0.9, z)
   b.setSurf(metal ? SURF.metal : SURF.wood)
@@ -477,6 +482,8 @@ export function pickup(b: Builder, x: number, z: number, rot: number, g: Ground,
   const y0 = (g(fx.x, fx.z) + g(bx.x, bx.z)) / 2 - (o.sunk ?? 0)
   const pitch = Math.atan2(g(fx.x, fx.z) - g(bx.x, bx.z), 3.2)
   const P = (lx: number, ly: number, lz: number) => T(lx, y0 + ly + lx * Math.tan(pitch), lz)
+  // (modelled — places.py: a '50s farm pickup in its paint, or the wreck: rust, flat tyres, the hood up)
+  if (b.sink?.((o.rust ?? 0) > 0.5 || o.flat || o.noWheel ? 'pickup_wreck' : 'pickup', x, y0, z, rot, { tint: col, tiltZ: pitch })) return
   const U = T(1, 0, 0).sub(T(0, 0, 0)), W = T(0, 0, 1).sub(T(0, 0, 0))
   const body = mixc(col, C.rust, o.rust ?? 0)
   const bx2 = (lx: number, ly: number, lz: number, hx: number, hy: number, hz: number, c: RGB) => b.box(P(lx, ly, lz), U, Y, W, hx, hy, hz, c)

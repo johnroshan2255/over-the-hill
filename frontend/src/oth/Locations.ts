@@ -6,6 +6,7 @@ import {
   radioMast, rails, rbox, type RGB, rock, rowboat, shade, steps, stovepipe, tarpShelter, tentA, tentDome, V, warningSign, windowAt,
   type WinState, woodpile, wheel, X, Y, Z, boardWalls, mixc,
 } from './Kit'
+import { hasPlace, panes } from './Buildings'
 
 /**
  * THE VALLEY'S PLACES, COMPOSED (2026-11-06, the user: "transform these into recognizable points of interest … every
@@ -25,6 +26,8 @@ export interface Ctx {
   clear: (cx: number, cz: number, hx: number, hz: number, rot?: number) => void
   /** A seed of the place's own (its variations). */
   seed: number
+  /** A MODELLED building (Buildings.ts — places.py) placed at (x, z) turned rot, on the place's ground level. */
+  model?: (name: string, x: number, z: number, rot: number, y?: number) => void
 }
 
 const DOOR_H = 2.3, DOOR_HW = 0.58
@@ -37,8 +40,13 @@ export function sub(c: Ctx, dx: number, dz: number, rot: number, f: (c2: Ctx) =>
     ...c, g: (x, z) => g(dx + x * cs + z * sn, dz - x * sn + z * cs),
     col: (cx, cy, cz, hx, hy, hz, gr) => { const r = Math.abs(sn) > 0.7; c.col(dx + cx * cs + cz * sn, cy, dz - cx * sn + cz * cs, r ? hz : hx, hy, r ? hx : hz, gr) },
     clear: (cx, cz, hx, hz, r = 0) => c.clear(dx + cx * cs + cz * sn, dz - cx * sn + cz * cs, hx, hz, r + rot),
+    model: c.model && ((name, x, z, r, y) => c.model!(name, dx + x * cs + z * sn, dz - x * sn + z * cs, r + rot, y)),
   }
+  // (the props' models too, moved with the part)
+  const sink = b.sink
+  if (sink) b.sink = (name, x, y, z, r, o) => sink(name, dx + x * cs + z * sn, y, dz - x * sn + z * cs, r + rot, o)
   f(c2)
+  b.sink = sink
   b.transform(from, new GFX.Matrix4().compose(V(dx, 0, dz), new GFX.Quaternion().setFromAxisAngle(Y, rot), V(1, 1, 1)))
 }
 /** Painted siding colours (linear, weathered): faded barn red, cream, sage, slate blue, mustard, a soft white. */
@@ -64,12 +72,24 @@ export interface CabinOpts {
   storeys?: number
   /** The upper windows' states (a haunted house: one cold light that gutters). */
   upper?: WinState[]
+  /** Its model (places.py) — drawn instead of the boxes when the place can take one. */
+  model?: string
 }
 /** A CABIN on its foundation (centre 0, 0, its front +z): walls, a real roof, framed windows (lit when lived in;
  *  broken / boarded when not), a door (ajar in a ruin), a porch with steps, a chimney. The colliders, the clearing. */
 export function cabin(c: Ctx, o: CabinOpts): void {
   const { b, g } = c
   const w = o.w ?? 8.5, d = o.d ?? 6.5, floor = 0.5, H = 3.3 * (o.storeys ?? 1), ruin = o.state === 'ruin'
+  if (o.model && c.model && hasPlace(o.model)) {
+    // THE MODEL (places.py): the building whole; its glass ours; its colliders and its clearing as before
+    c.model(o.model, 0, 0, 0)
+    panes(b, o.model)
+    if ((o.chimney ?? 'stone') === 'stone') c.col(-w / 2 - 0.45, 2.5, -0.8, 0.55, 2.5, 0.55)
+    c.col(0, floor + H / 2, 0, w / 2 + 0.2, H / 2 + floor / 2, d / 2 + 0.2)
+    c.clear(0, 0, w / 2 + 0.6, d / 2 + 0.6)
+    if (o.porch !== false) c.clear(0, d / 2 + 1.2, w / 2 + 0.3, 1.4)
+    return
+  }
   const paint = o.paint ?? b.wood(1), trim = o.trim ?? C.trim
   foundation(b, w + 0.1, d + 0.1, floor, g)
   box(b, 0, floor - 0.06, 0, w / 2, 0.06, d / 2, b.wood(0.8)) // (the floor)
@@ -155,6 +175,7 @@ export function cabinYard(c: Ctx, kind: 'trapper' | 'pond' | 'birch' | 'ruin'): 
 /** An OUTHOUSE (a tall plank box, a moon cut in the door, a lean roof). */
 export function outhouse(c: Ctx, x: number, z: number, rot: number): void {
   const { b, g } = c, y = g(x, z), cs = Math.cos(rot), sn = Math.sin(rot)
+  if (c.model && hasPlace('outhouse')) { c.model('outhouse', x, z, rot, y); c.col(x, y + 1.3, z, 0.75, 1.3, 0.75); return }
   const P = (lx: number, ly: number, lz: number) => V(x + lx * cs + lz * sn, y + ly, z - lx * sn + lz * cs)
   const u = V(cs, 0, -sn), w = V(sn, 0, cs)
   for (let i = 0; i < 5; i++) for (const s of [-1, 1]) b.box(P(-0.6 + i * 0.3, 1.25, s * 0.65), u, Y, w, 0.14, 1.25 + (s < 0 ? 0.15 : 0), 0.03, b.wood(0.9 + 0.2 * b.rnd()))
@@ -214,6 +235,9 @@ export function mineSite(c: Ctx): void {
   shed(c, -6.5, -0.5, 0.2, true)
   sub(c, 14, 10, 0.3, (c2) => {
     const py = c2.g(0, 0)
+    if (c2.model && hasPlace('powder_house')) {
+      c2.model('powder_house', 0, 0, 0, py); warningSign(b, -2.2, 2.2, 0.3, c2.g); c2.col(0, py + 1.2, 0, 1.4, 1.2, 1.4); return
+    }
     b.setSurf(SURF.stone)
     for (let i = 0; i < 6; i++) for (const s of [-1, 1]) box(b, s * 1.2, py + 0.2 + i * 0.4, 0, 0.2, 0.2, 1.2, shade(C.stone, 0.7 + 0.35 * b.rnd()))
     for (let i = 0; i < 6; i++) box(b, 0, py + 0.2 + i * 0.4, -1.15, 1.2, 0.2, 0.2, shade(C.stone, 0.7 + 0.35 * b.rnd()))
@@ -235,6 +259,7 @@ export function mineSite(c: Ctx): void {
 export function shed(c: Ctx, x: number, z: number, rot: number, tin = true): void {
   sub(c, x, z, rot, (c2) => {
     const { b, g } = c2, y = g(0, 0)
+    if (c2.model && hasPlace('tool_shed')) { c2.model('tool_shed', 0, 0, 0, y); c2.col(0, y + 1.3, 0, 1.7, 1.3, 1.4); return }
     const n = 12
     for (let i = 0; i < n; i++) { const t = -1.6 + (i + 0.5) * (3.2 / n); for (const s of [-1, 1]) box(b, t, y + 1.3 + (s > 0 ? 0.15 : -0.15), s * 1.3, 3.2 / n / 2 - 0.01, 1.3 + (s > 0 ? 0.15 : -0.15), 0.03, b.wood(0.85 + 0.25 * b.rnd())) }
     for (let i = 0; i < 9; i++) { const t = -1.3 + (i + 0.5) * (2.6 / 9); for (const s of [-1, 1]) if (!(s > 0 && Math.abs(t) < 0.6)) box(b, s * 1.6, y + 1.3, t, 0.03, 1.3, 2.6 / 18 - 0.01, b.wood(0.85 + 0.25 * b.rnd())) }
@@ -252,13 +277,15 @@ export function shed(c: Ctx, x: number, z: number, rot: number, tin = true): voi
 export function fishingHut(c: Ctx, waterY: number): void {
   const { b, g } = c
   const w = 4.4, d = 3.6, floor = 0.35
-  foundation(b, w, d, floor, g)
-  boardWalls(b, w, d, floor, 2.6, mixc(PAINTS.sage, [0.3, 0.3, 0.28], 0.4), true, C.trim)
-  leanRoof(b, w + 0.8, -d / 2 - 0.4, floor + 3.3, d / 2 + 0.6, floor + 2.55, C.tin, true)
-  door(b, V(0.8, floor, d / 2 + 0.06), Z, X, 0.55, 2.15, b.wood(0.8), 0.15)
-  windowAt(b, V(-1.1, floor + 1.55, d / 2 + 0.06), Z, X, 0.45, 0.4, 'lit', C.trim)
-  windowAt(b, V(w / 2 + 0.06, floor + 1.55, 0), X, V(0, 0, -1), 0.45, 0.4, 'dark', C.trim)
-  stovepipe(b, -1.4, -0.8, floor + 2.9, floor + 4.2)
+  if (c.model && hasPlace('fishing_hut')) { c.model('fishing_hut', 0, 0, 0); panes(b, 'fishing_hut') } else {
+    foundation(b, w, d, floor, g)
+    boardWalls(b, w, d, floor, 2.6, mixc(PAINTS.sage, [0.3, 0.3, 0.28], 0.4), true, C.trim)
+    leanRoof(b, w + 0.8, -d / 2 - 0.4, floor + 3.3, d / 2 + 0.6, floor + 2.55, C.tin, true)
+    door(b, V(0.8, floor, d / 2 + 0.06), Z, X, 0.55, 2.15, b.wood(0.8), 0.15)
+    windowAt(b, V(-1.1, floor + 1.55, d / 2 + 0.06), Z, X, 0.45, 0.4, 'lit', C.trim)
+    windowAt(b, V(w / 2 + 0.06, floor + 1.55, 0), X, V(0, 0, -1), 0.45, 0.4, 'dark', C.trim)
+    stovepipe(b, -1.4, -0.8, floor + 2.9, floor + 4.2)
+  }
   c.col(0, 1.5, 0, w / 2 + 0.1, 1.5, d / 2 + 0.1)
   c.clear(0, 0, w / 2 + 0.5, d / 2 + 0.5)
   steps(b, V(0.8, floor, d / 2 + 0.1), Z, X, 0.6, g)
@@ -366,7 +393,7 @@ export function camp(c: Ctx, style: CampStyle): void {
  *  truck (gone — its tracks and an oil stain left), a water tank on a stand. */
 export function rangerStation(c: Ctx): void {
   const { b, g } = c
-  cabin(c, { walls: 'clap', paint: [0.42, 0.28, 0.14], trim: [0.55, 0.52, 0.42], roof: C.greenRoof, tin: true, state: 'empty', w: 9, d: 7, chimney: 'pipe', shutters: PAINTS.green })
+  cabin(c, { walls: 'clap', paint: [0.42, 0.28, 0.14], trim: [0.55, 0.52, 0.42], roof: C.greenRoof, tin: true, state: 'empty', w: 9, d: 7, chimney: 'pipe', shutters: PAINTS.green, model: 'ranger' })
   radioMast(b, -7.5, -3, g, 16)
   b.setSurf(SURF.metal); b.log(V(6, g(6, 6) - 0.3, 6), V(6, g(6, 6) + 7, 6), 0.05, [0.6, 0.6, 0.6]); b.setSurf(SURF.wood)
   b.setSurf(SURF.fabric); panel(b, V(6, g(6, 6) + 6.8, 6.05), V(7.3, g(6, 6) + 6.7, 6.25), V(7.3, g(6, 6) + 6.0, 6.25), V(6, g(6, 6) + 6.0, 6.05), [0.12, 0.25, 0.45], [0.1, 0.2, 0.36]); b.setSurf(SURF.wood)
@@ -387,6 +414,8 @@ export function rangerStation(c: Ctx): void {
 export function garage(c: Ctx): void {
   const { b, g } = c
   const w = 9, d = 8, floor = 0.15
+  const modelled = !!c.model && hasPlace('garage')
+  if (modelled) { c.model!('garage', 0, 0, 0); panes(b, 'garage') } else {
   foundation(b, w, d, floor, g, C.stoneDark)
   boardWalls(b, w, d, floor, 4.2, PAINTS.red, true, C.trim)
   gableRoof(b, w + 0.3, d + 0.3, floor + 4.2, 2.6, 0.5, { col: C.tin, gable: PAINTS.red, tin: true })
@@ -402,6 +431,7 @@ export function garage(c: Ctx): void {
   windowAt(b, V(-w / 2 - 0.06, floor + 2.0, -1), V(-1, 0, 0), Z, 0.7, 0.5, 'broken', C.trim)
   // the sign board over the doors
   b.setSurf(SURF.plain); box(b, 0, floor + 5.0, d / 2 + 0.2, 2.6, 0.45, 0.05, [0.6, 0.56, 0.45]); box(b, 0, floor + 5.0, d / 2 + 0.26, 2.3, 0.18, 0.01, [0.35, 0.07, 0.04]); b.setSurf(SURF.wood)
+  }
   c.col(0, 2.2, 0, w / 2 + 0.1, 2.2, d / 2 + 0.1)
   c.clear(0, 3, w / 2 + 2, d / 2 + 5)
   // a car on blocks before the doors (wheels gone), its bonnet up
@@ -414,8 +444,10 @@ export function garage(c: Ctx): void {
   for (let k = 0; k < 4; k++) wheel(b, V(-5.8, g(-5.8, 5.5) + 0.15 + k * 0.3, 5.5), Y, 0.42, 0.28)
   for (const [x, z] of [[-6.8, 4.8], [-5.0, 6.6]] as const) wheel(b, V(x, g(x, z) + 0.42, z), V(0.8, 0, 0.6).normalize(), 0.42, 0.28)
   // the lean-to on the side: a workbench, a vice, a jerrycan
-  for (const z of [-3.2, 1.8]) post(b, w / 2 + 2.6, z, floor + 3.0, g, 0.08)
-  b.box(V(w / 2 + 1.35, floor + 3.2, -0.7), V(1, -0.25, 0).normalize(), V(0.25, 1, 0).normalize(), Z, 1.45, 0.04, 2.7, C.tin)
+  if (!modelled) {
+    for (const z of [-3.2, 1.8]) post(b, w / 2 + 2.6, z, floor + 3.0, g, 0.08)
+    b.box(V(w / 2 + 1.35, floor + 3.2, -0.7), V(1, -0.25, 0).normalize(), V(0.25, 1, 0).normalize(), Z, 1.45, 0.04, 2.7, C.tin)
+  }
   box(b, w / 2 + 1.0, g(w / 2 + 1, -0.7) + 0.9, -0.7, 0.4, 0.05, 1.8, b.wood(1.1))
   for (const z of [-2.3, 0.9]) box(b, w / 2 + 1.0, g(w / 2 + 1, z) + 0.45, z, 0.35, 0.45, 0.05, b.wood(0.8))
   b.setSurf(SURF.metal); box(b, w / 2 + 1.0, g(w / 2 + 1, 0) + 1.05, 0, 0.1, 0.1, 0.12, C.steel); box(b, w / 2 + 1.2, g(w / 2 + 1.2, -2) + 0.27, -2, 0.18, 0.27, 0.08, [0.15, 0.25, 0.1]); b.setSurf(SURF.wood)
@@ -425,11 +457,14 @@ export function garage(c: Ctx): void {
 export function riverShelter(c: Ctx): void {
   const { b, g } = c
   const w = 4.6, d = 3.2, y = g(0, 0)
-  for (let i = 0; i < 7; i++) b.log(V(-w / 2 - 0.3, y + 0.2 + i * 0.34, -d / 2), V(w / 2 + 0.3, y + 0.2 + i * 0.34, -d / 2), 0.17, b.wood(0.85 + 0.2 * b.rnd()))
-  for (const s of [-1, 1]) for (let i = 0; i < 5; i++) { const t = i / 5, h = 0.2 + i * 0.34; b.log(V(s * w / 2, y + h, -d / 2 - 0.3), V(s * w / 2, y + h, -d / 2 + d * (1 - t * 0.7) + 0.2), 0.16, b.wood(0.85 + 0.2 * b.rnd())) }
-  for (const s of [-1, 1]) post(b, s * w / 2, d / 2, y + 2.1, g, 0.12)
-  leanRoof(b, w + 1.0, -d / 2 - 0.5, y + 2.75, d / 2 + 0.7, y + 2.0, C.shingle)
-  box(b, 0, y + 0.3, -0.5, w / 2 - 0.2, 0.08, 1.1, b.wood(1.0))
+  if (c.model && hasPlace('river_shelter')) c.model('river_shelter', 0, 0, 0, y)
+  else {
+    for (let i = 0; i < 7; i++) b.log(V(-w / 2 - 0.3, y + 0.2 + i * 0.34, -d / 2), V(w / 2 + 0.3, y + 0.2 + i * 0.34, -d / 2), 0.17, b.wood(0.85 + 0.2 * b.rnd()))
+    for (const s of [-1, 1]) for (let i = 0; i < 5; i++) { const t = i / 5, h = 0.2 + i * 0.34; b.log(V(s * w / 2, y + h, -d / 2 - 0.3), V(s * w / 2, y + h, -d / 2 + d * (1 - t * 0.7) + 0.2), 0.16, b.wood(0.85 + 0.2 * b.rnd())) }
+    for (const s of [-1, 1]) post(b, s * w / 2, d / 2, y + 2.1, g, 0.12)
+    leanRoof(b, w + 1.0, -d / 2 - 0.5, y + 2.75, d / 2 + 0.7, y + 2.0, C.shingle)
+    box(b, 0, y + 0.3, -0.5, w / 2 - 0.2, 0.08, 1.1, b.wood(1.0))
+  }
   c.col(0, y + 1.2, -d / 2, w / 2 + 0.3, 1.2, 0.3); for (const s of [-1, 1]) c.col(s * w / 2, y + 1.0, 0, 0.25, 1.0, d / 2)
   c.clear(0, 0.5, w / 2 + 1, d / 2 + 2.5)
   fireRing(b, 0, d / 2 + 2.0, g, true)
@@ -443,6 +478,17 @@ export function riverShelter(c: Ctx): void {
 export function houseRuin(c: Ctx, big: boolean): void {
   const { b, g } = c
   const w = big ? 10 : 8, d = big ? 7.5 : 6.5
+  const name = big ? 'house_ruin_big' : 'house_ruin_small'
+  if (c.model && hasPlace(name)) {
+    c.model(name, 0, 0, 0)
+    for (const [x0, z0, x1, z1, h] of [[-w / 2, -d / 2, w / 2, -d / 2, 3.6], [w / 2, -d / 2, w / 2, d / 2, 2.2], [-w / 2, -d / 2, -w / 2, d / 2, 3.6]] as const)
+      c.col((x0 + x1) / 2, h / 2, (z0 + z1) / 2, Math.abs(x1 - x0) / 2 + 0.3, h / 2, Math.abs(z1 - z0) / 2 + 0.3)
+    // (the front, low, either side of the doorway at x 0.4 … 1.6)
+    c.col((-w / 2 + 0.4) / 2, 1.0, d / 2, (w / 2 + 0.4) / 2, 1.0, 0.3); c.col((w / 2 + 1.6) / 2, 1.0, d / 2, (w / 2 - 1.6) / 2, 1.0, 0.3)
+    c.col(w / 2 - 0.8, 3, -d / 2 + 0.9, 0.6, 3, 0.6)
+    c.clear(0, 0, w / 2, d / 2)
+    return
+  }
   b.setSurf(SURF.stone)
   const wall = (x0: number, z0: number, x1: number, z1: number, h0: number, h1: number, gap?: [number, number]) => {
     const L = Math.hypot(x1 - x0, z1 - z0), ux = (x1 - x0) / L, uz = (z1 - z0) / L, n = Math.round(L / 0.55)
@@ -508,7 +554,7 @@ export function researchCamp(c: Ctx): void {
 export function hamlet(c: Ctx): void {
   const { b, g } = c
   sub(c, -12, -6, 0.5, (c2) => houseRuin(c2, true))
-  sub(c, 10, -8, -0.4, (c2) => cabin(c2, { walls: 'batten', paint: PAINTS.cream, trim: C.trim, roof: C.shingleGrey, state: 'ruin', w: 7.5, d: 6, porch: false, chimney: 'pipe' }))
+  sub(c, 10, -8, -0.4, (c2) => cabin(c2, { walls: 'batten', paint: PAINTS.cream, trim: C.trim, roof: C.shingleGrey, state: 'ruin', w: 7.5, d: 6, porch: false, chimney: 'pipe', model: 'hamlet_cabin' }))
   sub(c, 13, 10, -1.9, (c2) => barn(c2))
   // the WELL: a stone ring, a roof on two posts, the windlass, a bucket
   const wy = g(0, 2)
@@ -531,6 +577,12 @@ export function hamlet(c: Ctx): void {
 export function barn(c: Ctx): void {
   const { b, g } = c
   const w = 10, d = 13, floor = 0.1
+  if (c.model && hasPlace('barn')) {
+    c.model('barn', 0, 0, 0); panes(b, 'barn')
+    c.col(0, 2.4, 0, w / 2 + 0.1, 2.4, d / 2 + 0.1)
+    c.clear(0, 0, w / 2 + 1, d / 2 + 1)
+    return
+  }
   foundation(b, w, d, floor, g, C.stoneDark)
   boardWalls(b, w, d, floor, 4.8, mixc(PAINTS.red, b.wood(0.8), 0.35), true, C.trim)
   gableRoof(b, w + 0.4, d + 0.4, floor + 4.8, 3.6, 0.5, { col: C.tin, gable: mixc(PAINTS.red, b.wood(0.8), 0.35), tin: true, holes: 0.45, sag: 0.3 })
@@ -612,7 +664,7 @@ export function graveyard(c: Ctx, x0: number, z0: number, rot: number): void {
  *  graveyard behind the broken fence, the gate hanging open. */
 export function ghostHouse(c: Ctx): void {
   const { b, g } = c
-  cabin(c, { walls: 'clap', paint: mixc(PAINTS.white, [0.3, 0.3, 0.28], 0.55), trim: [0.3, 0.29, 0.27], roof: C.shingleGrey, state: 'ruin', w: 9, d: 7, storeys: 2, chimney: 'stone', upper: ['eerie', 'broken', 'boarded'], shutters: [0.12, 0.12, 0.11] })
+  cabin(c, { walls: 'clap', paint: mixc(PAINTS.white, [0.3, 0.3, 0.28], 0.55), trim: [0.3, 0.29, 0.27], roof: C.shingleGrey, state: 'ruin', w: 9, d: 7, storeys: 2, chimney: 'stone', upper: ['eerie', 'broken', 'boarded'], shutters: [0.12, 0.12, 0.11], model: 'ghost_house' })
   for (const [x, z, h, s] of [[-9, 4, 9, 1], [8.5, -6, 11, 2], [10, 7, 7, 3], [-7, -9, 10, 4], [-13, -2, 8, 5]] as const) { deadTree(b, x, z, g, h, s); c.col(x, 2, z, 0.35, 2, 0.35) }
   // the swing: two ropes from the big dead tree's low branch, the seat
   const sy = g(8.5, -6)

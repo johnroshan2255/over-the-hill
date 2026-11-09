@@ -1,3 +1,4 @@
+import { TRAILER, TrailerModel } from './Trailer'
 import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import { Character } from './Character'
@@ -7,7 +8,7 @@ import type { OthPhysics } from './Physics'
 import { MotoBike } from './Bike'
 import type { TerrainShadow } from './TerrainShadow'
 import { RemoteCar } from './Vehicle'
-import { Kind, Slot } from '../net/pose'
+import { FLAG_HITCHED, Kind, Slot } from '../net/pose'
 import { group, Groups } from '../physics/PhysicsWorld'
 import type RAPIER from '@dimforge/rapier3d-compat'
 import type { Remote, Session } from '../net/Session'
@@ -49,6 +50,11 @@ interface Avatar {
   /** Its kinematic bodies: the car, and the player (on foot / the bike). */
   solidCar: Solid | null
   solidMe: Solid | null
+  /** Their trailer (Trailer.ts' model alone), its body solid; made the first time they have one. */
+  trailer: TrailerModel | null
+  trailerLoading: boolean
+  solidTr: Solid | null
+  trailerAt: GFX.Vector3
 }
 
 const TAG_FAR = 900 // m: no tag beyond
@@ -59,6 +65,7 @@ export class Remotes {
   private readonly s = { p: [0, 0, 0] as [number, number, number], q: [0, 0, 0, 1] as [number, number, number, number], speed: 0, kind: 0 as Kind }
   private readonly v = new GFX.Vector3()
   private readonly qq = new GFX.Quaternion()
+  private readonly v2 = new GFX.Vector3()
 
   constructor(
     private readonly session: Session,
@@ -92,7 +99,7 @@ export class Remotes {
     name.textContent = r.name
     tag.append(name, dist)
     this.layer.appendChild(tag)
-    return { r, car, hero: null, moto: null, loading: false, tag, name, dist, kind: -1, pos: new GFX.Vector3(), heading: 0, shown: false, solidCar: null, solidMe: null, camDist: 0, inView: true, animDt: 0, animN: 0 }
+    return { r, car, hero: null, moto: null, loading: false, tag, name, dist, kind: -1, pos: new GFX.Vector3(), heading: 0, shown: false, solidCar: null, solidMe: null, trailer: null, trailerLoading: false, solidTr: null, trailerAt: new GFX.Vector3(NaN, 0, 0), camDist: 0, inView: true, animDt: 0, animN: 0 }
   }
 
   /** The walker and the bike, loaded the first time this player needs them. */
@@ -133,6 +140,8 @@ export class Remotes {
   private drop(a: Avatar): void {
     a.solidCar = this.unsolid(a.solidCar)
     a.solidMe = this.unsolid(a.solidMe)
+    a.solidTr = this.unsolid(a.solidTr)
+    a.trailer?.root.removeFromParent()
     a.car.dispose()
     if (a.hero) { a.hero.hide(); a.hero.root.removeFromParent(); a.hero.shadowMesh.removeFromParent() }
     if (a.moto) { a.moto.root.removeFromParent(); a.moto.shadowMesh.removeFromParent() }
@@ -181,6 +190,30 @@ export class Remotes {
       if (kind === Kind.Foot) a.solidMe = this.solid(a.solidMe, 'foot', () => R.ColliderDesc.capsule(0.55, 0.3).setTranslation(0, 0.85, 0), s.p, [0, 0, 0, 1])
       else if (kind === Kind.Moto) a.solidMe = this.solid(a.solidMe, 'moto', () => R.ColliderDesc.cuboid(0.3, 0.55, 1.0).setTranslation(0, 0.6, 0), s.p, s.q)
       else a.solidMe = this.unsolid(a.solidMe)
+      // their TRAILER: where they say, its wheels turning by how far it went, its jockey wheel up when it's hitched
+      const tt = r.tracks.get(Slot.Trailer)
+      if (tt?.last) {
+        if (!a.trailer && !a.trailerLoading) {
+          a.trailerLoading = true
+          const m = new TrailerModel()
+          void m.load(this.atmos, this.shadow, this.farGrid).then(() => { a.trailer = m; this.scene.add(m.root) })
+        }
+        const ps = { p: [0, 0, 0] as [number, number, number], q: [0, 0, 0, 1] as [number, number, number, number], speed: 0, kind: 0 as Kind }
+        tt.at(t, ps)
+        if (a.trailer) {
+          const m = a.trailer
+          m.root.visible = true
+          m.root.position.set(ps.p[0], ps.p[1], ps.p[2]); m.root.quaternion.set(ps.q[0], ps.q[1], ps.q[2], ps.q[3]); m.root.updateMatrixWorld(true)
+          const d = Number.isNaN(a.trailerAt.x) ? 0 : this.v.set(0, 0, -1).applyQuaternion(m.root.quaternion).dot(this.v2.copy(m.root.position).sub(a.trailerAt))
+          a.trailerAt.copy(m.root.position)
+          m.animate(d, !!(tt.last.flags & FLAG_HITCHED), dt)
+        }
+        const R = this.physics.pw.R
+        a.solidTr = this.solid(a.solidTr, 'trailer', () => R.ColliderDesc.cuboid(TRAILER.bedW / 2, 0.25, TRAILER.bedL / 2).setTranslation(0, TRAILER.floor + 0.05, 0), ps.p, ps.q)
+      } else {
+        if (a.trailer) a.trailer.root.visible = false
+        a.solidTr = this.unsolid(a.solidTr)
+      }
       const hero = a.hero, moto = a.moto
       if (moto) {
         if (kind === Kind.Moto) {
