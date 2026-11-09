@@ -64,6 +64,10 @@ const AUDIO: Choice[] = [
   { key: 'sound', label: 'Sound', help: 'The engine, the tyres, the valley and the music (also M in game).', options: [{ v: true, label: 'On' }, { v: false, label: 'Off' }] },
 ] as Choice[]
 
+const COOP: Choice[] = [
+  { key: 'bot', label: 'Helper bot', help: 'In a co-op world in the valley, a bot named after you joins as another player: he walks the valley, chops trees and mines stone, claims land, builds a cottage, a cabin, a garden or a camp, then takes it down and moves on. You see him on the map and in the chat. Off: he takes his things down and leaves.', options: [{ v: false, label: 'Off' }, { v: true, label: 'On' }] },
+] as Choice[]
+
 const KEYS: [string, string][] = [
   ['W A S D', 'Drive and steer · on foot: move'], ['F', 'Get out / get in'], ['Space', 'Handbrake · on foot: jump'], ['Shift', 'Boost · on foot: sprint'], ['X / Z', 'Gear up / down (manual)'], ['E', 'Winch'], ['R', 'Reset the car'],
   ['C', 'Camp: pitch / rest'], ['B', 'Build (co-op): mark your land'], ['1 / 2', 'G500 4×4² / BMW E30'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Q', 'Action wheel'], ['Esc', 'Pause'],
@@ -77,7 +81,7 @@ const RIDES: Ride[] = [
   { ride: 'moto', name: 'Motorbike', line: '450 cm³ · ~80 hp · 5 gears', blurb: 'A motocross bike: 310 mm of travel, ~180 km/h, climbs faces to 70°. Wheelies (↓ + throttle), stoppies, jumps and flips. Your car waits where you take it out.' },
 ]
 
-const TABS: Record<Exclude<Screen, 'main'>, string[]> = { garage: ['Vehicle', 'Paint', 'Driving'], settings: ['Graphics', 'Audio', 'Controls'], journal: ['Journal'], coop: ['Worlds'] }
+const TABS: Record<Exclude<Screen, 'main'>, string[]> = { garage: ['Vehicle', 'Paint', 'Driving'], settings: ['Graphics', 'Audio', 'Co-op', 'Controls'], journal: ['Journal'], coop: ['Worlds'] }
 
 export class Menu {
   readonly root = document.createElement('div')
@@ -200,7 +204,7 @@ export class Menu {
     if (t === 'Journal') return this.journal()
     if (t === 'Worlds') return this.coop()
     if (t === 'Controls') return [el('div', 'oh-list', [el('div', 'oh-side', [el('div', 'oh-keys', KEYS.flatMap(([k, d]) => [el('kbd', '', [k]), el('span', '', [d])]))])]), el('div', 'oh-side', [el('h4', '', ['Controls']), el('p', '', ['Keyboard, or the on-screen pads on a touch screen. The round button top right (Q) opens the action wheel: pause, map, minimap, bike, winch, reset, lights, time, weather, sound. A gamepad comes later.'])])]
-    const rows = t === 'Driving' ? DRIVING : t === 'Graphics' ? GRAPHICS : AUDIO
+    const rows = t === 'Driving' ? DRIVING : t === 'Graphics' ? GRAPHICS : t === 'Co-op' ? COOP : AUDIO
     this.sel = Math.min(this.sel, rows.length - 1)
     const list = el('div', 'oh-list', rows.map((c, i) => this.row(c, i)))
     const c = rows[this.sel]
@@ -499,7 +503,7 @@ export class Menu {
       this.render()
       return
     }
-    const rows = tabName === 'Driving' ? DRIVING : tabName === 'Graphics' ? GRAPHICS : tabName === 'Audio' ? AUDIO : []
+    const rows = tabName === 'Driving' ? DRIVING : tabName === 'Graphics' ? GRAPHICS : tabName === 'Audio' ? AUDIO : tabName === 'Co-op' ? COOP : []
     this.note = ''
     if (!rows.length) return
     if (c === 'ArrowDown' || c === 'KeyS') this.sel = (this.sel + 1) % rows.length

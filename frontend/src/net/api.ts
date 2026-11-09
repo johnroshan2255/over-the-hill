@@ -66,6 +66,29 @@ export async function signIn(name: string): Promise<Account> {
   return keep(await call<Account>('POST', '/v1/players', { name }))
 }
 
+/** THE BOT's account (oth/Bot.ts): its own name and token, kept beside ours — never ours (the server would see one
+ *  player twice). Named after its owner ("Asha · bot", ≤ 20 characters: the server's limit); a fresh one if the
+ *  server forgot it. */
+const BOT_KEY = 'overhill.bot.v1'
+export async function botAccount(owner: string): Promise<Account> {
+  const name = `${owner.trim().slice(0, 14) || 'Player'} · bot`
+  let have: Account | null = null
+  try { have = JSON.parse(localStorage.getItem(BOT_KEY) ?? 'null') as Account | null } catch { /* (none) */ }
+  if (have?.token) {
+    try {
+      if (have.name !== name) have = { ...have, name: (await call<{ id: string; name: string }>('PATCH', '/v1/me', { name }, have.token)).name }
+      else await call('GET', '/v1/me', undefined, have.token)
+      try { localStorage.setItem(BOT_KEY, JSON.stringify(have)) } catch { /* (not kept) */ }
+      return have
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 401) throw e
+    }
+  }
+  const a = await call<Account>('POST', '/v1/players', { name })
+  try { localStorage.setItem(BOT_KEY, JSON.stringify(a)) } catch { /* (not kept) */ }
+  return a
+}
+
 /** The build catalogue (backend catalog.rs): every piece, its name, its group, what it costs. */
 export interface PieceInfo { kind: string; name: string; group: string; cost: Bag }
 export const getCatalog = () => call<{ pieces: PieceInfo[]; carry: number }>('GET', '/v1/catalog')

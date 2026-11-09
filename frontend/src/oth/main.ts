@@ -43,6 +43,7 @@ import { carKind, Coop, type Local } from './Coop'
 import { Gather } from './Gather'
 import { GroundEdits } from './GroundEdits'
 import { Trailer } from './Trailer'
+import { Bot } from './Bot'
 import { coopRequested, loadAccount, requestCoop } from '../net/api'
 import { Kind } from '../net/pose'
 import { Session } from '../net/Session'
@@ -364,6 +365,15 @@ async function boot() {
   const coopLocal: Local = { kind: Kind.Jeep, p: new GFX.Vector3(), q: new GFX.Quaternion(), parked: null, trailer: null }
   /** Our trailer (Trailer.ts) — a co-op world's: hauling what's gathered. */
   let trailer: Trailer | null = null
+  /** THE HELPER BOT (Bot.ts — SETTINGS › CO-OP, ?bot=1): a second player from this tab, in a co-op world in the valley.
+   *  (?botspeed=N: everything N times faster — the harness; ?botlog=1: what he does, in the console) */
+  let bot: Bot | null = null
+  const startBot = () => {
+    if (bot || !coop || coop.session.closed) return
+    const log = q.get('botlog') === '1' ? (m: string) => console.info(m) : undefined
+    bot = new Bot({ owner: coop.session, world: () => ({ map: world.map, trees: world.trees, rocks: world.rocks }), near: () => ride.pos, speed: num('botspeed', 1), first: num('botfirst', -1), log })
+  }
+  const stopBot = () => { void bot?.stop(); bot = null }
   let towCam = false
   const coopParked = { kind: Kind.Jeep as Kind, p: new GFX.Vector3(), q: new GFX.Quaternion() }
   const localNow = (): Local => {
@@ -900,7 +910,8 @@ async function boot() {
       if (k >= 0.99) { fsr?.dispose(); fsr = null }
       else if (fsr) fsr.scale = k
       else fsr = new Fsr(renderer, k)
-    } else if (key === 'quality' || key === 'antialias') restartPending = true
+    } else if (key === 'bot') { if (st.bot) { if (coop) startBot(); else toast('The bot joins in a co-op world — CO-OP on the title screen', 3500) } else stopBot() }
+    else if (key === 'quality' || key === 'antialias') restartPending = true
   }
   // MOUSE LOOK (mouseLook.ts): the lock lost to Esc pauses — the browser keeps that Esc, the keydown below never sees it
   initMouseLook(renderer.domElement, () => { if (!pause) setPaused(true) })
@@ -1216,6 +1227,7 @@ async function boot() {
       // THE CLAIMS' GROUND (GroundEdits.ts — step 5: shaped, paved, ponds)
       ground = new GroundEdits(session, () => world, physics)
       coop.ground = ground
+      if (q.get('bot') === '1') startBot()
       ground.onSettle = (x0, z0, x1, z1) => coop?.claims.reground(x0, z0, x1, z1)
       // THE BUILDER'S WORK SEEN: he swings the pick into the ground he shapes, stoops to lay paving or a piece; the
       // dust where the ground moves and where a piece lands (Pieces.ts animates it in)
@@ -1285,6 +1297,10 @@ async function boot() {
     get riding() { return riding },
     /** (co-op) the session and the others as drawn (scripts/harness/coop.mjs) */
     get coop() { return coop },
+    /** (the helper bot — scripts/harness/bottest.mjs) */
+    get bot() { return bot },
+    startBot,
+    stopBot,
     /** (co-op) gathering on foot (scripts/harness/gathertest.mjs) */
     get gather() { return gather },
     /** (co-op) our trailer (scripts/harness/trailertest.mjs) */

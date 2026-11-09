@@ -25,6 +25,9 @@ export interface Settings {
   upscale: 'off' | 'quality' | 'balanced' | 'performance'
   fpsOverlay: boolean
   sound: boolean
+  /** THE HELPER BOT (oth/Bot.ts): in a co-op world in the valley, a second player run from this tab who gathers,
+   *  builds and moves on. */
+  bot: boolean
 }
 
 export const DEFAULTS: Settings = {
@@ -40,6 +43,7 @@ export const DEFAULTS: Settings = {
   upscale: 'off',
   fpsOverlay: false,
   sound: true,
+  bot: false,
 }
 
 const KEY = 'overhill.settings.v1'
@@ -77,6 +81,7 @@ export function gameParams(): URLSearchParams {
   p.set('aids', s.aids)
   p.set('offroad', s.offroadAssist ? '1' : '0')
   if (!s.sound) p.set('sound', '0')
+  if (s.bot) p.set('bot', '1')
   for (const [k, v] of new URLSearchParams(location.search)) p.set(k, v)
   return p
 }

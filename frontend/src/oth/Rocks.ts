@@ -408,6 +408,22 @@ export class Rocks {
     return i === undefined ? null : { i, rock: best }
   }
 
+  /** Every boulder a pick can work (nearestBoulder's sizes) within r of (x, z), with its index (the bot — Bot.ts). */
+  bouldersNear(x: number, z: number, r: number, minS = 0.45, maxS = 4): { i: number; rock: Inst }[] {
+    if (!this.idx) { this.idx = new Map(); this.all.forEach((k, n) => this.idx!.set(k, n)) }
+    const out: { i: number; rock: Inst }[] = []
+    for (let j = Math.floor((z - r) / CELL); j <= Math.floor((z + r) / CELL); j++) for (let i = Math.floor((x - r) / CELL); i <= Math.floor((x + r) / CELL); i++) {
+      const list = this.grid.get(this.key(i, j))
+      if (!list) continue
+      for (const k of list) {
+        if (k.s < minS || k.s > maxS || (k.x - x) ** 2 + (k.z - z) ** 2 > r * r) continue
+        const n = this.idx.get(k)
+        if (n !== undefined) out.push({ i: n, rock: k })
+      }
+    }
+    return out
+  }
+
   biggestNear(x: number, z: number, r: number): Inst | null {
     let best: Inst | null = null
     for (const list of this.grid.values()) for (const k of list) {

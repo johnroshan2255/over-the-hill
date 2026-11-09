@@ -46,6 +46,11 @@ const SWINGS = 3
 const CARRY_CAP = 4
 /** Where a claim's stockpile stands (from its flag, m: in toward the middle, and to the side). */
 const STOCK_AT = [3.4, 1.8]
+/** Where claim c's stockpile stands (beside its flag) — every client's and the bot's (Bot.ts) the same. */
+export function stockSpotOf(c: Claim, map: MapData): [number, number] {
+  const [fx, fz] = flagSpot(c, map), d = Math.hypot(c.x - fx, c.z - fz) || 1, ix = (c.x - fx) / d, iz = (c.z - fz) / d
+  return [fx + ix * STOCK_AT[0] - iz * STOCK_AT[1], fz + iz * STOCK_AT[0] + ix * STOCK_AT[1]]
+}
 /** The models' sizes (gather_assets.py: a log 1.6 m long): its radius, the stump's. */
 const LOG_R = 0.12, STUMP_R = 0.33
 
@@ -278,8 +283,7 @@ export class Gather {
   private stockSpot(c: Claim): [number, number] {
     const w = this.here()
     if (!w) return [c.x, c.z]
-    const [fx, fz] = flagSpot(c, w.map), d = Math.hypot(c.x - fx, c.z - fz) || 1, ix = (c.x - fx) / d, iz = (c.z - fz) / d
-    return [fx + ix * STOCK_AT[0] - iz * STOCK_AT[1], fz + iz * STOCK_AT[0] + ix * STOCK_AT[1]]
+    return stockSpotOf(c, w.map)
   }
 
   private stockpile(id: string): void {

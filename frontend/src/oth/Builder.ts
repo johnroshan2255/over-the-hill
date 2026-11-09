@@ -81,105 +81,11 @@ export class Builder {
   }
   rotate(): void { this.turn++ }
 
-  /** The ground's height (the map's) — the highest under a cell's corners and middle. */
-  private cellBase(cx: number, cz: number): { y: number; spread: number } {
-    const m = this.map(), h = KIT.cell / 2
-    let lo = Infinity, hi = -Infinity
-    for (const [dx, dz] of [[-h, -h], [h, -h], [-h, h], [h, h], [0, 0]]) { const y = m.height(cx + dx, cz + dz); lo = Math.min(lo, y); hi = Math.max(hi, y) }
-    return { y: hi, spread: hi - lo }
-  }
-  /** The floor's base at a cell: its foundation's, else the ground's. */
-  private baseAt(cx: number, cz: number, claim: string): number {
-    for (const p of this.session.pieces.values()) if (p.claim === claim && p.kind.startsWith('foundation') && Math.hypot(p.x - cx, p.z - cz) < 0.2) return p.y
-    return this.cellBase(cx, cz).y
-  }
-
-  /** The ground-floor wall of this claim nearest (hx, hz) — within 3.2 m, the cursor outside it (its cell bare of a
-   *  foundation that side) — and its outward normal. */
-  private wallNear(hx: number, hz: number, claim: string): { w: Piece; nx: number; nz: number } | null {
-    let best: { w: Piece; nx: number; nz: number } | null = null, bd = 3.2
-    for (const p of this.session.pieces.values()) {
-      if (p.claim !== claim || !p.kind.startsWith('wall') || p.kind === 'wall_drystone') continue
-      const d = Math.hypot(hx - p.x, hz - p.z)
-      if (d >= bd) continue
-      // (its faces along its rot's z; the side the cursor is on)
-      let nx = Math.sin(p.rot), nz = Math.cos(p.rot)
-      if ((hx - p.x) * nx + (hz - p.z) * nz < 0) { nx = -nx; nz = -nz }
-      const ox = p.x + nx * KIT.cell / 2, oz = p.z + nz * KIT.cell / 2
-      if ([...this.session.pieces.values()].some((f) => f.claim === claim && f.kind.startsWith('foundation') && Math.hypot(f.x - ox, f.z - oz) < 0.3)) continue
-      // (the lowest storey's: a porch is on the ground)
-      if ([...this.session.pieces.values()].some((q) => q !== p && q.claim === claim && q.kind.startsWith('wall') && Math.hypot(q.x - p.x, q.z - p.z) < 0.3 && q.y < p.y - 0.5)) continue
-      best = { w: p, nx: Math.round(nx), nz: Math.round(nz) }; bd = d
-    }
-    return best
-  }
-
   /** Where the selected piece would go for the cursor at (hx, hz) — and why not, if it can't. */
   private placeFor(hx: number, hz: number): Placement | null {
     const info = this.piece, c = this.mine()
     if (!info || !c) return null
-    const kind = info.kind, slot = slotOf(kind), C = KIT.cell, F = KIT.floor, W = KIT.wallH
-    const i = Math.round((hx - c.x) / C), j = Math.round((hz - c.z) / C)
-    const cx = c.x + i * C, cz = c.z + j * C
-    const same = (x: number, y: number, z: number, test: (p: Piece) => boolean) => [...this.session.pieces.values()].some((p) => p.claim === c.id && test(p) && Math.hypot(p.x - x, p.z - z) < 0.3 && Math.abs(p.y - y) < 0.5)
-    let x = cx, z = cz, y = 0, rot = 0, why = ''
-    if (slot === 'cell') {
-      rot = kind.startsWith('roof') ? (this.turn % 2) * Math.PI / 2 : (this.turn % 4) * Math.PI / 2
-      if (kind.startsWith('foundation')) {
-        const b = this.cellBase(cx, cz)
-        y = b.y
-        if (b.spread > 0.6) why = 'Too steep for a foundation here — try the next cell'
-        if (same(x, y, z, (p) => p.kind.startsWith('foundation'))) why = 'A foundation stands here already'
-      } else {
-        const base = this.baseAt(cx, cz, c.id)
-        // the highest wall round this cell → the roof (or a floor) on top of it
-        let top = 0
-        for (const p of this.session.pieces.values()) {
-          if (p.claim !== c.id || !p.kind.startsWith('wall') || p.kind === 'wall_drystone') continue
-          if (Math.abs(p.x - cx) <= C / 2 + 0.1 && Math.abs(p.z - cz) <= C / 2 + 0.1) top = Math.max(top, Math.round((p.y - base - F) / W) + 1)
-        }
-        if (!top) why = kind === 'floor_plank' ? 'A floor goes on walls — build the walls first' : 'A roof goes on walls — build the walls first'
-        y = kind === 'floor_plank' ? base + top * W : base + F + Math.max(1, top) * W
-        if (same(x, y, z, (p) => p.kind === kind || (p.kind.startsWith('roof') && kind.startsWith('roof') && kind !== 'roof_shingle_ridge'))) why = 'There is one here already'
-      }
-    } else if (slot === 'edge') {
-      const fx = (hx - cx) / C, fz = (hz - cz) / C
-      let ox = 0, oz = 0
-      if (Math.abs(fx) > Math.abs(fz)) { ox = Math.sign(fx) || 1; x = cx + ox * C / 2 } else { oz = Math.sign(fz) || 1; z = cz + oz * C / 2 }
-      if (this.turn % 2) { ox = -ox; oz = -oz }
-      rot = Math.atan2(-ox, -oz)
-      if (kind.startsWith('wall') && kind !== 'wall_drystone') {
-        // on the floor of the cell it bounds (either side's foundation), stacked on a wall already there
-        const base = Math.max(this.baseAt(cx, cz, c.id), this.baseAt(cx + (Math.abs(fx) > Math.abs(fz) ? Math.sign(fx) : 0) * C, cz + (Math.abs(fx) > Math.abs(fz) ? 0 : Math.sign(fz)) * C, c.id) - 0.001)
-        let level = 0
-        while (same(x, base + F + level * W, z, (p) => p.kind.startsWith('wall') && p.kind !== 'wall_drystone') && level < 3) level++
-        y = base + F + level * W
-        if (level >= 3) why = 'Three storeys is the most'
-      } else {
-        y = this.map().height(x, z)
-        if (same(x, y, z, (p) => p.kind.startsWith('fence') || p.kind === 'wall_drystone' || p.kind === 'plant_hedge')) why = 'There is one here already'
-      }
-    } else if ((kind === 'porch_deck' || kind === 'porch_roof') && this.wallNear(hx, hz, c.id)) {
-      // A PORCH against a wall: on its outside (the cursor's side), its middle, the deck's top at the floor's
-      const { w, nx, nz } = this.wallNear(hx, hz, c.id)!
-      x = w.x + nx * (C / 2 - 0.5); z = w.z + nz * (C / 2 - 0.5)
-      rot = Math.atan2(nx, nz)
-      y = w.y - F
-      if (same(x, y, z, (p) => p.kind === kind)) why = 'There is one here already'
-    } else {
-      x = Math.round(hx * 4) / 4; z = Math.round(hz * 4) / 4
-      rot = (this.turn % 24) * Math.PI / 12
-      y = this.map().height(x, z)
-      if (kind === 'jetty') { const w = this.map().waterAt(x, z); if (w !== null) y = w + 0.35 }
-      else if (this.map().waterAt(x, z) !== null) why = kind.startsWith('plant_') ? 'Not in the water — plant it on the bank' : 'Not in the water'
-    }
-    // (the flag's pole: nothing built through it)
-    const [fx, fz] = flagSpot(c, this.map())
-    if (!why && (slot === 'cell' ? Math.abs(x - fx) < KIT.cell / 2 + 0.4 && Math.abs(z - fz) < KIT.cell / 2 + 0.4 : Math.hypot(x - fx, z - fz) < 1.3)) why = 'Your flag stands here'
-    // in your land; the stockpile pays
-    if (Math.hypot(x - c.x, z - c.z) > c.r - 0.8) why = 'Outside your land'
-    else if (!why && !this.session.world.rules.creative && !covers(c.stock, info.cost)) why = `Your stockpile needs ${short(c.stock, info.cost)} more`
-    return { kind, x, y, z, rot, why }
+    return placementFor(this.session, this.map(), c, info, hx, hz, this.turn)
   }
 
   /** Every frame in build mode: the ghost to the cursor's ground point (null: the cursor isn't on the ground). */
@@ -232,6 +138,109 @@ export class Builder {
   }
 
   dispose(): void { this.ghost.removeFromParent() }
+}
+
+/** The ground's height (the map's) — the highest under a cell's corners and middle. */
+function cellBase(m: MapData, cx: number, cz: number): { y: number; spread: number } {
+  const h = KIT.cell / 2
+  let lo = Infinity, hi = -Infinity
+  for (const [dx, dz] of [[-h, -h], [h, -h], [-h, h], [h, h], [0, 0]]) { const y = m.height(cx + dx, cz + dz); lo = Math.min(lo, y); hi = Math.max(hi, y) }
+  return { y: hi, spread: hi - lo }
+}
+/** The floor's base at a cell: its foundation's, else the ground's. */
+function baseAt(S: Session, m: MapData, cx: number, cz: number, claim: string): number {
+  for (const p of S.pieces.values()) if (p.claim === claim && p.kind.startsWith('foundation') && Math.hypot(p.x - cx, p.z - cz) < 0.2) return p.y
+  return cellBase(m, cx, cz).y
+}
+
+/** The ground-floor wall of this claim nearest (hx, hz) — within 3.2 m, the cursor outside it (its cell bare of a
+ *  foundation that side) — and its outward normal. */
+function wallNear(S: Session, hx: number, hz: number, claim: string): { w: Piece; nx: number; nz: number } | null {
+  let best: { w: Piece; nx: number; nz: number } | null = null, bd = 3.2
+  for (const p of S.pieces.values()) {
+    if (p.claim !== claim || !p.kind.startsWith('wall') || p.kind === 'wall_drystone') continue
+    const d = Math.hypot(hx - p.x, hz - p.z)
+    if (d >= bd) continue
+    // (its faces along its rot's z; the side the cursor is on)
+    let nx = Math.sin(p.rot), nz = Math.cos(p.rot)
+    if ((hx - p.x) * nx + (hz - p.z) * nz < 0) { nx = -nx; nz = -nz }
+    const ox = p.x + nx * KIT.cell / 2, oz = p.z + nz * KIT.cell / 2
+    if ([...S.pieces.values()].some((f) => f.claim === claim && f.kind.startsWith('foundation') && Math.hypot(f.x - ox, f.z - oz) < 0.3)) continue
+    // (the lowest storey's: a porch is on the ground)
+    if ([...S.pieces.values()].some((q) => q !== p && q.claim === claim && q.kind.startsWith('wall') && Math.hypot(q.x - p.x, q.z - p.z) < 0.3 && q.y < p.y - 0.5)) continue
+    best = { w: p, nx: Math.round(nx), nz: Math.round(nz) }; bd = d
+  }
+  return best
+}
+
+/**
+ * WHERE A PIECE GOES (the builder's snapping — the class comment): piece `info` on claim `c` for the cursor at
+ * (hx, hz), turned `turn` times (R) — and why not, if it can't. Shared by the builder and the bot (Bot.ts), so a piece
+ * the bot sets down sits exactly where a player's would.
+ */
+export function placementFor(S: Session, m: MapData, c: Claim, info: { kind: string; cost: Bag }, hx: number, hz: number, turn: number): Placement {
+  const kind = info.kind, slot = slotOf(kind), C = KIT.cell, F = KIT.floor, W = KIT.wallH
+  const i = Math.round((hx - c.x) / C), j = Math.round((hz - c.z) / C)
+  const cx = c.x + i * C, cz = c.z + j * C
+  const same = (x: number, y: number, z: number, test: (p: Piece) => boolean) => [...S.pieces.values()].some((p) => p.claim === c.id && test(p) && Math.hypot(p.x - x, p.z - z) < 0.3 && Math.abs(p.y - y) < 0.5)
+  let x = cx, z = cz, y = 0, rot = 0, why = ''
+  if (slot === 'cell') {
+    rot = kind.startsWith('roof') ? (turn % 2) * Math.PI / 2 : (turn % 4) * Math.PI / 2
+    if (kind.startsWith('foundation')) {
+      const b = cellBase(m, cx, cz)
+      y = b.y
+      if (b.spread > 0.6) why = 'Too steep for a foundation here — try the next cell'
+      if (same(x, y, z, (p) => p.kind.startsWith('foundation'))) why = 'A foundation stands here already'
+    } else {
+      const base = baseAt(S, m, cx, cz, c.id)
+      // the highest wall round this cell → the roof (or a floor) on top of it
+      let top = 0
+      for (const p of S.pieces.values()) {
+        if (p.claim !== c.id || !p.kind.startsWith('wall') || p.kind === 'wall_drystone') continue
+        if (Math.abs(p.x - cx) <= C / 2 + 0.1 && Math.abs(p.z - cz) <= C / 2 + 0.1) top = Math.max(top, Math.round((p.y - base - F) / W) + 1)
+      }
+      if (!top) why = kind === 'floor_plank' ? 'A floor goes on walls — build the walls first' : 'A roof goes on walls — build the walls first'
+      y = kind === 'floor_plank' ? base + top * W : base + F + Math.max(1, top) * W
+      if (same(x, y, z, (p) => p.kind === kind || (p.kind.startsWith('roof') && kind.startsWith('roof') && kind !== 'roof_shingle_ridge'))) why = 'There is one here already'
+    }
+  } else if (slot === 'edge') {
+    const fx = (hx - cx) / C, fz = (hz - cz) / C
+    let ox = 0, oz = 0
+    if (Math.abs(fx) > Math.abs(fz)) { ox = Math.sign(fx) || 1; x = cx + ox * C / 2 } else { oz = Math.sign(fz) || 1; z = cz + oz * C / 2 }
+    if (turn % 2) { ox = -ox; oz = -oz }
+    rot = Math.atan2(-ox, -oz)
+    if (kind.startsWith('wall') && kind !== 'wall_drystone') {
+      // on the floor of the cell it bounds (either side's foundation), stacked on a wall already there
+      const base = Math.max(baseAt(S, m, cx, cz, c.id), baseAt(S, m, cx + (Math.abs(fx) > Math.abs(fz) ? Math.sign(fx) : 0) * C, cz + (Math.abs(fx) > Math.abs(fz) ? 0 : Math.sign(fz)) * C, c.id) - 0.001)
+      let level = 0
+      while (same(x, base + F + level * W, z, (p) => p.kind.startsWith('wall') && p.kind !== 'wall_drystone') && level < 3) level++
+      y = base + F + level * W
+      if (level >= 3) why = 'Three storeys is the most'
+    } else {
+      y = m.height(x, z)
+      if (same(x, y, z, (p) => p.kind.startsWith('fence') || p.kind === 'wall_drystone' || p.kind === 'plant_hedge')) why = 'There is one here already'
+    }
+  } else if ((kind === 'porch_deck' || kind === 'porch_roof') && wallNear(S, hx, hz, c.id)) {
+    // A PORCH against a wall: on its outside (the cursor's side), its middle, the deck's top at the floor's
+    const { w, nx, nz } = wallNear(S, hx, hz, c.id)!
+    x = w.x + nx * (C / 2 - 0.5); z = w.z + nz * (C / 2 - 0.5)
+    rot = Math.atan2(nx, nz)
+    y = w.y - F
+    if (same(x, y, z, (p) => p.kind === kind)) why = 'There is one here already'
+  } else {
+    x = Math.round(hx * 4) / 4; z = Math.round(hz * 4) / 4
+    rot = (turn % 24) * Math.PI / 12
+    y = m.height(x, z)
+    if (kind === 'jetty') { const w = m.waterAt(x, z); if (w !== null) y = w + 0.35 }
+    else if (m.waterAt(x, z) !== null) why = kind.startsWith('plant_') ? 'Not in the water — plant it on the bank' : 'Not in the water'
+  }
+  // (the flag's pole: nothing built through it)
+  const [fx, fz] = flagSpot(c, m)
+  if (!why && (slot === 'cell' ? Math.abs(x - fx) < KIT.cell / 2 + 0.4 && Math.abs(z - fz) < KIT.cell / 2 + 0.4 : Math.hypot(x - fx, z - fz) < 1.3)) why = 'Your flag stands here'
+  // in your land; the stockpile pays
+  if (Math.hypot(x - c.x, z - c.z) > c.r - 0.8) why = 'Outside your land'
+  else if (!why && !S.world.rules.creative && !covers(c.stock, info.cost)) why = `Your stockpile needs ${short(c.stock, info.cost)} more`
+  return { kind, x, y, z, rot, why }
 }
 
 const MATS = ['wood', 'stone', 'metal'] as const

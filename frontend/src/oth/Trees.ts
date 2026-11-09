@@ -210,6 +210,20 @@ export class Trees {
     }
     return best
   }
+  /** Every STANDING tree within r of (x, z), at least minH tall: their indices (the bot's woods — Bot.ts). */
+  standingNear(x: number, z: number, r: number, minH = 4): number[] {
+    const out: number[] = [], d = this.data
+    for (let j = Math.floor((z - r) / TILE); j <= Math.floor((z + r) / TILE); j++) for (let i = Math.floor((x - r) / TILE); i <= Math.floor((x + r) / TILE); i++) {
+      const list = this.tiles.get(this.key(i, j))
+      if (!list) continue
+      for (const t of list) {
+        if (this.gone.has(t)) continue
+        const o = t * TREE_STRIDE
+        if (d[o + 3] >= minH && (d[o] - x) ** 2 + (d[o + 2] - z) ** 2 < r * r) out.push(t)
+      }
+    }
+    return out
+  }
   /**
    * A TREE FALLS (2026-11-09): drawn on its own while it goes — its near LOD and the trees' own shader (TREE_FALL: the
    * whole tree turned about its foot, toward (dx, dz)), the way a cut trunk goes: slowly at first, then all at once

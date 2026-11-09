@@ -267,6 +267,12 @@
       .oth-hands b { align-self: stretch; display: flex; align-items: center; padding: 0 8px; background: #f4efe6; color: #120c04; font-weight: 700; }
       .oth-hands small { color: rgba(244, 239, 230, .55); font-size: 12px; }
       body.touch .oth-hands { top: calc(122px + env(safe-area-inset-top)); font-size: 12px; gap: 7px; }
+      /* THE HELPER BOT (oth/Bot.ts — SETTINGS › CO-OP): what he's doing, under the hands' chip */
+      .oth-bot { position: fixed; right: calc(14px + env(safe-area-inset-right)); top: calc(168px + env(safe-area-inset-top)); z-index: 4; display: flex; align-items: baseline; gap: 10px; max-width: min(560px, calc(100vw - 28px)); padding: 4px 12px 3px 0; background: rgba(8, 8, 10, .6); color: #f4efe6; font: 700 14px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; pointer-events: none; white-space: nowrap; }
+      .oth-bot b { align-self: stretch; display: flex; align-items: center; padding: 0 8px; background: #f2a93b; color: #120c04; font-weight: 700; }
+      .oth-bot i { font-style: normal; overflow: hidden; text-overflow: ellipsis; color: #f2a93b; }
+      body.touch .oth-bot { top: calc(152px + env(safe-area-inset-top)); font-size: 12px; gap: 7px; }
+      @media (orientation: portrait) { body.touch .oth-bot { top: auto; right: auto; left: calc(12px + env(safe-area-inset-left)); bottom: calc(232px + env(safe-area-inset-bottom)); } }
       .oth-gatherbtn { display: none; }
       body.touch .oth-gatherbtn.on { display: grid; place-items: center; position: fixed; z-index: 5; left: 50%; transform: translateX(-50%); bottom: calc(100px + env(safe-area-inset-bottom)); height: 40px; padding: 0 22px; border-radius: 20px; border: 2px solid rgba(255, 255, 255, .6); background: rgba(242, 169, 59, .55); color: #fff; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .14em; text-transform: uppercase; touch-action: none; }
       @media (orientation: portrait) { body.touch .oth-gatherbtn.on { bottom: calc(186px + env(safe-area-inset-bottom)); } }
