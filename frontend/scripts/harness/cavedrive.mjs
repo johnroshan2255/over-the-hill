@@ -1,6 +1,6 @@
 // cavedrive.mjs [outDir] — a STEERING BOT drives THE CAVE WORLD round (CaveWorld.ts: its physics one triangle mesh): from
 // 25 m before the mouth up the way in, across the great hall, down the gallery to the far chamber, back by the loop and
-// out of the mouth again (env CAR: gwagen | bmw). Reports where it
+// out of the mouth again (env CAR: offroader | g500 | e30). Reports where it
 // is, its height over the terrain (the cave's floors stand above it: never under), its speed, any flip or stall, and
 // shots from the chase camera on the way.   node scripts/harness/cavedrive.mjs screenshots/cave-drive   (PORT 5200)
 import puppeteer from 'puppeteer-core'
@@ -12,7 +12,7 @@ const ANGLE = process.platform === 'win32' ? 'd3d11' : 'metal'
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: [`--use-angle=${ANGLE}`, '--ignore-gpu-blocklist', '--mute-audio', '--window-size=1280,720'], defaultViewport: { width: 1280, height: 720 } })
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 300)) })
-await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=ultra&dpr=fixed&time=0&hour=14&weather=clear&world=valley&sound=0&save=0&car=${process.env.CAR || 'gwagen'}`, { waitUntil: 'load' })
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=ultra&dpr=fixed&time=0&hour=14&weather=clear&world=valley&sound=0&save=0&car=${process.env.CAR || 'offroader'}`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car.sim, { timeout: 180000, polling: 250 })
 await p.addStyleTag({ content: 'body > :not(canvas) { display: none !important; }' })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

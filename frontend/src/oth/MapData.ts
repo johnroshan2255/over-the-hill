@@ -161,6 +161,8 @@ export class MapData {
   /** The playable box's half size (m) and the world's. */
   readonly half: number
   readonly farHalf: number
+  /** Half the PLAYABLE land's side (m): the walls stand 40 m inside it (Physics.ts). The valley: 6144 (12 km). */
+  readonly play: number
 
   /** The terrain quadtree's min / max heights (mapPrep.ts: computed with the map, for Terrain's leaf size). */
   readonly pyramid: PreparedMap['pyramid']
@@ -175,6 +177,10 @@ export class MapData {
     this.farN = p.fields.n
     this.half = -meta.inner.origin
     this.farHalf = -meta.far.origin
+    // THE PLAYABLE LAND (2026-11-10, the user: "make it all playable, just restrict the last 2 km round the world"): the
+    // 16 km world less a 2 km rim — ±6144 m, 12 km across. Inside the old 4 km box the ground is its 2 m grid; beyond
+    // it the world's own grid (`height()` has always answered there). The valley only, for now.
+    this.play = meta.id === 'valley' ? Math.max(this.half, this.farHalf - 2048) : this.half      // (the desert keeps its box for now)
     this.mask = mask
     const mn = meta.mask.n
     this.maskTex = new GFX.DataTexture(mask, mn, mn, GFX.RGBAFormat, GFX.UnsignedByteType)

@@ -77,6 +77,11 @@ void main() {
   gl_Position = projectionMatrix * viewMatrix * w;
 }`
 
+const FLAT = typeof location === 'undefined' || new URLSearchParams(location.search).get('flat') !== '0'
+const PALETTE: Record<string, [number, number, number]> = {
+  stone: [0.3, 0.3, 0.32], block: [0.33, 0.33, 0.34], rock: [0.3, 0.3, 0.32], bark: [0.3, 0.25, 0.2], shingle: [0.2, 0.175, 0.155], planks: [0.34, 0.28, 0.22],
+  barn: [0.3, 0.2, 0.15], door: [0.22, 0.17, 0.13], tin: [0.34, 0.37, 0.38], iron: [0.08, 0.08, 0.085], birch: [0.66, 0.64, 0.58],
+}
 export type KitMatDef = { k: number; tint: number[]; tex?: string; flat?: number[]; emit?: boolean; clamp?: boolean; cut?: boolean; sway?: boolean }
 /** A model's meshes gathered by the named object each is under (`names`), each with its material's name (model space). */
 export function gltfParts(gltf: { scene: GFX.Object3D }, names: Set<string>): Record<string, { mat: string; geo: GFX.BufferGeometry }[]> {
@@ -101,11 +106,23 @@ export async function kitMaterial(d: KitMatDef, atmos: Atmosphere, shadow: Terra
     uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 }, uCoat: { value: 0 }, uCoatColor: { value: new GFX.Color(0.8, 0.6, 0.42) }, uCarBase: { value: 0 },
     uTint: { value: new GFX.Vector3(...(d.flat ?? d.tint) as [number, number, number]) },
   }
-  if (d.tex) {
+  // THE FLAT PALETTE (FLAT, below): Over the Hill's few muted colours — grey boulder stone, grey-brown logs, a darker
+  // roof — one a material, no texture at all (the scan's mean came out olive for the mossy stone, near black for the
+  // logs). A scan with a paint of its own (the siding: its tint IS the paint) keeps its mean (FLAT_MAP).
+  const flat = FLAT && d.tex && !d.cut && !d.clamp ? (d.tex === 'bark' && d.tint[0] > 2 ? PALETTE.birch : PALETTE[d.tex]) : undefined
+  if (flat) uniforms.uTint.value.set(flat[0], flat[1], flat[2])
+  else if (d.tex) {
     const [c, n] = await Promise.all([webpTexture(texUrl(d.tex), true), webpTexture(texUrl(`${d.tex}_n`), false)])
     for (const t of [c, n]) if (!d.clamp) { t.wrapS = t.wrapT = GFX.RepeatWrapping; t.needsUpdate = true }
     uniforms.uMap.value = c; uniforms.uNormalMap.value = n
-    defines.USE_MAP_OTH = ''; defines.USE_NORMALMAP_OTH = ''
+    defines.USE_MAP_OTH = ''
+    // FLAT COLOURS (2026-11-10, the user — Over the Hill's buildings beside ours: "check why it doesn't match"; ours
+    // wore photo scans — wood grain, shingles, mossy stone — where theirs are one flat colour a surface, the shape and
+    // the light doing the rest): a TILING scan is read at its mean colour (FLAT_MAP: far down its mips) and its normal
+    // map left off — the valley's buildings and ruins, the building kit, the same pieces in co-op. The leaves' atlas
+    // (cut out by its alpha) and the clamped sheets keep their pictures. `?flat=0`: the scans as before (the A/B).
+    if (FLAT && !d.cut && !d.clamp) defines.FLAT_MAP = ''
+    else defines.USE_NORMALMAP_OTH = ''
   }
   // (the plants' leaves: cut out by the atlas's alpha, both sides drawn, swaying)
   if (d.cut) defines.ALPHA_CUT = ''

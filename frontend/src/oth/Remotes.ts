@@ -173,12 +173,12 @@ export class Remotes {
       if (kind === Kind.Foot || kind === Kind.Moto) void this.people(a)
       // the car: driven (the player entity), or parked (their second entity)
       if (kind === Kind.Jeep || kind === Kind.E30) {
-        void a.car.setCar(kind === Kind.Jeep ? 'gwagen' : 'bmw', r.colour)
+        void a.car.setCar(kind === Kind.Jeep ? r.car || 'offroader' : 'e30', r.colour)
         a.car.pose(s.p, s.q, s.speed, dt)
       } else if (parked?.last) {
         const ps = { p: [0, 0, 0] as [number, number, number], q: [0, 0, 0, 1] as [number, number, number, number], speed: 0, kind: 0 as Kind }
         parked.at(t, ps)
-        void a.car.setCar(ps.kind === Kind.E30 ? 'bmw' : 'gwagen', r.colour)
+        void a.car.setCar(ps.kind === Kind.E30 ? 'e30' : r.car || 'offroader', r.colour)
         a.car.pose(ps.p, ps.q, 0, dt)
       }
       a.car.root.userData.on = kind === Kind.Jeep || kind === Kind.E30 || !!parked?.last

@@ -251,6 +251,7 @@ pub enum Ev<'a> {
     Joined { sid: u32, id: &'a str, name: &'a str },
     Left { sid: u32 },
     Chat { sid: u32, name: &'a str, text: &'a str },
+    Ride { sid: u32, car: &'a str },
     TreeCut { tree: u32, x: f32, z: f32, by: u32 },
     TreeBack { tree: u32 },
     Drop { drop: &'a Loose },
@@ -764,6 +765,12 @@ impl World {
             ClientMsg::Pave { mat, x, z, r } => self.pave(sid, mat, x, z, r),
             ClientMsg::Pond { x, z, r, depth } => self.pond(sid, x, z, r, depth),
             ClientMsg::Stow { from, to, bag } => self.stow(sid, from, to, bag),
+            ClientMsg::Ride { car } => {
+                // (an id: short, letters / digits / _ - only — it's shown to nobody, only looked up in the game's garage)
+                if car.is_empty() || car.len() > 24 || !car.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') { return Err("no such car".into()) }
+                self.all(&Ev::Ride { sid, car: &car });
+                Ok(())
+            }
             ClientMsg::Ping { n } => {
                 self.to(sid, &Ev::Pong { n });
                 Ok(())

@@ -1,256 +1,100 @@
-# overhill — what's next (hand-off, 2026-11-06: the valley's places and caves)
+# overhill — what's next (hand-off, 2026-11-10: the garage, the big valley, the flat look)
 
-Read `CLAUDE.md` and `docs/ARCHITECTURE.md` first ("Make the Valley great — stage 2" and "The caves, as land").
-The previous hand-off (the desert and the crossing) is in git: `git show 3a28864:docs/NEXT.md`.
+Read this first when you pick the work up again. The hand-off before this one (the valley's places and the cave
+world, 2026-11-06 … 08) is kept whole in `docs/NEXT_caves.md`.
 
-## Where it stands
+**Nothing from 2026-11-10 is committed.** Branch `coop-claims`, ~95 changed / new files (the cars, the outland, the
+flat look, the harness fixes, the docs). Commit before anything risky.
 
-**Committed in `28e074b`** (both sessions' work together); the caves' round 2 (section 1) is not committed yet. That commit holds:
-- **This one (places and caves):**
-  - New files: `Kit.ts`, `Locations.ts`, `Sites.ts`.
-  - Changes in `Landmarks.ts`, `Bridges.ts`, `Atmosphere.ts`, `Terrain.ts`, `Rocks.ts`, `Bushes.ts`, `Places.ts`, `Props.ts`, `World.ts`, `main.ts`, `MapData.ts`, `Chart.ts`, `paint.ts` and `index.html`.
-  - Harness scripts: `absites.mjs`, `abverge.mjs`, `cavecost.mjs`, `caveshot.mjs`.
-- **The other session's:**
-  - `Grass.ts`, `GroundCache.ts`, `Trees.ts`, `treeGeometry.ts`, part of `Terrain.ts`.
-  - The valley's data: `public/oth/valley/{height,far,trail}.bin`, `meta.json`, `chart.webp`.
-  - `trackdrive.mjs`, `trackgrade.py`, `trackscan.py`, `waterdump.mjs`.
-  - Its own changes in `Props.ts` and `World.ts` (the water and the tracks).
+---
 
-The valley's data changed, and the new places are planned from it on every load (`Sites.planSites`). Where each place lands may therefore differ from the last screenshots. Re-shoot before judging.
+## 1. Where things stand
 
-What's in, working:
-- **Valley details:** verge stones and logs, field paint, light.
-- **Places:** composed places (cabins with paint and porches, the mine site, four camp styles, docks, the hamlet, ruins, garage, ranger station, the Hollow House with its flickering window), night windows, smoke columns, and notes (11 + the cave ones; 15 coins on first read).
-- **The caves:**
-  - **Lantern Tunnel:** the track through a grassy hill.
-  - **Sky Hollow:** a dome with a hole in the roof and pines growing in the shaft of light.
-  - **Crystal Grotto:** a long gallery with the survey's camp.
-  - **Bear's Den:** small and low.
-  - Every cave is one way in and has its own shape.
-
-Cost, measured: ULTRA 1080p +0.02 to +0.14 ms at a cave; the worst view is 1.34 ms (745 fps, deep forest). LOW adds at most 0.18 ms. Elsewhere ULTRA averages 0.787 ms (about 1270 fps). The details are in `docs/PERF.md`.
-
-## 0. THE CAVE WORLD (2026-11-07) — replaces the procedural caves (ARCHITECTURE.md "The cave world — Sky Hollow")
-
-Done: modelled in Blender (`scripts/oth/caves.py`), exported (`public/oth/valley/cave.glb` + `cave.json`), placed,
-laid on the land, painted (grass gold and green with rock patches, the terrain's rock inside), pines on top and in the
-skylight's garden, collision, the dark, the drivable lane (`cavedrive.mjs`: to the far chamber, no flip). The
-procedural tunnel and the three grottos are gone (Locations.ts' caves, Sites' tunnel / grotto picks). Sections 1 and the
-caves' items in 2 below are history.
-
-Round 4 (2026-11-07, the user: "twice the height; on top like the terrain — rock no grass, green grass on green, yellow on
-yellow; a gradual transition, not a sticker"): every roof twice as high over its floor (caves.py `TALL`, `_taller`;
-floors, the lane, the pools, the Haven unmoved), the hill ~77 m (its blobs raised), the arch scaled with the mouth.
-The hill's turf paints from the land's MASK as the terrain does (Bridges `uMask` / `uMaskGrid`; CaveWorld.grassOn writes
-the hill's rock as smooth ramps into R and its dryness, softened over 20 m, into G — the blades read the same).
-The turf shader: the paint blended across the floor→wall bend (no stepped line), a ragged wide grass → soil →
-rock band, the lit-blades normal bend eased out over it; inside per pixel from the slope (grass up, rock on the walls,
-moss-green on ledges, green / gold patches). Views on the top: `cavecheck.mjs` o_top / p_top_rim / q_top_flank.
-Next:
-- **The user's idea: the cave as its OWN small world** (~400 m, Draco; the outside unloaded while inside — World.ts's
-  swap, as at the pass). Then the deep parts can go under the land.
-- Water in the far chamber's basin; the hill's shadow on the land (TerrainShadow: the TOP grid into its heights).
-- The garden turf's edge shows a seam on the rock floor (separate meshes): blend it.
-- The terrain's own ground shows a little at the mouth's threshold (a gold patch on the floor just inside the arch).
-- Measure on a phone (the cave's inside: ~200 k triangles, its trees and bushes — only drawn from in or near it); the
-  inside's cost in the great hall is +0.6 ms ULTRA on the M4 (the growth) — LODs for the tufts / a lighter far LOD.
-- A faint dotted line on the hill from afar (the grass field's far edge crossing the slope, likely) — check.
-- The lake / ponds are flat dark water: a reflection, a ripple.
-- Old saves: the places after it got new ids (the four caves became one) — a found-flag may point at the wrong place.
-
-Round 5 (2026-11-07, the user's screenshots: "a sticker, no transition at the entrance"; "make sure the same terrain
-method covers the cave — now it's separate"; "the wall inside — where is the rock shader?"; the sun's glare through the
-hill; "why no grass here"; the walker sinking into the floor; "the water must be like the outside water"; "these dark
-circles on the whole terrain"). ARCHITECTURE.md "The cave world" → "The hill IS the ground" has the how. Done:
-- the hill's top written into the GROUND's own heights / normals (GPU copy only), the openings CUT (Terrain.setHoles, a
-  second draw for the patches round the cave), the old turf kept only at the openings' rims — in the ground's own
-  material (Terrain.meshMaterial); the foot fades onto the land (no sawtooth);
-- rock round the whole mouth (arch + the walls coming out of the face) by 3D distance into the mask: the ground's own
-  rock→grass band; the inside floor turns to rock over ~4 m toward the walls; the walls plain rock (no moss / ledge
-  strips), lit FROM the openings (Atmosphere caveLit) so the relief reads;
-- the field's grass on the cave floor (a second Grass, `cave`), the ponds in the valley's water shader, the walker
-  set on what's under the car (Physics.surface `from`), no glare through the hill (Glow.lift), the floor's collider
-  dipped at the mouth with the drawn floor (the car jumped a lip), the field paint's tussocks removed everywhere.
-- Round 5b (the user played it): the walker's FEET found the land under the cave's floor and bent down into it
-  (main.ts hero.ground now rays down from the hips: Physics.surface `from`); the cave's shade fill 0.12 → 0.42 (the
-  ledges' undersides went black); the turf dipped at the mouth with the arch / floor (a crack of sky). THE RAIN, all
-  worlds: no sky sheen on wet faces (Atmosphere shade — it turned the rock and the trees white), puddles on flat bare
-  rock too (Terrain), droplet glints on the near trees (Trees.ts).
-- Round 6 (the user: "the cave a skeleton, the terrain its skin"): every cave surface — arch, walls, floor, garden, the
-  hill's surface by the openings — drawn in the GROUND'S OWN SHADER (Terrain.skinMaterial: OTH_SKIN, the mesh's normal,
-  `skin` = (inside, least rock); the cave's dark and caveLit in it). WebGPU gotcha: the skin's extra inputs must be
-  plain `varying` lines, never inside #ifdef (PlayCanvas numbers the varyings before the defines). The cut is CIRCLES
-  (mouth 22 m, skylights r + 9 m: tighter, the 2 m grid hangs as curtains into a shaft), the hill surface easing onto
-  the ground's over their last 6 m with the ground's normal; normals averaged across the parts' seams; triangles wound
-  to their normals; one-triangle holes in the model filled; the mouth's dip smooth in height; the old hand-made tufts
-  off (the field's grass grows in there); the skylights' shafts drawn from anywhere (they were white from afar), their
-  rims lit as the top (the dark fades over the top 9 m), the walls rock to the rim.
-  Round 7 (the skylights' tops): no ring of model turf — the GROUND draws the hill to each lip: its heights FILLED
-  across the hole (and over the rim's rock outcrops, where the top grid has no value) so no 2 m cell hangs into the
-  shaft; the hole CUT by holeK (uHole's second half of rows — WebGPU allows 16 samplers a stage and they were all
-  used: a 17th blacked the frame), 0 only within r + 1.5 m where the top is missing, bilinear; a two-sided rock SKIRT
-  down 12 m along that contour; the rock clamped under the ground near the lips; the model's rock where nothing lies
-  over it (outcrops on the hill) lit as outside (no cave dark — it showed black). A round cut (distance field) was
-  tried and is worse: the shafts aren't round.
-  STILL: the hole's edge follows the 2 m grid (a little polygonal); the hill's rock patches show the relief more
-  faintly than the valley's rock in the same framing (same shader — the eased normals / the light; look at it). The scratchpad tour (car placed in each chamber) put
-  the car inside the rock — place it from the lane's floor, not a ray from above.
-- Round 8 (the mouth's floor — the user: "terrain sheet showing", "two patches as cuts", "hollow space"): NO dip any
-  more; the GROUND is raised to the cave's floor (CPU g.h too — the physics' heightfield, map.height for what's placed
-  after) — under the floor / low turf in the mouth's circle just under it (cut over it), in front a ramp up to its edge
-  (level 3 m, down over 8). Played in a VISIBLE Chrome: drove in and out, no slab, lip or hole; from above no sky.
-  Left: faint 2 m steps where the turf hands over to the ground at the circle's right edge; small dark shards by the
-  exit; the car got airborne ~20 m out driving out at 58 km/h (the land's own slope? check).
-  The hill's rock patches: the relief IS drawn (?tcut=rdbg shows its strength 1 there) — it reads faint on the long
-  smooth faces (relief is per-pixel light only); the valley's rock looks the same in the same framing.
-- Round 9 (2026-11-08): the mouth's seams hidden under hand-placed rounded stones (SLABS in CaveWorld: picked off
-  the screen with a ray, draped on the ground, in the ground's skin, in the collider; low on the lane) and bushes
-  round them (Sites.dressHills); a little green round the mouth (mask G). TRIED AND OFF: stretching the hill's flanks
-  (CaveWorld.spreadFoot / spreadGrade, `?caveflanks=1`) — a grade limit on the land round the hill made vertical
-  walls and creases where the raised ground met the model; the right way is in Blender (caves.py: a wider, concave
-  foot fillet), not on the land at load.
-- A/B switches: `?caveground=0` (the hill its own turf mesh again), `?cavegrass=0`.
-- Cost (ULTRA 1080p, interleaved, before the last look rounds): the hill as ground ≈ 0 (±0.06 ms); the floor's grass
-  +0.26 ms at the mouth, ~0 to +0.3 in the hall (LOW +0.35) — drawn only in the cave / within 30 m of an opening. The
-  final run was taken while the user played on the same GPU (every variant tripled): RE-MEASURE `node
-  scripts/harness/abq.mjs "|caveground=0|cavegrass=0" caveFront,caveHall,caveAbove,spawn 4` (and TIER=low) on a quiet
-  machine, and on a phone.
-- Still to look at: the passage's floor near the mouth reads mottled grey / gold (the walls' band in a narrow way); a
-  few arch polygon points at its outer edge; the cave grass's cost on phones (a lower density there).
-- Check by PLAYING: `?at=cave`, drive in with the keys on the chase camera (a key-driving probe like the session's
-  drive.cjs) — the fixed views (cavecheck.mjs) missed the arch's teeth, the slivers and the jump.
-
-## 1. DONE: the caves' rock read as cement, not as the terrain's rock (the user, 2026-11-06)
-
-The user's words: *"i asked u to change the rock part to the texture the outside and top where we used the normal terrain was really good, now it's like a cement building."*
-
-**What the user liked** was:
-- the HILL itself: its turf, `SURF.turf`, the field's own `grassPaint`, with bare rock where it's steep;
-- the real terrain around it;
-- the terrain's own rock: faceted, blue-grey, crumpled.
-
-**What they dislike** is everything in `SURF.cliff`:
-- the mouths' faces;
-- the tunnel's cut walls and portal faces;
-- the vaults and domes;
-- the passages and the skylight's shaft.
-
-**Why it reads as cement:**
-- `smoothMesh` (`Locations.ts`) gives the cliff shells *smooth* normals over big, slow bulges (`wobble`). The result is large, soft, plastered surfaces.
-- The cliff paint (Bridges FRAG, `surf > 7.5`) adds horizontal "beds" every 1.35 m. Those read as concrete pour lines or building courses.
-- The terrain's rock looks good for three reasons, and the caves have none of them:
-  1. its FACETS: the heightfield's triangles, about 2 m, flat-ish;
-  2. `ROCK_RELIEF_GLSL` (`rockRelief.ts`): per-pixel crumpled creases on HIGH/ULTRA, also used by the boulders (`Rocks.ts`);
-  3. its paint varies with steepness and comes in broad tones (`paint.ts`: slab, streaks, lichen, `rockFill`).
-
-**DONE (round 2, 2026-11-06; the user then asked for it "like in Genshin Impact").** Re-shoot with `caveshot.mjs`.
-
-Fix 1.1 as planned (turf down over the faces) was not done. Chunky rock FACES with moss on their ledges, and the hill
-swept down beside them, read as Genshin's cave mouths. They also keep the meshes that the colliders and `dressHills`
-already know. What was done (ARCHITECTURE.md "The caves, as land" has the how):
-- **Facets, not plaster.** Every cliff shell goes through `rockMesh`:
-  - it is pushed out and back by `rockField` (ridged 3D noise: chunks ~7 m, crumples ~2.5 m, wandering ledges ~2.7 m;
-    about ±1 m);
-  - each triangle is drawn flat with its own normal, darker in the hollows;
-  - shared edges move as one (`D`), the turf's edge stays put (`K` = 0), and coincident vertices share a normal;
-  - sizes: dome facets ~1.6 m (`T` from its size), the cavern face 8 rows, the tunnel's vault 24 round.
-- **The hills' steep parts** are rock the same way (`hillMesh`: gently pushed, faceted). The rest is smooth turf.
-- **Paint** (`rockPaint`, Bridges FRAG):
-  - the beds are gone;
-  - the terrain's slab grey in broad tones, read on each facet's own plane (the old projection smeared);
-  - streaks, and MOSS on what faces up;
-  - `ROCK_VALUE` 1.55 sets its value against the terrain's rock. Checked side by side: the tunnel by the grey
-    boulders, the grotto under the grey hills.
-- **The terrain's relief** (`rockRelief`) on the cliff and on the turf's rock, HIGH / ULTRA.
-- **Shapes:**
-  - Sky Hollow's trapezoid is gone. The hill sweeps down beside the mouth (`cavernLand`: the front's depth `fr` grows
-    with |x|; `M` extra rows in front of the hill's grid draw the slopes).
-  - The tunnel's cut leans back from the face itself (no vertical edges), and its arches are uneven at the mouths too.
-  - The dome's ring now closes (its wobble wrapped). There had been a crack of daylight at th = 0 since the first
-    version.
-- **Cost:** within noise (PERF.md).
-- **Harness:** `caveshot.mjs` and `cavecost.mjs` now find Chrome on Windows too.
-- **Also fixed: grass on rock** (the user's screenshot of a track's cut, grey with a meadow on it). The grass bake
-  read the ground's normal blurred (mip 2.5), so narrow steep cuts the terrain paints as scree grew grass. It now
-  reads mip 0, as the terrain does up close, and stops a little short of scree (ARCHITECTURE.md "No grass on stone").
-- **Also fixed: patchy rock** (the user's screenshots: a rock hill crumpled in blocks, smooth between). The ground
-  cache baked the relief weaker than the live steep walls drew it; now the relief is live on all rock, exactly as on
-  2026-11-04, and the cache keeps everything else (ARCHITECTURE.md "The rock's relief is LIVE"). No measurable cost.
-  The user rejected painted creases and a sunlight gain: keep the relief as it was. **To do: confirm on the Mac
-  mini** (the user's 500+ fps at ULTRA): \`node scripts/harness/abq.mjs "" rockhill,spawn,forest,cliff 4\` before and
-  after this change.
-
-**Still open on the look** (ask the user first; they've not seen round 2):
-- Sky Hollow's hill top is flat and its sides steep, so from above it reads as a mesa. Rounder shoulders would help.
-- Genshin-style touches not tried yet:
-  - grass spilling over the face's brow (longer tufts, `tuftMesh` lean);
-  - the crystals tinting the walls near them;
-  - a warmer lit / cooler shaded rock.
-- Sky Hollow's floor climbs steeply from the mouth to the chamber (the passage keeps the mouth's height, `y0`). So
-  from the chamber, looking out, you face the dome wall above the passage. `caveshot`'s `e_inside_out` shows only rock
-  there (it did before round 2 too). This is part of the drive-in check below.
-
-## 1b. The frame rate round (2026-11-07) — docs/PERF.md "2026-11-07"
-
-The user: travel the whole valley, fix every sudden fps drop, 500+ fps at ULTRA on the Windows laptop (Ryzen 7 +
-RTX 4050), 700+ on the Mac mini, 100+ on a Chromebook / small phone — never at the cost of the look.
-
-- **Done (all CPU-side, pixel-identical — `pixdiff.mjs`):** PlayCanvas's release build in dev (`vite.config.ts`;
-  `PCDEBUG=1` for the debug one — this also makes `vite build` work again); the gfx layer's frame (uniforms bound once,
-  no key strings / sets / attribute lists a frame, hidden meshes not re-prepared, `OthMaterial`); the driving HUD
-  written only on change; instancing buffers sized to what's drawn (the 20–96 ms hitches); the horizon built a slice a
-  frame; the garbage cut (158 → 89 KB a frame).
-- **Tools:** `tour.mjs sweep` (every track every 150 m + every place: the GPU cost spot by spot) and `tour.mjs drive`
-  (the camera down every track at 25 m/s: each frame, each system — the hitches and where); `pixdiff.mjs` (the same
-  picture? two servers, with the noise floor); `playchrome.mjs` (a VISIBLE Chrome, uncapped, the car driven with the
-  keys, the overlay); `abq.mjs` variants take `port=N` (a second dev server: e.g. a copy of the old code).
-- **Where it stands (this laptop, ULTRA 1080p uncapped):** spawn driving 373 → 687 fps, forest 509 → 782, lake 543 →
-  801, cliff 560 → 790, rockhill 521 → 913; the whole valley driven at 25 m/s: mean 794 fps, 0.22 % hitches; a visible
-  Chrome with the car driven: 614 fps (PERF.md has the tables). The terrain shadow's bake (every ~12 s of play): 5.2 →
-  3.0 ms.
-- **Open — the collection stall:** every 30–50 s, uncapped, a MAJOR garbage collection gives 1–2 s of 20–60 ms frames
-  on the dev server; the production build (`npm run build` then `npm run preview`) only ~0.5 s of 10–20 ms. What's
-  promoted is PlayCanvas's per-frame frame graph and WebGPU objects (~2.4 KB a frame) — the next lever, inside
-  PlayCanvas. (Ruled out: physics, the JS heap's size, the uniform staging.) Play / judge fps on the production build.
-- **To do:** re-run on the Mac mini: `node scripts/harness/abq.mjs "" spawn,forest,lake,cliff,rockhill 4` and
-  `node scripts/harness/tour.mjs drive` — the M4's CPU is faster, so expect more than this PC's gains. A phone /
-  Chromebook needs measuring on the device (`phone.mjs`); a 60 Hz screen caps Chrome at 60 fps, so "100+" there needs
-  a 90 / 120 Hz screen. The garbage left (~89 KB a frame: Rapier, PlayCanvas's own, the terrain select) is the next
-  hitch source to cut.
-
-## 2. Other fixes, smaller
-
-- **Glare through rock.** The sun's glow sprite shows through cave roofs (a star on the vault in the tunnel and the hall). `Glow.ts` draws it without testing occlusion. Hide it while the camera is in a cave: `caveK` at the camera, done on the CPU in `main.ts`.
-- **Drive into every cave with the car and the bike.** The colliders are boxes: the walls, the hill's bulk by rows, and a lid over each roof. Check that nothing snags at the mouths and that the floors are drivable (the skylight's mound especially). `scripts/harness/rockdrive.mjs` / `trackdrive.mjs` are a start.
-- **Phone.** Measure the caves with `PHONE=1` (`absites.mjs` has the phone viewport; `cavecost.mjs` doesn't yet).
-- **Notes.** Sky Hollow and Bear's Den have none (`NOTES` in `Sites.ts`, keyed by name). The Ranger Station's note mentions "the grotto"; keep the story consistent.
-- **Crate ids.** After the data changes, re-check that every crate keeps its id with `?sites=0` vs `1` (it held at 72 before).
-- **Commit** the caves' round 2 when the user has seen it.
-
-## Where things are
-
-| what | where |
+| area | state |
 |---|---|
-| the kit (walls, roofs, windows, tents, docks, trucks, rock chunks) | `src/oth/Kit.ts` |
-| the places' compositions; the caves (`tunnelHill`, `tunnel`, `cavernLand`, `cavern`, `smoothMesh`, `wobble`, tufts) | `src/oth/Locations.ts` (the caves: from "THE CAVES") |
-| where the new places go, the caves' darkness (`caveUniforms`, nearest three per frame), trees lifted onto hills (`dressHills`), notes | `src/oth/Sites.ts` |
-| the surfaces' shading (`SURF`: wood, stone, metal, fabric, plain, lamp, eerie, turf, cliff) | `src/oth/Bridges.ts` FRAG |
-| a cave's darkness in the shaders (`caveK`, the skylight's lit column in `B.w`) | `src/oth/Atmosphere.ts` |
-| each kind built (PLACES table) | `src/oth/Landmarks.ts` |
-| build order (plan → keep discs → dress hills → trees and bushes → landmarks) | `src/oth/World.ts` |
+| **Garage** | the Overlander 4×4 (ours) + 18 kit cars, all painted (PC file 2048², phone file 1024²), real spare wheels, no overlapping skins (17 of 19 clean), paint grain off on them. G500 and E30 shelved in code. `docs/VEHICLES.md` |
+| **Playable land** | 4 km → **12 km** (walls at ±6104 m, `MapData.play`). The old 4 km valley untouched; the country round it re-shaped and drivable |
+| **Outland** | ranges and peaks (30 peaks, the highest 1 210 m), cliff-walled gorges, ~117 k trees, 10 ranger towers, 12 gorge bridges. **No tracks, bushes, boulders or other places out there yet** |
+| **Spawn** | moved to the track by Eagle Point (rock hill inside the old valley); the old one kept as `meta.spawn0` |
+| **Buildings' look** | flat colours (one muted colour a material, no photo scans) on the valley's buildings, ruins and the building kit. Shapes unchanged. `?flat=0` shows the scans |
+| **Frame rate (M4, ULTRA 1080p, headless)** | `fps.mjs ultra` mean 1.58 ms (631 fps), every measured view ≥ 500. Three places measured under 500 before the outland work (below) |
+| **Phone** | never measured on a real device. The phone path (LOW, `mobile=1`) loads without errors — that is all that is known |
 
-**Gotchas:**
-- The gfx layer drops GLSL uniform arrays: use single vec4s.
-- Editing `src/` during a harness run makes Vite reload and kills the run.
-- `map.trackDist` saturates a few metres off a track. For direction, use `toTrackPt` in `Sites.ts`, which samples track points every 6 m.
-- `Sites.ts` was emptied once by a bad script this session and rebuilt from the session's edit record. It compiles and works, but commit it soon.
+## 2. What to do next, in order
 
-## Checking
+1. **Tracks in the outland** (the towers and bridges are off-road only until then).
+   - The box's track texture (`trail.bin`, 2 m, 4 km) cannot cover 12 km. Plan: A* on the world's 8 m grid in
+     `scripts/oth/outland.py` (valley floors → each tower, across each gorge bridge, joined to the box's tracks at its
+     edge), written to `meta.outland.trails`; drawn as ground-hugging ribbons (a strip mesh a track, near ones only),
+     not a texture.
+   - Then: the map (`MapView.ts`), radar (`Radar.ts`), chart (`Chart.ts`) and nav (`Nav.ts`) to 12 km — they use
+     `meta.inner.origin` (2048) as the map's half; the server's bounds (`backend/src/map.rs`, `world.rs`).
+   - Keep trees off the tracks (`Trees.placeTrees`, the outland loop's `keepOff`).
+2. **Building SHAPES** (the user's two reference pictures, `~/Desktop/Screenshot 2026-11-10 at 11.51.00 AM.png` /
+   `11.51.12 AM.png` — one is an AI render, one is Over the Hill; both the same style): 6–7 thick squared logs with
+   notched corners (ours: ~15 thin round ones), a roof of 8–10 big slabs (ours: hundreds of shingles), grey faceted
+   BOULDERS for foundations, chimneys and ruin walls (ours: thin walls), squat proportions, bare dirt round a place.
+   Cobblestone paving STAYS (the user). Files: `scripts/oth/places.py` (the valley's buildings → `places.glb`),
+   `scripts/oth/buildkit.py` (the co-op kit → `kit.glb`), then the plants. Props drawn by `Landmarks.ts` /
+   `Locations.ts` (tents, carts, crates, the mine's white boulders) still have their own textures / colours.
+3. **Fill the outland**: bushes (`Bushes.ts`), rocks / boulders (`Rocks.ts`), groves (`Groves.ts`), places
+   (`Sites.planSites` stops at `map.half - 140`) — each planned per cell on its own seed so the load stays flat. Rock
+   out there is plain grey (the slope's paint alone): give it the relief / strata the box's rock has. A few grass
+   tufts still stand on gorge walls. Tree shade is box-only.
+4. **The night as Over the Hill's** — not started. Get reference frames first (the user's, or the Steam page's).
+5. **Frame rate**:
+   - three places under 500 fps on the M4 (measured before the outland): Falls Camp 458, Fisher's Landing 477, Birch
+     Hollow Cabin 484. At Falls Camp the ground / rock is 0.95 ms of 2.1, trees 0.32, the fall 0.19, water 0.15.
+     Re-measure (`ONLY=places node scripts/harness/tour.mjs sweep`), then cut the rock's cost near cliffs.
+   - **a real phone on USB** (`scripts/harness/phone.mjs` — it still uses the old timer: switch it to `pace.mjs` first).
+   - the Windows laptop not re-measured since 2026-11-07 (687–913 fps then).
+6. **Smaller leftovers**: the three cab-overs of the 21 (Forward, Rust Ox, Mammoth) not built; the headlamp glow ~9 cm
+   off on textured cars; whether old saves keep their position with the new spawn — not checked; the walls at ±6104 m
+   not driven into; the desert keeps its 4 km box (`MapData.play` is the valley's only).
 
+## 3. How to run
+
+```sh
+cd backend  && cargo run --release            # the server, :5280
+cd frontend && npm run dev                    # the game, http://localhost:5200  (what the harnesses expect)
+cd frontend && npm run dev:lan                # for a phone on the Wi-Fi: https://<this Mac's IP>:5300/
+cd frontend && npx tsc --noEmit && npm test   # typecheck; drivetrain (745 checks) + mtb + moto + gpu + wire
+cd backend  && cargo test --test golden       # the wire's golden file (GOLDEN=update to rewrite)
 ```
-cd frontend && npm run dev                                  # (port 5200 for the scripts)
-node scripts/harness/caveshot.mjs <dir>                     # every cave: front, side, above, inside, skylight
-node scripts/harness/cavecost.mjs ultra                     # ?sites=0 vs on at each cave (and `low`)
-PORT=5200 node scripts/harness/absites.mjs ultra            # every new place (heavy: if it gets killed, use cavecost)
-npx tsc --noEmit -p . && npm test
-```
+
+Do NOT rebuild models or edit `src/` while someone has the game open on a phone: every change reloads the page, and a
+flood of reloads once hung the LAN server (2026-11-10).
+
+## 4. The scripts added on 2026-11-10
+
+| script | what |
+|---|---|
+| `scripts/oth/outland.py` | THE OUTLAND: `python3 scripts/oth/outland.py [PREVIEW=<dir>] [WRITE=0] [SEED=7]` — re-shapes the world's grid beyond the box (8 m, 2049²), places the towers, the gorge bridges, the spawn; writes `far.bin` + `meta.json`. Re-runnable: it starts from `scripts/oth/.cache/valley-preoutland` |
+| `scripts/oth/offroader.py`, `carkit.py`, `cars.py` | the cars (Blender): `blender -b --factory-startup --python scripts/oth/cars.py -- CAR=<id>` (one car a run), `… offroader.py`; each writes `<id>.glb` + `<id>.m.glb`; `cars.py` also `cars.json` |
+| `scripts/oth/coplanar.py` | two skins in one plane (they blink): `blender -b --factory-startup --python scripts/oth/coplanar.py -- <a.glb> … [TOP=14]` — run after any car rebuild |
+| `scripts/harness/pace.mjs` | the honest frame timer (two drained windows, the slope). Used by `fps`, `abq`, `ablate`, `floor`, `tour sweep`. NOT yet by `abgpu`, `farcost`, `gpubase`, `movecost`, `perfmarks`, `phone`, `pix`, `placecost` |
+| `scripts/harness/outland.mjs` | the outland checked: the car set down at 5 spots, views of the spawn, towers, bridges |
+| `scripts/harness/carshot.mjs`, `fleetshot.mjs`, `flicker.mjs` | a car looked over (QUICK=1: outside only); every car loaded and shot; jumping pixels on a car |
+| `scripts/harness/floor.mjs`, `passes.mjs`, `pipes.mjs`, `gputime.mjs`, `devinfo.mjs` | the empty frame's cost; a frame's render passes; every pipeline / shader; the GPU's own clock; the device |
+
+## 5. Things that will bite
+
+- **Never re-run `terrain.py` on the valley.** Its files are `terrain.py` + `valley_cliff.py` + `trackgrade.py` + the
+  cave's ground + … in a chain; a re-run loses the graded tracks. Post-process instead (as `outland.py` does).
+- **Every frame time recorded 2026-11-07 … 11-10 morning is ~2–3 ms too high** (`docs/PERF.md`, top section):
+  `queue.onSubmittedWorkDone()` answers ~0.6 s late on PlayCanvas's release build. A/B differences are right; absolute
+  numbers are not. Use `pace.mjs`.
+- **The two worlds' grids differ now** (valley world 2049² at 8 m, desert 1025² at 16 m). `TerrainShadow` bakes the
+  world's shade at a fixed 1025²; anything else that assumed one size for both will throw at the crossing.
+- **The box's textures end at its edge** (mask, track, normals): a shader that samples them beyond ±2048 reads the rim
+  texel. The grass bake is fixed (`Grass.ts`, "THE OUTLAND"); check any new one.
+- **Tree placement order matters**: the box's trees use one shared random sequence — add new placement AFTER it, on
+  per-cell seeds (as the outland's loop), or every tree in the valley moves.
+- **The user's standing rules**: no subagents; every feature measured per tier and checked in headless Chrome; phones
+  must hold 60 fps; commit only when asked; Over the Hill is a reference for style, never copied.
+
+## 6. Docs
+
+`docs/PERF.md` (the measurements and the log) · `docs/VEHICLES.md` (the 21 cars) · `docs/ARCHITECTURE.md` (the world,
+the renderer) · `docs/MULTIPLAYER.md` (co-op) · `docs/ASSETS.md` (every model's source) · `docs/NEXT_caves.md` (the
+previous hand-off: places, the cave world, its open items).

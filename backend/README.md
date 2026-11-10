@@ -75,6 +75,7 @@ the teleport flag is ignored. The server relays each entity's 17 bytes as they c
 | `remove` | `piece` (a piece or a pond) | yours; half the cost back |
 | `shape` | `op`: `raise` \| `lower` \| `flatten` \| `smooth`, `x`, `z`, `r` (1–12), `strength`, `y` (flatten; null otherwise) | in your claim, ±8 m |
 | `pave` | `mat`: `stone` \| `gravel` \| `planks` \| `dirt` \| `erase`, `x`, `z`, `r` (0.5–6) | 1 stone / wood per 8 m² |
+| `ride` | `car`: the garage's id of the car the player drives (≤ 24 letters / digits / `_` `-`) — relayed to everyone as the `ride` event (`sid`, `car`); the server keeps none of it: the game says it again when someone joins | — |
 | `pond` | `x`, `z`, `r` (3–15), `depth` (0.5–3) | inside your claim; 4 each |
 | `ping` | `n` | answered at once with `pong {n}` (the round trip) |
 

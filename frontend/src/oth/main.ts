@@ -40,6 +40,7 @@ import { Fsr } from './Fsr'
 import { initMouseLook, lockMouse, lookBlocked, mouseLocked, onMouseLook, releaseMouse } from './mouseLook'
 import { PerfMarks, type PerfSnap } from './PerfMarks'
 import { carKind, Coop, type Local } from './Coop'
+import { DEFAULT_VEHICLE } from '../gameplay/vehicle/catalogue'
 import { Gather } from './Gather'
 import { GroundEdits } from './GroundEdits'
 import { Trailer } from './Trailer'
@@ -54,7 +55,7 @@ import { Session } from '../net/Session'
  * headless shot harness (scripts/shot.mjs).
  *
  * Switches (settings.ts `gameParams`: the menus' settings, under the page's URL): ?tier=low|medium|high|ultra
- *      ?car=gwagen|bmw ?paint=rrggbb ?gearbox=auto|manual ?aids=off|standard|full ?offroad=0|1 ?aa=0 ?scale=50…100
+ *      ?car=offroader (g500 | e30: the shelved models) ?paint=rrggbb ?gearbox=auto|manual ?aids=off|standard|full ?offroad=0|1 ?aa=0 ?scale=50…100
  *      ?sound=0 ?drive=0 (start in the free camera) ?x= &z= (m) ?h= (m above the ground) ?yaw= ?pitch= (rad) ?hour=
  *      ?tm=neutral|agx|aces ?exp= (exposure) ?stats=1 ?world=valley|desert ?weather=clear|cloudy|rain|sandstorm
  *      ?save=0 (a test session: the journey and the journal never written) ?at=cave (start before Sky Hollow's mouth)
@@ -197,7 +198,7 @@ async function boot() {
     const l = world.places.find((p) => p.kind === 'cave')
     if (l) car.spawnAt = { x: l.x + Math.sin(l.rot) * 30, z: l.z + Math.cos(l.rot) * 30, heading: l.rot }
   }
-  await car.setCar(q.get('car') ?? 'gwagen')
+  await car.setCar(q.get('car') ?? DEFAULT_VEHICLE)
   scene.add(car.root, car.shadowMesh)
   // THE MOUNTAIN BIKE (Bike.ts): carried on the car, taken out with B
   // THE MOTORBIKE (MotoSim.ts, the same Bike drawing): taken out with F (GTA's key) — 2026-11-05
@@ -379,6 +380,8 @@ async function boot() {
   const localNow = (): Local => {
     const L = coopLocal
     const out = onFoot || riding
+    // (which car is ours: the others draw that one — sent when it changes, and to each who joins: Session.ride)
+    if (car.id) coop?.session.ride(car.id)
     if (onFoot) { L.kind = Kind.Foot; L.p.copy(hero.pos); L.q.copy(coopQ.setFromAxisAngle(coopUp, hero.heading)) }
     else if (riding) { L.kind = Kind.Moto; L.p.copy(two.root.position); L.q.copy(two.root.quaternion) }
     else { L.kind = carKind(car.id); L.p.copy(car.root.position); L.q.copy(car.root.quaternion) }

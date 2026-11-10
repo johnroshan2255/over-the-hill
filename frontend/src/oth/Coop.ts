@@ -189,4 +189,4 @@ function bagText(b: Bag): string {
 }
 
 /** Our player entity's kind for the car `id`. */
-export const carKind = (id: string): Kind => (id === 'bmw' ? Kind.E30 : Kind.Jeep)
+export const carKind = (id: string): Kind => (id === 'e30' ? Kind.E30 : Kind.Jeep)

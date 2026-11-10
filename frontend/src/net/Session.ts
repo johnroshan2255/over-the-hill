@@ -70,7 +70,8 @@ function slerp(a: number[], b: number[], t: number, out: number[]): void {
   for (let j = 0; j < 4; j++) out[j] /= len
 }
 
-export interface Remote { sid: number; id: string; name: string; colour: string; tracks: Map<number, Track> }
+/** (`car`: the garage car they drive — the `ride` event; '' until they've said: the main car is drawn) */
+export interface Remote { sid: number; id: string; name: string; colour: string; car: string; tracks: Map<number, Track> }
 
 /** A player's colour (their car's paint, their name tag, their flag) — from their id, the same on every screen. */
 export const COLOURS = ['#c8462d', '#2f7fb8', '#d9a227', '#3f9a5b', '#8e4fb0', '#d26f9a', '#2aa6a1', '#e07b2f', '#6b7fd1', '#9fb83a', '#b84a4a', '#4f6f8f']
@@ -202,6 +203,14 @@ export class Session {
     this.ws.close()
   }
 
+  /** OUR CAR, told to the others (the garage's id): on a change, and to each player who joins after. */
+  private car = ''
+  ride(car: string): void {
+    if (car === this.car || this.closed) return
+    this.car = car
+    this.send(encodeIntent({ t: 'ride', car }))
+  }
+
   private ended(why: string): void {
     if (this.closed) return
     this.closed = true
@@ -211,7 +220,7 @@ export class Session {
   }
 
   private addPlayer(sid: number, id: string, name: string): void {
-    this.remotes.set(sid, { sid, id, name, colour: colourOf(id), tracks: new Map() })
+    this.remotes.set(sid, { sid, id, name, colour: colourOf(id), car: '', tracks: new Map() })
   }
 
   private message(b: Uint8Array): void {
@@ -241,7 +250,9 @@ export class Session {
     const e = decodeEv(b)
     if (!e) return
     switch (e.t) {
-      case 'joined': this.addPlayer(e.sid, e.id, e.name); break
+      // (someone new: they don't know our car yet — said again)
+      case 'joined': this.addPlayer(e.sid, e.id, e.name); if (this.car) this.send(encodeIntent({ t: 'ride', car: this.car })); break
+      case 'ride': { const r = this.remotes.get(e.sid); if (r) r.car = e.car; break }
       case 'left': this.remotes.delete(e.sid); break
       case 'ok': { const p = this.pending.get(e.req); this.pending.delete(e.req); p?.ok(); break }
       case 'err': { if (e.req !== null) { const p = this.pending.get(e.req); this.pending.delete(e.req); p?.fail(e.msg) } break }

@@ -49,6 +49,9 @@ pub enum ShapeOp {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum ClientMsg {
     Chat { text: String },
+    /// WHICH CAR the player drives (the garage's id — the game's catalogue, not the server's business): relayed to
+    /// everyone as `Ev::Ride`, so they draw that car. Sent on joining, on a change, and again when someone joins.
+    Ride { car: String },
     /// A tree felled: its index in the map's tree list (the client's `Trees.data`), where it stood, how tall it was.
     CutTree { tree: u32, x: f32, z: f32, h: f32 },
     /// One hit on a rock or a scrap heap: `node` is the client's key ("rock:123", "scrap:mine"), `size` how much it holds.

@@ -70,7 +70,7 @@ const COOP: Choice[] = [
 
 const KEYS: [string, string][] = [
   ['W A S D', 'Drive and steer · on foot: move'], ['F', 'Get out / get in'], ['Space', 'Handbrake · on foot: jump'], ['Shift', 'Boost · on foot: sprint'], ['X / Z', 'Gear up / down (manual)'], ['E', 'Winch'], ['R', 'Reset the car'],
-  ['C', 'Camp: pitch / rest'], ['B', 'Build (co-op): mark your land'], ['1 / 2', 'G500 4×4² / BMW E30'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Q', 'Action wheel'], ['Esc', 'Pause'],
+  ['C', 'Camp: pitch / rest'], ['B', 'Build (co-op): mark your land'], ['1 / 2', 'Overlander 4×4 / Sierra K'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Q', 'Action wheel'], ['Esc', 'Pause'],
 ]
 
 /** THE GARAGE's vehicles (2026-11-05, the user: "car to bike must be chosen where we choose the jeep and the BMW"):
@@ -125,9 +125,26 @@ export class Menu {
   // ---------------------------------------------------------------------------------------------------- the screens
   private readonly view = document.createElement('div')
 
+  /** Which list was showing, and how far each scrolling part of it was scrolled (kept across a redraw). */
+  private shown = ''
   private render(): void {
     // (a panel fills the top right: the full-screen button steps aside — index.html)
     document.body.classList.toggle('oh-panel-open', this.screen !== 'main')
+    // A REDRAW KEEPS THE SCROLL (2026-11-10, the user, on a phone: "when I click something it scrolls to the top, so
+    // selection won't work" — the garage's twenty cars: every redraw built the list anew, at its top): the lists'
+    // scroll taken before, put back after — while the same screen and tab show; then the selected row brought into
+    // view if it's outside it (the arrow keys walking down a long list).
+    const key = `${this.mode}/${this.screen}/${this.tab}`, kept = this.shown === key ? [...this.view.querySelectorAll('.oh-list, .oh-side')].map((e) => e.scrollTop) : []
+    this.shown = key
+    this.draw()
+    this.view.querySelectorAll('.oh-list, .oh-side').forEach((e, i) => { if (kept[i]) e.scrollTop = kept[i] })
+    const sel = this.view.querySelector('.oh-list .sel') as HTMLElement | null, box = sel?.closest('.oh-list')
+    if (sel && box) {
+      const a = sel.getBoundingClientRect(), b = box.getBoundingClientRect()
+      if (kept.length && (a.top < b.top || a.bottom > b.bottom)) sel.scrollIntoView({ block: 'nearest' })
+    }
+  }
+  private draw(): void {
     if (this.screen === 'main') this.view.replaceChildren(...(this.mode === 'title' ? [this.brand()] : this.mode === 'camp' ? [this.brand(this.h.heading ?? 'Camp', 'Camp')] : []), this.mainList(), this.hints(['Enter', 'Select'], ...(this.mode !== 'title' ? [['Esc', this.mode === 'camp' ? 'Leave' : 'Resume'] as [string, string]] : [])))
     else if (this.screen === 'coop') this.view.replaceChildren(this.panel(), this.hints(['↑ ↓', 'Choose'], ['Enter', 'Select'], ['Esc', 'Back']))
     else this.view.replaceChildren(this.panel(), this.hints(['↑ ↓', 'Choose'], ['← →', 'Change'], ['Q E', 'Tabs'], ['Esc', 'Back']))
@@ -166,7 +183,7 @@ export class Menu {
     return el('nav', 'oh-main', items.map((it, i) => {
       const b = el('button', 'oh-item' + (i === this.sel ? ' sel' : ''), [it.label, ...(it.note ? [el('small', '', [it.note])] : [])])
       if (it.disabled) b.setAttribute('disabled', '')
-      b.addEventListener('pointerenter', () => { if (!it.disabled && this.sel !== i) { this.sel = i; this.render() } })
+      b.addEventListener('pointerenter', (ev) => { if (hover(ev) && !it.disabled && this.sel !== i) { this.sel = i; this.render() } })
       b.addEventListener('click', () => { if (!it.disabled) it.go() })
       return b
     }))
@@ -219,7 +236,7 @@ export class Menu {
     left.addEventListener('click', (e) => { e.stopPropagation(); this.sel = i; this.change(c, -1) })
     right.addEventListener('click', (e) => { e.stopPropagation(); this.sel = i; this.change(c, 1) })
     const r = el('div', 'oh-row' + (i === this.sel ? ' sel' : ''), [el('span', '', [c.label]), el('span', 'oh-val', [left, el('b', '', [label]), right])])
-    r.addEventListener('pointerenter', () => { if (this.sel !== i) { this.sel = i; this.render() } })
+    r.addEventListener('pointerenter', (ev) => { if (hover(ev) && this.sel !== i) { this.sel = i; this.render() } })
     r.addEventListener('click', () => { this.sel = i; this.change(c, 1) })
     return r
   }
@@ -242,7 +259,7 @@ export class Menu {
       const b = el('button', 'oh-car' + (i === this.sel ? ' sel' : '') + (on ? ' chosen' : ''), [
         el('h3', '', [r.name]), el('p', '', [r.line]), ...(on ? [el('span', 'oh-tag', ['Selected'])] : []),
       ])
-      b.addEventListener('pointerenter', () => { if (this.sel !== i) { this.sel = i; this.render() } })
+      b.addEventListener('pointerenter', (ev) => { if (hover(ev) && this.sel !== i) { this.sel = i; this.render() } })
       b.addEventListener('click', () => { this.sel = i; this.pickCar(i) })
       return b
     })
@@ -267,12 +284,12 @@ export class Menu {
       const b = el('button', 'oh-swatch' + (p.hex === null ? ' own' : '') + (i === this.sel ? ' sel' : '') + (p.hex === this.s.paint ? ' chosen' : '') + (owned ? '' : ' locked'), p.hex === null ? ['MAP'] : owned ? [] : [el('span', 'oh-price', [`${paintPrice(p.hex, i)}◆`])])
       if (p.hex) b.style.background = p.hex
       b.title = p.name
-      b.addEventListener('pointerenter', () => { if (this.sel !== i) { this.sel = i; this.render() } })
+      b.addEventListener('pointerenter', (ev) => { if (hover(ev) && this.sel !== i) { this.sel = i; this.render() } })
       b.addEventListener('click', () => { this.sel = i; this.pickPaint(i) })
       return b
     })
     const p = SWATCHES[this.sel], price = paintPrice(p.hex, this.sel), owned = paintOwned(this.j, p.hex, this.sel)
-    const help = p.hex === null ? "This valley's colour for the car: the G500 in rust red, the E30 in cream." : p.name === 'Stock' ? "The model's own colours." : owned ? 'Enter or click to paint the car.' : `${price} ◆ — Enter or click to buy (you have ${this.j.coins} ◆). Coins: supply crates and the places you find.`
+    const help = p.hex === null ? "This valley's colour for the car: each car its own." : p.name === 'Stock' ? "The model's own colours." : owned ? 'Enter or click to paint the car.' : `${price} ◆ — Enter or click to buy (you have ${this.j.coins} ◆). Coins: supply crates and the places you find.`
     return [el('div', 'oh-list', [el('div', 'oh-swatches', sw)]), el('div', 'oh-side', [el('h4', '', [p.name]), el('p', '', [help]), ...(this.note ? [el('p', 'oh-note', [this.note])] : [])])]
   }
 
@@ -395,7 +412,7 @@ export class Menu {
     const co = this.co
     this.sel = Math.min(this.sel, this.coopRows() - 1)
     const pick = (i: number, e: HTMLElement) => {
-      e.addEventListener('pointerenter', () => { if (this.sel !== i && document.activeElement?.tagName !== 'INPUT') { this.sel = i; this.render() } })
+      e.addEventListener('pointerenter', (ev) => { if (hover(ev) && this.sel !== i && document.activeElement?.tagName !== 'INPUT') { this.sel = i; this.render() } })
       return e
     }
     const input = (cls: string, value: string, ph: string, max: number, set: (v: string) => void) => {
@@ -538,6 +555,10 @@ function ago(t: number): string {
   const m = Math.max(0, (Date.now() - t) / 60000)
   return m < 1 ? 'just now' : m < 60 ? `${Math.round(m)} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`
 }
+
+/** A MOUSE hovering (it moves the selection). Not a finger: a touch 'enters' the row it lands on, and the redraw that
+ *  followed threw away the very button being tapped — its click never came (the phone's taps that did nothing). */
+const hover = (e: Event): boolean => (e as PointerEvent).pointerType === 'mouse'
 
 function carLine(v: VehicleDef): string {
   const s = v.spec

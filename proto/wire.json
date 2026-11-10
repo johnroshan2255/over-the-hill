@@ -58,7 +58,8 @@
     "pond_gone": [51, [["id", "str"]]],
     "ok": [52, [["req", "var"]]],
     "err": [53, [["req", "varn"], ["msg", "str"]]],
-    "pong": [54, [["n", "var"]]]
+    "pong": [54, [["n", "var"]]],
+    "ride": [55, [["sid", "var"], ["car", "str"]]]
   },
   "intents": {
     "chat": [10, [["text", "str"]]],
@@ -75,6 +76,7 @@
     "shape": [21, [["op", "op"], ["x", "f32"], ["z", "f32"], ["r", "f32"], ["strength", "f32"], ["y", "f32n"]]],
     "pave": [22, [["mat", "pave"], ["x", "f32"], ["z", "f32"], ["r", "f32"]]],
     "pond": [23, [["x", "f32"], ["z", "f32"], ["r", "f32"], ["depth", "f32"]]],
-    "ping": [24, [["n", "var"]]], "stow": [25, [["from", "store"], ["to", "store"], ["bag", "bag"]]]
+    "ping": [24, [["n", "var"]]], "stow": [25, [["from", "store"], ["to", "store"], ["bag", "bag"]]],
+    "ride": [26, [["car", "str"]]]
   }
 }

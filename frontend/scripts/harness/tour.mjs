@@ -6,7 +6,7 @@
 //   drive  — the HITCHES: the camera flown along every track at SPEED m/s in real time; every frame's interval, the
 //            page's JavaScript in it, and each system's update (wrapped from here, no game code changed). Frames over
 //            2.5× the median are listed with where they happened and what took the time.
-//   node scripts/harness/tour.mjs sweep tour.json       env: STEP (90) TIER (ultra) PORT (5200) QS (extra URL params)
+//   node scripts/harness/tour.mjs sweep tour.json       env: STEP (90) TIER (ultra) PORT (5200) QS (extra URL params) ONLY=places
 //   node scripts/harness/tour.mjs drive drive.json      env: SPEED (25) TRACKS (all, or e.g. 0,3,7)
 import puppeteer from 'puppeteer-core'
 import fs from 'node:fs'
@@ -58,6 +58,7 @@ if (mode === 'sweep') {
     spots.push({ n: `${l.kind}:${l.name}`, x, z, h: 4, yaw: Math.atan2(-(l.x - x), -(l.z - z)), pitch: -0.12 })
     if (l.kind === 'tunnel' || l.kind === 'cavern') spots.push({ n: `${l.kind}:${l.name}:in`, x: l.x - Math.sin(l.rot) * 6, z: l.z - Math.cos(l.rot) * 6, h: 2.4, yaw: l.rot + Math.PI, pitch: -0.03 })
   }
+  if (process.env.ONLY === 'places') spots.splice(0, spots.length, ...spots.filter((q) => q.n.includes(':')))       // ONLY=places: the places alone
   console.log(`${spots.length} spots`)
   const res = []
   const t0 = Date.now()
@@ -67,12 +68,13 @@ if (mode === 'sweep') {
       o.view(s.x, s.z, s.h, s.yaw, s.pitch)
       // (the moved-to ground bakes over the next frames: let it settle)
       await new Promise((r) => { let n = 0; const f = () => { if (++n < 40) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
-      await o.gpuDone()
-      const j0 = window.__js, t0 = performance.now()
-      await new Promise((r) => { let n = 0; const f = () => { if (++n < 80) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
-      await o.gpuDone()
-      const ms = (performance.now() - t0) / 80, st = o.stats()
-      return { ms, js: (window.__js - j0) / 80, draws: st.draws, tris: st.tris, trees: st.trees, cpu: st.cpuMs }
+      // (pace.mjs's way: two drained windows, the slope — `gpuDone` answers a constant ~0.6 s late on the release build,
+      //  which "80 frames drained" charged to the frame: ~+7 ms on every spot)
+      const run = async (n) => { await o.gpuDone(); const t0 = performance.now(); await new Promise((r) => { let k = 0; const f = () => { if (++k < n) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) }); await o.gpuDone(); return performance.now() - t0 }
+      const j0 = window.__js
+      const ta = await run(60), tb = await run(300)
+      const ms = (tb - ta) / 240, st = o.stats()
+      return { ms, js: (window.__js - j0) / 360, draws: st.draws, tris: st.tris, trees: st.trees, cpu: st.cpuMs }
     }, s)
     res.push({ ...s, ...r })
     if (res.length % 25 === 0) console.log(`  ${res.length}/${spots.length}  ${((Date.now() - t0) / 1000).toFixed(0)} s`)

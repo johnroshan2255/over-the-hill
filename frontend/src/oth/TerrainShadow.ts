@@ -8,6 +8,9 @@ import type { MapData } from './MapData'
  * ground is fully lit (`uShadowOn` 0). The ground samples it per pixel, the grass per blade root — one fetch each,
  * no shadow-map pass, the same on every tier.
  */
+/** The world's shade texture: 1025² (16 m on a 16 km world) for every world — the worlds share the one texture. */
+const SH_WORLD_N = 1025
+
 export class TerrainShadow {
   readonly box: GFX.DataTexture
   readonly world: GFX.DataTexture
@@ -39,7 +42,7 @@ export class TerrainShadow {
       return t
     }
     this.box = tex(this.boxN)
-    this.world = tex(map.far.n)
+    this.world = tex(SH_WORLD_N)
     this.uniforms.uShBox.value = this.box
     this.uniforms.uShWorld.value = this.world
     this.uniforms.uShBoxGrid.value.set(this.boxN, map.inner.step * 2, map.inner.origin, 0)
@@ -82,11 +85,16 @@ export class TerrainShadow {
    *  the frame that swaps to it. */
   prepare(map: MapData): void {
     if (this.keys.has(map)) return
-    if ((map.inner.n - 1) / 2 + 1 !== this.boxN || map.far.n !== this.world.image.width) throw new Error('TerrainShadow: a world of another size')
+    if ((map.inner.n - 1) / 2 + 1 !== this.boxN || (map.far.n - 1) % (SH_WORLD_N - 1) !== 0) throw new Error('TerrainShadow: a world of another size')
     const key = ++this.nextKey
     this.keys.set(map, key)
     const g = (h: MapData['inner']) => ({ h: h.h.slice(), n: h.n, step: h.step, origin: h.origin })
-    this.worker.postMessage({ type: 'init', key, inner: g(map.inner), far: g(map.far) })
+    // (the world's shade is baked on SH_WORLD_N² whatever the world's own grid — the valley's is 8 m, 2049², since
+    //  2026-11-10: every k-th height goes to the worker)
+    const k = (map.far.n - 1) / (SH_WORLD_N - 1), F = map.far
+    let far = g(F)
+    if (k > 1) { const h = new Float32Array(SH_WORLD_N * SH_WORLD_N); for (let j = 0; j < SH_WORLD_N; j++) for (let i = 0; i < SH_WORLD_N; i++) h[j * SH_WORLD_N + i] = F.h[j * k * F.n + i * k]; far = { h, n: SH_WORLD_N, step: F.step * k, origin: F.origin } }
+    this.worker.postMessage({ type: 'init', key, inner: g(map.inner), far })
   }
 
   /** The OCCLUDERS standing on a world's ground (the desert's slab stacks — Rocks.occluders: per slab its corner count,
@@ -152,7 +160,8 @@ float sunVisibilityTerrain(vec2 xz) {
   if (uShOn < 0.5) return 1.0;
   float e = -uShBoxGrid.z - uShBoxGrid.y;
   if (abs(xz.x) < e && abs(xz.y) < e) return textureLod(uShBox, ((xz - uShBoxGrid.z) / uShBoxGrid.y + 0.5) / uShBoxGrid.x, 0.0).r;
-  return textureLod(uShWorld, ((xz - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).r;
+  // (the world's shade: SH_WORLD_N² over the world's span, whatever the world grid's own size)
+  return textureLod(uShWorld, ((xz - uFarGrid.z) / (uFarGrid.y * (uFarGrid.x - 1.0)) * ${SH_WORLD_N - 1}.0 + 0.5) / ${SH_WORLD_N}.0, 0.0).r;
 }
 // … and the forests' shade on top
 float sunVisibility(vec2 xz) {

@@ -90,8 +90,12 @@ export class Trees {
     }
     // the forests' shade: stamped by the terrain shadow's worker at every sun position (off the main thread — at a low
     // sun every shadow is long: stamping 25 000 of them froze the game 100–180 ms each time, all evening and night)
-    const sh = (this.shade = new Float32Array(this.count * 4))
-    for (let i = 0; i < this.count; i++) { const o = i * TREE_STRIDE; sh.set([this.data[o], this.data[o + 2], this.data[o + 3], this.data[o + 5]], i * 4) }
+    // (the BOX's trees only: the shade's grid is the box's — the outland's woods, MapData.play, cast none yet)
+    const hb = map.half
+    let nb = 0
+    for (let i = 0; i < this.count; i++) { const o = i * TREE_STRIDE; if (Math.abs(this.data[o]) < hb && Math.abs(this.data[o + 2]) < hb) nb++ }
+    const sh = (this.shade = new Float32Array(nb * 4))
+    for (let i = 0, w = 0; i < this.count; i++) { const o = i * TREE_STRIDE; if (Math.abs(this.data[o]) < hb && Math.abs(this.data[o + 2]) < hb) { sh[w] = this.data[o]; sh[w + 1] = this.data[o + 2]; sh[w + 2] = this.data[o + 3]; sh[w + 3] = this.data[o + 5]; w += 4 } }
     if (shade) shadow.setTrees(sh, CROWN)
     this.leafU = { value: createLeafTexture() }
     this.frondU = { value: createFrondTexture() }
@@ -1056,6 +1060,39 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
     for (const [x, z, h, species] of gv.trees) {
       const k = hash01(x + 0.13, z - 0.41)
       out.push(x, map.height(x, z) - 0.3, z, h, k * Math.PI * 2, species, hash01(x - 0.27, z + 0.61), hash01(x + 0.83, z + 0.07))
+    }
+  }
+  // THE OUTLAND'S WOODS (2026-11-10 — the playable land beyond the box, MapData.play; scripts/oth/outland.py): no forest
+  // mask out there, so the land itself says where: STANDS (a slow noise picks the wooded country, a faster one the
+  // stands in it) on the valley floors and the lower flanks, thinning from 420 m and gone by 640 m (the tree line: the
+  // ranges stand bare above it), never on a slope a tree couldn't hold. Spruce, with larch stands and — low down —
+  // broadleaf groves. An 11 m grid (the box's is 6.5): ~1.1 M cells, each on its own seed, most turned away by the
+  // noises alone before the ground is asked. The tiles (64 m) keep the frame's cost to what is near.
+  if (map.play > map.half + 100) {
+    const GO = 11, ho = map.play - 60, hb = map.half - 50
+    // (clear of the outland's places — the ranger towers — and of the gorge bridges' ends)
+    const keepOff: [number, number, number][] = [...(map.meta.landmarks ?? []).filter((l) => Math.abs(l.x) > map.half || Math.abs(l.z) > map.half).map((l) => [l.x, l.z, 18] as [number, number, number]),
+      ...(map.meta.bridges ?? []).flatMap((b) => (Math.abs(b.x0) > map.half || Math.abs(b.z0) > map.half ? [[b.x0, b.z0, 12], [b.x1, b.z1, 12]] as [number, number, number][] : []))]
+    for (let gz = -ho; gz < ho; gz += GO, yield) for (let gx = -ho; gx < ho; gx += GO) {
+      if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }       // (the box: placed above)
+      const region = vn(gx / 420 + 7.3, gz / 420 - 2.1)
+      if (region < 0.34) continue
+      const stand = smooth(0.44, 0.6, vn(gx / 58 - 11, gz / 58 + 4))
+      let q = cellSeed(Math.round(gx), Math.round(gz), 91)
+      const r1 = () => ((q = (Math.imul(q ^ (q >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+      const pw = smooth(0.34, 0.6, region) * (0.03 + 0.6 * stand)
+      if (r1() > pw) continue
+      const x = gx + (r1() * 1.6 - 0.3) * GO, z = gz + (r1() * 1.6 - 0.3) * GO
+      if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) continue
+      const y = map.height(x, z)
+      if (y > 640 || r1() < (y - 420) / 220) continue
+      const sl = Math.hypot(map.height(x + 5, z) - map.height(x - 5, z), map.height(x, z + 5) - map.height(x, z - 5)) / 10
+      if (sl > 0.6) continue
+      const low = y < 270 && vn(x / 150 + 3, z / 150 + 9) > 0.62
+      const species = low ? (r1() < 0.5 ? 3 : 4) : vn(x / 230, z / 230) > 0.66 ? 1 : r1() < 0.03 ? 2 : 0
+      let H = family(species) === 1 ? 8 + 8.5 * Math.pow(r1(), 0.8) : (7 + 15 * Math.pow(r1(), 0.8)) * (0.8 + 0.2 * stand)
+      if (species === 0 && r1() < 0.1) H = Math.max(H, 26 + 10 * r1())
+      out.push(x, y - 0.3, z, H, r1() * Math.PI * 2, species, r1(), r1())
     }
   }
 }

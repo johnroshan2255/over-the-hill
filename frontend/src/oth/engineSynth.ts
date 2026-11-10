@@ -37,12 +37,22 @@ export interface EngineVoice {
   gain: number
 }
 
+// The off-roader's (and the shelved G500 4×4²'s — the same machine): a cross-plane V8 (firing order 1-5-4-8-6-3-7-2, 90° apart; bank A = 1–4, B = 5–8 — each bank fires
+// at uneven intervals: the V8 burble), twin pipes, a deep muffler, two turbos
+const V8: EngineVoice = { firing: [0, 0.875, 0.625, 0.25, 0.125, 0.5, 0.75, 0.375], bank: [0, 0, 0, 0, 1, 1, 1, 1], pipe: [2.5, 2.75], header: 0.45, muffler: 78, open: 2600, intake: 0.25, mech: 0.3, turbo: 0.55, gain: 1.0 }
+
 export const VOICES: Record<string, EngineVoice> = {
-  // G500 4×4²: a cross-plane V8 (firing order 1-5-4-8-6-3-7-2, 90° apart; bank A = 1–4, B = 5–8 — each bank fires
-  // at uneven intervals: the V8 burble), twin pipes, a deep muffler, two turbos
-  gwagen: { firing: [0, 0.875, 0.625, 0.25, 0.125, 0.5, 0.75, 0.375], bank: [0, 0, 0, 0, 1, 1, 1, 1], pipe: [2.5, 2.75], header: 0.45, muffler: 78, open: 2600, intake: 0.25, mech: 0.3, turbo: 0.55, gain: 1.0 },
+  offroader: V8,
+  // THE KIT'S CARS' voices (catalogue `voice`): a small-block V8 (the off-roader's burble, one pipe, no turbos); an
+  // inline SIX (even, 120° apart: smooth, a low hum); a FOUR (the E30's order, a duller pipe); a DIESEL four (slow, loud in
+  // its works, a closed-up muffler)
+  v8: { ...V8, pipe: [2.7, 2.7], muffler: 95, open: 3000, turbo: 0, mech: 0.4, gain: 1.0 },
+  i6: { firing: [0, 4 / 6, 2 / 6, 5 / 6, 1 / 6, 3 / 6], bank: [0, 0, 0, 0, 0, 0], pipe: [2.8, 2.8], header: 0.5, muffler: 105, open: 3200, intake: 0.35, mech: 0.45, turbo: 0, gain: 1.0 },
+  i4: { firing: [0, 0.75, 0.25, 0.5], bank: [0, 0, 0, 0], pipe: [2.4, 2.4], header: 0.5, muffler: 130, open: 3600, intake: 0.5, mech: 0.55, turbo: 0, gain: 0.95 },
+  d4: { firing: [0, 0.75, 0.25, 0.5], bank: [0, 0, 0, 0], pipe: [2.6, 2.6], header: 0.45, muffler: 85, open: 2200, intake: 0.3, mech: 0.9, turbo: 0.3, gain: 1.05 },
+  g500: V8,
   // E30 M3 (S14): an inline four (180° apart), a 4-2-1 header, a bright muffler, a loud intake (throttle bodies)
-  bmw: { firing: [0, 0.75, 0.25, 0.5], bank: [0, 0, 0, 0], pipe: [2.9, 2.9], header: 0.6, muffler: 150, open: 4200, intake: 0.8, mech: 0.55, turbo: 0, gain: 0.95 },
+  e30: { firing: [0, 0.75, 0.25, 0.5], bank: [0, 0, 0, 0], pipe: [2.9, 2.9], header: 0.6, muffler: 150, open: 4200, intake: 0.8, mech: 0.55, turbo: 0, gain: 0.95 },
   // the kei van: a 660 cm³ inline three (240° apart), a short pipe, a small buzzy muffler
   // THE MOTORBIKE: a 450 cm³ single (one pulse every 720°), a short header into a small, bright silencer, a loud intake
   // and a busy valvetrain — the thump at idle, the rasp up high

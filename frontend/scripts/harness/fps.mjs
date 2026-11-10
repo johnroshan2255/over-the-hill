@@ -4,6 +4,7 @@
 // keeps `window.__oth` (ready, view, drive, stats, world).
 //   node scripts/harness/fps.mjs ultra            node scripts/harness/fps.mjs ultra "api=webgpu"
 import puppeteer from 'puppeteer-core'
+import { PACE } from './pace.mjs'
 const tier = process.argv[2] || 'ultra'
 const extra = process.argv[3] ? `&${process.argv[3]}` : ''
 // (PORT=5201: the same views on main — the three.js build — for a like-for-like A/B)
@@ -29,15 +30,9 @@ const measure = () => p.evaluate(() => new Promise((r) => {
 }))
 // THE GPU'S REAL PACE: 300 frames submitted, then wait until the GPU has finished them (WebGPU's rAF runs ahead of the
 // GPU in headless Chrome — rAF timing alone lies there; on WebGL2 the two agree)
-const drained = () => p.evaluate(async () => {
-  const o = window.__oth
-  if (!o.gpuDone) return NaN // (a build without it — main: WebGL2, where rAF timing is honest)
-  await o.gpuDone()
-  const t0 = performance.now()
-  await new Promise((r) => { let n = 0; const f = () => { if (++n < 300) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
-  await o.gpuDone()
-  return (performance.now() - t0) / 300
-})
+// (pace.mjs: two drained windows and the slope between them — `gpuDone` answers a constant ~0.6 s late on the release
+//  build, which "300 frames drained" charged to the frame: every number since 2026-11-07 read ~+2 ms too high)
+const drained = async () => ((await p.evaluate(() => !window.__oth.gpuDone)) ? NaN : p.evaluate(PACE))
 const VIEWS = [
   // [world, name, drive?, x, z, h, yaw, pitch]
   ['valley', 'spawn (car)', true],

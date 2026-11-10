@@ -52,10 +52,12 @@ export type Ev =
   | { t: 'ok'; req: number }
   | { t: 'err'; req: number | null; msg: string }
   | { t: 'pong'; n: number }
+  | { t: 'ride'; sid: number; car: string }
 
 export type Store = 'carry' | 'trailer'
 export type Intent =
   | { t: 'chat'; text: string }
+  | { t: 'ride'; car: string }
   | { t: 'cut_tree'; tree: number; x: number; z: number; h: number }
   | { t: 'mine'; node: string; x: number; z: number; size: number }
   | { t: 'pick'; drop: string; to: Store }

@@ -5,6 +5,7 @@
 //   node scripts/harness/abq.mjs "|tcut=flat" spawn,lake 4          node scripts/harness/abq.mjs "|hide=water|hide=trees" lake
 // env TIER (ultra), PORT (5200), API (webgpu | webgl2: the default backend when unset)
 import puppeteer from 'puppeteer-core'
+import { PACE } from './pace.mjs'
 const variants = (process.argv[2] ?? '').split('|')
 const views = (process.argv[3] || 'spawn,lake').split(',')
 const reps = Number(process.argv[4] || 3)
@@ -15,15 +16,8 @@ const ANGLE = process.platform === 'win32' ? 'd3d11' : 'metal'
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
   args: ['--disable-gpu-vsync', '--disable-frame-rate-limit', `--use-angle=${ANGLE}`, '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--window-size=1920,1080', '--mute-audio'],
   defaultViewport: { width: 1920, height: 1080, deviceScaleFactor: 1 } })
-const drained = (p) => p.evaluate(async () => {
-  const o = window.__oth, runs = []
-  for (let k = 0; k < 3; k++) {
-    await o.gpuDone(); const t0 = performance.now()
-    await new Promise((r) => { let n = 0; const f = () => { if (++n < 200) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
-    await o.gpuDone(); runs.push((performance.now() - t0) / 200)
-  }
-  runs.sort((a, b) => a - b); return runs[1]
-})
+// (pace.mjs: the slope between two drained windows — the constant ~0.6 s `gpuDone` takes on the release build cancels)
+const drained = (p) => p.evaluate(PACE)
 const api = process.env.API ? `&api=${process.env.API}` : ''
 for (const view of views) {
   const v = V[view]

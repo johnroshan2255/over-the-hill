@@ -5,6 +5,45 @@ will give const 60+ in ultra"*; *"we can hide things from far"*; *"do all the st
 preserve the visual appearance while reducing the actual rendering cost"*; *"check the cheapest way to create water"*.
 This is step 8 of `MIGRATION.md`, with the phone made a goal of its own.
 
+## 2026-11-10 — THE YARDSTICK WAS WRONG since 2026-11-07: every "GPU-drained" number read ~+2–3 ms too high
+
+The user: *"make sure … in pc 500+ ultra const"*. `fps.mjs ultra` read 3.48 ms (287 fps) on the M4 against 1.885 on
+2026-11-06 — a regression? Bisected with a worktree: the 11-06 evening build 2.14 ms, the 11-07 morning one 3.59. The
+one change between them that mattered: PlayCanvas's RELEASE build (`vite.config.ts`). Today's game on the DEBUG build
+(`PCDEBUG=1`): 2.13 ms. But the two builds send the GPU **the same frame** — hooked WebGPU (`passes.mjs`, `pipes.mjs`):
+one pass, 74 draws, 1.83 M vertices, the same 119 pipelines and shaders, the same attachments and load / store ops.
+
+**The cause: `queue.onSubmittedWorkDone()` (our `gpuDone`) answers ~0.59 s late on the release build while the game
+runs — a CONSTANT, whatever the frame costs** (the debug build's error scopes flush the queue at every call; nothing
+does in release). "200 frames, then drained" charged those 590 ms to 200 frames: **+2.9 ms a frame** (300 frames:
++2.0; `tour.mjs sweep`'s 80: +7). `gputime.mjs`: 2 855 frames in 5 s then the same 588 ms to drain = 1.96 ms; the
+GPU's own clock (timestamp queries, debug build) 1.68 ms for the pass.
+
+**The fix — `scripts/harness/pace.mjs`:** two drained windows of different lengths (150 and 750 frames) and the SLOPE
+between them; the constant cancels. `fps.mjs`, `abq.mjs`, `ablate.mjs`, `floor.mjs`, `tour.mjs sweep` use it. NOT yet:
+`abgpu`, `farcost`, `gpubase`, `movecost`, `perfmarks`, `phone`, `pix`, `placecost` (rAF only) — their absolute numbers
+are still inflated on WebGPU. **A/B DIFFERENCES in the log below stay right** (the constant is on both sides); the
+ABSOLUTE ms since 2026-11-07 (the "4.7 ms spawn" of every `abq` row) are not — read them as ~1.8.
+
+**Where the M4 really stands (ULTRA, 1920 × 1080, uncapped, WebGPU, headless, the release build, all 19 painted cars in):**
+
+| `fps.mjs ultra` | ms | fps |
+|---|---|---|
+| spawn (car) | 1.751 | 571 |
+| forest | 1.640 | 610 |
+| lake | 1.826 | 548 |
+| cliff | 1.593 | 628 |
+| oasis | 1.994 | 501 |
+| plain | 1.448 | 691 |
+| **mean** | **1.709** | **585** |
+
+`floor.mjs` (new): the EMPTY frame (every part hidden) 0.40 ms at 1080p, 0.19 at 960 × 540 — the clear, the 4× resolve,
+the present; the world 1.45 ms. `ablate.mjs ultra spawn`: terrain 0.45, rocks 0.36, trees 0.23, grass 0.19, bushes 0.12,
+sky 0.08, landmarks (the places) 0.06.
+
+**The places** (`ONLY=places tour.mjs sweep`: each of the 38 from 26 m): median 1.538 ms (650 fps), mean 1.615; 35 of
+38 at ≥ 500 fps. Under: Falls Camp 2.182 (458), Fisher's Landing 2.095 (477), Birch Hollow Cabin 2.065 (484).
+
 ## 2026-11-07 — Chromebooks and integrated GPUs: ULTRA drawn the phones' way, the resolution adaptive everywhere
 
 The user: *"we need it be played on anything"*; *"do all optimization works, so that even a chrome book will get 500
@@ -281,3 +320,12 @@ Several windows at once are fine for CHECKING (browsers, phones), never for MEAS
 | 2026-11-07 | THE CAVE WORLD round 3: taller, a second skylight, 3 ponds, ~30 trees, ~110 bushes, ~2 600 tufts, ~60 % grass inside; the field's grass on its hill (Grass.setHill, the tiles' boxes on it) | abq `|cave=0` (M4, ULTRA 1080p, a busy machine — spawn 5.1 ms): front −0.43, inside the great hall +0.62 (was −0.43 before the growth), above +0.60, spawn ±0.00. Load ~350 ms (cave.glb 0.83 MB, bones.glb 0.2) | not measured | — |
 | 2026-11-07 | THE CAVE WORLD round 4: twice the height (184 k rock triangles), the hill painted from the land's mask, the turf's smooth transitions. Found on the way: the inside's tufts / bones / props mesh (122 k triangles) was drawn ALWAYS — now hidden with the inside; "in front of the mouth" counts only low enough to see in; the inside drawn after the turf from outside (renderOrder); the outside hill reads its paint from above only; the rock's 6-fetch paint only where it shows | abq `|cave=0` (M4, ULTRA 1080p): front +0.03, great hall +0.66 (+1.9 before the fixes), above +0.35 (+1.7 before; round 3 +0.60), spawn +0.04 | not measured | — |
 | 2026-11-08 | FIRST SIGHT (the PERF MARKS drive, `perfmarks.mjs drive`, ZOOM 40 — the user: "sudden fps drops at places"): (1) the PlayCanvas port's `compileAsync` was a stub — every material's shader and WebGPU pipeline was made the first time it was DRAWN (30–60 ms each, one per new kind of thing coming into view); now THE WARM-UP (gfx/scene.ts): every mesh's material layout warmed once — 61 in the valley, behind the loading text (12 a frame), then 1 a frame for what's added (the crossing's world: `compileAsync` adds its group hidden); on WebGPU the warm draw is a `createRenderPipelineAsync` (Dawn compiles on a worker, the real draw finds the finished pipeline — the blocking compile of the desert's big shaders had stalled the GPU process ~0.3–1.1 s at a time near the pass). (2) the shore / paving picks allocated arrays and closures each frame — now none. Static views unchanged: at the user's Copper Mine meadow the frame is CPU-bound ~2.3 ms headless, its GPU 0.88 ms | the pass approach (452, −1071): stalls 1110 / 520 / 336 / 233 / 101 / 254 ms → 112 / 242 ms (the desert's build steps — `rocks` 151 ms one step; left); valley drive marks: see below | not measured | — |
+| 2026-11-10 | THE OFF-ROADER (our own model, 26.7 k triangles, 0.87 MB, no textures) as the main car in place of the G500 (29.7 k, 1.98 MB): the same three draws + the driver's door + the cockpit's parts | `abq.mjs "car=g500\|car=offroader" spawn 5` (M4, 1080p uncapped, interleaved): ULTRA 4.668 → 4.665 ms, HIGH 4.570 → 4.585, MEDIUM 4.053 → 4.063, LOW 3.029 → 3.013 — no measurable cost (±0.02) | not measured (no phone) | — |
+| 2026-11-10 | the off-roader RESTYLED (soft bevels, cargo on the rack: 31.5 k triangles, 0.95 MB), drawn without the paint grain (`smooth`), its glass darker from outside | `abq.mjs "car=g500\|car=offroader" spawn 5` (M4, 1080p): ULTRA 4.710 → 4.654 ms, LOW 2.935 → 2.901 — no cost (the grain's fetches saved) | not measured (no phone) | — |
+| 2026-11-10 | the off-roader's last rework (30.5 k triangles, 1.01 MB; the grain back on, dark glass) | `abq.mjs "car=g500\|car=offroader" spawn 5` (M4, 1080p): ULTRA 4.661 → 4.671 ms, LOW 2.897 → 2.947 — level with the G500 (within the run's spread) | not measured (no phone) | — |
+| 2026-11-10 | SIERRA K, the first of the 21 (docs/VEHICLES.md): 21.4 k triangles, 0.77 MB | `abq.mjs "car=offroader\|car=sierra" spawn 5` (M4, 1080p): ULTRA 4.697 → 4.603 ms, LOW 2.937 → 2.897 — no cost over the off-roader | not measured (no phone) | — |
+| 2026-11-10 | the cars WEATHERED (carkit.py `weather`: baked AO + road dust in the vertex colours, the big panels cut on a grid for it; dark glass): off-roader 30.5 k → 34.4 k triangles, 1.52 MB; Sierra K 26.4 k, 1.24 MB | `abq.mjs "car=g500\|car=offroader\|car=sierra" spawn 5` (M4, 1080p; the ULTRA run drifted 4.66 → 4.96 ms over its reps — a warming machine): ULTRA g500 4.866, off-roader 4.995 (+0.13), Sierra 4.927 (+0.06); LOW 3.045 / 3.095 (+0.05) / 3.036 (−0.01). Re-measure the off-roader's +0.1 on a quiet machine | not measured (no phone) | — |
+| 2026-11-10 | THE KIT'S 18 CARS in the garage (25–28 k triangles, ~1.2 MB each; only the driven one is loaded) | `abq.mjs "car=offroader\|car=wagon63\|car=steppe" spawn 4` (M4, ULTRA 1080p): 4.741 / 4.655 / 4.595 ms — under the off-roader; the others not measured one by one (the same kit, the same size) | not measured (no phone) | — |
+| 2026-11-10 | the off-roader PAINTED (carkit.py `paint_texture`: one image over the paint's panels — chips, scratches, rust, mud — baked by rules in Blender; the garage's paint through the game's white-paint mask). PC: `offroader.glb`, 2048² (2.15 MB); PHONES (a weak GPU, LOW / MEDIUM): `offroader.m.glb`, 1024² (1.97 MB), drawn at 512² on LOW (loadModels `carDetailFor`) | `abq.mjs "car=g500\|car=offroader" spawn 5` (M4, 1080p): ULTRA 4.664 → 4.748 ms (+0.085), LOW 2.971 → 3.051 (+0.08). Texture memory with mips: 21 MB at 2048², 5.6 MB at 1024², 1.4 MB at 512². All 19 cars load on LOW the phones' way (`Q=mobile=1 fleetshot.mjs <dir> low`): no errors | a real phone: not measured | — |
+| 2026-11-10 | EVERY CAR PAINTED, and the BLINK fixed (the user: "some pixels or the car's body parts blink"). Three causes, all in the models / their look: (1) the paint GRAIN's dots are one pixel each at a few metres and sparkled as the car moved — off on the painted cars (catalogue `smooth`; the texture carries the wear), three height samples a pixel fewer; (2) TWO SKINS IN ONE PLANE (arch liners / flares on the body's arch, the tail between the quarters, a flush bonnet, grille bars, and a doubled nose on the four winged cars) — found by the new `scripts/oth/coplanar.py`, 17 of 19 cars clean, the other two ≤ 100 cm² under the sills; (3) the paint atlas's unbaked ground was BLACK and bled into the islands' edges through the mips (the off-roader's "black, unpainted" back) — now the paint's pale. The spares are real wheels (`make_wheel`, +3 k triangles where a car carries one). Files: PC `<id>.glb` 2048² (1.7–2.3 MB), phones `<id>.m.glb` 1024² (1.5–2.1 MB), LOW draws 512². | abq, spawn, 4 reps, interleaved — ULTRA 1080p: G500 (the old car, grain on) 4.947 ms · off-roader 4.975 (+0.03) · Sierra 4.881 (−0.07) · Eighty-Eight 4.875 (−0.07). LOW + `mobile=1`: G500 3.064 · off-roader 3.098 (+0.03) · Sierra 3.003 (−0.06). All within the run's noise (±0.15 ms): no cost. Not measured on a real phone. |
+| 2026-11-10 | THE BIG VALLEY, first steps (docs/NEXT.md): the playable land 4 km → 12 km (walls at ±6104 m), the world's grid 8 m (2049², far.bin 2.1 → 8.4 MB; the valley's folder 29 MB), the outland's woods (+117 k trees: 160 k), 10 ranger towers, 12 gorge bridges, the buildings in flat colours | `fps.mjs ultra` (pace.mjs's timer): mean 1.709 → 1.584 ms (585 → 631 fps; the spawn is a new spot), every view ≥ 500; `abq "\|flat=0"` spawn: 1.475 vs 1.471 (the flat look: no cost). Load to ready in headless: ~5–7 s (not A/B'd against before). Memory not measured: + ~25 MB of world heights / normals | not measured (no phone); LOW + `mobile=1` loads without errors | — |

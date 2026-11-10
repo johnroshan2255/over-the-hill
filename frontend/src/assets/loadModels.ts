@@ -53,7 +53,8 @@ export interface TruckModel {
   paintMap: GFX.Texture | null
   /** Lamp lenses found on the model (right side; the left mirrors it): centre + half size (m, truck space). */
   lamps: { head: Lamp | null; tail: Lamp | null }
-  /** Opening front doors (cut out of the body in Blender: nodes `door_FL*` / `door_FR*` with a `hinge` extra). */
+  /** The doors cut out of the body in Blender (nodes `door_FL*` / `door_FR*` — and `door_RL*` / `door_RR*` — with a
+   *  `hinge` extra): the left ones first. The DRIVER'S is `driverDoor(model)`. */
   doors: CarDoor[]
   /** Steering-wheel rim radius (m). */
   steeringRadius: number
@@ -115,6 +116,11 @@ export interface CarDoor {
   length: number
   bottom: number
   top: number
+}
+
+/** The driver's door: the left side's front one (the hinge furthest forward — −z); null = the model has no doors cut. */
+export function driverDoor(m: { doors: CarDoor[] }): CarDoor | null {
+  return m.doors.filter((d) => d.side === -1).sort((a, b) => a.hinge[2] - b.hinge[2])[0] ?? null
 }
 
 export interface Lamp {
@@ -280,17 +286,33 @@ export type VehicleModel = TruckModel
 const vehicleCache = new Map<string, Promise<VehicleModel>>()
 
 /** Load (once) and bake a catalogue vehicle. */
+/** PC or PHONE (2026-11-10, the user: "make sure all work on a low-end mobile … separate for mobile and PC"): `small`
+ *  — a weak GPU, a phone, the LOW / MEDIUM tiers (oth/Vehicle.ts sets it from the tier before the first car loads) —
+ *  loads each car's phone file where it has one (`urlSmall`: the painted texture at 1024²), and `maxTexture` caps what
+ *  goes to the GPU (512 on LOW: 1.4 MB with its mips, against 21 MB for the PC's 2048²). */
+let detail = { small: false, maxTexture: 0 }
+export function carDetail(small: boolean, maxTexture = 0): void { detail = { small, maxTexture } }
+/** The rule, from the quality tier: a phone-class chip or the LOW / MEDIUM tiers take the phones' files; LOW draws 512². */
+export function carDetailFor(tier: { name: string; weakGpu?: boolean }): void { carDetail(!!tier.weakGpu || tier.name === 'low' || tier.name === 'medium', tier.name === 'low' ? 512 : 0) }
+
 export function loadVehicle(id: string, onProgress?: (f: number) => void): Promise<VehicleModel> {
   const def = vehicleDef(id)
-  let p = vehicleCache.get(def.id)
+  // (kept per detail: the title's preload guesses the tier — a different one in play loads its own)
+  const key = `${def.id}|${detail.small ? 's' : 'f'}${detail.maxTexture}`
+  let p = vehicleCache.get(key)
   if (!p) {
     let total = def.bytes
-    const car = new GLTFLoader().loadAsync(def.url, (e) => {
+    const car = new GLTFLoader().loadAsync(detail.small && def.urlSmall ? def.urlSmall : def.url, (e) => {
       if (e.lengthComputable) total = e.total
       onProgress?.(Math.min(1, e.loaded / total))
     })
-    p = Promise.all([car, loadHull()]).then(([g, hull]) => ({ ...bakeVehicle(g.scene, def), hull }))
-    vehicleCache.set(def.id, p)
+    p = Promise.all([car, loadHull()]).then(([g, hull]) => {
+      const m = bakeVehicle(g.scene, def)
+      // (the paint mask and the lamps have read the full image: now the size this device draws)
+      if (m.map && detail.maxTexture) m.map = downscaleTexture(m.map, detail.maxTexture)
+      return { ...m, hull }
+    })
+    vehicleCache.set(key, p)
   } else onProgress?.(1)
   return p
 }
@@ -526,7 +548,8 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   let rim = 0.6
   const bodies: GFX.BufferGeometry[] = [], glasses: GFX.BufferGeometry[] = []
   const wheelParts: { geo: GFX.BufferGeometry; name: string }[] = []
-  // Doors (FL / FR: skin, trim and their window) and the steering wheel, split out by node name (Blender prep).
+  // Doors (FL / FR — and RL / RR where the model has them cut, the off-roader: skin, trim and their window) and the
+  // steering wheel, split out by node name (Blender prep).
   const doorParts = new Map<string, { body: GFX.BufferGeometry[]; glass: GFX.BufferGeometry[]; hinge: number[] }>()
   const steerParts: GFX.BufferGeometry[] = []
   // Cockpit (vehicle_cabin.py): static cabin parts, gauge faces, moving controls (pivot / axis extras, glTF space).
@@ -545,7 +568,7 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   for (const m of meshes) {
     const { color, map: mm, glass } = matColor(m.mat)
     if (/light|lamp|glow/i.test(m.name) || /light|lamp|glow/i.test(m.mat.name)) lampParts.push({ geo: m.geo.clone(), color })
-    const doorKey = /door_(FL|FR)/i.exec(m.name)?.[1].toUpperCase()
+    const doorKey = /door_(FL|FR|RL|RR)/i.exec(m.name)?.[1].toUpperCase()
     let door = doorKey ? doorParts.get(doorKey) : undefined
     if (doorKey && !door) doorParts.set(doorKey, (door = { body: [], glass: [], hinge: (m.extras.hinge as number[]) ?? [0, 0, 0] }))
     if (/^dial_/i.test(m.name)) {

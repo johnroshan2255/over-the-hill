@@ -27,7 +27,8 @@ function preload(): void {
   idle(() => {
     void import('three')
     void import('./physics/PhysicsWorld').then((m) => m.PhysicsWorld.load())
-    void import('./assets/loadModels').then((m) => m.loadVehicle(loadSettings().car)).catch(() => {})
+    // (the car, at the size this device will draw it: the tier as the game will pick it — phones their own file)
+    void Promise.all([import('./assets/loadModels'), import('./oth/quality')]).then(([m, q]) => { m.carDetailFor(q.pickTier()); return m.loadVehicle(loadSettings().car) }).catch(() => {})
     for (const f of MAP_FILES) void fetch(`${MAP}/${f}`, { priority: 'low' } as RequestInit).catch(() => {})
   })
 }

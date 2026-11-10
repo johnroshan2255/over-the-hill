@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
 const { mergeGeometries } = GFX
-import { loadVehicle, type TruckModel } from '../assets/loadModels'
+import { carDetailFor, driverDoor, loadVehicle, type TruckModel } from '../assets/loadModels'
 import { VEHICLES, vehicleDef } from '../gameplay/vehicle/catalogue'
 import { resolveSpec } from '../gameplay/vehicle/drivetrain/spec'
 import { blendRoughness, Surf, type SurfaceMix } from '../gameplay/vehicle/drivetrain/tyre'
@@ -55,7 +55,9 @@ export class Vehicle {
   constructor(private readonly map: MapData, private readonly physics: OthPhysics, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 },
       uCoat: this.coatU, uCoatColor: { value: this.coatColor }, uCarBase: this.baseU }
-    void tier
+    // PHONES AND WEAK GPUS: the cars' phone files and smaller textures (loadModels carDetail) — a phone-class chip, or
+    // the LOW / MEDIUM tiers: the 1024² file; LOW: drawn at 512²
+    carDetailFor(tier)
     // the contact shadow: a grid that follows the ground under the car, darkest under the body, soft at the edge
     const sg = new GFX.PlaneGeometry(1, 1, 14, 14).rotateX(-Math.PI / 2)
     this.shadow = new GFX.Mesh(sg, new GFX.ShaderMaterial({
@@ -108,6 +110,7 @@ export class Vehicle {
   /** P: the wipers sweep. */
   wipers = false
   private wipeT = 0
+  private clutchK = 0
   private lastT = 0
   /** The roof's height over the ground (m, car space): the driver and the first-person eye stay under it. */
   get roofY(): number {
@@ -126,7 +129,7 @@ export class Vehicle {
   /** The driver's door in car space (hinge, its length back from it, bottom / top) and the driver's seat — where the
    *  character's hips sit (2026-11-05: getting in and out). */
   get driverDoor(): { hinge: GFX.Vector3; length: number; bottom: number; top: number; seat: GFX.Vector3 } | null {
-    const d = this.model?.doors.find((q) => q.side === -1)
+    const d = this.model ? driverDoor(this.model) : null
     if (!d) return null
     const hinge = new GFX.Vector3(...d.hinge)
     // (the seat: inside the door's opening, a little behind its middle, just above its sill)
@@ -265,23 +268,26 @@ export class Vehicle {
     u.uPaintMask.value = truck.paintMap
     ;(u.uPaint.value as GFX.Color).set(paint)
     // (MIST_K: the crossing's cloud takes less of the car than of the land — Atmosphere.ts)
-    const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45', ...(GRAIN_OFF ? { NO_GRAIN: '' } : {}) }
+    // (a car's own look — catalogue `smooth` / `glassTint`: the off-roader's clean paint, no grain; its darker glass)
+    const look = vehicleDef(truck.id)
+    const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45', ...(GRAIN_OFF || look.smooth ? { NO_GRAIN: '' } : {}) }
+    const glassDef: Record<string, string> = look.glassTint ? { GLASS_A: look.glassTint.toFixed(2) } : {}
     if (truck.map) defines.USE_MAP_OTH = ''
     if (truck.paintMap) defines.USE_PAINTMAP = ''
     const vc = (g: GFX.BufferGeometry) => !!g.attributes.color
     // THREE DRAWS for the whole car (2026-11-02: it was 11 — body, cabin, two door skins, four wheels, three glass
-    // pieces): the body with the CABIN (dash, seats, console — seen through the windows) and the FRONT DOORS (cut out
-    // of the body in the model, set at their hinges: they never open here) as one mesh, the windows as one, the four
+    // pieces): the body with the CABIN (dash, seats, console — seen through the windows) and the DOORS (cut out of
+    // the body in the model — two on the E30, four on the off-roader — set at their hinges: they never open here) as one mesh, the windows as one, the four
     // wheels as one instanced mesh
     const atHinge = (geo: GFX.BufferGeometry, hinge: [number, number, number]) => geo.clone().translate(...hinge)
     // (the DRIVER'S DOOR its own two draws on a pivot at its hinge: it opens as the character gets in or out —
-    //  2026-11-05; the other door stays in the body)
-    const driver = truck.doors.find((d) => d.side === -1) ?? null
+    //  2026-11-05; the other doors stay in the body)
+    const driver = driverDoor(truck)
     const fixed = truck.doors.filter((d) => d !== driver)
     const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...fixed.map((d) => atHinge(d.body, d.hinge))])
     const glassGeo = mergeParts([truck.glass, ...fixed.flatMap((d) => (d.glass ? [atHinge(d.glass, d.hinge)] : []))])
     const body = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
-    const glass = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false })
+    const glass = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false })
     // (no depth written: the water — drawn after the glass, transparent too — showed nowhere through a window from
     //  inside; 2026-11-05)
     const b = new GFX.Mesh(bodyGeo, body)
@@ -427,8 +433,11 @@ export class Vehicle {
       if (this.wipers || this.wipeT % 1.1 > 0.02) this.wipeT += dt
       const sweep = (0.5 - 0.5 * Math.cos((this.wipeT / 1.1) * Math.PI * 2)) * 1.45
       const gas = Math.max(0, c.throttle), brk = c.brake || c.throttle < 0 ? 1 : 0
+      // the CLUTCH pedal (a manual's): down as the drivetrain's clutch opens — pulling away, each shift — eased, a foot's speed
+      const open = 1 - (this.sim.drivetrain?.clutch ?? 1)
+      this.clutchK += Math.max(-dt * 7, Math.min(dt * 9, open - this.clutchK))
       for (const pt of this.parts) {
-        const a = pt.kind === 'pedal_gas' ? gas * 0.32 : pt.kind === 'pedal_brake' ? brk * 0.3 : pt.kind.startsWith('wiper') ? sweep : 0
+        const a = pt.kind === 'pedal_gas' ? gas * 0.32 : pt.kind === 'pedal_brake' ? brk * 0.3 : pt.kind === 'pedal_clutch' ? this.clutchK * 0.34 : pt.kind.startsWith('wiper') ? sweep : 0
         pt.g.quaternion.setFromAxisAngle(pt.axis, a)
       }
       if (this.cockpit) this.cockpit.visible = this.inside || (this.near && this.root.visible)
@@ -599,8 +608,10 @@ function mergeParts(parts: GFX.BufferGeometry[]): GFX.BufferGeometry {
 /** ?grain=0 (the cost A/B — scripts/harness/abgpu.mjs): the vehicles' paint grain off. */
 export const GRAIN_OFF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('grain') === '0'
 
-/** Paint per car on this map: the G500 in rust red, the E30 in cream. */
-const OTH_PAINT: Record<string, string> = { gwagen: '#b8452e', bmw: '#efe4cc' }
+/** Paint per car on this map: the off-roader in rust red (the shelved G500 too), the shelved E30 in cream. */
+// (muted, a little faded — worn paint, not a toy's: 2026-11-10, the user: "too cartoonish")
+// (the kit's cars: each its own colour — catalogue `stock.paint`)
+const OTH_PAINT: Record<string, string> = { offroader: '#a8573f', g500: '#b8452e', e30: '#efe4cc' }
 
 const VERT = /* glsl */ `
 in float paintMask;
@@ -688,17 +699,25 @@ void main() {
   float ck = caveK(vWorld);
   float sun = sunVisibility(vWorld.xz) * (1.0 - ck);
 #ifdef GLASS
+#ifndef GLASS_A
+#define GLASS_A 0.42
+#endif
   // WINDOWS: lightly tinted glass — the cabin shows through, the sky reflects in it by Fresnel, the sun glints
   float F = 0.08 + 0.88 * pow(1.0 - max(dot(N, V), 0.0), 4.0);
   vec3 R = reflect(-V, N);
   vec3 sky = skyColor(normalize(vec3(R.x, abs(R.y) + 0.05, R.z)));
   vec3 c = mix(vec3(0.05, 0.065, 0.075) * (ambient(N) + uSunColor * 0.25), sky * 0.85, F);
   c += uSunColor * sun * pow(max(dot(R, uSunDir), 0.0), 220.0) * 2.5;
-  gl_FragColor = vec4(applyAtmos(c, vWorld), mix(0.42, 0.95, F));
+  gl_FragColor = vec4(applyAtmos(c, vWorld), mix(gl_FrontFacing ? GLASS_A : 0.42, 0.95, F)); // (a darker tint — GLASS_A — from OUTSIDE only: looking out through it, the pane's back, the view stays clear)
 #else
   vec3 albedo = vCol;
 #ifdef USE_MAP_OTH
+#ifdef FLAT_MAP
+  // (Pieces.ts FLAT: a tiling scan read far down its mips — its mean colour, a broad soft tone left: flat paint, no photo grain)
+  vec4 tex = texture(uMap, vUv, 7.0);
+#else
   vec4 tex = texture(uMap, vUv);
+#endif
 #ifdef ALPHA_CUT
   if (tex.a < 0.5) discard;
 #endif
@@ -926,7 +945,7 @@ export class RemoteCar {
     this.root.visible = this.shadow.visible = false
   }
 
-  /** Car `id` (the catalogue's: gwagen, bmw) in `paint` — its model loaded once (loadModels caches it). */
+  /** Car `id` (the catalogue's: offroader; a shelved one's: g500, e30) in `paint` — its model loaded once (loadModels caches it). */
   async setCar(id: string, paint: string): Promise<void> {
     if (id === this.id) { (this.uniforms.uPaint.value as GFX.Color).set(paint); return }
     this.id = id
@@ -939,7 +958,10 @@ export class RemoteCar {
     u.uMap.value = truck.map
     u.uPaintMask.value = truck.paintMap
     ;(u.uPaint.value as GFX.Color).set(paint)
-    const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45', ...(GRAIN_OFF ? { NO_GRAIN: '' } : {}) }
+    // (a car's own look — catalogue `smooth` / `glassTint`: the off-roader's clean paint, no grain; its darker glass)
+    const look = vehicleDef(truck.id)
+    const defines: Record<string, string> = { OTH_SPEC: '', MIST_K: '0.45', ...(GRAIN_OFF || look.smooth ? { NO_GRAIN: '' } : {}) }
+    const glassDef: Record<string, string> = look.glassTint ? { GLASS_A: look.glassTint.toFixed(2) } : {}
     if (truck.map) defines.USE_MAP_OTH = ''
     if (truck.paintMap) defines.USE_PAINTMAP = ''
     const vc = (g: GFX.BufferGeometry) => !!g.attributes.color
@@ -947,7 +969,7 @@ export class RemoteCar {
     const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...truck.doors.map((d) => at(d.body, d.hinge))])
     const glassGeo = mergeParts([truck.glass, ...truck.doors.flatMap((d) => (d.glass ? [at(d.glass, d.hinge)] : []))])
     const body = new GFX.Mesh(bodyGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) }))
-    const glass = new GFX.Mesh(glassGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45' }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false }))
+    const glass = new GFX.Mesh(glassGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false }))
     body.frustumCulled = glass.frustumCulled = false
     glass.renderOrder = 3
     this.wheelMesh = new GFX.InstancedMesh(truck.wheel, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) }), 4)

@@ -177,7 +177,7 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   `PhysicsWorld` — on this map: the ground as 256 m heightfield tiles of the 2 m grid streamed 3 × 3 round the car,
   the rocks within 160 m as convex hulls of their drawn shapes, walls 40 m inside the box's edge. Tyres read this
   map's surfaces (dirt on the tracks, grass, sand / gravel at the water, rock). Drawn with this world's light
-  (`shade`, the terrain's baked sun shadow) + a terrain-hugging contact shadow; paint per car (rust G500, cream E30,
+  (`shade`, the terrain's baked sun shadow) + a terrain-hugging contact shadow; paint per car (rust off-roader, cream E30,
   orange kei van; `?paint=`). Chase camera with drag-orbit; V = free camera. Keys W A S D / Space / Shift / R / 1 2 3,
   touch ◀ ▶ GAS BRAKE ⟲. Cost: the car + shadow ≈ 8 draws; LOW 1.45 ms GPU with it.
 - **Trees** (`treeGeometry.ts`, `Trees.ts`; new for this world): the OTH spruce / golden larch — stacked FRILLED
@@ -417,7 +417,7 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
     the left hand's path in it: getting out it's pushed open over 7–27 %, the body leaves the seat over 34–55 % (the
     step down from the 4×4's height), pushed shut over 62–74 %; getting in pulled open over 12–30 %, the climb up over
     36–55 %, pulled shut over 60–75 %. A DOOR CAMERA (outside the driver's door, behind it) films it. Off a bike the bike is PARKED there (`Bike.park`: drawn without its rider, no physics); F
-    near it gets back on. WHICH VEHICLE is chosen in the GARAGE (2026-11-05, the user: not from the wheel): G500, E30,
+    near it gets back on. WHICH VEHICLE is chosen in the GARAGE (2026-11-05, the user: not from the wheel): the off-roader (the main car since 2026-11-10 — the G500 is shelved: catalogue.ts SHELVED, `?car=g500`), E30,
     the mountain bike, the motorbike (`settings.ride`; in the pause menu taken at once — `applyRide`: onto it beside
     you, the car parked, or into the car — brought to you if it's far). The action wheel keeps only the rare things. The chase camera frames the character
     (4.2 m) and stops in front of the cars (VehicleMesh in its ray). `?ride=foot` starts out of the car,
@@ -626,7 +626,7 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   rapier 4.3 MB (later, or preloaded). A dev / shot URL (`?tier=` `?drive=` `?x=` …) goes straight in.
 - **UI**: GTA-style — square edges everywhere, condensed upper-case type (Anton titles, Barlow Condensed), near-black
   panels, white selection bars, one amber accent (#f2a93b). Keyboard (↑ ↓ ← → Enter Esc, Q / E tabs), mouse, touch.
-  Screens: title (CONTINUE · NEW START / PLAY · GARAGE · SETTINGS · CO-OP soon), GARAGE (car: G500 4×4² / E30 M3 with
+  Screens: title (CONTINUE · NEW START / PLAY · GARAGE · SETTINGS · CO-OP soon), GARAGE (car: Overlander 4×4 — the off-roader — / E30 M3 with
   their numbers; paint: the valley's colour per car or the catalogue's 16; driving: gearbox, aids, off-road assist),
   SETTINGS (graphics: quality, anti-aliasing, resolution, FPS overlay; audio; controls), PAUSE (Esc / the II button:
   resume, garage, settings, apply & restart here, quit to title). Paused = the frame returns at once: no physics, no
@@ -818,7 +818,7 @@ the light gets"; "naturally blended". One cave in the valley:
   thinning toward it. ONE rock everywhere: the arch, the hill's bare patches, the cave and the stones — `caveRockPaint`.
 - **Driving it round** (the user: "my cars must go in easily and come back"): the lane is one ROUND (`LANE_FLOOR`): in
   by the way in, a broad bend across the hall into the gallery, the far chamber, back by the loop and round the garden
-  to the way out; 9.6 m wide, 4.6 m clear; the pillars ~10 m off it. `cavedrive.mjs` (CAR=gwagen | bmw): both drive it
+  to the way out; 9.6 m wide, 4.6 m clear; the pillars ~10 m off it. `cavedrive.mjs` (CAR=offroader | bmw): both drive it
   round and out, no flip, no stall. `?at=cave`: start 30 m before its mouth, facing it.
 - **Grass on the hill** (the user: "there must be grass"): the field's own blades — `Grass.setHill` gets the hill's top
   over the ground (a 2 m world grid, `CaveWorld.grassOn`) and stands them on it; its rock patches go into the map's

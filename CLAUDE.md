@@ -7,9 +7,10 @@
 | `proto/wire.json` | the game ↔ server wire, one schema both read (`backend/src/wire.rs`, `frontend/src/net/wire.ts`); a change must pass `cargo test --test golden` (`GOLDEN=update` to rewrite) and `npm run test:wire` |
 | `docs/ARCHITECTURE.md` | read first: the world, the renderer, the front end, the saves |
 | `docs/MULTIPLAYER.md` | **the shared valley: claim land, gather, haul, build, raid — the plan and its order; the server's API in `backend/README.md`** |
-| `docs/NEXT.md` | **the hand-off: the valley's places and caves — what's done, the caves' rock fix, what's next** |
+| `docs/NEXT.md` | **the hand-off (2026-11-10): the garage, the 12 km valley and its outland, the flat look — what's done, what's next, what bites** (the one before, places and caves: `docs/NEXT_caves.md`) |
 | `docs/DESERT_MATCH.md` | **matching Over the Hill's desert: the 0–100 score method (`scripts/oth/compare.py`), the loop, the content + terrain checks** |
 | `docs/PERF.md` | **500 fps on the PC, a constant 60 on a Snapdragon 6-series phone at ULTRA: the measurements, the tools, the plan in phases, the log** |
+| `docs/VEHICLES.md` | **the garage to build: 21 vehicles (Over the Hill's roster, our own models of the real machines) — each one's real specs, physics, doors and parts** |
 | `docs/ASSETS.md` | every model / image / sound not made here: source, author, licence — add a row with each new one |
 
 - Run each side's commands from its own folder (`cd frontend && npm test`).

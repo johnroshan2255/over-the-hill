@@ -65,11 +65,11 @@ export class OthPhysics {
 
   private buildStatic(): void {
     const R = this.R, map = this.map
-    // the box's edge: tall walls 40 m inside it (the far world beyond has no colliders)
-    const h = map.half - 40, walls = this.pw.world.createRigidBody(R.RigidBodyDesc.fixed())
+    // the PLAYABLE LAND's edge (MapData.play — the valley: 12 km, the world less a 2 km rim): tall walls 40 m inside it
+    const h = map.play - 40, walls = this.pw.world.createRigidBody(R.RigidBodyDesc.fixed())
     this.statics.push(walls)
     for (const [x, z, hx, hz] of [[h, 0, 2, h], [-h, 0, 2, h], [0, h, h, 2], [0, -h, h, 2]] as const) {
-      this.pw.world.createCollider(R.ColliderDesc.cuboid(hx, 600, hz).setTranslation(x, 300, z).setCollisionGroups(group(Groups.Static, 0xffff)), walls)
+      this.pw.world.createCollider(R.ColliderDesc.cuboid(hx, 1200, hz).setTranslation(x, 900, z).setCollisionGroups(group(Groups.Static, 0xffff)), walls)
     }
     // the BRIDGES (Bridges.ts draws them): a deck box whose top is the planks, sloping y0 → y1 with its road (the
     // bake carves the road onto both ends: no lip) and a RAIL on the posts (a guard wall).

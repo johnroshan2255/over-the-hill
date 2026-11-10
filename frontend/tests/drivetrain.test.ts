@@ -6,6 +6,7 @@
 import { group, Groups, PhysicsWorld } from '../src/physics/PhysicsWorld'
 import { TruckSim, type Controls, type TruckTune } from '../src/gameplay/vehicle/VehicleSim'
 import { SPECS } from '../src/gameplay/vehicle/specs'
+import CARS from '../src/gameplay/vehicle/cars.json'
 import { resolveSpec, type VehicleSpec } from '../src/gameplay/vehicle/drivetrain/spec'
 import { Surf, type SurfaceMix } from '../src/gameplay/vehicle/drivetrain/tyre'
 
@@ -19,8 +20,11 @@ const R = await PhysicsWorld.load()
 /** Each model as the game's loader normalises it (assets/loadModels bakeVehicle: metres, −Z forward, wheelbase
  *  centre origin, ground at y = 0) — measured from the GLBs. */
 const MODELS: Record<string, { wheelPos: [number, number, number][]; wheelRadius: number; half: { x: number; y: number; z: number } }> = {
-  gwagen: { wheelPos: [[-0.918, 0.483, -1.448], [0.918, 0.482, -1.448], [-0.914, 0.482, 1.448], [0.914, 0.482, 1.448]], wheelRadius: 0.482, half: { x: 1.1, y: 0.96, z: 2.34 } },
-  bmw: { wheelPos: [[-0.719, 0.3, -1.285], [0.719, 0.3, -1.285], [-0.719, 0.3, 1.285], [0.719, 0.3, 1.285]], wheelRadius: 0.3, half: { x: 0.857, y: 0.605, z: 2.159 } },
+  // (the off-roader: scripts/oth/offroader.py logs these)
+  offroader: { wheelPos: [[-0.82, 0.48, -1.425], [0.82, 0.48, -1.425], [-0.82, 0.48, 1.425], [0.82, 0.48, 1.425]], wheelRadius: 0.476, half: { x: 1.141, y: 1.195, z: 2.284 } },
+  ...Object.fromEntries(Object.entries(CARS as Record<string, { wheelPos: [number, number, number][]; wheelRadius: number; half: { x: number; y: number; z: number } }>).map(([id, c]) => [id, { wheelPos: c.wheelPos, wheelRadius: c.wheelRadius, half: c.half }])), // (the kit's cars: scripts/oth/cars.py writes their measures)
+  g500: { wheelPos: [[-0.918, 0.483, -1.448], [0.918, 0.482, -1.448], [-0.914, 0.482, 1.448], [0.914, 0.482, 1.448]], wheelRadius: 0.482, half: { x: 1.1, y: 0.96, z: 2.34 } },
+  e30: { wheelPos: [[-0.719, 0.3, -1.285], [0.719, 0.3, -1.285], [-0.719, 0.3, 1.285], [0.719, 0.3, 1.285]], wheelRadius: 0.3, half: { x: 0.857, y: 0.605, z: 2.159 } },
   van: { wheelPos: [[-0.591, 0.255, -0.92], [0.601, 0.255, -0.92], [-0.6, 0.255, 0.92], [0.59, 0.255, 0.92]], wheelRadius: 0.255, half: { x: 0.817, y: 0.739, z: 1.689 } },
 }
 
@@ -218,8 +222,14 @@ for (const id of Object.keys(SPECS) as (keyof typeof SPECS)[]) {
     D.toggleLow(0)
     for (let k = 0; k < 3 && D.locks.size < RS.drive.lockers.length; k++) D.cycleLockers()
     const y0 = t.body.translation().y
-    // A driver feathers it (60 %): flooring a car without traction control in 4L just spins the tyres.
-    run(p, t, 12, { throttle: 0.6 })
+    // A driver feathers it (60 %): flooring a car without traction control in 4L just spins the tyres. (A small engine
+    // needs more of its pedal: 1.5 × what the slope takes of its first-gear, low-range pull — the Steppe's 116 N·m, floored.)
+    const pull = (spec.power.peakTorque * (spec.transmission.ratios?.[0] ?? 1) * (spec.transmission.final ?? 1) * RS.drive.low * 0.85) / RS.axles[0].radius
+    const need = spec.mass.kerb * 9.81 * Math.sin((35 * Math.PI) / 180)
+    // (… and a truck geared to pull a house — a 6 : 1 first on a 5.8 axle — LESS of it: at 60 % its tyres just spin)
+    const thr = 0.6 * pull < 1.35 * need ? (1.5 * need) / pull : 0.6 * pull > 1.45 * need && (spec.transmission.ratios?.[0] ?? 1) > 5.5 ? (1.26 * need) / pull : 0.6
+    // (a crawler takes its time: 30 s, not 12, for a first gear past 5.5 : 1 — 2 m/s flat out in low)
+    run(p, t, (spec.transmission.ratios?.[0] ?? 1) > 5.5 ? 30 : 12, { throttle: Math.min(1, Math.max(0.3, thr)) })
     const climbed = t.body.translation().y - y0
     check(`${id}: climbs a 35° slope in low range (locked: ${[...D.locks].join(', ') || 'none'})`, climbed > 6 && t.axesUp() > 0.5, `+${climbed.toFixed(1)} m`)
     p.dispose()
@@ -361,7 +371,7 @@ for (const id of Object.keys(SPECS) as (keyof typeof SPECS)[]) {
     }
     const c = flick(1.4)
     check(`${id}: a handbrake slide can be CAUGHT (counter-steer → straight, no spin)`, c.end < 0.18 && c.maxS < 1.2 && c.up > 0.9, `max ${deg(c.maxS).toFixed(0)}°, end ${deg(c.end).toFixed(0)}°`)
-    if (id === 'bmw') {
+    if (id === 'e30') {
       const h = flick(1.1)
       check(`${id}: a drift can be HELD on throttle + counter-steer (15–57° ≥ 1 s, LSD rear)`, h.held >= 1 && h.up > 0.9, `held ${h.held.toFixed(1)} s, max ${deg(h.maxS).toFixed(0)}°`)
     }
@@ -371,7 +381,14 @@ for (const id of Object.keys(SPECS) as (keyof typeof SPECS)[]) {
   // brakes. A car driving its rear axle only (rear-drive, part-time 4WD in 2H) does it; a permanent 4×4 can't hold
   // its driven fronts (it creeps off), like the real thing. Aids off (an old van's: the real car's).
   const rearDrive = RS.drive.layout === 'part-time-4WD' /* (2H) */ || (!RS.axles[0].driven && RS.drive.layout !== 'AWD-permanent' && RS.drive.layout !== 'AWD-on-demand')
-  if (rearDrive) {
+  // (A CRAWLER first gear can't make a burnout: flat out in 1st its rim does under 9 m/s — the Powerline's 6.4 × 5.83,
+  //  the Lynx's 5.8 × 4.97, the Boar's, the Woodbox's: the brake stand just holds or creeps. The burnout / fire checks
+  //  are for cars whose first gear can spin a tyre fast.)
+  const g1 = (spec.transmission.ratios?.[0] ?? 1) * (spec.transmission.final ?? 1)
+  const rimAtRedline = (((spec.power.redline ?? spec.power.powerRpm * 1.1) * 2 * Math.PI) / 60 / g1) * RS.axles[RS.axles.length - 1].radius
+  const canBurn = rimAtRedline >= 9
+  if (rearDrive && !canBurn) console.log(`SKIP  ${id}: burnout + tyre fire (a crawler first gear: ${rimAtRedline.toFixed(1)} m/s at the rim, flat out)`)
+  if (rearDrive && canBurn) {
     const p = world()
     const t = car(p, id, { aids: 'off' })
     const D = t.drivetrain!, r = RS.axles[RS.axles.length - 1].radius, last = (RS.axles.length - 1) * 2

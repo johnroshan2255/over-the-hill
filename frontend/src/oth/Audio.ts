@@ -1,6 +1,7 @@
 import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import { ENGINE_WORKLET, VOICES } from './engineSynth'
+import { vehicleDef } from '../gameplay/vehicle/catalogue'
 import type { MapData } from './MapData'
 import type { Vehicle } from './Vehicle'
 import type { Bike } from './Bike'
@@ -311,7 +312,7 @@ export class OthAudio {
       // a new car (or the first): its voice, and the key turns once it's loaded
       if (this.voiceOf !== this.car.id && this.car.id) {
         this.voiceOf = this.car.id
-        E.port.postMessage({ voice: VOICES[this.car.id] ?? VOICES.gwagen })
+        E.port.postMessage({ voice: VOICES[this.car.id] ?? VOICES[vehicleDef(this.car.id).voice ?? ''] ?? VOICES.offroader })
         E.port.postMessage({ event: 'start' })
       }
       const thr = Math.max(0, sim.controls.throttle)
@@ -338,8 +339,11 @@ export class OthAudio {
     const slide = bk ? Math.max(bk.front.slip, bk.rear.slip) : n ? n.slide : sim?.drifting ? 0.8 : 0, spin = n ? n.spin : 0
     const hard = bk ? bHard : n ? n.hard : 0.3, loose = bk ? (1 - bHard) * 0.6 : n ? n.gravel + n.soft : 0.7
     const fast = Math.min(1, speed / 20)
-    if (this.squeal) {
-      this.squeal.gain.gain.setTargetAtTime(Math.min(1, slide * 1.2 + spin * 0.5) * hard * 0.5 * Math.min(1, speed / 6) * near, t, 0.06)
+    // (a number that isn't one — a sim caught mid-reload, a pose not yet read — must not reach the audio graph: an
+    //  AudioParam throws on it, every frame after; 2026-11-10: 2 000 of them from a phone while the cars were rebuilt)
+    const squealK = Math.min(1, slide * 1.2 + spin * 0.5) * hard * 0.5 * Math.min(1, speed / 6) * near
+    if (this.squeal && Number.isFinite(squealK) && Number.isFinite(fast)) {
+      this.squeal.gain.gain.setTargetAtTime(squealK, t, 0.06)
       this.squeal.src.playbackRate.setTargetAtTime(0.9 + 0.2 * fast, t, 0.1)
     }
     if (this.gravel) {

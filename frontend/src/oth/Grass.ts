@@ -555,6 +555,17 @@ void main() {
   vec3 N = unpackN(textureLod(uNIn, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0).rg);
   vec4 trailT = textureLod(uTrail, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 0.0); // (R the track, B A the mud, flowers)
   float trail = trailT.r * 8.0;
+  // THE OUTLAND (2026-11-10 — the playable land beyond the box, MapData.play): the box's normal, mask and track
+  // textures end at its edge (their rim texel was read for everything beyond: grass grew up the gorges' cliffs). Out
+  // there the ground's own slope, from its heights (this is the bake — a few texels a frame, not the blades' shader)
+  {
+    float eb = uBoxHalf - uInGrid.y;
+    if (abs(root.x) > eb || abs(root.y) > eb) {
+      const float E = 4.0;
+      N = normalize(vec3(terrainHeight(root - vec2(E, 0.0)) - terrainHeight(root + vec2(E, 0.0)), 2.0 * E, terrainHeight(root - vec2(0.0, E)) - terrainHeight(root + vec2(0.0, E))));
+      m = vec4(0.0); trail = 99.0; trailT = vec4(0.0);
+    }
+  }
 #ifdef CAVE_GRASS
   // (the cave's floor: not the hill's rock or slope over it — its footprint says where it grows — and its colour the
   //  floor's own patches of green and gold, Bridges.ts' inside paint read at the same point)
