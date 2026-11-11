@@ -1,6 +1,51 @@
 # Anatomy audit: the hero (`frontend/src/assets/models/human/character.glb`), 2026-11-09
 
-## After the fit (`frontend/scripts/oth/hero_fit.py`, the same day)
+## 2026-11-11: a man's frame, cut clothes, the arms' carriage (`hero.py`)
+
+The user: "him walking, his body structure all looks gay … make him like a perfect guy, add a shirt and cargo-like
+pants, not leggings". Measured (anatomy_check.py; the clips' joints frame by frame), what read wrong and what was done:
+
+| item | before | after | average man |
+|---|---|---|---|
+| hip joints apart | 0.229 | **0.191** (each leg 1.9 cm in) | 0.17–0.20 |
+| across the thighs' top / the hips, clothed | 0.393 / 0.388 (wider than the chest: an hourglass) | **0.37 / 0.357** | hips 0.36 + cloth |
+| waist, bare | 0.241 × 0.161 (hero_fit widened the clothed one to 0.289) | **0.289 × 0.193** (in hero.py: the shirt is cut on it) | 0.28–0.30 × 0.20–0.22 |
+| chest, clothed | 0.330 × 0.246 | **0.348 × 0.261** | 0.33 × 0.25, athletic +5–8 % |
+| neck breadth | 0.113 | **0.130** | 0.12 |
+| trousers | his skin + 2 cm: every muscle of the thigh, the seat and the calf; the hem 9 cm over the boot | **a cut**: 18 cm across at the thigh, 15.6 at the knee, 14.8 from the calf to a hem over the boot; cargo pockets | — |
+| boots | the bare foot + 1.7 cm: a pointed slipper, 2 cm high at the toes | **a last**: a round toe box 6 cm high, a 1.7 cm outsole with a heel; 0.29 × 0.11 | 0.29 × 0.11–0.12 |
+| elbows from the centre line, walking / standing | 0.28–0.31 (17–21° out) | **0.24** | ~0.21–0.23 |
+| wrist cocked, walking / standing | 12–15° / 19–21° | **6–7° / 11°** | near straight |
+| clavicles lowered in the clips | 9° | **6°** (9° sloped the shoulders off the neck once the arms came in) | slope 15–25° |
+| thighs turned in (hero_fit) | 2.5° | **1°** (step width walking 0.143) | 0.10–0.15 |
+| triangles | 16 653 | **16 837** (the outsoles) | — |
+| draw cost (this Mac, 1080p uncapped, charcost.mjs) | 0.023 ms LOW · 0.05 ms ULTRA | 0.023 ms LOW · 0.03 ms ULTRA (noise) | — |
+
+The same day, after the user played him ("while running / walking his shoulder goes a bit down and in idle it goes up —
+I want it in between … one side has more gap from the body and the other has no gap … put a shirt on him"): measured in
+the chest's own frame, clip by clip —
+
+| item | before | after |
+|---|---|---|
+| shoulder joint under the neck's base: idle / walk / run | 5.0–6.5 / 10.1–10.4 / 6.5–7.1 cm | **8.2–8.6 cm in every standing / moving clip** (the clavicles' mean lift −18°) |
+| upper arm's spread, left / right: idle, walk | 8.2° / 9.3°, 12.0° / 8.2° | **11.7° / 11.8°, 11.8° / 11.7°** |
+| elbow out from the chest's centre, left / right: idle, walk | 0.228 / 0.249, 0.259 / 0.230 | **0.249 / 0.247, 0.260 / 0.260** |
+| wrist out, left / right: idle, walk | 0.223 / 0.226, 0.235 / 0.230 (then 0.235 / 0.272 once the upper arms matched) | **0.246 / 0.244, 0.250 / 0.255** |
+| shirt | short sleeves, olive: read as a T-shirt | long sleeves rolled on the forearm, a red-and-black check |
+
+Then ("change the shirt to something like a jacket … make him look good, a cargo and a suitable jacket"): the top is a
+brown leather jacket worn open over a grey crew-neck T-shirt — a collar, a zip on each front, two flapped pockets,
+shoulder straps, a knit waistband over the belt (its hem 3 cm under the belt's lower edge) and knit cuffs at the wrists.
+
+| item | the check shirt | the jacket |
+|---|---|---|
+| chest, clothed | 0.363 × 0.268 | **0.373 × 0.275** (leather 15 mm off him; 26 mm over the belt) |
+| sleeve across: biceps / elbow / wrist | 0.126 / 0.118 / ended mid-forearm | **0.138 / 0.126 / 0.080** (to the wrist, a 5 cm cuff) |
+| the garment's edges | his skin's own rings: a slope across a quad | **cut into the mesh**: the hem, the two fronts, the cuffs — two rings 3 mm apart (+440 vertices) |
+| triangles | 16 837 | **17 717** |
+| draw cost (this Mac, 1080p uncapped, charcost.mjs) | 0.019 ms LOW · 0.012 ms ULTRA | 0.016 ms LOW · 0.035 ms ULTRA (noise) |
+
+## After the fit (`frontend/scripts/oth/hero_fit.py`, 2026-11-09)
 
 | item | before | after | average man |
 |---|---|---|---|

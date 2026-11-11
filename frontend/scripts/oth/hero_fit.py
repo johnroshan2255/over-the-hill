@@ -22,6 +22,11 @@
 #   THE LEGS     every clip's thighs turned in 2.5° about the pelvis's forward axis, the shins and feet kept as they
 #                were: the knees and feet under the hips (they stood a hip-joint's width apart, legs like columns).
 #   The bones keep their orientations (a joint moved moves its bone whole), so every clip plays as it did.
+#
+#   2026-11-11 (the user: "his body structure … make him like a perfect guy", "cargo-like pants, not leggings"): hero.py
+#   now builds him a man's frame (the hip joints ±0.095, the waist) and CUTS his clothes (a field shirt, cargo trousers,
+#   work boots) — so the waist, the seat, the boots' width and the legs' slimming above default to none here (they'd
+#   reshape the cut cloth), and the thighs turn in 1° (the hips are narrower: 2.5° would cross his knees).
 import sys, os, math, json
 import numpy as np
 import bpy
@@ -35,9 +40,9 @@ OUT = os.path.abspath(kw.get('OUT', os.path.join(FRONTEND, 'src', 'assets', 'mod
 PREVIEW = kw.get('PREVIEW')
 UPPER_ARM, FOREARM = float(kw.get('UPPER_ARM', '0.31')), float(kw.get('FOREARM', '0.25'))
 HEAD_UP, HEAD_SCALE = float(kw.get('HEAD_UP', '0.045')), float(kw.get('HEAD_SCALE', '0.95'))
-WAIST_W, WAIST_D, GLUTE = float(kw.get('WAIST_W', '0.11')), float(kw.get('WAIST_D', '0.10')), float(kw.get('GLUTE', '0.015'))
-BOOT_W = float(kw.get('BOOT_W', '0.82'))
-LEG_IN = math.radians(float(kw.get('LEG_IN', '2.5')))
+WAIST_W, WAIST_D, GLUTE = float(kw.get('WAIST_W', '0')), float(kw.get('WAIST_D', '0')), float(kw.get('GLUTE', '0'))   # (2026-11-11: hero.py's now — see THE WAIST above)
+BOOT_W = float(kw.get('BOOT_W', '1'))
+LEG_IN = math.radians(float(kw.get('LEG_IN', '1')))
 TORSO_PITCH = {'idle': 1.0, 'walk': 2.5, 'turn_left': 1.0, 'turn_right': 1.0}   # (degrees forward, the clip's mean)
 PFX = 'mixamorig:'
 def log(*a): print('[fit]', *a, flush=True)
@@ -109,7 +114,7 @@ for sg in (-1, 1):
 # THE LEGS (2026-11-09, the user: "his thighs and calves are too big compared to his upper body"): each leg vertex drawn
 # toward its bones' axis (hip → knee, knee → ankle, by its weights) — THIGH / CALF of its distance taken; nothing at the
 # hip joint (the seat and the pelvis kept), full 12 cm under it; nothing in the boot, full above its top (the boots kept)
-THIGH, CALF = float(kw.get('THIGH', '0.10')), float(kw.get('CALF', '0.12'))
+THIGH, CALF = float(kw.get('THIGH', '0')), float(kw.get('CALF', '0'))
 def hull_len(pts):
     pts = sorted(map(tuple, pts))
     if len(pts) < 3: return 0.0
