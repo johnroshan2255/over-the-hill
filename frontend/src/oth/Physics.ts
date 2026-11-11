@@ -223,7 +223,7 @@ export class OthPhysics {
         if (this.rocks.has(i)) continue
         // (a STACK: a hull per slab — the car drives on its tops and climbs its edges; a hull round the whole stack
         //  was an invisible cone over every bench — 2026-11-04. A stone: the hull of its shape)
-        const stack = !!this.rockSet.slabs[r.v]
+        const stack = !!this.rockSet.slabs[r.v] || !!r.crag   // (a crag, a ledge: ground — the wheels climb onto it)
         const parts = this.rockSet.slabs[r.v] ?? [this.rockSet.shapes[r.v]], cols: RAPIER.Collider[] = []
         this.rockSet.matrixOf(r, this.m)
         for (const src of parts) {
@@ -254,7 +254,7 @@ export class OthPhysics {
         const h = b.rot / 2
         this.propCols.set(i, this.pw.world.createCollider(
           this.R.ColliderDesc.cuboid(b.hx, b.hy, b.hz).setTranslation(b.x, b.y, b.z).setRotation({ x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) })
-            .setCollisionGroups(group(Groups.Static, 0xffff)).setFriction(0.7),
+            .setCollisionGroups(b.ground ? group(Groups.Static | Groups.StaticMesh, STATIC_MESH_FILTER) : group(Groups.Static, 0xffff)).setFriction(0.7),
           this.rockBody,
         ))
       }
@@ -269,7 +269,7 @@ export class OthPhysics {
           if (t.gone.has(i)) continue // (felled: its trunk goes — the loop below removes it)
           near.add(i)
           if (this.trunks.has(i)) continue
-          const H = d[o + 3], r = Math.max(0.22, 0.022 * H * (d[o + 5] === 2 ? 1.6 : 1)), hh = H * 0.2
+          const H = d[o + 3], r = Math.max(0.22, 0.022 * H * (d[o + 5] === 2 ? 1.6 : d[o + 5] === 6 ? 2.6 : 1)), hh = H * 0.2
           this.trunks.set(i, this.pw.world.createCollider(
             this.R.ColliderDesc.cylinder(hh, r).setTranslation(d[o], d[o + 1] + hh, d[o + 2]).setCollisionGroups(group(Groups.Static, 0xffff)).setFriction(0.7),
             this.rockBody,

@@ -38,6 +38,8 @@ export class Vehicle {
   private readonly shadow: GFX.Mesh
   private readonly keys = new Set<string>()
   private pedal = 0
+  /** THE AUTOPILOT's hand on the controls (main.ts → Autopilot.drive): true = it set them this step. */
+  pilot: ((dt: number, sim: TruckSim, manual: boolean, up: number) => boolean) | null = null
   private steerK = 0
   private hold = 0
   /** Touch pedals / steering (−1 … 1), from the on-screen buttons. */
@@ -384,14 +386,20 @@ export class Vehicle {
       this.steerK = Math.sign(ad) * Math.max(Math.abs(st), this.hold * this.hold * (3 - 2 * this.hold))
     }
     const c = this.sim.controls
-    c.throttle = this.pedal
-    c.steer = this.steerK
-    c.brake = down || this.touch.brake > 0
-    c.handbrake = k.has('Space')
-    c.boost = k.has('ShiftLeft') || k.has('ShiftRight')
-    c.footBrake = 0
-    c.lift = 0
-    c.parked = false
+    // THE AUTOPILOT (Autopilot.ts): it drives unless the player's hands are on the controls (then it lets go)
+    const manual = w !== 0 || ad !== 0 || k.has('Space')
+    const r = this.sim.body.rotation(), upY = 1 - 2 * (r.x * r.x + r.z * r.z)
+    if (this.pilot?.(dt, this.sim, manual, upY)) { this.pedal = 0; this.steerK = 0; this.hold = 0 }
+    else {
+      c.throttle = this.pedal
+      c.steer = this.steerK
+      c.brake = down || this.touch.brake > 0
+      c.handbrake = k.has('Space')
+      c.boost = k.has('ShiftLeft') || k.has('ShiftRight')
+      c.footBrake = 0
+      c.lift = 0
+      c.parked = false
+    }
     this.readPose(this.prevP, this.prevQ)
     this.sim.step(dt)
     this.sim.keepAbove(this.map.height(t.x, t.z))

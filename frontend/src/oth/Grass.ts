@@ -3,7 +3,7 @@ import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import { PAINT_GLSL } from './paint'
 import type { Tier } from './quality'
-import { HEIGHT_GLSL, ROAD_GLSL, SHAPE_GLSL, shapeDefines, type Terrain } from './Terrain'
+import { HEIGHT_GLSL, ROAD_GLSL, SHAPE_GLSL, rimDefines, shapeDefines, type Terrain } from './Terrain'
 import { SHADOW_GLSL } from './TerrainShadow'
 import { PAVE_FRAME_GLSL } from './paveTex'
 
@@ -111,7 +111,7 @@ export class Grass {
       uPave: t.uPave, uPave0: t.uPave0, uPave1: t.uPave1, uPave2: t.uPave2, uPave3: t.uPave3,
     }
     const paved = (terrain.mesh.material as GFX.ShaderMaterial).defines?.OTH_PAVE !== undefined && !cave
-    this.field = new GrassField(renderer, R, uniforms, { ...map.biomeDefines, ...caveDef, ...(paved ? { OTH_PAVE: '' } : {}) })
+    this.field = new GrassField(renderer, R, uniforms, { ...map.biomeDefines, ...rimDefines(), ...caveDef, ...(paved ? { OTH_PAVE: '' } : {}) })
     Object.assign(uniforms, this.field.uniforms)
     // (2026-10-27, 400 fps at 1080p: each ring is built at its INNER edge's density and the rank cull thins it outward —
     //  the culled tufts still cost a vertex each; the near ring (to 0.25 R) split in two halves those: its outer half
@@ -131,7 +131,7 @@ export class Grass {
       const mat = new GFX.ShaderMaterial({
         glslVersion: GFX.GLSL3,
         uniforms: { ...uniforms, uBuild: { value: density }, uRin: { value: bounds[r] }, uRout: { value: bounds[r + 1] }, uFan: { value: blades[r] } },
-        defines: { ...map.biomeDefines, ...shapeDefines(), ...caveDef, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}) }, // (no specular: on blades of roughness 0.85 it never showed)
+        defines: { ...map.biomeDefines, ...shapeDefines(), ...rimDefines(), ...caveDef, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}) }, // (no specular: on blades of roughness 0.85 it never showed)
         vertexShader: VERT,
         fragmentShader: FRAG,
         side: GFX.DoubleSide,
@@ -335,10 +335,18 @@ void main() {
   // (THE OUTLAND: the box's normals end at its edge — its rim texel lit every blade beyond it. The world's own there)
   {
     float ebn = uBoxHalf - uInGrid.y;
-    if (abs(root.x) > ebn || abs(root.y) > ebn) {
-      N = unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).rg);
+    // (… handed over across the box's last ~100 m, as the ground's: Terrain.ts boxRimN)
+#ifdef OTH_NO_RIM
+    float kn = 0.0;
+#else
+    float kn = smoothstep(uBoxHalf - 100.0, uBoxHalf - 6.0, max(abs(root.x), abs(root.y)));
+#endif
+    if (abs(root.x) > ebn || abs(root.y) > ebn) kn = 1.0;
+    if (kn > 0.0) {
+      vec2 fUv = ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x;
+      N = normalize(mix(N, unpackN(textureLod(uNFar, fUv, 0.0).rg), kn));
 #ifdef OTH_SHAPE
-      Nb = unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 2.5).rg);
+      Nb = normalize(mix(Nb, unpackN(textureLod(uNFar, fUv, 2.5).rg), kn));
 #endif
     }
   }
@@ -582,6 +590,15 @@ void main() {
     if (abs(root.x) > eb || abs(root.y) > eb) {
       N = unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).rg);
       m = outlandMask(1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); m.r = max(m.r, st); m.a *= 1.0 - st; } trail = 99.0; trailT = vec4(0.0, 0.0, bogMud(root, pn.mid.r), meadowAt(root, pn.mid.b));
+    } else {
+      // (the box's rim: its mask and normal handed over to the outland's, as the ground's — Terrain.ts boxRim / boxRimN)
+      float rim = boxRim(root, (pn.big.g - 0.5) * 100.0 + (pn.mid.r - 0.5) * 40.0), kn = boxRimN(root);
+      if (kn > 0.0) N = normalize(mix(N, unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).rg), kn));
+      if (rim > 0.0) {
+        vec4 mo = outlandMask(1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); mo.r = max(mo.r, st); mo.a *= 1.0 - st; }
+        m = mix(m, mo, rim);
+        trailT.ba = mix(trailT.ba, vec2(bogMud(root, pn.mid.r), meadowAt(root, pn.mid.b)), rim);
+      }
     }
   }
 #ifdef CAVE_GRASS

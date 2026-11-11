@@ -296,12 +296,20 @@ export function regrowPads(map: MapData, landmarks: Landmark[]): void {
 
 /** The caves' DARK for this world (Atmosphere caveK): each cave's line (mouth → its far point), radius, roof, how far in
  *  from the mouth it comes on; none in the desert. */
+const CAVES = new WeakMap<Landmark[], { n: number; caves: [Landmark, NonNullable<Landmark['dark']>][] }>()
 export function caveUniforms(atmos: Atmosphere, landmarks: Landmark[], cam?: { x: number; z: number }): void {
   const u = atmos.uniforms
   const A = [u.uCaveA0.value, u.uCaveA1.value, u.uCaveA2.value], B = [u.uCaveB0.value, u.uCaveB1.value, u.uCaveB2.value]
   for (const v of B) v.set(0, 0, 0, 0)
   // (the shader has three: the three nearest the camera — every frame, a handful of places)
-  const caves = landmarks.flatMap((l) => [l.dark ? [l, l.dark] : null, l.dark2 ? [l, l.dark2] : null, l.dark3 ? [l, l.dark3] : null].filter((e) => e !== null)) as [Landmark, NonNullable<Landmark['dark']>][]
+  // (the caves' list made once per list — 2026-11-12: rebuilt every frame it allocated three arrays a place, and with the
+  //  Wardens' 500 ruins among the places that was ~0.1–0.3 ms a frame in the collector)
+  let hit = CAVES.get(landmarks)
+  if (!hit || hit.n !== landmarks.length) {
+    hit = { n: landmarks.length, caves: landmarks.flatMap((l) => [l.dark ? [l, l.dark] : null, l.dark2 ? [l, l.dark2] : null, l.dark3 ? [l, l.dark3] : null].filter((e) => e !== null)) as [Landmark, NonNullable<Landmark['dark']>][] }
+    CAVES.set(landmarks, hit)
+  }
+  const caves = hit.caves
   if (cam && caves.length > A.length) caves.sort(([p], [q]) => (p.x - cam.x) ** 2 + (p.z - cam.z) ** 2 - (q.x - cam.x) ** 2 - (q.z - cam.z) ** 2)
   for (let i = 0; i < Math.min(A.length, caves.length); i++) {
     const [l, d] = caves[i], sn = Math.sin(l.rot), cs = Math.cos(l.rot)

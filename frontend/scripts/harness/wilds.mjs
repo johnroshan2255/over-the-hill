@@ -5,7 +5,7 @@
 import puppeteer from 'puppeteer-core'
 import fs from 'node:fs'
 const [out = 'screenshots/wilds', tier = 'ultra'] = process.argv.slice(2); fs.mkdirSync(out, { recursive: true })
-const b = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--mute-audio', '--window-size=1280,720'], defaultViewport: { width: 1280, height: 720 } })
+const b = await puppeteer.launch({ executablePath: process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: [process.platform === 'win32' ? '--use-angle=d3d11' : '--use-angle=metal', '--ignore-gpu-blocklist', '--mute-audio', '--window-size=1280,720'], defaultViewport: { width: 1280, height: 720 } })
 const p = await b.newPage(); const errs = []
 p.on('pageerror', (e) => errs.push(e.message))
 p.on('console', (m) => { if (m.type() === 'error' || (m.type() === 'warn' && /exceeds|Invalid|invalid/.test(m.text()))) errs.push(m.text().split('\n')[0]) })   // (WebGPU's validation speaks in warnings: a draw it refuses is a black frame)

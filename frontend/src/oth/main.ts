@@ -21,6 +21,7 @@ import { FlyCam } from './FlyCam'
 import { MapData } from './MapData'
 import { MapView } from './MapView'
 import { Guide, Obstacles } from './Nav'
+import { Autopilot } from './Autopilot'
 import { OthPhysics } from './Physics'
 import { group, Groups } from '../physics/PhysicsWorld'
 import { createPaintTexture } from './noiseTex'
@@ -408,10 +409,32 @@ async function boot() {
     const o = new Obstacles(), d = w.trees.data
     for (let i = 0; i < w.trees.count; i++) o.add(d[i * TREE_STRIDE], d[i * TREE_STRIDE + 2], 0.6)
     w.rocks.each((k) => { if (k.s > 1.3) o.add(k.x, k.z, 0.55 * k.s) })
+    // (and the PLACES — the cabins, the ruins, the towers, the camps: an off-road leg goes round a building, not through
+    //  it — 2026-11-11, the autopilot drove the route into the Old Hut's wall)
+    for (const l of w.places) if (l.r > 0) o.add(l.x, l.z, Math.min(14, l.r * 0.8 + 1))
     return o
   }
   guide.setWorld(world.id, world.map, obstacles(world))
   guide.onArrive = (w) => { toast(`Arrived · ${w.name}`, 3200); audio.chime('place') }
+  // THE AUTOPILOT (Autopilot.ts — 2026-11-11, the user: "an option to turn on autopilot and off, so it will safely go
+  // there"): it drives the 4×4 along the GPS's route; O, the action wheel, the button over the speed. The player's
+  // hands on the controls take it back
+  const autopilot = new Autopilot(guide, physics.pw, (x, z) => world.map.height(x, z))
+  autopilot.onMessage = (m) => toast(m, 2600)
+  car.pilot = (dt, sim, manual, up) => autopilot.drive(dt, sim, manual, up)
+  // (its reset — the R key's: back on its wheels where it is, on what's under it — facing along the route)
+  autopilot.resetCar = (heading) => {
+    const s = car.sim
+    if (!s) return
+    const t = s.body.translation()
+    physics.follow(t.x, t.z)
+    s.place(t.x, physics.surface(t.x, t.z, Math.max(world.map.height(t.x, t.z), t.y - 1.5)) + 0.8, t.z, heading)
+  }
+  const toggleAutopilot = () => {
+    if (!autopilot.on && (!driving || riding || onFoot)) { toast('Autopilot drives the 4×4 — get in first'); return }
+    autopilot.toggle()
+  }
+  window.addEventListener('keydown', (e) => { if (e.code === 'KeyO' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !pause) toggleAutopilot() })
   const chartSize = isMobileDevice() ? 768 : 1024
   const charts = (w: World) => {
     const chart = new Chart(w.map, chartSize)
@@ -764,6 +787,24 @@ async function boot() {
     } else chase.snap()
   })
   const ui = driveUi(car, ride, twos, hero, () => onFoot, () => (onFoot ? getIn() : getOut()))
+  // (the autopilot's button: over the speed, while a destination is set — amber while it drives)
+  const apBtn = document.createElement('button')
+  apBtn.className = 'oth-ap'
+  apBtn.title = 'Autopilot (O)'
+  apBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); toggleAutopilot(); apHud() })
+  document.getElementById('drive')?.querySelector('.spd')?.before(apBtn)
+  let apKey = ''
+  const apHud = () => {
+    const show = autopilot.on || (!!guide.waypoint && !!guide.route && driving && !riding && !onFoot)
+    const st = autopilot.state
+    const html = !show ? '' : autopilot.on ? `<kbd>O</kbd>Autopilot<small>${st === 'back' ? 'backing up' : st === 'stop' ? 'stopping' : st === 'round' ? 'going round' : st === 'slope' ? 'easing off the slope' : 'on'}</small>` : '<kbd>O</kbd>Autopilot'
+    const key = html + autopilot.on
+    if (key === apKey) return
+    apKey = key
+    apBtn.innerHTML = html
+    apBtn.classList.toggle('show', show)
+    apBtn.classList.toggle('on', autopilot.on)
+  }
   // SOUND: the engine, the tyres, the music and the valley's ambience (starts on the first key / tap — Audio.ts)
   const audio = new OthAudio(map, car, atmos)
   audio.moto = moto
@@ -939,6 +980,7 @@ async function boot() {
       ...(radar ? [{ id: 'radar', label: 'Minimap', icon: ICONS.radar, key: 'N', run: toggleRadar, on: () => radarOn }] : []),
 
       { id: 'winch', label: 'Winch', icon: ICONS.winch, key: 'E', run: press('KeyE'), show: () => driving && !riding && !onFoot },
+      { id: 'autopilot', label: () => (autopilot.on ? 'Autopilot off' : 'Autopilot'), icon: ICONS.pilot, key: 'O', run: toggleAutopilot, on: () => autopilot.on, show: () => driving && !riding && !onFoot },
       { id: 'reset', label: 'Reset', icon: ICONS.reset, key: 'R', run: () => { if (riding) two.reset(); else car.reset() }, show: () => driving && !onFoot },
       { id: 'lights', label: 'Lights', icon: ICONS.lights, key: 'L', run: press('KeyL'), show: () => !riding && !onFoot },
       { id: 'build', label: 'Build', icon: ICONS.flag, key: 'B', run: () => { if (coop) coop.build.toggle(); else toast('Building needs a co-op world — CO-OP on the title screen', 3500) }, on: () => !!coop?.build.on },
@@ -1026,7 +1068,22 @@ async function boot() {
   const noteHud = () => {
     const p = ride.pos, slow = onFoot || Math.abs(ride.speedKmh) < 12
     const l = slow ? world.places.find((q) => q.note && (q.x - p.x) ** 2 + (q.z - p.z) ** 2 < 11 * 11) : undefined
-    readouts.note(l?.note ? { place: l.name, ...l.note } : null)
+    // (or the WARDENS' WRITING on a stone — Wardens.ts: stopped within 9 m of one; the first read pays, kept apart)
+    const wt = !l && slow ? world.wardens?.textNear(p.x, p.z) ?? null : null
+    readouts.note(l?.note ? { place: l.name, ...l.note } : wt ? { place: wt.place, title: wt.title, text: wt.text } : null)
+    if (wt) {
+      const key = `oth.wtexts.${world.map.meta.id}`
+      let seen: Set<number>
+      try { seen = new Set(JSON.parse(localStorage.getItem(key) ?? '[]') as number[]) } catch { seen = new Set() }
+      if (seen.has(wt.id)) return
+      seen.add(wt.id)
+      try { localStorage.setItem(key, JSON.stringify([...seen])) } catch { /* (not kept) */ }
+      journal.coins += 10
+      keepJournal()
+      readouts.coins(journal.coins, 10)
+      toast(`Warden writing read · ${seen.size} / ${world.wardens?.textCount ?? 0}`, 2800)
+      return
+    }
     if (!l) return
     const read = notesRead(world.map.meta.id)
     if (read.has(l.id)) return
@@ -1108,6 +1165,8 @@ async function boot() {
     gather?.update(dt)
     ground?.update(dt)
     guide.update(dt, ride.pos.x, ride.pos.z)
+    // (the autopilot lets go when the 4×4 isn't what's driven: on foot, the bike, the free camera)
+    if (autopilot.on && (onFoot || riding || !driving)) autopilot.stop('Autopilot off')
     // the journey: distance driven (not the jumps of a reset / a car change), the last safe spot, the autosave
     playSeconds += dt
     const moved = Math.hypot(ride.pos.x - lastPos.x, ride.pos.z - lastPos.z)
@@ -1128,7 +1187,7 @@ async function boot() {
     }
     // the HUD's slow parts (4× a second): the signpost, the camp prompt
     if ((hudTick += dt) > 0.25) {
-      hudTick = 0; signHud(); noteHud()
+      hudTick = 0; signHud(); noteHud(); apHud()
       const c = canCamp() ? campHere() : null, act = actionNow()
       // (on foot by a vehicle: "F Get in" — GTA's; else the camp's)
       readouts.prompt(onFoot && act ? ['F', act] : gather?.prompt ?? (canCamp() ? ['C', c ? `Rest at ${c.name}` : 'Pitch camp'] : null))
@@ -1342,6 +1401,7 @@ async function boot() {
     },
     crossing,
     guide,
+    autopilot,
     get mapView() { return mapView },
     get radar() { return radar },
     /** This world's chart, painted to the end, as a WebP data URL (scripts/harness/chartbake.mjs → chart.webp). */
@@ -1502,7 +1562,7 @@ function fadeThrough(mid: () => void): void {
 function driveUi(car: Vehicle, ride: { readonly speedKmh: number; readonly gear: string; readonly sim: unknown }, twos: Bike[], hero: Character, onFoot: () => boolean, doAct: () => void): { update: (driving: boolean, time: string) => void; action: (label: string | null) => void } {
   const box = document.createElement('div')
   box.id = 'drive'
-  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · E winch · F get out · C camp · R reset · B build · Tab map · Q menu · Esc pause</div>'
+  box.innerHTML = '<div class="spd"><b>0</b><span>km/h</span><i></i><em></em></div><div class="help">W A S D drive · Space handbrake · Shift boost · E winch · F get out · C camp · R reset · B build · Tab map · O autopilot · Q menu · Esc pause</div>'
   // THE GEARS (2026-11-08, the user: "the manual gear shift — arrows for it in game; on mobile a small gear section"):
   // with the Manual gearbox, a small box by the speed — ▲ up, the gear, ▼ down — clicked or tapped (the keys X / Z
   // shown beside them on a keyboard); hidden on the bike, on foot and with the automatic

@@ -23,6 +23,8 @@ export interface Landmark {
   kind: 'tower' | 'view' | 'cabin' | 'shack' | 'sawmill' | 'mine' | 'meteorite' | 'falls' | 'meadow' | 'camp' | 'oasis' | 'aqueduct' | 'arch' | 'spires' | 'gorge' | 'ksar' | 'dunes' | 'slickrock'
     // (2026-11-06, Sites.ts — the valley's new places)
     | 'cave' | 'ghost' | 'ruin' | 'ranger' | 'garage' | 'shelter' | 'hamlet' | 'research' | 'dock' | 'wreck'
+    // (2026-11-12, Wardens.ts — the outland's ruins: a beacon, a giant, a temple, a ring … its style says which)
+    | 'warden'
   name: string; x: number; z: number; y: number; rot: number; r: number
   /** Its style (a camp's: expedition / hikers / fishers / abandoned; a cabin's story). */
   style?: string
@@ -115,9 +117,14 @@ export interface MapMeta {
   }
 }
 /** A lake of the outland (wilds.py): its water at `level` within r of (x, z) — or of the line to (x1, z1). */
-export interface OutLake { name: string; x: number; z: number; r: number; level: number; depth: number; x1?: number; z1?: number }
-/** Metres from (x, z) to a lake's point / line. */
+export interface OutLake {
+  name: string; x: number; z: number; r: number; level: number; depth: number; x1?: number; z1?: number
+  /** (made as the map loads — MapData.cutLakes: no water past the line (x − L.x, z − L.z)·(nx, nz) = d) */
+  cut?: [number, number, number]
+}
+/** Metres from (x, z) to a lake's point / line — Infinity past its cut (MapData.cutLakes). */
 export function lakeOff(L: OutLake, x: number, z: number): number {
+  if (L.cut && (x - L.x) * L.cut[0] + (z - L.z) * L.cut[1] > L.cut[2]) return Infinity
   if (L.x1 === undefined || L.z1 === undefined) return Math.hypot(x - L.x, z - L.z)
   const bx = L.x1 - L.x, bz = L.z1 - L.z, t = Math.max(0, Math.min(1, ((x - L.x) * bx + (z - L.z) * bz) / Math.max(1e-6, bx * bx + bz * bz)))
   return Math.hypot(x - L.x - bx * t, z - L.z - bz * t)
@@ -262,6 +269,53 @@ export class MapData {
     this.waterTex.wrapS = this.waterTex.wrapT = GFX.ClampToEdgeWrapping
     this.waterTex.needsUpdate = true
     this.waterBody = p.waterBody
+    this.cutLakes()
+  }
+
+  /**
+   * THE OUTLAND LAKES' FAR SIDE (2026-11-11, the user's screenshot of Frost Tarn — "water floating or air"): a lake's
+   * water lay over ALL ground below its level within its reach — past the bowl's rim too, where the mountain falls
+   * away: a sheet of water hung over the drop at the tarn's level, the bed's gravel painted down the face under it.
+   * The lake is what a flood from its middle reaches below its level (8 m grid); any other low ground in its reach gets
+   * a CUT — a straight line through the dry rim between the two (the widest gap of 180 tried), past which there's no
+   * water, no bed, no wet shore (lakeOff → Infinity; the ground's shader the same line: Terrain.ts uLakeB.zw).
+   */
+  private cutLakes(): void {
+    const S = this.meta.far.step
+    for (const L of this.meta.outland?.lakes ?? []) {
+      delete L.cut
+      if (gameParams().get('lakecut') === '0') continue   // (?lakecut=0: as it was — the A/B)
+      const x0 = Math.min(L.x, L.x1 ?? L.x) - L.r, z0 = Math.min(L.z, L.z1 ?? L.z) - L.r
+      const nx = Math.ceil((Math.max(L.x, L.x1 ?? L.x) + L.r - x0) / S) + 1, nz = Math.ceil((Math.max(L.z, L.z1 ?? L.z) + L.r - z0) / S) + 1
+      const wet = new Uint8Array(nx * nz), off = new Float32Array(nx * nz)
+      for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+        const x = x0 + i * S, z = z0 + j * S, k = j * nx + i
+        off[k] = lakeOff(L, x, z)
+        wet[k] = off[k] < L.r && this.height(x, z) < L.level ? 1 : 0
+      }
+      // the flood from the middle (the low ground within half its reach), 4-connected
+      const own = new Uint8Array(nx * nz), st: number[] = []
+      for (let k = 0; k < nx * nz; k++) if (wet[k] && off[k] < L.r * 0.5) { own[k] = 1; st.push(k) }
+      while (st.length) {
+        const k = st.pop()!, i = k % nx, j = (k / nx) | 0
+        for (const m of [i > 0 ? k - 1 : -1, i < nx - 1 ? k + 1 : -1, j > 0 ? k - nx : -1, j < nz - 1 ? k + nx : -1]) if (m >= 0 && wet[m] && !own[m]) { own[m] = 1; st.push(m) }
+      }
+      const lake: [number, number][] = [], stray: [number, number][] = []
+      for (let k = 0; k < nx * nz; k++) if (wet[k]) (own[k] ? lake : stray).push([x0 + (k % nx) * S - L.x, z0 + ((k / nx) | 0) * S - L.z])
+      if (!stray.length || !lake.length) continue
+      let best: [number, number, number] | null = null, gap = -Infinity
+      for (let a = 0; a < 180; a++) {
+        const t = (a / 180) * 2 * Math.PI, cx = Math.cos(t), cz = Math.sin(t)
+        let hi = -Infinity, lo = Infinity
+        for (const [x, z] of lake) hi = Math.max(hi, x * cx + z * cz)
+        for (const [x, z] of stray) lo = Math.min(lo, x * cx + z * cz)
+        if (lo - hi > gap) { gap = lo - hi; best = [cx, cz, (hi + lo) / 2] }
+      }
+      // (a cell's water runs up to a cell's width toward dry ground: a gap under 8 m leaves a sliver either side)
+      // (d > 0 always — the middle is lake: the ground's shader takes the line as (nx, nz) / d)
+      if (best && gap > 0 && best[2] > 1) L.cut = best
+      if (gap < 2 * S) console.warn(`[map] ${L.name}: its stray low ground ${gap > 0 ? `only ${gap.toFixed(0)} m past the lake` : 'not on one side'} (${stray.length} cells)`)
+    }
   }
 
   /** Which lake / pond owns each 4 m cell (mapPrep.ts waterOwner: 0 none, 1 the lake, 2 + i pond i). */

@@ -259,7 +259,9 @@ const CELL = 128
 // (a ruin's 2 m: its ground is the paving's — World.build pavePatch, 2026-11-08; it was a bare 5.5 m disc)
 const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, crate: 1.8, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 2.0, well: 1.8, tent: 4.0, log: 1.1, stump: 0.9 }
 
-export interface PropCollider { x: number; y: number; z: number; rot: number; hx: number; hy: number; hz: number }
+export interface PropCollider { x: number; y: number; z: number; rot: number; hx: number; hy: number; hz: number
+  /** (GROUND: the wheels' rays see it — a platform, a plinth: Wardens.ts) */
+  ground?: boolean }
 
 export class Props {
   readonly group = new GFX.Group()

@@ -11,6 +11,7 @@ import { Grass } from './Grass'
 import { Horizon } from './Horizon'
 import { Landmarks, pavePatch } from './Landmarks'
 import { Wonders } from './Wonders'
+import { planWardens, Wardens } from './Wardens'
 import { type Landmark, MapData } from './MapData'
 import { gameParams } from '../settings'
 import { placeThings } from './Places'
@@ -65,6 +66,8 @@ export class World {
   caveGrass: Grass | null = null
   /** The outland's wonders (Wonders.ts: the World Tree, the stone arch). */
   wonders: Wonders | null = null
+  /** The Wardens' country (Wardens.ts: the outland's ruins, giants, writings). */
+  wardens: Wardens | null = null
 
   private constructor(
     readonly id: WorldId,
@@ -147,9 +150,19 @@ export class World {
     // (the cave world's shape: its hill's top, its apron — fetched before the places are chosen: it takes the most room)
     const caveMeta = map.desert || gameParams().get('cave') === '0' ? null : await loadCaveMeta(WORLDS[id].path)
     const plan = gameParams().get('sites') === '0' ? { sites: [], keep: [] } : await step('sites', () => planSites(map, rocks, placed.props, [...(map.meta.landmarks ?? []), ...placed.camps], 1000, caveMeta))
-    const open = (x: number, z: number) => plan.keep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r)
+    // THE WARDENS' COUNTRY (Wardens.ts): its ruins planned now, so the trees, bushes and stones keep off them
+    const wplan = await step('wardens plan', () => planWardens(map, rocks))
+    const wk = new Map<number, [number, number, number][]>()
+    for (const k of wplan.keep) { const h = Math.floor(k[0] / 64) * 4096 + Math.floor(k[1] / 64); const l = wk.get(h); if (l) l.push(k); else wk.set(h, [k]) }
+    const wardenOpen = (x: number, z: number) => {
+      const ci = Math.floor(x / 64), cj = Math.floor(z / 64)
+      for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) for (const [kx, kz, r] of wk.get(i * 4096 + j) ?? []) if ((x - kx) ** 2 + (z - kz) ** 2 < r * r) return false
+      return true
+    }
+    const open = (x: number, z: number) => plan.keep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r) && wardenOpen(x, z)
     const keepEvery = (a: ArrayLike<number>, stride: number) => { const o: number[] = []; for (let i = 0; i < a.length; i += stride) if (open(a[i], a[i + 2])) for (let k = 0; k < stride; k++) o.push(a[i + k]); return new Float32Array(o) }
     rocks.removeWithin(plan.keep)
+    rocks.removeWithin(wplan.keep)
     // (the cave's hill: the land round it raised into its long flanks — before anything is placed on it)
     { const cs = plan.sites.find((l) => l.kind === 'cave'); if (cs && caveMeta && gameParams().get('caveflanks') === '1') CaveWorld.spreadFoot(map, cs, caveMeta) } // (off: it made walls and creases — 2026-11-08)
     // (and the small things on it: pebbles, logs, stumps — never a crate, a sign, a camp's)
@@ -191,6 +204,12 @@ export class World {
     wonders.horizon = horizon
     landmarks.colliders.push(...wonders.colliders)
     wonders.addLakes(water.poolMaterial())
+    // (the Wardens' named sites join the landmarks — found, on the map and the signposts, the GPS round them — after
+    //  Landmarks is built: their stones are Wardens' own; their colliders stream with the props')
+    if (gameParams().get('wsites') !== '0') places.push(...wplan.sites)
+    props.colliders.push(...wplan.cols)
+    const wardens = await step('wardens', () => new Wardens(wplan, atmos, shadow, tier, env.farGrid))
+    wardens.horizon = horizon
     const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
     // (the desert's sandstone slabs: fetched, Draco-decoded in the loader's workers)
     const tf = performance.now()
@@ -214,6 +233,8 @@ export class World {
     w.caveGrass = caveGrass
     w.wonders = wonders
     w.group.add(wonders.group)
+    w.wardens = wardens
+    if (gameParams().get('wdraw') !== '0') w.group.add(wardens.group)
     if (caveGrass) w.group.add(caveGrass.group)
     w.group.add(props.group, landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group)
     if (glow) w.group.add(glow.group)
@@ -259,6 +280,7 @@ export class World {
     this.trees.update(camera)
     this.bushes.update(camera)
     this.props.update(camera)
+    this.wardens?.update(camera)
     this.formations?.update(camera)
     this.cave?.update(camera.position)
     if (this.caveGrass) { const on = !!this.cave?.insideShown; this.caveGrass.group.visible = on; if (on) this.caveGrass.update(camera) }

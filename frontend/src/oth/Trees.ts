@@ -33,12 +33,15 @@ import { broadleafGeometry, palmGeometry, CROWN, spruceGeometry } from './treeGe
 const TILE = 64
 /** Values per tree in `data`: x, y, z, height, rotation, species, seed, rank.
  *  Species: 0 spruce, 1 larch, 2 snag (the conifer shape) · 3 birch (gold), 4 aspen (red / orange), 5 green broadleaf
- *  (the broadleaf shape, white trunks) — OTH's mixed autumn woods. */
+ *  (the broadleaf shape, white trunks) — OTH's mixed autumn woods · 6 OAK (2026-11-12: the broadleaf shape widened into a
+ *  round dome on a stout brown trunk — oakShape — the parkland's big green trees). */
 export const TREE_STRIDE = 8
 /** The shape family of a species: 0 conifer, 1 broadleaf. */
 const family = (sp: number) => (sp >= 3 ? 1 : 0)
 /** The species with impostors, in atlas row order (a snag is a pixel there). */
-const IMP_SPECIES = [0, 1, 3, 4, 5]
+const IMP_SPECIES = [0, 1, 3, 4, 5, 6]
+/** The oak's impostor frame is wider (its crown 1.5× the broadleaf's): IMP.FW × this. */
+const OAK_FW = 1.62
 
 export class Trees {
   readonly group = new GFX.Group()
@@ -129,7 +132,7 @@ export class Trees {
         ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) },
         uImpAlb: { value: null }, uImpNor: { value: null }, uImpSize: { value: new GFX.Vector2(IMP.cols * IMP.fw, IMP.rows * IMP.fh) },
       },
-      defines: { ...map.biomeDefines, ...(tier.spec ? { OTH_SPEC: '' } : {}), IMP_NA: IMP.cols.toFixed(1), IMP_ROWS: IMP.rows.toFixed(1), IMP_FW: IMP.FW.toFixed(3), IMP_FH: IMP.FH.toFixed(3), IMP_CY: IMP.CY.toFixed(3), IMP_E1: ((IMP.elev[0] + IMP.elev[1]) / 2).toFixed(3), IMP_E2: ((IMP.elev[1] + IMP.elev[2]) / 2).toFixed(3) },
+      defines: { ...map.biomeDefines, ...(tier.spec ? { OTH_SPEC: '' } : {}), IMP_NA: IMP.cols.toFixed(1), IMP_ROWS: IMP.rows.toFixed(1), IMP_FW: IMP.FW.toFixed(3), IMP_FW_OAK: (IMP.FW * OAK_FW).toFixed(3), IMP_FH: IMP.FH.toFixed(3), IMP_CY: IMP.CY.toFixed(3), IMP_E1: ((IMP.elev[0] + IMP.elev[1]) / 2).toFixed(3), IMP_E2: ((IMP.elev[1] + IMP.elev[2]) / 2).toFixed(3) },
       vertexShader: IMP_VERT,
       fragmentShader: IMP_FRAG,
       // MSAA tiers: the alpha edge resolves to smooth coverage (no hard, shimmering cut-out); LOW keeps the test
@@ -461,6 +464,8 @@ export class Trees {
       const sp = IMP_SPECIES[ri]
       bake.uniforms.uSpecies.value = sp
       mesh.geometry = geos[family(sp)]
+      const fw = (IMP.FW / 2) * (sp === 6 ? OAK_FW : 1)
+      cam.left = -fw; cam.right = fw; cam.updateProjectionMatrix()
       for (let e = 0; e < IMP.elev.length; e++) {
         for (let a = 0; a < IMP.cols; a++) {
           const az = (a / IMP.cols) * Math.PI * 2, el = IMP.elev[e]
@@ -500,7 +505,7 @@ export class Trees {
 
 /** The impostor atlas layout: `cols` azimuths × 3 elevations (rad) × 2 species (rows), frames fw × fh px framing
  *  FW × FH tree heights centred CY up (the crown with its plumes, from the side to 55° above). */
-const IMP = { cols: 12, elev: [0.05, 0.45, 0.95], rows: 15, fw: 80, fh: 160, FW: 0.56, FH: 1.08, CY: 0.52 }
+const IMP = { cols: 12, elev: [0.05, 0.45, 0.95], rows: 18, fw: 80, fh: 160, FW: 0.56, FH: 1.08, CY: 0.52 }
 
 /** A unit quad (x −0.5…0.5, y 0…1): the impostor's billboard. */
 function impostorQuad(): GFX.BufferGeometry {
@@ -553,6 +558,18 @@ vec3 barkLight(vec3 albedo, float h01, vec3 n) {
 }
 // the darkest a tree gets inside (its AO's floor): a spruce's dense needles darkest; a larch's thin needles and a
 // broadleaf's leaves let the light in
+// THE OAK (species 6 — 2026-11-12): the broadleaf geometry made a wide round DOME on a short, stout trunk — the crown
+// 1.5× as wide and pulled down a little, the trunk 2.4× as thick below the fork, its limbs spread with the crown
+vec3 oakShape(vec3 p, float fol) {
+  if (fol < 0.5) {
+    if (p.y < 0.33) { p.xz *= 2.4; p.y *= 0.86; }
+    else { p.xz *= 1.6; p.y = 0.284 + (p.y - 0.33) * 0.84; }
+    return p;
+  }
+  p.xz *= 1.5;
+  p.y = 0.27 + (p.y - 0.3) * 0.86;
+  return p;
+}
 float aoFloor(float species) { return species > 2.5 ? 0.4 : species > 0.5 ? 0.36 : 0.22; }
 vec3 treeAlbedo(float species, float fol, float j) {
 #ifdef OTH_DESERT
@@ -562,6 +579,7 @@ vec3 treeAlbedo(float species, float fol, float j) {
   return mix(vec3(0.03, 0.1, 0.03), vec3(0.09, 0.2, 0.05), 0.5 + j * 0.6) * PLANT_VALUE * 1.25;
 #endif
   if (fol < 0.5) {
+    if (species > 5.5) return vec3(0.17, 0.11, 0.07);         // the oak: a warm dark brown
     if (species > 2.5) return vec3(0.62, 0.61, 0.57);         // birch / aspen: white bark (a little grey: barkLight)
     return species > 1.5 ? vec3(0.36, 0.33, 0.29) : vec3(0.1, 0.055, 0.03); // (a snag's weathered silver-grey · the spruce's dark brown)
   }
@@ -575,6 +593,7 @@ vec3 treeAlbedo(float species, float fol, float j) {
   //  the near-pure red was the strongest colour in the valley; the birch a clean gold, not a mustard)
   if (species < 3.5) return mix(vec3(0.7, 0.42, 0.05), vec3(0.92, 0.67, 0.11), 0.5 + j * 0.8) * PLANT_VALUE;
   if (species < 4.5) return mix(vec3(0.62, 0.15, 0.03), vec3(0.9, 0.5, 0.08), 0.5 + j * 0.9) * PLANT_VALUE;
+  if (species > 5.5) return mix(vec3(0.07, 0.19, 0.035), vec3(0.2, 0.36, 0.06), 0.5 + j * 0.8) * PLANT_VALUE; // (the oak: a lush, bright green — the user's Genshin frames)
   return mix(vec3(0.06, 0.15, 0.03), vec3(0.15, 0.26, 0.045), 0.5 + j * 0.8) * PLANT_VALUE; // (the green broadleaf deeper too)
 }
 `
@@ -611,6 +630,7 @@ void main() {
   // a snag: the trunk alone, thick and BROKEN OFF under half the height (not a needle up to the sky), the foliage
   // collapsed away
   if (species > 1.5 && species < 2.5) { p = fol > 0.5 ? vec3(0.0) : vec3(p.x * 2.2, min(p.y, 0.42) * 0.9, p.z * 2.2); }
+  if (species > 5.5) p = oakShape(p, fol);
   // a broadleaf's own crown, from the tree's seed (one geometry, every tree a different outline): its base raised a
   // little (the top kept), its width ×0.8–1.2 — each way its own, an oval from above, not a ball — and its depth
   // ×0.88–1.12 about its middle; and the whole tree LEANS a little (up to ~4°, the foot kept) — 2026-11-06: the one
@@ -736,7 +756,7 @@ void main() {
   if (card) albedo = leafLight(leafTone(albedo, fract(vLeaf.z) / 0.9, vSpecies), lt, N);
   if (vLeaf.z < -0.5) albedo = frondTone(albedo, ft, vLeaf.x, fract(-vLeaf.z) / 0.9, vSpecies);
 #ifndef OTH_DESERT
-  if (vFol < 0.5 && vSpecies > 2.5) albedo = barkLight(albedo, vH, N);
+  if (vFol < 0.5 && vSpecies > 2.5 && vSpecies < 5.5) albedo = barkLight(albedo, vH, N);
 #endif
 #ifdef TREE_SHADE
   alpha = 1.0;
@@ -784,7 +804,9 @@ void main() {
   vAo = color.r;
   vH = color.b;
   vAlb = treeAlbedo(uSpecies, color.g, 0.0);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec3 p = uSpecies > 5.5 ? oakShape(position, color.g) : position;
+  vP = p;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
 }
 `
 const BAKE_FRAG = /* glsl */ `
@@ -819,7 +841,7 @@ void main() {
     albedo = leafLight(leafTone(albedo, fract(vLeaf.z) / 0.9, uSpecies), lt, N);
   }
 #ifndef OTH_DESERT
-  if (vFol < 0.5 && uSpecies > 2.5) albedo = barkLight(albedo, vH, N);
+  if (vFol < 0.5 && uSpecies > 2.5 && uSpecies < 5.5) albedo = barkLight(albedo, vH, N);
 #endif
   if (vLeaf.z < -0.5) {
     vec4 ft = frondCard(vLeaf.x, vLeaf.y, -vLeaf.z);
@@ -859,8 +881,8 @@ void main() {
   float ie = el < IMP_E1 ? 0.0 : el < IMP_E2 ? 1.0 : 2.0;
   vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam));
   vec3 upv = cross(toCam, right);
-  vec3 p = center + right * (position.x * IMP_FW * H) + upv * ((position.y - 0.5) * IMP_FH * H);
-  float row = (aT1.y < 1.5 ? aT1.y : aT1.y - 1.0) * 3.0 + ie; // (IMP_SPECIES order: 0 1 3 4 5)
+  vec3 p = center + right * (position.x * (aT1.y > 5.5 ? IMP_FW_OAK : IMP_FW) * H) + upv * ((position.y - 0.5) * IMP_FH * H);
+  float row = (aT1.y < 1.5 ? aT1.y : aT1.y - 1.0) * 3.0 + ie; // (IMP_SPECIES order: 0 1 3 4 5 6)
   vCell = vec2(position.x + 0.5, position.y);
   vUv = vec2((ia + position.x + 0.5) / IMP_NA, (row + position.y) / IMP_ROWS);
   vWorld = p;
@@ -1100,6 +1122,7 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       const x = gx + (r1() * 1.6 - 0.3) * GO, z = gz + (r1() * 1.6 - 0.3) * GO
       if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) continue
       if (map.roadEdge(x, z) < 4.0) continue                                       // (off the outland's roads, and their verges)
+      if (rocks.onCrag(x, z, 1.5)) continue                                        // (… and the crags, the ledges: Rocks.ts)
       const y = map.height(x, z)
       if (map.lakeShore(x, z, y, 0.6)) continue   // (not in a lake, nor on its wet shore)
       if (y > 640 || r1() < (y - 420) / 220) continue
@@ -1111,5 +1134,55 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       if (species === 0 && r1() < 0.1) H = Math.max(H, 26 + 10 * r1())
       out.push(x, y - 0.3, z, H, r1() * Math.PI * 2, species, r1(), r1())
     }
+    // THE PARKLAND (2026-11-12, the user's Genshin Impact frames: "just an empty place … we need naturality, beauty like
+    // this"): the open country between the stands was bare grass to the hills. Now, every ~110 m cell its own seed —
+    // likelier where there's no stand (the region noise low) — a GROVE of round broadleaf trees (green, or birch gold,
+    // or aspen orange, 4–9 together, the tallest in the middle) or a LONE BIG TREE standing out on the meadow (the eye
+    // always has one to go to). Off the roads (8 m), the lakes, the slopes a tree couldn't hold, the places. The groves'
+    // middles are kept (parklandOf) — the bushes ring their feet (Bushes.ts). ?park=0: none (the A/B).
+    const park: [number, number, number][] = []
+    PARK.set(map, park)
+    if (gameParams().get('park') !== '0') {
+      const PG = 72
+      for (let gz = -ho; gz < ho; gz += PG, yield) for (let gx = -ho; gx < ho; gx += PG) {
+        if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }
+        let q = cellSeed(Math.round(gx), Math.round(gz), 97)
+        const r1 = () => ((q = (Math.imul(q ^ (q >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+        const region = vn(gx / 420 + 7.3, gz / 420 - 2.1)
+        if (r1() > (region < 0.34 ? 0.78 : 0.34)) continue
+        const cx = gx + (0.1 + 0.8 * r1()) * PG, cz = gz + (0.1 + 0.8 * r1()) * PG
+        const ok = (x: number, z: number) => {
+          if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr) || map.roadEdge(x, z) < 6.5 || rocks.onCrag(x, z, 2)) return null
+          const y = map.height(x, z)
+          if (y > 760 || map.lakeShore(x, z, y, 0.8)) return null
+          // (up the hillsides too — half the outland is over 23°, and that was where it stood bare: to ~37°)
+          if (Math.hypot(map.height(x + 4, z) - map.height(x - 4, z), map.height(x, z + 4) - map.height(x, z - 4)) / 8 > 0.75) return null
+          return y
+        }
+        if (ok(cx, cz) === null) continue
+        // (on a hillside: smaller groups, a lone tree more often)
+        const hill = Math.hypot(map.height(cx + 6, cz) - map.height(cx - 6, cz), map.height(cx, cz + 6) - map.height(cx, cz - 6)) / 12 > 0.42
+        const kind = r1(), lone = kind < (hill ? 0.45 : 0.28)
+        // (the grove's species: mostly OAK — the round green dome; birch gold; aspen orange — one or two of another among them)
+        const main = kind < 0.2 ? (r1() < 0.7 ? 6 : 3) : kind < 0.62 ? 6 : kind < 0.88 ? 3 : 4, other = main === 6 ? 3 : 6
+        const n = lone ? 1 + (r1() < 0.35 ? 1 : 0) : hill ? 2 + Math.floor(r1() * 3) : 4 + Math.floor(r1() * 6)
+        const placed: [number, number][] = []
+        for (let i = 0, tries = 0; i < n && tries < n * 4; tries++) {
+          const a = r1() * Math.PI * 2, d = i === 0 ? 0 : 3.5 + r1() * (lone ? 6 : 4 + n * 1.2)
+          const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d
+          if (placed.some(([px, pz]) => (px - x) ** 2 + (pz - z) ** 2 < 5.2 * 5.2)) continue
+          const y = ok(x, z)
+          if (y === null) continue
+          placed.push([x, z]); i++
+          const sp = r1() < 0.22 ? other : main
+          const H = (lone ? 14 + 5 * r1() : (i === 1 ? 13 : 8.5) + 5 * r1()) * (sp === 6 ? 0.9 : 1)
+          out.push(x, y - 0.3, z, H, r1() * Math.PI * 2, sp, r1(), r1())
+        }
+        if (placed.length) park.push([cx, cz, lone ? 6 : 6 + n * 1.3])
+      }
+    }
   }
 }
+/** The parkland's groves (x, z, reach) — Trees.placeTrees makes them, Bushes.placeBushes rings them. */
+const PARK = new WeakMap<MapData, [number, number, number][]>()
+export function parklandOf(map: MapData): [number, number, number][] { return PARK.get(map) ?? [] }

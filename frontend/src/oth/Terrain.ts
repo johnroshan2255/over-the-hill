@@ -124,7 +124,7 @@ export class Terrain {
       uRoadG: { value: new GFX.Vector4(map.roadHalf, 1 / (2 * map.roadHalf), map.roadHW, ROAD_REACH) },
       uSnowAt: { value: new GFX.Vector4(map.meta.outland?.snow?.x ?? 0, map.meta.outland?.snow?.z ?? 0, gameParams().get('snow') === '0' ? 0 : map.meta.outland?.snow?.r ?? 0, map.meta.outland?.snow?.line ?? 900) },   // (?snow=0: no early snow — the A/B)
       // (the outland's lakes, up to six: x, z, reach, level — reach 0: none)
-      ...Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7].flatMap((k) => { const L = map.meta.outland?.lakes?.[k]; return [[`uLake${k}`, { value: L ? new GFX.Vector4(L.x, L.z, L.r, L.level) : new GFX.Vector4(0, 0, 0, 0) }], [`uLakeB${k}`, { value: L ? new GFX.Vector4(L.x1 ?? L.x, L.z1 ?? L.z, 0, 0) : new GFX.Vector4(0, 0, 0, 0) }]] })),
+      ...Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7].flatMap((k) => { const L = map.meta.outland?.lakes?.[k]; return [[`uLake${k}`, { value: L ? new GFX.Vector4(L.x, L.z, L.r, L.level) : new GFX.Vector4(0, 0, 0, 0) }], [`uLakeB${k}`, { value: L ? new GFX.Vector4(L.x1 ?? L.x, L.z1 ?? L.z, L.cut ? L.cut[0] / L.cut[2] : 0, L.cut ? L.cut[1] / L.cut[2] : 0) : new GFX.Vector4(0, 0, 0, 0) }]] })),
       // (the outland's bog — x, z, reach — and its flower meadows, up to three)
       // (?zones=0: no boulder field's bed, bog or flower meadows painted — the A/B)
       uStony: { value: (() => { const Z = ZONES_ON() ? map.meta.outland?.zones?.find((q) => q.kind === 'rocks') : undefined; return Z ? new GFX.Vector4(Z.x, Z.z, Z.r * 1.12, 0) : new GFX.Vector4(0, 0, 0, 0) })() },
@@ -140,7 +140,7 @@ export class Terrain {
       uShore0: { value: new GFX.Vector4(0, 0, 0, 0) }, uShore1: { value: new GFX.Vector4(0, 0, 0, 0) },
       uShore2: { value: new GFX.Vector4(0, 0, 0, 0) }, uShore3: { value: new GFX.Vector4(0, 0, 0, 0) },
     }
-    const defines: Record<string, string> = { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...shapeDefines() }
+    const defines: Record<string, string> = { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...shapeDefines(), ...rimDefines() }
     if (tier.groundCache > 0 && gameParams().get('gcache') !== '0') {
       this.cache = new GroundCache(renderer, tier.groundCache, 2 * map.farHalf, this.uniforms, defines, HEIGHT_GLSL, SURF_GLSL)
       Object.assign(this.uniforms, this.cache.uniforms)
@@ -413,6 +413,8 @@ float groundRelief(vec2 xz) {
  *  the crests lighter (groundRelief, baked), and the SMALL slopes' light against the hill's broad one (the light the
  *  local normal gets minus what the hill's normal ~30 m across gets) — the hills keep their soft light, the bumps on
  *  them come back. `?shape=0` off; `?shapeao=` (per m of hollow), `?shapesun=` the strengths. */
+/** ?rim=0: the box's rim handed over to the outland at a line, as before 2026-11-11 (the A/B — ROAD_GLSL boxRim). */
+export function rimDefines(): Record<string, string> { return gameParams().get('rim') === '0' ? { OTH_NO_RIM: '' } : {} }
 export function shapeDefines(): Record<string, string> {
   const q = gameParams()
   if (q.get('shape') === '0') return {}
@@ -509,6 +511,18 @@ void main() {
 export const ROAD_GLSL = /* glsl */ `
 uniform vec4 uRoadG;
 uniform vec4 uSnowAt;
+// THE BOX'S RIM (2026-11-11, the user: "the lines … and sudden colour changes" — a hard line across the field and the
+// road where the 4 km box ends: inside it the ground's mask is mask.bin's, beyond it the outland's own, each its own
+// gold; the 2 m normals beside the 8 m): 0 inside the box … 1 at its edge and beyond — the box's mask hands over to the
+// outland's across its last ~220 m, the hand-over's line pushed in and out by jit (m, ±70 at most: the edge itself is
+// always 1); boxRimN: the normals' — narrower, the same for every reader (no noise to hand)
+#ifdef OTH_NO_RIM
+float boxRim(vec2 xz, float jit) { return 0.0; }
+float boxRimN(vec2 xz) { return 0.0; }
+#else
+float boxRim(vec2 xz, float jit) { return smoothstep(uBoxHalf - 300.0, uBoxHalf - 80.0, max(abs(xz.x), abs(xz.y)) + jit); }
+float boxRimN(vec2 xz) { return smoothstep(uBoxHalf - 100.0, uBoxHalf - 6.0, max(abs(xz.x), abs(xz.y))); }
+#endif
 // THE OUTLAND'S MASK (rock, dryness, wet, forest — what mask.bin holds inside the box), from the slope, the height and
 // the paint's two broad noises: the ground paints with it — and the grass's bake asks the SAME (2026-11-11, the user:
 // "it does not grow grass based on terrain colour": the bake had taken a mask of zeros out there — lush green blades
@@ -528,6 +542,8 @@ float lakeOne(vec4 L, vec4 B, vec2 xz, float h) {
   if (L.z <= 0.0) return -9.0;
   vec2 pa = xz - L.xy, ba = B.xy - L.xy;
   vec2 d = pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 1e-4), 0.0, 1.0);
+  // (past its cut — MapData.cutLakes, uLakeB.zw = its line's normal / its distance: the low ground over the rim — none)
+  if (dot(pa, B.zw) > 1.0) return -9.0;
   return dot(d, d) < L.z * L.z ? L.w - h : -9.0;
 }
 float lakeDepth(vec2 xz, float h) {
@@ -607,7 +623,13 @@ float strataN(float x) { float i = floor(x), f = x - i; return mix(strataH(i), s
 vec3 unpackN(vec2 e) { vec2 n = e * 2.0 - 1.0; return vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y); }
 bool inTheBox(vec2 xz) { float e = uBoxHalf - uInGrid.y; return abs(xz.x) < e && abs(xz.y) < e; }
 // the smooth normal: the box's 2 m grid a few mips up (rolling shapes), the world's 16 m one outside
-vec3 groundNormal(vec2 xz, bool box) { return box ? unpackN(texture(uNIn, gridUv(uInGrid, xz), 0.8).rg) : unpackN(texture(uNFar, gridUv(uFarGrid, xz), 0.0).rg); }
+// (… handed over to the world's across the box's last ~100 m — boxRimN: a seam of light at its edge otherwise)
+vec3 groundNormal(vec2 xz, bool box) {
+  if (!box) return unpackN(texture(uNFar, gridUv(uFarGrid, xz), 0.0).rg);
+  vec3 n = unpackN(texture(uNIn, gridUv(uInGrid, xz), 0.8).rg);
+  float k = boxRimN(xz);
+  return k > 0.0 ? normalize(mix(n, unpackN(texture(uNFar, gridUv(uFarGrid, xz), 0.0).rg), k)) : n;
+}
 
 // (shape: the ground's small relief, groundRelief — from the cache; 0 painted live: the walls)
 struct Surf { vec3 col; float rock; float rough; float aoB; float grassy; float under; float relief; float trail; float bog; float pudN; float dots; float flower; vec2 rip; float shape; };
@@ -635,26 +657,31 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   float steep = 1.0 - Ns.y; // 0 flat … 0.3 ≈ 45°
 
   // the mask: baked inside the box; outside it, painted from slope, height and noise (the far ranges)
-  vec4 m;
-  if (box) {
-    m = texture(uMask, gridUv(uMaskGrid, xz));
-#ifdef OTH_SKIN
-    // (inside a cave: its own rock; no water, earth or forest floor from the hill's top over it)
-    m.r = max(m.r, gSkinRock);
-    m.ba *= 1.0 - gSkinIn;
-#endif
-  } else {
+  // (the box's rim: its mask handed over to the outland's — boxRim; 1 beyond the box)
+  float rim = box ? boxRim(xz, (p.big.g - 0.5) * 100.0 + (p.mid.r - 0.5) * 40.0) : 1.0;
+  vec4 m = vec4(0.0);
+  if (box) m = texture(uMask, gridUv(uMaskGrid, xz));
+  if (rim > 0.0) {
+    vec4 mo;
 #ifdef OTH_DESERT
     // (the far desert: sandstone where it's steep, sand everywhere else — loose in broad drifts; nothing grows)
     float rock = smoothstep(0.12, 0.26, steep + (p.big.b - 0.5) * 0.12);
-    m = vec4(rock, 0.55 + (p.big.g - 0.5) * 0.7, 0.0, 0.0);
+    mo = vec4(rock, 0.55 + (p.big.g - 0.5) * 0.7, 0.0, 0.0);
 #else
-    m = outlandMask(steep, h, p.big, p.mid);
-    { float st = stonyAt(xz, p.mid.g); m.r = max(m.r, st); m.a *= 1.0 - st; }
+    mo = outlandMask(steep, h, p.big, p.mid);
+    { float st = stonyAt(xz, p.mid.g); mo.r = max(mo.r, st); mo.a *= 1.0 - st; }
 #endif
+    m = mix(m, mo, rim);
   }
+#ifdef OTH_SKIN
+  if (box) {
+    // (inside a cave: its own rock; no water, earth or forest floor from the hill's top over it)
+    m.r = max(m.r, gSkinRock);
+    m.ba *= 1.0 - gSkinIn;
+  }
+#endif
   vec4 trailT = box ? texture(uTrail, gridUv(uInGrid, xz)) : vec4(1.0, 0.0, 0.0, 0.0); // (R the track, B A the mud, flowers)
-  if (!box) { trailT.b = bogMud(xz, p.mid.r); trailT.a = meadowAt(xz, p.mid.b); } // (the outland's bog and flower meadows)
+  if (rim > 0.0) trailT.ba = mix(trailT.ba, vec2(bogMud(xz, p.mid.r), meadowAt(xz, p.mid.b)), rim); // (the outland's bog and flower meadows)
   float trail = trailT.r * 8.0;
   float thw = uTrailHW;
   // (an outland road, where it's nearer than a track of the box: the same earth, its own width)
@@ -665,26 +692,20 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   // (a road of the outland is not one earth from end to end: grey GRAVEL as it climbs — whole by ~560 m — and darker,
   //  damp, under the forest's patches; the valley runs keep the tracks' tan)
   if (outRoad > 0.5 && g.trail > 0.01) col = mix(col, col * mix(vec3(1.0), vec3(0.7, 0.73, 0.78), smoothstep(360.0, 560.0, h + (p.mid.r - 0.5) * 60.0)) * (1.0 - 0.2 * g.forest), g.trail);
-  // THE EARLY SNOW (uSnowAt — the outland's high massif): the first fall of the year
-  if (!box) {
+  // THE EARLY SNOW (uSnowAt — the outland's high massif): the first fall of the year (the outland's paint from the box's rim on)
+  if (rim > 0.0) {
     float sn = earlySnow(xz, h, steep, p.big.r, p.mid.g, p.fine.g, p.mid.b) * (1.0 - 0.8 * g.trail);
     col = mix(col, SNOW, sn);
     g.snow = max(g.snow, sn);
-    // THE CLIFFS' BEDS (2026-11-11, the user: "amazing cliff views … huge cliffs"): out here a cliff was one flat grey — the
-    // box's faint beds fade by a few metres off. Three scales of bed by height (≈ 46 m, 15 m and — near — 5 m thick, none
-    // sharing a period, each bent a little by the broad noises so no line runs level for a kilometre): each bed its own
-    // tone between slate, warm buff and pale grey; a dark line under each ledge (the bed above overhangs); the gentler
-    // ledges between keep their grass or snow. Read by a rock face steeper than ~40°, from any distance.
-    float face = g.rock * smoothstep(0.22, 0.42, steep) * (1.0 - g.trail);
+    // THE CLIFFS' TONE: out here a cliff would be one flat grey — its faces take broad PATCHES of tone instead, slate to
+    // warm buff to pale grey, by the paint's 2D noises (a few hundred metres and ~70 m across). NO BEDS BY HEIGHT
+    // (2026-11-11, night — the user, of the striped peaks: "fix all repeated line like this"): the strata painted every
+    // 46 / 15 / 5 m with a dark ledge line under each read as stripes over every peak and through the snow — gone.
+    float face = g.rock * smoothstep(0.22, 0.42, steep) * (1.0 - g.trail) * rim;
     if (face > 0.01) {
-      float q = h + (p.big.r - 0.5) * 26.0 + (p.mid.g - 0.5) * 7.0;
-      float b1 = strataN(q / 46.0 + 3.1), b2 = strataN(q / 15.0 + 7.7), b3 = foot < 2.5 ? strataN(q / 5.0 + 1.3) : 0.5;
-      float tone = 0.5 * b1 + 0.32 * b2 + 0.18 * b3;
-      vec3 bed = mix(vec3(0.27, 0.29, 0.33), mix(vec3(0.47, 0.4, 0.31), vec3(0.5, 0.49, 0.46), smoothstep(0.45, 0.8, b2)), smoothstep(0.25, 0.7, tone));
-      float e1 = fract(q / 46.0 + 3.1), e2 = fract(q / 15.0 + 7.7);
-      float ledge = max(1.0 - smoothstep(0.0, 0.07, e1), 0.6 * (1.0 - smoothstep(0.0, 0.1, e2)) * (1.0 - smoothstep(6.0, 22.0, foot)));
-      bed *= 1.0 - 0.38 * ledge;
-      col = mix(col, bed * (0.92 + 0.16 * p.mid.r), face * 0.8 * (1.0 - g.snow));
+      float tone = clamp(p.big.g * 0.6 + p.mid.b * 0.4, 0.0, 1.0);
+      vec3 bed = mix(vec3(0.33, 0.35, 0.38), mix(vec3(0.47, 0.41, 0.33), vec3(0.5, 0.49, 0.46), smoothstep(0.5, 0.75, p.mid.g)), smoothstep(0.3, 0.7, tone));
+      col = mix(col, bed * (0.92 + 0.16 * p.mid.r), face * 0.6 * (1.0 - g.snow));
     }
     // a LAKE's shore and bed: wet gravel from half a metre over the water down
     float lw = lakeDepth(xz, h);
@@ -741,10 +762,9 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
 #endif
   if (cliffK > 0.01) {
     float nearK = 1.0 - smoothstep(0.8, 3.5, foot);
-    float q = h + (p.mid.g - 0.5) * 6.0 + (p.big.r - 0.5) * 9.0;
-    float bh = strataN(q / 13.0);
-    if (nearK > 0.01) bh = mix(bh, 0.62 * bh + 0.38 * strataN(q / 4.1 + 5.3), nearK);
-    vec3 band = mix(vec3(1.08, 1.03, 0.92), vec3(0.92, 0.97, 1.06), bh);
+    // (no beds by height — 2026-11-11, night, the user: "fix all repeated line like this": the 13 m / 4 m bands were
+    //  horizontal stripes up every steep face; the face's tone is the paint's, the streaks and the ledges' moss stay)
+    vec3 band = vec3(1.0);
     float wx = smoothstep(0.3, 0.7, abs(Ns.x) / (abs(Ns.x) + abs(Ns.z) + 1e-4));
     float streak = 0.0;
     if (nearK > 0.01) {
@@ -1102,7 +1122,7 @@ void main() {
   vec3 lit = col * (1.0 - 0.14 * under);
 #ifdef OTH_SHAPE
   // the small shapes' light: the hollows, and the bumps' slopes against the hill's (its normal ~30 m across)
-  vec3 Nb = box ? unpackN(texture(uNIn, gridUv(uInGrid, xz), 4.0).rg) : Ns;
+  vec3 Nb = box ? normalize(mix(unpackN(texture(uNIn, gridUv(uInGrid, xz), 4.0).rg), Ns, boxRimN(xz))) : Ns;
 #ifdef OTH_SKIN
   lit *= mix(shapeLight(s.shape, Ns, Nb, sun), 1.0, vSkin.x); // (outside as the ground; none in the cave)
 #else

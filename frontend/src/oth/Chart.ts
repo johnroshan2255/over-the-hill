@@ -15,7 +15,7 @@ import { WORLDS, type WorldId } from './World'
 export class Chart {
   readonly canvas = document.createElement('canvas')
   /** THE OUTLAND's chart (2026-11-11 — the playable land beyond the box, MapData.play): the same paper, coarser — its
-   *  relief, rock, the early snow — FAR_S² over ± `farHalf`; null for a world that is all box. The map lays the box's
+   *  relief, rock, the early snow — farS² over ± `farHalf`; null for a world that is all box. The map lays the box's
    *  chart over its middle. */
   readonly far: HTMLCanvasElement | null = null
   readonly farHalf: number = 0
@@ -24,7 +24,7 @@ export class Chart {
 
   constructor(map: MapData, readonly S: number) {
     this.canvas.width = this.canvas.height = S
-    if (map.play > map.half + 100) { this.far = document.createElement('canvas'); this.far.width = this.far.height = FAR_S; this.farHalf = map.play }
+    if (map.play > map.half + 100) { this.far = document.createElement('canvas'); this.far.width = this.far.height = farS(S); this.farHalf = map.play }
     this.gen = this.paint(map)
   }
 
@@ -59,6 +59,12 @@ export class Chart {
         if (m[2] > 0.9) { r = 0.47; gg = 0.67; b = 0.79 }
         // hillshade (light from the north-west; scaled to the 640² chart's 6.4 m cells) and 40 m contours
         const hx = H[j * S + Math.min(S - 1, i + 1)] - H[j * S + Math.max(0, i - 1)], hz = H[Math.min(S - 1, j + 1) * S + i] - H[Math.max(0, j - 1) * S + i]
+        // THE BOX'S RIM (2026-11-11, the user: a hard seam on the radar where the box's chart met the outland's — its
+        // greens beside the outland's gold): the box's colours hand over to the outland chart's over its last 240 m
+        if (this.far) {
+          const e = Math.max(Math.abs(x), Math.abs(z)), w = Math.min(1, Math.max(0, (e - (half - 260)) / 240))
+          if (w > 0) { const t = w * w * (3 - 2 * w), [fr, fg, fb] = farTint(map, x, z, h, Math.hypot(hx, hz) / (2 * cell)); r += (fr - r) * t; gg += (fg - gg) * t; b += (fb - b) * t }
+        }
         const sh = Math.max(0.55, Math.min(1.25, 1 + (-hx - hz) * 0.06 * (6.4 / cell)))
         let k = sh
         if (m[2] <= 0.9 && Math.floor(h / 40) !== Math.floor(H[j * S + Math.min(S - 1, i + 1)] / 40)) k *= 0.9
@@ -78,8 +84,8 @@ export class Chart {
 
   /** The outland: meadow, rock where it's steep, the early snow (meta.outland.snow) and the far ranges', hillshade, 80 m contours. */
   private *paintFar(map: MapData, canvas: HTMLCanvasElement): Generator<void, void, void> {
-    const S = FAR_S, g = canvas.getContext('2d')!, img = g.createImageData(S, S), half = map.play, cell = (2 * half) / S
-    const H = new Float32Array(S * S), sn0 = map.meta.outland?.snow
+    const S = canvas.width, g = canvas.getContext('2d')!, img = g.createImageData(S, S), half = map.play, cell = (2 * half) / S
+    const H = new Float32Array(S * S)
     for (let j = 0; j < S; j++) {
       for (let i = 0; i < S; i++) H[j * S + i] = map.height(-half + (i + 0.5) * cell, -half + (j + 0.5) * cell)
       if ((j & 31) === 31) yield
@@ -89,13 +95,7 @@ export class Chart {
         const x = -half + (i + 0.5) * cell, z = -half + (j + 0.5) * cell, h = H[j * S + i]
         const hx = H[j * S + Math.min(S - 1, i + 1)] - H[j * S + Math.max(0, i - 1)], hz = H[Math.min(S - 1, j + 1) * S + i] - H[Math.max(0, j - 1) * S + i]
         const slope = Math.hypot(hx, hz) / (2 * cell)
-        let r = 0.66, gg = 0.66, b = 0.41
-        const low = Math.max(0, Math.min(1, (330 - h) / 160)); r += (0.5 - r) * low * 0.6; gg += (0.6 - gg) * low * 0.6; b += (0.34 - b) * low * 0.6   // (the valley floors greener)
-        const rk = Math.max(0, Math.min(1, (slope - 0.5) / 0.4)); r += (0.6 - r) * rk; gg += (0.59 - gg) * rk; b += (0.57 - b) * rk
-        let line = 900
-        if (sn0) { const d = Math.hypot(x - sn0.x, z - sn0.z), t = Math.max(0, Math.min(1, (d - 0.45 * sn0.r) / (0.55 * sn0.r))); line = sn0.line + (900 - sn0.line) * t * t * (3 - 2 * t) }
-        const sn = Math.max(0, Math.min(1, (h - line - 40) / 150)) * (1 - 0.6 * rk); r += (0.95 - r) * sn; gg += (0.96 - gg) * sn; b += (0.98 - b) * sn
-        if (map.lakeAt(x, z) !== null) { r = 0.47; gg = 0.67; b = 0.79 }
+        const [r, gg, b] = farTint(map, x, z, h, slope)
         let k = Math.max(0.55, Math.min(1.25, 1 + (-hx - hz) * 0.06 * (6.4 / cell)))
         if (Math.floor(h / 80) !== Math.floor(H[j * S + Math.min(S - 1, i + 1)] / 80) || Math.floor(h / 80) !== Math.floor(H[Math.min(S - 1, j + 1) * S + i] / 80)) k *= 0.92
         const o = (j * S + i) * 4
@@ -109,7 +109,24 @@ export class Chart {
     g.putImageData(img, 0, 0)
   }
 }
-const FAR_S = 768
+/** The outland chart's side: 1536 (8 m a pixel over ±6144 — the world grid's own: a gorge 50–70 m across was 3–4
+ *  pixels at 768, its rims a chain of beads on the radar, 2026-11-11) where the box's chart is 1024 (PCs), 768 on phones. */
+const farS = (boxS: number) => (boxS >= 1024 ? 1536 : 768)
+
+/** The outland chart's colour at x, z (before the hillshade): meadow, the valley floors greener, rock where it's steep
+ *  (slope: rise / run), the early snow (meta.outland.snow) and the far ranges', the lakes — the box's chart hands over
+ *  to it at its rim. */
+function farTint(map: MapData, x: number, z: number, h: number, slope: number): [number, number, number] {
+  const sn0 = map.meta.outland?.snow
+  let r = 0.66, gg = 0.66, b = 0.41
+  const low = Math.max(0, Math.min(1, (330 - h) / 160)); r += (0.5 - r) * low * 0.6; gg += (0.6 - gg) * low * 0.6; b += (0.34 - b) * low * 0.6   // (the valley floors greener)
+  const rk = Math.max(0, Math.min(1, (slope - 0.5) / 0.4)); r += (0.6 - r) * rk; gg += (0.59 - gg) * rk; b += (0.57 - b) * rk
+  let line = 900
+  if (sn0) { const d = Math.hypot(x - sn0.x, z - sn0.z), t = Math.max(0, Math.min(1, (d - 0.45 * sn0.r) / (0.55 * sn0.r))); line = sn0.line + (900 - sn0.line) * t * t * (3 - 2 * t) }
+  const sn = Math.max(0, Math.min(1, (h - line - 40) / 150)) * (1 - 0.6 * rk); r += (0.95 - r) * sn; gg += (0.96 - gg) * sn; b += (0.98 - b) * sn
+  if (map.lakeAt(x, z) !== null) { r = 0.47; gg = 0.67; b = 0.79 }
+  return [r, gg, b]
+}
 
 /** The other world's baked chart (null if it isn't there: the map draws its tracks on plain paper). */
 const baked = new Map<WorldId, Promise<HTMLImageElement | null>>()
@@ -125,7 +142,7 @@ export function bakedChart(id: WorldId): Promise<HTMLImageElement | null> {
 }
 
 // ------------------------------------------------------------------------------------------------- shared drawing
-export const ICON: Record<Landmark['kind'], string> = { tower: '♜', view: '◭', cabin: '⌂', shack: '⌂', sawmill: '▤', mine: '⛏', meteorite: '✶', falls: '≋', meadow: '✿', camp: '▲', oasis: '≈', aqueduct: '⌓', arch: '⌒', spires: '▴', gorge: '≍', ksar: '▦', dunes: '∿', slickrock: '◒', cave: '◖', ghost: '☗', ruin: '⌂', ranger: '⚑', garage: '⚙', shelter: '⌂', hamlet: '⌂', research: '◬', dock: '⚓', wreck: '✕' }
+export const ICON: Record<Landmark['kind'], string> = { tower: '♜', view: '◭', cabin: '⌂', shack: '⌂', sawmill: '▤', mine: '⛏', meteorite: '✶', falls: '≋', meadow: '✿', camp: '▲', oasis: '≈', aqueduct: '⌓', arch: '⌒', spires: '▴', gorge: '≍', ksar: '▦', dunes: '∿', slickrock: '◒', cave: '◖', ghost: '☗', ruin: '⌂', ranger: '⚑', garage: '⚙', shelter: '⌂', hamlet: '⌂', research: '◬', dock: '⚓', wreck: '✕', warden: '◈' }
 /** The route's colour (GTA's waypoint violet: it reads on green and on sand). */
 export const ROUTE = '#a24dff'
 

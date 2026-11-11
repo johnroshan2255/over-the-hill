@@ -5,6 +5,34 @@ will give const 60+ in ultra"*; *"we can hide things from far"*; *"do all the st
 preserve the visual appearance while reducing the actual rendering cost"*; *"check the cheapest way to create water"*.
 This is step 8 of `MIGRATION.md`, with the phone made a goal of its own.
 
+## 2026-11-12 — the outland dressed: crags, parkland, the Wardens' ruins (`docs/NEXT.md` §10)
+
+`abq.mjs "|wardens=0&park=0&crags=0"` (the laptop, 1080p uncapped, interleaved, 4–5 reps): ULTRA ring 1.164 vs 1.265, giant 1.985 vs 1.831,
+oroad 1.387 vs 1.207, spawn 2.124 vs 1.951 (re-run per feature: spawn +0.011 / −0.018 / +0.049 — noise; spawn was 2.0–2.26 before). LOW ring 1.485 vs
+1.344, giant 1.754 vs 1.700, oroad 1.455 vs 1.260, spawn 1.917 vs 1.915. Per feature at oroad (ULTRA): wardens 0.07 (after the compass fix),
+crags 0.06, park ~0. The Wardens draw 3–8 k triangles in a view (≤ 16 draws, empty kinds hidden). Load: +0.16 s plan, +0.17 s trees.
+
+## 2026-11-11, late — the outland lakes cut at their rims (`docs/NEXT.md` §8)
+
+`abq.mjs "|lakecut=0" tarn,omeadow` (the laptop, 1080p uncapped, interleaved): ULTRA tarn 2.090 vs 2.165 ms (less water drawn), omeadow 1.573 vs
+1.575; LOW tarn 1.612 vs 1.526, re-run in the other order 1.598 vs 1.625 — noise. The cost: a dot product per lake in the
+ground's and the grass's shaders (outland only), and the flood as the map loads (~80 k height reads over the eight lakes, not timed).
+
+## 2026-11-11, night — the box's rim blended, the walls anti-aliased (`docs/NEXT.md` §8)
+
+`TIER=… abq.mjs "|rim=0" spawn,boxedge 4` (the Windows laptop, RTX 4050, 1080p uncapped, interleaved; base = with the
+rim's hand-over):
+
+| view | ULTRA base | ULTRA `rim=0` | LOW base | LOW `rim=0` |
+|---|---|---|---|---|
+| spawn | 2.259 ms | 2.324 (base −0.065) | 2.171 | 2.122 (base +0.049) |
+| boxedge (672, −2015, on a road 33 m in) | 1.771 | 1.848 (base −0.077) | 1.786 | 1.724 (base +0.061) |
+
+All within the spread between reps (±0.1 ms; one LOW rep 2.37): the rim is a `max`, two `abs` and a `smoothstep` a pixel
+inside the box, its two extra reads (the far normal) only in the last 100 m. The walls (`walls.mjs`) change heights
+only — the same mesh, the same draws. The outland chart at 1536² (PCs): the chart painted in ~0.85 s of 2.5 ms slices
+(was ~0.5 s) — ready ~6 s after the load instead of ~3.5 s; phones keep 768².
+
 ## 2026-11-11 — the wilds: outland roads, the early snow, the World Tree (`docs/NEXT.md` §7)
 
 `abq.mjs "|roads=0&snow=0&wonders=0" spawn,lake,oroad,wtree,osnow 4` (M4, 1080p uncapped, interleaved; base = with them):

@@ -22,6 +22,8 @@ const CELL = 128
 /** The desert's stacks: their variants come after the stones and the round ones; drawn out to STACK_REACH m. */
 const STACK0 = 14 // (= VARIANTS + ROUND)
 const STACK_REACH = 1800
+/** The crags' cells (m): bigger than the stones' — they're drawn ~2.5 km out. */
+const CRAG_CELL = 256
 
 /** A seed of its own for a cell / an item at (a, b) (salt: which loop) — placement one change elsewhere can't move. */
 export function cellSeed(a: number, b: number, salt: number): number {
@@ -30,7 +32,9 @@ export function cellSeed(a: number, b: number, salt: number): number {
   return (h ^ (h >>> 16)) >>> 0
 }
 
-export interface Inst { x: number; y: number; z: number; s: number; sy: number; rot: number; tilt: number; v: number; ax?: number; az?: number }
+export interface Inst { x: number; y: number; z: number; s: number; sy: number; rot: number; tilt: number; v: number; ax?: number; az?: number
+  /** (the outland's crags and ledges: drawn on their own pass, farther — and ground to the wheels) */
+  crag?: boolean }
 /** The desert's stack library (Rocks.loadStacks): [kind][lod] meshes, real diameters, each kind's slabs' corners. */
 export interface StackSet { geos: GFX.BufferGeometry[][]; diam: number[]; hulls: Float32Array[][] }
 
@@ -151,7 +155,7 @@ export class Rocks {
       const geo = sculpted ? sculpted[0] : v < VARIANTS ? boulder(0x51ed + v * 977) : roundBoulder(0x7a3 + v * 131)
       // (the physics' hull: the sculpted stone's far shape — its hull is the near one's, near enough, from 32 points)
       this.shapes.push((sculpted ? sculpted[1] : geo).attributes.position.array as Float32Array)
-      const n = all.filter((r) => r.v === v).length + this.verge.filter((r) => r.v === v).length // (+ the verges', settled later)
+      const n = all.filter((r) => r.v === v && !r.crag).length + this.verge.filter((r) => r.v === v).length // (+ the verges', settled later)
       const mesh = new GFX.InstancedMesh(geo, mat, Math.max(1, n))
       mesh.count = 0
       mesh.frustumCulled = false
@@ -197,7 +201,42 @@ export class Rocks {
     this.footprint.generateMipmaps = true
     this.footprint.unpackAlignment = 1
     this.footprint.needsUpdate = true
-    for (const r of all) this.toGrid(r)
+    // THE CRAGS' meshes: the blocks' shapes again, their own instances (drawn out to cragReach — update)
+    this.cragReach = tier.rockReach * 2.8 * (tier.weakGpu ? 0.65 : 1)   // (a weak GPU — the phones: a third nearer)
+    for (let v = 0; v < VARIANTS; v++) {
+      const n = all.filter((r) => r.crag && r.v === v).length
+      const mesh = new GFX.InstancedMesh(this.meshes[v].geometry, mat, Math.max(1, n))
+      mesh.count = 0; mesh.frustumCulled = false
+      mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
+      this.cragMeshes.push(mesh)
+      this.group.add(mesh)
+    }
+    for (const r of all) if (r.crag) this.toCragGrid(r); else this.toGrid(r)
+  }
+
+  /** The crags by 256 m cell (their own pass). */
+  private readonly cragGrid = new Map<number, Inst[]>()
+  private readonly cragBox = new Map<number, [number, number]>()
+  private readonly cragMeshes: GFX.InstancedMesh[] = []
+  private cragReach = 2500
+  /** Is (x, z) on a crag's footprint (+ pad m)? — the outland's trees and bushes keep off them. */
+  onCrag(x: number, z: number, pad: number): boolean {
+    const ci = Math.floor(x / CRAG_CELL), cj = Math.floor(z / CRAG_CELL)
+    for (let j = cj - 1; j <= cj + 1; j++) for (let i = ci - 1; i <= ci + 1; i++) {
+      for (const r of this.cragGrid.get(this.key(i, j)) ?? []) {
+        const dx = x - r.x, dz = z - r.z, c = Math.cos(r.rot), s = Math.sin(r.rot)
+        if (dx * dx + dz * dz > (r.s * 0.75 + pad) ** 2) continue
+        if (Math.abs(dx * c - dz * s) < r.s * 0.5 + pad && Math.abs(dx * s + dz * c) < r.s * (r.az ?? 0.9) * 0.45 + pad) return true
+      }
+    }
+    return false
+  }
+
+  private toCragGrid(r: Inst): void {
+    const k = this.key(Math.floor(r.x / CRAG_CELL), Math.floor(r.z / CRAG_CELL))
+    let list = this.cragGrid.get(k)
+    if (!list) this.cragGrid.set(k, (list = []))
+    list.push(r)
   }
 
   private toGrid(r: Inst): void {
@@ -653,6 +692,75 @@ export class Rocks {
         }
       }
     }
+    // THE OUTLAND'S CRAGS AND LEDGES (2026-11-12, the user's screenshots: "just an empty place … we need naturality,
+    // beauty like this" — a Genshin Impact valley: grey cliffs broken into bands and shelves, grass on every ledge):
+    // a third of the outland is slope over 30°, and it was one smooth painted face. Now:
+    //   CRAGS on the steep ground — a BAND of 2–4 big blocks side by side along the contour, each turned to face down
+    //     the hill and sunk into it (only its face and its top show), a second band above it on the steepest: the face
+    //     reads as stepped cliffs with grassy shelves between.
+    //   LEDGES on the grassy slopes — 2–5 low, wide slabs along the contour, a metre or two of grey face showing:
+    //     the shelves that break up a meadow.
+    // A 56 m grid, each cell on its own seed (nothing else moves); clear of the roads and their banks, the lakes, the
+    // box, the wilds' places and the bridges' ends. Drawn on their own pass out to `cragReach` (`update`). ?crags=0: none.
+    if (map.play > map.half + 100 && gameParams().get('crags') !== '0') {
+      const ho = map.play - 90, hb = map.half + 60, G = 64
+      const keepOff: [number, number, number][] = [
+        ...(map.meta.bridges ?? []).flatMap((b) => [[b.x0, b.z0, 30], [b.x1, b.z1, 30]] as [number, number, number][]),
+        ...(map.meta.outland?.places ?? []).flatMap((q) => (q.kind === 'worldtree' ? [[q.x, q.z, 1.5 * (q.h ?? 150)]] : q.kind === 'arch' ? [[q.x, q.z, 70]] : q.kind === 'view' || q.kind === 'pass' ? [[q.x, q.z, 40]] : q.kind === 'crater' ? [[q.x, q.z, (q.floor ?? 170) * 0.8]] : []) as [number, number, number][]),
+        ...(map.meta.landmarks ?? []).filter((l) => Math.abs(l.x) > map.half || Math.abs(l.z) > map.half).map((l) => [l.x, l.z, l.r + 30] as [number, number, number]),
+      ]
+      const grad = (x: number, z: number): [number, number] => [(map.height(x + 4, z) - map.height(x - 4, z)) / 8, (map.height(x, z + 4) - map.height(x, z - 4)) / 8]
+      /** A block set into the hill at (x, z), its face toward (dx, dz) (downhill): w wide along the contour, d deep, h of
+       *  it standing over the ground at its face. */
+      const block = (x: number, z: number, dx: number, dz: number, w: number, d: number, h: number, v: number, lean: number): boolean => {
+        const ux = -dz, uz = dx                                         // (along the contour)
+        if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) return false
+        // (no corner of it within 7.5 m of a road's edge — roadEdge reads 8 past that: the cut banks stay clear)
+        for (const [a1, a2] of [[0, 0], [0.55, 0.3], [-0.55, 0.3], [0.55, -0.6], [-0.55, -0.6], [0, 0.4]]) {
+          if (map.roadEdge(x + ux * w * a1 + dx * d * a2, z + uz * w * a1 + dz * d * a2) < 7.5) return false
+        }
+        const yF = Math.min(map.height(x, z), map.height(x + ux * w * 0.45, z + uz * w * 0.45), map.height(x - ux * w * 0.45, z - uz * w * 0.45))
+        if (map.lakeShore(x, z, yF, 1.5)) return false
+        // (the unit block: ±0.5 across, ~0.72 high, its middle at 0 — set back into the hill a third of its depth, its
+        //  top h over the ground at its face, its foot h / 2 under it)
+        const sy = h * 2.1, cx = x - dx * d * 0.32, cz = z - dz * d * 0.32
+        out.push({ x: cx, y: yF + 0.25 * h, z: cz, s: w, sy, rot: Math.atan2(dx, dz), tilt: lean, v, ax: 1, az: d / w, crag: true })
+        return true
+      }
+      for (let gz = -ho; gz < ho; gz += G) for (let gx = -ho; gx < ho; gx += G) {
+        if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }
+        s = cellSeed(Math.round(gx), Math.round(gz), 81)
+        const x = gx + rnd() * G, z = gz + rnd() * G
+        const [gxs, gzs] = grad(x, z), sl = Math.hypot(gxs, gzs)
+        if (sl < 0.16 || sl > 2.6) continue
+        const y = map.height(x, z)
+        const dx = -gxs / sl, dz = -gzs / sl                           // (down the hill)
+        const steep = sl > 0.52
+        if (rnd() > (steep ? 0.42 : 0.12 + 0.24 * Math.min(1, (sl - 0.16) / 0.36))) continue
+        if (!steep && y > 900) continue
+        // (a band's size: the steep faces are 100–400 m tall — their blocks 18–42 m wide, 7–30 m of face showing)
+        const n = steep ? 2 + Math.floor(rnd() * 3) : 2 + Math.floor(rnd() * 3), big = steep ? 18 + rnd() * 24 : 7 + rnd() * 9
+        // the band: blocks side by side along the contour, overlapping, each its own size, a little in or out of the line
+        let along = -((n - 1) / 2) * big * 0.72
+        for (let i = 0; i < n; i++) {
+          const w = big * (0.7 + 0.6 * rnd()), d = steep ? w * (0.5 + 0.3 * rnd()) : w * (0.6 + 0.35 * rnd())
+          const h = steep ? Math.min(30, (5 + rnd() * 12) * Math.min(1.8, sl)) : 1.1 + rnd() * 1.8
+          const off = (rnd() - 0.5) * (steep ? 8 : 3), v = Math.floor(rnd() * VARIANTS), lean = (rnd() - 0.5) * 0.12
+          const bx = x - dz * along + dx * off, bz = z + dx * along + dz * off
+          along += big * (0.6 + 0.25 * rnd())
+          // (the contour bends: each block faces its own way down)
+          const [ax, az] = grad(bx, bz), al = Math.hypot(ax, az)
+          if (al < 0.12) continue
+          block(bx, bz, -ax / al, -az / al, w, d, h, v, lean)
+          // (the steepest: a second, smaller band above — the cliff in steps)
+          if (steep && al > 0.85 && rnd() < 0.55) {
+            const up = h / al * 0.9 + d * 0.4, ux = bx + (ax / al) * up, uz = bz + (az / al) * up
+            const [bx2, bz2] = grad(ux, uz), bl = Math.hypot(bx2, bz2)
+            if (bl > 0.6) block(ux, uz, -bx2 / bl, -bz2 / bl, w * (0.7 + 0.3 * rnd()), d * 0.8, h * (0.6 + 0.4 * rnd()), Math.floor(rnd() * VARIANTS), lean)
+          }
+        }
+      }
+    }
     // the desert's STACKED ROCK (meta.stacks — desert.py): each at its own scale and turn, its base on the lowest
     // ground under it (a little sunk: never floating)
     // (?skyline=0: without the stacks past the box — the cost A/B)
@@ -716,7 +824,7 @@ export class Rocks {
     // (the outland's roads run a little way into the box, to its own tracks — scripts/oth/wilds.py: a stone of the
     //  valley's that stands in one is taken off, after every draw: no other stone moves. A 4.8 m block stood in the
     //  west connector — the bot stopped dead against it, scripts/harness/trackdrive.mjs SET=outland)
-    return map.roadHalf > 1 ? out.filter((r) => map.roadEdge(r.x, r.z) > r.s * 0.55 + 0.4) : out
+    return map.roadHalf > 1 ? out.filter((r) => r.crag || map.roadEdge(r.x, r.z) > r.s * 0.55 + 0.4) : out   // (the crags: their own corners asked — block())
   }
 
   /** Terrain occlusion (main.ts sets it): cells behind the hills are skipped. */
@@ -807,6 +915,36 @@ export class Rocks {
         mesh.setMatrixAt(mesh.count++, this.m)
       }
     }
+    // THE CRAGS: out to cragReach, per 256 m cell (in view, not behind the hills), the ones under ~4 px skipped
+    for (const m of this.cragMeshes) m.count = 0
+    {
+      const CR = this.cragReach, c0 = Math.floor((cx - CR) / CRAG_CELL), c1 = Math.floor((cx + CR) / CRAG_CELL), r0 = Math.floor((cz - CR) / CRAG_CELL), r1 = Math.floor((cz + CR) / CRAG_CELL)
+      for (let j = r0; j <= r1; j++) for (let i = c0; i <= c1; i++) {
+        const k = this.key(i, j), list = this.cragGrid.get(k)
+        if (!list) continue
+        const x0 = i * CRAG_CELL, z0 = j * CRAG_CELL
+        const nx = Math.max(x0 - cx, 0, cx - x0 - CRAG_CELL), nz = Math.max(z0 - cz, 0, cz - z0 - CRAG_CELL)
+        if (nx * nx + nz * nz > CR * CR) continue
+        let yb = this.cragBox.get(k)
+        if (!yb) {
+          yb = [Infinity, -Infinity]
+          for (const r of list) { yb[0] = Math.min(yb[0], r.y - r.sy * 0.4); yb[1] = Math.max(yb[1], r.y + r.sy * 0.4) }
+          this.cragBox.set(k, yb)
+        }
+        this.box.min.set(x0 - 20, yb[0], z0 - 20)
+        this.box.max.set(x0 + CRAG_CELL + 20, yb[1], z0 + CRAG_CELL + 20)
+        if (!this.frustum.intersectsBox(this.box)) continue
+        if (this.horizon?.hidden(x0 - 20, z0 - 20, x0 + CRAG_CELL + 20, z0 + CRAG_CELL + 20, yb[1])) continue
+        for (const r of list) {
+          const dx = r.x - cx, dz = r.z - cz, d2 = dx * dx + dz * dz
+          if (d2 > CR * CR || r.sy * r.sy < minRatio * minRatio * d2 * 16) continue   // (under ~8 px: not drawn)
+          const mesh = this.cragMeshes[r.v]
+          this.q.setFromEuler(this.e.set(r.tilt, r.rot, r.tilt * 0.6))
+          this.m.compose(this.p.set(r.x, r.y, r.z), this.q, this.sc.set(r.s * (r.ax ?? 1), r.sy, r.s * (r.az ?? 0.9)))
+          mesh.setMatrixAt(mesh.count++, this.m)
+        }
+      }
+    }
     // the STACKS: out to STACK_REACH, in view (a sphere round each), the far shape past ~8 % of the view's height
     for (const m of [...this.stackNear, ...this.stackFar]) if (m) m.count = 0
     const sph = new GFX.Sphere()
@@ -826,7 +964,7 @@ export class Rocks {
       mesh.setMatrixAt(mesh.count++, this.m)
     }
     this.count = 0
-    for (const m of [...this.meshes, ...this.farMeshes, ...this.stoneFar.filter(Boolean), ...this.stackNear.filter(Boolean), ...this.stackFar.filter(Boolean)]) { m.instanceMatrix.needsUpdate = true; this.count += m.count }
+    for (const m of [...this.meshes, ...this.cragMeshes, ...this.farMeshes, ...this.stoneFar.filter(Boolean), ...this.stackNear.filter(Boolean), ...this.stackFar.filter(Boolean)]) { m.instanceMatrix.needsUpdate = true; this.count += m.count }
   }
 }
 

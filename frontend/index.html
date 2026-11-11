@@ -26,6 +26,18 @@
       #drive .spd span { font-size: 15px; margin-left: 4px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; opacity: .8; }
       #drive .spd i { display: block; font-style: normal; font-size: 15px; font-weight: 700; letter-spacing: .14em; opacity: .85; }
       #drive .spd em { display: block; font-style: normal; font-size: 14px; font-weight: 600; letter-spacing: .14em; opacity: .7; }
+      /* THE AUTOPILOT (Autopilot.ts): over the speed while a destination is set — O on a keyboard; amber while it drives */
+      .oth-ap { display: none; margin: 0 0 6px auto; padding: 5px 12px 5px 10px; border: 0; border-left: 4px solid #a24dff; background: rgba(8, 8, 10, .62); color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; pointer-events: auto; cursor: pointer; white-space: nowrap; }
+      .oth-ap.show { display: block; }
+      .oth-ap:hover { background: rgba(30, 28, 32, .8); }
+      .oth-ap kbd { margin-right: 8px; padding: 0 5px; background: rgba(244, 239, 230, .16); font: 700 13px 'Barlow Condensed', system-ui, sans-serif; }
+      .oth-ap small { margin-left: 8px; font-size: 13px; color: rgba(244, 239, 230, .7); letter-spacing: .1em; }
+      .oth-ap.on { border-left-color: #f2a93b; background: rgba(242, 169, 59, .9); color: #120c04; animation: oth-ap 1.6s ease-in-out infinite; }
+      .oth-ap.on small { color: rgba(18, 12, 4, .75); }
+      .oth-ap.on kbd { background: rgba(18, 12, 4, .16); }
+      @keyframes oth-ap { 50% { background: rgba(242, 169, 59, .7); } }
+      body.touch .oth-ap { margin: 0 auto 6px; font-size: 14px; padding: 6px 14px; }
+      body.touch .oth-ap kbd { display: none; }
       /* THE GEARS (Manual gearbox): a small plate left of the speed — ▲ up, the gear, ▼ down; clickable, its keys shown */
       .oth-perftag { position: fixed; z-index: 6; left: 50%; top: 64px; transform: translateX(-50%); padding: 3px 8px; background: rgba(8, 8, 10, .7); color: #ff5a4a; font: 600 11px/1.2 var(--oh-ui, system-ui); letter-spacing: .08em; pointer-events: none; }
       .oth-gears { display: none; vertical-align: bottom; margin-right: 6px; pointer-events: auto; background: rgba(8, 8, 10, .55); text-align: center; }

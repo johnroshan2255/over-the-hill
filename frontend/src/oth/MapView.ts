@@ -198,22 +198,28 @@ export class MapView {
     const head = (Math.atan2(this.dir.x, -this.dir.z) * 180) / Math.PI // (0 = north = −z, 90 = east = +x)
     const W = 420, span = 160 // (the strip shows ±80°)
     const at = (bearing: number) => { let d = bearing - head; d = ((d + 540) % 360) - 180; return Math.abs(d) <= span / 2 ? W / 2 + (d / span) * W : null }
+    // (2026-11-12: each marker's style written only when it changes — 500 more places (the Wardens' ruins, Wardens.ts)
+    //  had the compass rewrite ~600 elements' styles ten times a second: ~0.07 ms a frame)
     const place = (el: HTMLElement, x: number | null) => {
+      const v = x === null ? 'none' : x.toFixed(0)
+      if (el.dataset.at === v) return
+      el.dataset.at = v
       el.style.display = x === null ? 'none' : ''
-      if (x !== null) el.style.transform = `translateX(${x.toFixed(1)}px)`
+      if (x !== null) el.style.transform = `translateX(${v}px)`
     }
     for (const t of this.ticks) place(t, at(Number(t.dataset.a)))
     const p = this.o.carPos(), lm = this.o.lm
     const bearing = (x: number, z: number) => (Math.atan2(x - p.x, -(z - p.z)) * 180) / Math.PI
     let best: { l: Landmark; d: number } | null = null
     for (const l of lm.list) {
-      const m = this.marks.get(l.id)!, d = Math.hypot(l.x - p.x, l.z - p.z)
-      const x = d < 2500 ? at(bearing(l.x, l.z)) : null
+      const m = this.marks.get(l.id)
+      if (!m) continue
+      // (the Wardens' ruins — hundreds of them — on the strip within 1.2 km; the other places within 2.5)
+      const d = Math.hypot(l.x - p.x, l.z - p.z), x = d < (l.kind === 'warden' ? 1200 : 2500) ? at(bearing(l.x, l.z)) : null
       place(m, x)
       if (x === null) continue
-      const found = lm.found.has(l.id)
-      m.textContent = found ? ICON[l.kind] : '?'
-      m.classList.toggle('found', found)
+      const found = lm.found.has(l.id), txt = found ? ICON[l.kind] : '?'
+      if (m.textContent !== txt) { m.textContent = txt; m.classList.toggle('found', found) }
       if (!best || d < best.d) best = { l, d }
     }
     const G = this.o.meta.gate

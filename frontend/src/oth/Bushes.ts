@@ -1,4 +1,5 @@
 import * as GFX from './gfx'
+import { parklandOf } from './Trees'
 import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
@@ -370,11 +371,11 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
       return (h(ix, iz) * (1 - u) + h(ix + 1, iz) * u) * (1 - w) + (h(ix, iz + 1) * (1 - u) + h(ix + 1, iz + 1) * u) * w
     }
     const stand = (x: number, z: number): number | null => {
-      if (map.roadEdge(x, z) < 1.4) return null
+      if (map.roadEdge(x, z) < 1.4 || rocks.onCrag(x, z, 0.8)) return null
       const y = map.height(x, z)
       if (y > 600 || map.lakeShore(x, z, y, 0.4)) return null
       if (sn && y > sn.line + 150 && Math.hypot(x - sn.x, z - sn.z) < sn.r * 0.7) return null
-      if (Math.hypot(map.height(x + 4, z) - map.height(x - 4, z), map.height(x, z + 4) - map.height(x, z - 4)) / 8 > 0.55) return null
+      if (Math.hypot(map.height(x + 4, z) - map.height(x - 4, z), map.height(x, z + 4) - map.height(x, z - 4)) / 8 > 0.8) return null
       return y
     }
     const bush = (x: number, z: number, y: number) => {
@@ -389,6 +390,14 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
       const x = gx + rnd() * GO, z = gz + rnd() * GO, y = stand(x, z)
       if (y === null || rnd() < (y - 380) / 220) continue
       bush(x, z, y)
+    }
+    // (the PARKLAND's groves — Trees.ts parklandOf: a ring of bushes about their feet, a few out on the meadow)
+    for (const [cx, cz, R] of parklandOf(map)) {
+      s = cellSeed(Math.round(cx), Math.round(cz), 66)
+      for (let q = 0, n = 3 + Math.floor(rnd() * 6); q < n; q++) {
+        const a = rnd() * Math.PI * 2, d = R * (0.55 + 0.7 * rnd()), bx = cx + Math.cos(a) * d, bz = cz + Math.sin(a) * d, y = stand(bx, bz)
+        if (y !== null) bush(bx, bz, y)
+      }
     }
     const hw = map.roadHW
     for (const L of map.meta.outland?.trails?.lines ?? []) {

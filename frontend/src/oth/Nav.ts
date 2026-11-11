@@ -384,12 +384,15 @@ export class Obstacles {
     c.push(x, z, r)
     this.maxR = Math.max(this.maxR, r)
   }
+  /** Where the route ends (the waypoint, the gate): a disc that holds it is no obstacle — a place you drive TO
+   *  stands on its own disc (the autopilot: the places and the buildings are obstacles too, 2026-11-11). */
+  except: { x: number; z: number } | null = null
   /** A disc within `pad` m of (x, z)? */
   hit(x: number, z: number, pad: number): boolean {
-    const R = this.maxR + pad
+    const R = this.maxR + pad, ex = this.except
     for (let i = Math.floor((x - R) / 8); i <= Math.floor((x + R) / 8); i++) for (let j = Math.floor((z - R) / 8); j <= Math.floor((z + R) / 8); j++) {
       const c = this.cells.get(i * 65536 + j)
-      if (c) for (let k = 0; k < c.length; k += 3) if ((c[k] - x) ** 2 + (c[k + 1] - z) ** 2 < (c[k + 2] + pad) ** 2) return true
+      if (c) for (let k = 0; k < c.length; k += 3) if ((c[k] - x) ** 2 + (c[k + 1] - z) ** 2 < (c[k + 2] + pad) ** 2 && !(ex && (c[k] - ex.x) ** 2 + (c[k + 1] - ex.z) ** 2 < (c[k + 2] + 6) ** 2)) return true
     }
     return false
   }
@@ -510,12 +513,20 @@ export class Guide {
     }
   }
 
+  /** Plan again from where the car is now (the autopilot, after it's been stuck: maybe another way round) — with
+   *  what blocked it (x, z, r) kept off from now on, if it says. */
+  replan(block?: { x: number; z: number; r: number }): void {
+    if (block && this.obstacles) (this.built ??= this.obstacles()).add(block.x, block.z, block.r)
+    this.plan()
+  }
+
   private plan(): void {
     const w = this.waypoint, map = this.map
     if (!w || !map) { this.route = null; return }
     const G = map.meta.gate, graph = RoadGraph.of(map.meta)
     const { x, z } = this.car
     const ob = this.obstacles ? (this.built ??= this.obstacles()) : undefined
+    if (ob) ob.except = w.world === this.world ? { x: w.x, z: w.z } : G ? { x: G.x, z: G.z } : null
     if (w.world === this.world) this.route = graph.route(x, z, w.x, w.z, map, ob)
     else if (G) {
       this.route = graph.route(x, z, G.x, G.z, map, ob)
