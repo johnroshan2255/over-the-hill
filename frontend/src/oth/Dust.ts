@@ -179,7 +179,6 @@ export class Dust {
    *  emission carried over (acc), lv the vehicle's velocity, go 0 … 1 with speed, slip 0 … 1, size the tyre (1 a car's;
    *  the bike's ~0.35: fewer, smaller puffs). */
   private tyre(dt: number, k: number, c: GFX.Vector3, lv: { x: number; y: number; z: number }, speed: number, go: number, slip: number, size: number): void {
-    const hw = this.map.meta.trails.hw
     const deck = this.map.bridgeAt(c.x, c.z)
     if (deck !== null && c.y > deck - 0.6) { this.acc[k] = 0; return } // (planks: no dust)
     // WATER (a ford, a pond's edge): SPLASHES — white spray thrown up and out, more with speed and depth; no dust
@@ -198,7 +197,7 @@ export class Dust {
       return
     }
     const m = this.map.maskAt(c.x, c.z, this.mk)
-    const track = Math.max(0, Math.min(1, (hw + 0.8 - this.map.trailDist(c.x, c.z)) / 1.2))
+    const track = Math.max(0, Math.min(1, (0.8 - this.map.wayEdge(c.x, c.z)) / 1.2))
     const bank = m[2] > 0.75 ? 1 - track : 0
     const rock = Math.min(1, m[0] * 1.6) * (1 - track) * (1 - bank)
     // (the desert: what isn't track, rock or bank is SAND — loose (its mask's G) throws big pale plumes; the valley's

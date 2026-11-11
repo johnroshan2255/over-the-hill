@@ -160,6 +160,8 @@ async function boot() {
       toast(`Discovered · ${l.name}   +${pay} ◆   ${n} / ${total}`, 4200)
       audio.chime('place')
     }
+    // (a rally stage begun or finished — Wonders.ts)
+    if (w.wonders) w.wonders.onStage = (m) => { toast(m, 5200); audio.chime('place') }
     atmos.desert = w.map.desert
     // (a pinned ?weather= settled at once, in the first world's own kind: rain or a sandstorm)
     if (wq && !settled) { settled = true; atmos.settleWeather() }
@@ -1193,6 +1195,7 @@ async function boot() {
     world.trees.seeThrough(ride.pos, driving && !inFpp && !mapView.isOpen ? (onFoot ? 1.1 : riding ? 1.5 : 2.8) : 0)
     const t0 = performance.now()
     world.update(camera, dt, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, ride.pos.x, ride.pos.z)
+    stageClock(world.wonders?.clock ?? null)
     // (what's out of view or behind the hills isn't drawn: 2026-11-02)
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     view.setFromProjectionMatrix(viewPV, GFX.WebGLCoordinateSystem, camera.reversedDepth)
@@ -1622,6 +1625,29 @@ boot().catch((e) => {
 })
 
 /** A short message at the top of the screen (the weather, a discovery), fading out after a few seconds. */
+/** THE STAGE CLOCK (Wonders.clock): while a rally stage is being run, its name and its time under the top bar — and the
+ *  best to beat. Written when its tenth of a second changes; gone when the stage is finished or left. */
+let stageEl: HTMLDivElement | null = null, stageKey = ''
+function stageClock(c: { name: string; t: number; best: number } | null): void {
+  const fmt = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`
+  const key = c ? `${c.name}|${Math.floor(c.t * 10)}` : ''
+  if (key === stageKey) return
+  stageKey = key
+  if (!c) { stageEl?.classList.remove('on'); return }
+  if (!stageEl) {
+    stageEl = document.createElement('div'); stageEl.className = 'oth-stage'
+    stageEl.innerHTML = '<span class="oth-stage-name"></span><b class="oth-stage-time"></b><span class="oth-stage-best"></span>'
+    document.body.appendChild(stageEl)
+  }
+  const [nm, tm, bs] = stageEl.children as unknown as HTMLElement[]
+  if (nm.textContent !== c.name) nm.textContent = c.name
+  tm.textContent = fmt(c.t)
+  const best = c.best ? `BEST ${fmt(c.best)}` : 'NO TIME SET'
+  if (bs.textContent !== best) bs.textContent = best
+  stageEl.classList.toggle('behind', c.best > 0 && c.t > c.best)
+  stageEl.classList.add('on')
+}
+
 let toastEl: HTMLDivElement | null = null, toastT = 0
 export function toast(msg: string, ms = 2600): void {
   if (!toastEl) { toastEl = document.createElement('div'); toastEl.className = 'oth-toast'; document.body.appendChild(toastEl) }

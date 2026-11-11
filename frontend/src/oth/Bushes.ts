@@ -357,4 +357,55 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
     }
     yield
   }
+  // THE OUTLAND'S BUSHES (2026-11-11 — the playable land beyond the box; the user: "bushes and boulders out there"): no
+  // mask out there, so the land says where — THICKETS (a slow noise picks them) on the valleys' floors and the lower
+  // flanks, thinner up the hills and gone by 600 m, none on a slope a bush couldn't hold, on a road, in a lake or in
+  // the snow; and a hedge of them along both verges of every road. A 13 m grid, each cell on its own seed (nothing in
+  // the box moves; most cells turned away by the noise before the ground is asked). ?obush=0: none (the A/B).
+  if (map.play > map.half + 100 && new URLSearchParams(location.search).get('obush') !== '0') {
+    const GO = 13, ho = map.play - 60, hb = map.half - 50, sn = map.meta.outland?.snow
+    const vn = (x: number, z: number, c: number, salt: number) => {
+      const fx = x / c, fz = z / c, ix = Math.floor(fx), iz = Math.floor(fz), u0 = fx - ix, w0 = fz - iz, u = u0 * u0 * (3 - 2 * u0), w = w0 * w0 * (3 - 2 * w0)
+      const h = (a: number, b: number) => cellSeed(a, b, salt) / 4294967296
+      return (h(ix, iz) * (1 - u) + h(ix + 1, iz) * u) * (1 - w) + (h(ix, iz + 1) * (1 - u) + h(ix + 1, iz + 1) * u) * w
+    }
+    const stand = (x: number, z: number): number | null => {
+      if (map.roadEdge(x, z) < 1.4) return null
+      const y = map.height(x, z)
+      if (y > 600 || map.lakeShore(x, z, y, 0.4)) return null
+      if (sn && y > sn.line + 150 && Math.hypot(x - sn.x, z - sn.z) < sn.r * 0.7) return null
+      if (Math.hypot(map.height(x + 4, z) - map.height(x - 4, z), map.height(x, z + 4) - map.height(x, z - 4)) / 8 > 0.55) return null
+      return y
+    }
+    const bush = (x: number, z: number, y: number) => {
+      const size = 0.9 + 1.5 * Math.pow(rnd(), 1.3), r = rnd(), kind = r < 0.06 ? 2 : r < 0.3 ? 1 : 0
+      out.push(x, y - 0.12 * size, z, size, rnd() * Math.PI * 2, kind, rnd())
+    }
+    for (let gz = -ho; gz < ho; gz += GO, yield) for (let gx = -ho; gx < ho; gx += GO) {
+      if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }       // (the box: placed above)
+      const thick = Math.min(1, Math.max(0, (0.6 * vn(gx, gz, 260, 61) + 0.4 * vn(gx, gz, 70, 62) - 0.47) / 0.2))
+      s = cellSeed(Math.round(gx), Math.round(gz), 63)
+      if (rnd() > 0.012 + 0.34 * thick) continue
+      const x = gx + rnd() * GO, z = gz + rnd() * GO, y = stand(x, z)
+      if (y === null || rnd() < (y - 380) / 220) continue
+      bush(x, z, y)
+    }
+    const hw = map.roadHW
+    for (const L of map.meta.outland?.trails?.lines ?? []) {
+      for (let k = 0; k + 1 < L.length; k += 2) {
+        const ux = L[k + 1][0] - L[k][0], uz = L[k + 1][1] - L[k][1], l = Math.hypot(ux, uz) || 1
+        for (const side of [-1, 1]) {
+          s = cellSeed(Math.round(L[k][0]), Math.round(L[k][1]), side > 0 ? 64 : 65)
+          if (rnd() > 0.3) continue
+          const off = hw + 1.7 + Math.pow(rnd(), 1.4) * 9, x = L[k][0] - (uz / l) * off * side, z = L[k][1] + (ux / l) * off * side
+          if (Math.abs(x) < hb && Math.abs(z) < hb) continue                        // (inside the box the valley's own bushes line it)
+          for (let q = 0, n = 1 + Math.floor(rnd() * 3); q < n; q++) {
+            const bx = x + (rnd() - 0.5) * 4.4, bz = z + (rnd() - 0.5) * 4.4, y = stand(bx, bz)
+            if (y !== null) bush(bx, bz, y)
+          }
+        }
+      }
+      yield
+    }
+  }
 }

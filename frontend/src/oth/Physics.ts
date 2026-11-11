@@ -14,6 +14,8 @@ import { TREE_STRIDE, type Trees } from './Trees'
  */
 const TILE = 128
 const TILE_REACH = 1 // tiles each side of the car's tile (3 × 3 = 768 m)
+/** The outland's tiles: their side (m: the box's tile's, and on its grid) and their cells a side. */
+const FAR_TILE = 256, FAR_CELLS = 64
 const ROCK_REACH = 160
 const TRUNK_REACH = 70
 const PROP_REACH = 70
@@ -22,6 +24,11 @@ export class OthPhysics {
   readonly pw: PhysicsWorld
   private readonly R: typeof RAPIER
   private readonly tiles = new Map<number, RAPIER.RigidBody>()
+  /** THE OUTLAND's ground (2026-11-11 — the playable land beyond the box, MapData.play): heightfield tiles of the
+   *  world's grid, FAR_TILE m each, streamed round the car as the box's are. Until now there were none: out there a
+   *  car had no wheel on anything — it fell through the drawn ground and was set back on it, over and over. */
+  private readonly farTiles = new Map<number, RAPIER.RigidBody>()
+  private lastFar = Number.NaN
   /** The rocks near the car: one collider each — a STACK one per slab (its slabs' own hulls). */
   private readonly rocks = new Map<number, RAPIER.Collider[]>()
   private readonly trunks = new Map<number, RAPIER.Collider>()
@@ -51,6 +58,8 @@ export class OthPhysics {
   setWorld(map: MapData, rocks: Rocks, trees: Trees | null): void {
     const W = this.pw.world
     for (const b of this.tiles.values()) W.removeRigidBody(b)
+    for (const b of this.farTiles.values()) W.removeRigidBody(b)
+    this.farTiles.clear(); this.lastFar = Number.NaN
     for (const c of [...[...this.rocks.values()].flat(), ...this.trunks.values(), ...this.propCols.values()]) W.removeCollider(c, false)
     for (const b of this.statics) W.removeRigidBody(b)
     this.tiles.clear(); this.rocks.clear(); this.trunks.clear(); this.propCols.clear()
@@ -184,6 +193,23 @@ export class OthPhysics {
       }
       for (const [k, b] of this.tiles) if (!want.has(k)) { this.pw.world.removeRigidBody(b); this.tiles.delete(k) }
     }
+    // the outland's tiles: the 3 × 3 round the car that aren't wholly the box's (the box's edge is on their grid)
+    if (this.map.play > this.map.half + 1) {
+      const fh = this.map.farHalf, hb = this.map.half, fi = Math.floor((x + fh) / FAR_TILE), fj = Math.floor((z + fh) / FAR_TILE), fkey = fi * 1024 + fj
+      if (fkey !== this.lastFar) {
+        this.lastFar = fkey
+        const want = new Set<number>(), nt = Math.floor((2 * fh) / FAR_TILE)
+        for (let j = fj - TILE_REACH; j <= fj + TILE_REACH; j++) for (let i = fi - TILE_REACH; i <= fi + TILE_REACH; i++) {
+          if (i < 0 || j < 0 || i >= nt || j >= nt) continue
+          const x0 = -fh + i * FAR_TILE, z0 = -fh + j * FAR_TILE
+          if (x0 >= -hb && x0 + FAR_TILE <= hb && z0 >= -hb && z0 + FAR_TILE <= hb) continue   // (the box's own ground)
+          const k = i * 1024 + j
+          want.add(k)
+          if (!this.farTiles.has(k)) this.farTiles.set(k, this.buildFarTile(x0, z0))
+        }
+        for (const [k, b] of this.farTiles) if (!want.has(k)) { this.pw.world.removeRigidBody(b); this.farTiles.delete(k) }
+      }
+    }
     const rc = Math.floor(x / 40) * 1024 + Math.floor(z / 40)
     if (rc !== this.lastRockCell) {
       this.lastRockCell = rc
@@ -271,6 +297,24 @@ export class OthPhysics {
     return hit ? Math.max(s, from - hit.timeOfImpact) : s
   }
   private downRay: RAPIER.Ray | null = null
+
+  /** One tile of the outland: FAR_TILE m square from (x0, z0), FAR_CELLS × FAR_CELLS cells — the ground as the game
+   *  draws and asks it (MapData.height: the world's 8 m grid read bilinear), sampled every 4 m: a heightfield's two
+   *  triangles a cell then lie within a few centimetres of that surface (at the grid's own 8 m a twisted cell stood
+   *  half a metre off it). */
+  private buildFarTile(x0: number, z0: number): RAPIER.RigidBody {
+    const V = FAR_CELLS + 1, st = FAR_TILE / FAR_CELLS, map = this.map
+    const body = this.pw.world.createRigidBody(this.R.RigidBodyDesc.fixed().setTranslation(x0 + FAR_TILE / 2, 0, z0 + FAR_TILE / 2))
+    const hf = new Float32Array(V * V)
+    for (let iz = 0; iz < V; iz++) for (let ix = 0; ix < V; ix++) hf[ix * V + iz] = map.height(x0 + ix * st, z0 + iz * st)
+    this.pw.world.createCollider(
+      this.R.ColliderDesc.heightfield(FAR_CELLS, FAR_CELLS, hf, { x: FAR_TILE, y: 1, z: FAR_TILE })
+        .setCollisionGroups(group(Groups.Terrain, 0xffff & ~Groups.VehicleMesh))
+        .setFriction(0.9),
+      body,
+    )
+    return body
+  }
 
   /** One tile: TILE × TILE cells of the 2 m grid, a heightfield centred on its body (Rapier: heights[ix · V + iz]). */
   private buildTile(i: number, j: number): RAPIER.RigidBody {

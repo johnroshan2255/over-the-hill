@@ -142,7 +142,7 @@ export function surfaceOf(map: MapData, wet: number, x: number, z: number, out: 
   out.wash = 0
   if (map.bridgeAt(x, z) !== null) { w[Surf.Asphalt] = 0.7; w[Surf.Dirt] = 0.3; blendRoughness(out); return }
   const m = map.maskAt(x, z, mk)
-  const track = Math.max(0, Math.min(1, (map.meta.trails.hw + 0.3 - map.trailDist(x, z)) / 0.6))
+  const track = Math.max(0, Math.min(1, (0.3 - map.wayEdge(x, z)) / 0.6))
   const water = m[2] > 0.9 ? 1 : 0
   const rock = Math.min(1, m[0] * 1.5) * (1 - track)
   const loose = map.desert ? Math.max(0, m[1] - 0.4) / 0.6 * (1 - track) * (1 - rock) : 0 // (the desert's loose sand: mask G)

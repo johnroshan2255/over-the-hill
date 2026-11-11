@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
-import { bakedChart, type Chart, type ClaimMark, claimTag, drawClaim, drawGate, drawPin, drawPlace, drawRoute, drawTracks, foundIn, ICON, label, ROUTE } from './Chart'
+import { bakedChart, type Chart, type ClaimMark, claimTag, drawClaim, drawGate, drawOutPlace, drawPin, drawPlace, drawRoads, drawRoute, drawStages, drawTracks, foundIn, ICON, label, ROUTE } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { Landmark, MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, type Waypoint, worldMeta } from './Nav'
@@ -231,6 +231,13 @@ export class MapView {
     return this.otherMeta ? -this.otherMeta.inner.origin : 2048
   }
 
+  /** How far the map can be moved and zoomed out (m from the middle): the chart's own half — or, where a world has
+   *  land beyond its box (the valley's outland, 2026-11-11), that land's. */
+  private reach(id: WorldId): number {
+    const m = id === this.o.world ? this.o.meta : this.otherMeta
+    return Math.max(this.half(id), m?.outland?.play ?? 0)
+  }
+
   private view(id: WorldId): { cx: number; cz: number; v: number } {
     let v = this.views.get(id)
     if (!v) this.views.set(id, (v = { cx: 0, cz: 0, v: this.half(id) }))
@@ -245,7 +252,7 @@ export class MapView {
   }
 
   private clampView(id: WorldId): void {
-    const V = this.view(id), H = this.half(id)
+    const V = this.view(id), H = this.reach(id)
     V.v = Math.max(150, Math.min(H, V.v))
     V.cx = Math.max(-H + V.v, Math.min(H - V.v, V.cx))
     V.cz = Math.max(-H + V.v, Math.min(H - V.v, V.cz))
@@ -255,7 +262,7 @@ export class MapView {
   private zoomBy(k: number, px?: number, py?: number): void {
     const V = this.view(this.tab)
     const [wx, wz] = px === undefined ? [V.cx, V.cz] : this.unproject(px, py!)
-    const v = Math.max(150, Math.min(this.half(this.tab), V.v * k)), f = v / V.v
+    const v = Math.max(150, Math.min(this.reach(this.tab), V.v * k)), f = v / V.v
     V.cx = wx - (wx - V.cx) * f
     V.cz = wz - (wz - V.cz) * f
     V.v = v
@@ -265,7 +272,7 @@ export class MapView {
 
   /** Z: the whole map ⇄ 800 m round the car (this world) / the centre (the other). */
   private zoomToggle(): void {
-    const V = this.view(this.tab), H = this.half(this.tab)
+    const V = this.view(this.tab), H = this.reach(this.tab)
     if (V.v > 900) {
       const p = this.o.carPos()
       V.v = 800
@@ -373,6 +380,13 @@ export class MapView {
     g.fillStyle = '#e6d6b8'
     g.fillRect(0, 0, S, S)
     const src: HTMLCanvasElement | HTMLImageElement | null = here ? this.o.chart.canvas : this.otherChart
+    // (the outland's chart under the box's: its relief and snow — this world's only; the other's outland is plain paper)
+    const far = here ? this.o.chart.far : null
+    if (far && this.o.chart.ready) {
+      const fh = this.o.chart.farHalf, fs = far.width
+      g.imageSmoothingEnabled = true
+      g.drawImage(far, ((V.cx - V.v + fh) / (2 * fh)) * fs, ((V.cz - V.v + fh) / (2 * fh)) * fs, (V.v / fh) * fs, (V.v / fh) * fs, 0, 0, S, S)
+    }
     if (src) {
       const cs = src.width
       g.imageSmoothingEnabled = true
@@ -381,7 +395,9 @@ export class MapView {
     const s = this.shown()
     const gd = this.o.guide, w = gd.waypoint
     if (s) {
-      const zoomK = 1 + 0.8 * (1 - V.v / half)
+      const zoomK = Math.max(0.55, 1 + 0.8 * (1 - V.v / half))
+      drawRoads(g, s.meta, P, 1.9 * k * zoomK)
+      drawStages(g, s.meta, P, 1.9 * k * zoomK, k, V.v < 3600)
       drawTracks(g, s.meta, P, 1.6 * k * zoomK, { x0: V.cx - V.v, z0: V.cz - V.v, x1: V.cx + V.v, z1: V.cz + V.v })
       const ms = s.meta.mud?.marsh
       if (ms) { const [mx, my] = P(ms.x, ms.z); label(g, 'The Bog', mx, my, '#4a3423', Math.round(12 * k), true) }
@@ -393,6 +409,17 @@ export class MapView {
         const [x, y] = P(l.x, l.z), found = s.found.has(l.id)
         drawPlace(g, l, found, x, y, k)
         if (found) label(g, l.name, x, y + 17 * k, '#3a2414', Math.round(10.5 * k), false)
+      }
+      // the outland's places and its great peaks (always named: they are what there is to drive out to)
+      for (const q of s.meta.outland?.places ?? []) {
+        const [x, y] = P(q.x, q.z)
+        drawOutPlace(g, q.kind, x, y, k)
+        label(g, q.name, x, y + 17 * k, q.kind === 'worldtree' ? '#234d19' : '#3a2414', Math.round((q.kind === 'worldtree' ? 12.5 : 10.5) * k), false)
+      }
+      if (V.v < 5200) for (const pk of (s.meta.outland?.peaks ?? []).slice(1, 9)) {
+        if (!pk.name) continue
+        const [x, y] = P(pk.x, pk.z)
+        label(g, `▲ ${pk.name} ${Math.round(pk.h)} m`, x, y, '#4a4038', Math.round(10 * k), true)
       }
       // the pass to the other world
       const G = s.meta.gate

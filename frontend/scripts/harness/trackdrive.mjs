@@ -5,6 +5,8 @@
 // — what's there: the grade ahead, the rock / trunk / prop nearest — and goes on 14 m further.
 //   node scripts/harness/trackdrive.mjs [out.json]    env: WORLD=valley  TRACKS=0,3,7 (default all; not LINES: zsh owns it)  DIRS=fwd,rev
 //                                                      PORT=5200  CAR=<id>  (needs `npm run dev`; ?save=0)
+//   SET=outland : the outland's ROADS instead (meta.outland.trails.lines — scripts/oth/wilds.py), the same bot
+//   SET=bridges : across each of the outland's gorge bridges (its approach, its deck, the far side)
 import puppeteer from 'puppeteer-core'
 import fs from 'node:fs'
 const out = process.argv[2] || 'vg/trackdrive.json'
@@ -21,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 await sleep(1500)
 
 if (process.env.TRACE) await p.evaluate((t) => { window.__trace = t.split('-').map(Number) }, process.env.TRACE)
-const nLines = await p.evaluate(() => {
+const nLines = await p.evaluate((set) => {
   const o = window.__oth, car = o.car, sim = car.sim, step = sim.step.bind(sim)
   o.drive(true)
   const B = (window.__bot = { path: null, i: 0, on: false })
@@ -56,8 +58,24 @@ const nLines = await p.evaluate(() => {
     sim.controls.handbrake = false
     return step(dt)
   }
-  return o.world.map.meta.trails.lines.length
-})
+  window.__lines = set === 'outland' ? o.world.map.meta.outland.trails.lines : o.world.map.meta.trails.lines
+  // (SET=bridges: each gorge bridge of the outland as a line of its own — the road up to it, its deck, the road beyond)
+  if (set === 'bridges') {
+    const roads = o.world.map.meta.outland.trails.lines
+    // (the road that ends at a bridge's end: its last 60 m TOWARD that end — else 40 m straight along the bridge's line)
+    const lead = (ex, ez, ux, uz) => {
+      // every road with an end at (ex, ez), ordered TOWARD it; the longest — and where that is only the short link from
+      // the junction 20 m off (the road arrived over the bridge and goes on from there), the road that goes on, first
+      const to = (x, z, r) => roads.flatMap((L) => [[L, L[L.length - 1]], [[...L].reverse(), L[0]]].filter(([, e]) => Math.hypot(e[0] - x, e[1] - z) < r).map(([P]) => P)).sort((p, q) => q.length - p.length)
+      const here = to(ex, ez, 4)[0]
+      if (here && here.length >= 8) return here.slice(-8)
+      if (here) { const on = to(here[0][0], here[0][1], 14).filter((P) => P !== here && P.length >= 6)[0]; return [...(on ? on.slice(-8, -1) : []), ...here] }
+      const out = []; for (let d = 40; d >= 0; d -= 8) out.push([ex - ux * d, ez - uz * d]); return out
+    }
+    window.__lines = (o.world.map.meta.bridges || []).filter((b) => b.outland).map((b) => { const L = Math.hypot(b.x1 - b.x0, b.z1 - b.z0), ux = (b.x1 - b.x0) / L, uz = (b.z1 - b.z0) / L; const A = lead(b.x0, b.z0, ux, uz), B = lead(b.x1, b.z1, -ux, -uz).reverse(), deck = []; for (let d = 8; d < L - 4; d += 8) deck.push([b.x0 + ux * d, b.z0 + uz * d]); return [...A, ...deck, ...B] })
+  }
+  return window.__lines.length
+}, process.env.SET || '')
 
 const want = process.env.TRACKS ? process.env.TRACKS.split(',').map(Number) : [...Array(nLines).keys()]
 const report = { world: WORLD, lines: [] }
@@ -66,7 +84,7 @@ for (const li of want) for (const dir of DIRS) {
   // the line, densified to 2 m; the gate's end (the crossing) left out
   const setup = await p.evaluate((li, dir) => {
     const o = window.__oth, B = window.__bot, M = o.world.map.meta
-    const raw = M.trails.lines[li].slice()
+    const raw = window.__lines[li].slice()
     if (dir === 'rev') raw.reverse()
     const path = []
     for (let k = 0; k < raw.length - 1; k++) {
@@ -78,7 +96,7 @@ for (const li of want) for (const dir of DIRS) {
     const keep = g ? path.filter(([x, z]) => Math.hypot(x - g.x, z - g.z) > 180) : path
     B.path = keep
     B.len = keep.length * 2
-    return { pts: keep.length, rough: (M.trails.rough || []).includes(li) }
+    return { pts: keep.length, rough: window.__lines === M.trails.lines && (M.trails.rough || []).includes(li) }
   }, li, dir)
   if (setup.pts < 6) continue
   const events = []

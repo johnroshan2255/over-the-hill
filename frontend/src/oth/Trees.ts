@@ -1062,6 +1062,17 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       out.push(x, map.height(x, z) - 0.3, z, h, k * Math.PI * 2, species, hash01(x - 0.27, z + 0.61), hash01(x + 0.83, z + 0.07))
     }
   }
+  // (the outland's roads run a little way into the box, to its own tracks — scripts/oth/wilds.py: no tree stands on
+  //  one. Taken off AFTER the box's placement, so its one shared random sequence is as it was: no other tree moves)
+  if (map.roadHalf > 1) {
+    let w = 0
+    for (let k = 0; k < out.length; k += 8) {
+      if (map.roadEdge(out[k], out[k + 2]) < 2.2) continue
+      if (w !== k) for (let c = 0; c < 8; c++) out[w + c] = out[k + c]
+      w += 8
+    }
+    out.length = w
+  }
   // THE OUTLAND'S WOODS (2026-11-10 — the playable land beyond the box, MapData.play; scripts/oth/outland.py): no forest
   // mask out there, so the land itself says where: STANDS (a slow noise picks the wooded country, a faster one the
   // stands in it) on the valley floors and the lower flanks, thinning from 420 m and gone by 640 m (the tree line: the
@@ -1072,7 +1083,11 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
     const GO = 11, ho = map.play - 60, hb = map.half - 50
     // (clear of the outland's places — the ranger towers — and of the gorge bridges' ends)
     const keepOff: [number, number, number][] = [...(map.meta.landmarks ?? []).filter((l) => Math.abs(l.x) > map.half || Math.abs(l.z) > map.half).map((l) => [l.x, l.z, 18] as [number, number, number]),
-      ...(map.meta.bridges ?? []).flatMap((b) => (Math.abs(b.x0) > map.half || Math.abs(b.z0) > map.half ? [[b.x0, b.z0, 12], [b.x1, b.z1, 12]] as [number, number, number][] : []))]
+      ...(map.meta.bridges ?? []).flatMap((b) => (Math.abs(b.x0) > map.half || Math.abs(b.z0) > map.half ? [[b.x0, b.z0, 12], [b.x1, b.z1, 12]] as [number, number, number][] : [])),
+      // (… the boulder field and the bog are open ground)
+      ...(map.meta.outland?.zones ?? []).flatMap((Z) => (Z.kind === 'rocks' ? [[Z.x, Z.z, Z.r * 1.1]] : Z.kind === 'bog' ? [[Z.x, Z.z, Z.r * 0.85]] : []) as [number, number, number][]),
+      // (… and of the wilds' places: the World Tree stands alone on its hill, the crater's floor is a meadow, the arch's feet are bare)
+      ...(map.meta.outland?.places ?? []).flatMap((q) => (q.kind === 'worldtree' ? [[q.x, q.z, 1.4 * (q.h ?? 150)]] : q.kind === 'crater' ? [[q.x, q.z, (q.floor ?? 170) + 20]] : q.kind === 'arch' ? [[q.x, q.z, 42]] : q.kind === 'view' ? [[q.x, q.z, 22]] : []) as [number, number, number][])]
     for (let gz = -ho; gz < ho; gz += GO, yield) for (let gx = -ho; gx < ho; gx += GO) {
       if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }       // (the box: placed above)
       const region = vn(gx / 420 + 7.3, gz / 420 - 2.1)
@@ -1084,7 +1099,9 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       if (r1() > pw) continue
       const x = gx + (r1() * 1.6 - 0.3) * GO, z = gz + (r1() * 1.6 - 0.3) * GO
       if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) continue
+      if (map.roadEdge(x, z) < 4.0) continue                                       // (off the outland's roads, and their verges)
       const y = map.height(x, z)
+      if (map.lakeShore(x, z, y, 0.6)) continue   // (not in a lake, nor on its wet shore)
       if (y > 640 || r1() < (y - 420) / 220) continue
       const sl = Math.hypot(map.height(x + 5, z) - map.height(x - 5, z), map.height(x, z + 5) - map.height(x, z - 5)) / 10
       if (sl > 0.6) continue

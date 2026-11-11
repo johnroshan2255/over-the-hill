@@ -15,6 +15,8 @@ export interface PreparedMap {
   farH: Float32Array
   innerNormals: Uint8Array
   farNormals: Uint8Array
+  /** The outland's roads as a field (roadField). */
+  road: { n: number; half: number; hw: number; tex: Uint8Array }
   mask: Uint8Array
   trail: Uint8Array
   mud: Uint8Array
@@ -34,6 +36,40 @@ export function heightsOf(raw: Uint16Array, g: Grid): Float32Array {
   const h = new Float32Array(raw.length), k = g.range / 65535
   for (let i = 0; i < raw.length; i++) h[i] = raw[i] * k + g.min
   return h
+}
+
+/** THE OUTLAND'S ROADS as a field the ground paints from and the game asks (meta.outland.trails — scripts/oth/wilds.py,
+ *  2026-11-11): the SIGNED distance to the nearest road's EDGE (−ROAD_REACH … +ROAD_REACH m ↔ 0 … 255; negative on the
+ *  road), ROAD_STEP m texels over the playable land. Signed to the edge, not the distance to the centre line: read
+ *  bilinear, a straight edge between texels comes out exact — a 6.6 m road keeps its width from 4 m texels (the centre
+ *  line's V would not). 3072² bytes for the valley's 12 km (9.4 MB); 2 × 2 where a world has no roads. */
+export const ROAD_STEP = 4, ROAD_REACH = 8
+/** A world without roads: 2 × 2 texels of "far from any" (half 1: the shader and `roadEdge` read nothing; a 1 × 1
+ *  texture the WebGPU backend would not bind — every frame an error, the desert black). */
+export const NO_ROADS = (): PreparedMap['road'] => ({ n: 2, half: 1, hw: 3, tex: new Uint8Array(4).fill(255) })
+export function roadField(meta: MapMeta): PreparedMap['road'] {
+  const tr = meta.outland?.trails
+  if (!tr?.lines?.length) return NO_ROADS()
+  const half = meta.outland!.play, n = Math.round((2 * half) / ROAD_STEP), hw = tr.hw, R = hw + ROAD_REACH
+  const tex = new Uint8Array(n * n).fill(255)
+  // (… and under an overlook's DECK — Wonders.lookout: out from its road's end over the brink — the same bare earth: no
+  //  grass up through its planks)
+  const decks = (meta.outland!.places ?? []).filter((p) => p.deck).map((p) => [[p.x, p.z], [p.x + Math.cos(p.rot ?? 0) * 24, p.z + Math.sin(p.rot ?? 0) * 24]])
+  for (const L of [...tr.lines, ...decks]) for (let k = 0; k + 1 < L.length; k++) {
+    const ax = L[k][0], az = L[k][1], dx = L[k + 1][0] - ax, dz = L[k + 1][1] - az, l2 = dx * dx + dz * dz || 1e-9
+    const i0 = Math.max(0, Math.floor((Math.min(ax, ax + dx) - R + half) / ROAD_STEP)), i1 = Math.min(n - 1, Math.floor((Math.max(ax, ax + dx) + R + half) / ROAD_STEP))
+    const j0 = Math.max(0, Math.floor((Math.min(az, az + dz) - R + half) / ROAD_STEP)), j1 = Math.min(n - 1, Math.floor((Math.max(az, az + dz) + R + half) / ROAD_STEP))
+    for (let j = j0; j <= j1; j++) {
+      const z = -half + (j + 0.5) * ROAD_STEP
+      for (let i = i0; i <= i1; i++) {
+        const x = -half + (i + 0.5) * ROAD_STEP
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2)), ex = x - ax - t * dx, ez = z - az - t * dz
+        const v = Math.round(Math.max(0, Math.min(1, (Math.sqrt(ex * ex + ez * ez) - hw + ROAD_REACH) / (2 * ROAD_REACH))) * 255)
+        if (v < tex[j * n + i]) tex[j * n + i] = v
+      }
+    }
+  }
+  return { n, half, hw, tex }
 }
 
 /** Normals: central differences, x / z components in 0..255 (y rebuilt in the shader). */
@@ -382,16 +418,17 @@ export async function prepareMap(base: string, leaf: number, onProgress?: (f: nu
   const innerNormals = normalsOf(innerH, meta.inner), farNormals = normalsOf(farH, meta.far)
   onProgress?.(0.8)
   const fields = distanceFields(meta)
+  const road = roadField(meta)
   reconcileWater(meta, innerH)
   const { tex: water, body: waterBody } = waterOwner(meta, innerH)
   onProgress?.(0.9)
   const pyramid = pyramidOf(meta, innerH, farH, leaf)
   onProgress?.(1)
-  return { meta, innerRaw, farRaw, innerH, farH, innerNormals, farNormals, mask: new Uint8Array(m), trail: new Uint8Array(t), mud: new Uint8Array(u), fields, water, waterBody, pyramid }
+  return { meta, innerRaw, farRaw, innerH, farH, innerNormals, farNormals, road, mask: new Uint8Array(m), trail: new Uint8Array(t), mud: new Uint8Array(u), fields, water, waterBody, pyramid }
 }
 
 /** Every array buffer in a prepared map (posted from the worker without a copy). */
 export function transferables(p: PreparedMap): ArrayBuffer[] {
-  const a = [p.innerRaw, p.farRaw, p.innerH, p.farH, p.innerNormals, p.farNormals, p.mask, p.trail, p.mud, p.fields.track, p.fields.river, p.water, p.waterBody, ...p.pyramid.minH, ...p.pyramid.maxH]
+  const a = [p.innerRaw, p.farRaw, p.innerH, p.farH, p.innerNormals, p.farNormals, p.road.tex, p.mask, p.trail, p.mud, p.fields.track, p.fields.river, p.water, p.waterBody, ...p.pyramid.minH, ...p.pyramid.maxH]
   return [...new Set(a.map((x) => x.buffer as ArrayBuffer))]
 }

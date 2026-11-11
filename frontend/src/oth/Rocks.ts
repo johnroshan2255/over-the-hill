@@ -616,6 +616,43 @@ export class Rocks {
       const a = rnd() * Math.PI * 2, d = r.hw[i] * (0.6 + rnd() * 1.4)
       add(r.x[i] + Math.cos(a) * d, r.z[i] + Math.sin(a) * d, 0.6 + rnd() * 1.8, 0.35)
     }
+    // THE OUTLAND'S ROCK (2026-11-11 — the playable land beyond the box; the user: "bushes and boulders out there"): no
+    // mask out there — the slope says where. FALLS of 3–7 blocks on the steeper ground (the feet of the cliffs, the
+    // gullies' sides: a hillside to pick a way through), a lone boulder now and then on the open floors; none over
+    // 780 m (the high faces are the terrain's own rock), on a road or its verge, or in a lake. A 60 m grid, each cell
+    // on its own seed, AFTER every stone of the valley's (its one random sequence is as it was). ?orocks=0: none.
+    if (map.play > map.half + 100 && new URLSearchParams(location.search).get('orocks') !== '0') {
+      const ho = map.play - 80, hb = map.half - 40
+      for (let gz = -ho; gz < ho; gz += 60) for (let gx = -ho; gx < ho; gx += 60) {
+        if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }
+        s = cellSeed(Math.round(gx), Math.round(gz), 71)
+        const x = gx + rnd() * 60, z = gz + rnd() * 60, sl = slope(x, z)
+        if (sl > 0.95 || rnd() > Math.min(0.4, Math.max(0, (sl - 0.22) * 1.2)) + 0.03) continue
+        if (map.height(x, z) > 780) continue
+        const fall = sl > 0.24, n = fall ? 3 + Math.floor(rnd() * 5) : 1, big = fall ? 2 + rnd() * 5 : 1.2 + rnd() * 3
+        for (let i = 0; i < n; i++) {
+          const a = rnd() * Math.PI * 2, d = fall ? rnd() * big * 1.7 : 0, px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d, size = big * (0.35 + 0.65 * rnd()) * (i === 0 ? 1.25 : 1)
+          if (map.roadEdge(px, pz) < size * 0.6 + 1.6 || map.lakeAt(px, pz) !== null) { rnd(); rnd(); rnd(); rnd(); continue }
+          add(px, pz, size, 0.25)
+        }
+      }
+    }
+    // THE BOULDER FIELD (meta.outland.zones `rocks` — the user: "offroad places"): a round of ground thick with stones,
+    // boulders 1.3–3.4 m across with rubble between them, a 5 m grid's cells two in three filled at its middle — no line
+    // through it: a way to be picked (its bed bare stone: Terrain.ts `stonyAt`; no tree stands in it: Trees.ts)
+    if (map.play > map.half + 100 && new URLSearchParams(location.search).get('orocks') !== '0' && new URLSearchParams(location.search).get('zones') !== '0') {
+      for (const Z of map.meta.outland?.zones ?? []) {
+        if (Z.kind !== 'rocks') continue
+        for (let gz = Z.z - Z.r; gz < Z.z + Z.r; gz += 5) for (let gx = Z.x - Z.r; gx < Z.x + Z.r; gx += 5) {
+          s = cellSeed(Math.round(gx * 2), Math.round(gz * 2), 73)
+          const x = gx + rnd() * 5, z = gz + rnd() * 5, d = Math.hypot(x - Z.x, z - Z.z) / Z.r
+          if (d > 1 || rnd() > 0.68 * (1 - 0.55 * d * d)) continue
+          const size = rnd() < 0.42 ? 2.0 + rnd() * 1.4 : rnd() < 0.5 ? 1.3 + rnd() * 0.7 : 0.5 + rnd() * 0.5
+          if (map.roadEdge(x, z) < size * 0.6 + 1.2) { rnd(); rnd(); rnd(); rnd(); continue }
+          add(x, z, size, 0.25)
+        }
+      }
+    }
     // the desert's STACKED ROCK (meta.stacks — desert.py): each at its own scale and turn, its base on the lowest
     // ground under it (a little sunk: never floating)
     // (?skyline=0: without the stacks past the box — the cost A/B)
@@ -676,7 +713,10 @@ export class Rocks {
       }
     }
     this.verge = out.splice(v0)
-    return out
+    // (the outland's roads run a little way into the box, to its own tracks — scripts/oth/wilds.py: a stone of the
+    //  valley's that stands in one is taken off, after every draw: no other stone moves. A 4.8 m block stood in the
+    //  west connector — the bot stopped dead against it, scripts/harness/trackdrive.mjs SET=outland)
+    return map.roadHalf > 1 ? out.filter((r) => map.roadEdge(r.x, r.z) > r.s * 0.55 + 0.4) : out
   }
 
   /** Terrain occlusion (main.ts sets it): cells behind the hills are skipped. */

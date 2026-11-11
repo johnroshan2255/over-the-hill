@@ -1,4 +1,4 @@
-import type { Landmark, MapData, MapMeta } from './MapData'
+import type { Landmark, MapData, MapMeta, OutPlace } from './MapData'
 import { WORLDS, type WorldId } from './World'
 
 /**
@@ -14,11 +14,17 @@ import { WORLDS, type WorldId } from './World'
  */
 export class Chart {
   readonly canvas = document.createElement('canvas')
+  /** THE OUTLAND's chart (2026-11-11 — the playable land beyond the box, MapData.play): the same paper, coarser — its
+   *  relief, rock, the early snow — FAR_S² over ± `farHalf`; null for a world that is all box. The map lays the box's
+   *  chart over its middle. */
+  readonly far: HTMLCanvasElement | null = null
+  readonly farHalf: number = 0
   ready = false
   private readonly gen: Generator<void, void, void>
 
   constructor(map: MapData, readonly S: number) {
     this.canvas.width = this.canvas.height = S
+    if (map.play > map.half + 100) { this.far = document.createElement('canvas'); this.far.width = this.far.height = FAR_S; this.farHalf = map.play }
     this.gen = this.paint(map)
   }
 
@@ -67,8 +73,43 @@ export class Chart {
       if ((j & 7) === 7) yield
     }
     g.putImageData(img, 0, 0)
+    if (this.far) yield* this.paintFar(map, this.far)
+  }
+
+  /** The outland: meadow, rock where it's steep, the early snow (meta.outland.snow) and the far ranges', hillshade, 80 m contours. */
+  private *paintFar(map: MapData, canvas: HTMLCanvasElement): Generator<void, void, void> {
+    const S = FAR_S, g = canvas.getContext('2d')!, img = g.createImageData(S, S), half = map.play, cell = (2 * half) / S
+    const H = new Float32Array(S * S), sn0 = map.meta.outland?.snow
+    for (let j = 0; j < S; j++) {
+      for (let i = 0; i < S; i++) H[j * S + i] = map.height(-half + (i + 0.5) * cell, -half + (j + 0.5) * cell)
+      if ((j & 31) === 31) yield
+    }
+    for (let j = 0; j < S; j++) {
+      for (let i = 0; i < S; i++) {
+        const x = -half + (i + 0.5) * cell, z = -half + (j + 0.5) * cell, h = H[j * S + i]
+        const hx = H[j * S + Math.min(S - 1, i + 1)] - H[j * S + Math.max(0, i - 1)], hz = H[Math.min(S - 1, j + 1) * S + i] - H[Math.max(0, j - 1) * S + i]
+        const slope = Math.hypot(hx, hz) / (2 * cell)
+        let r = 0.66, gg = 0.66, b = 0.41
+        const low = Math.max(0, Math.min(1, (330 - h) / 160)); r += (0.5 - r) * low * 0.6; gg += (0.6 - gg) * low * 0.6; b += (0.34 - b) * low * 0.6   // (the valley floors greener)
+        const rk = Math.max(0, Math.min(1, (slope - 0.5) / 0.4)); r += (0.6 - r) * rk; gg += (0.59 - gg) * rk; b += (0.57 - b) * rk
+        let line = 900
+        if (sn0) { const d = Math.hypot(x - sn0.x, z - sn0.z), t = Math.max(0, Math.min(1, (d - 0.45 * sn0.r) / (0.55 * sn0.r))); line = sn0.line + (900 - sn0.line) * t * t * (3 - 2 * t) }
+        const sn = Math.max(0, Math.min(1, (h - line - 40) / 150)) * (1 - 0.6 * rk); r += (0.95 - r) * sn; gg += (0.96 - gg) * sn; b += (0.98 - b) * sn
+        if (map.lakeAt(x, z) !== null) { r = 0.47; gg = 0.67; b = 0.79 }
+        let k = Math.max(0.55, Math.min(1.25, 1 + (-hx - hz) * 0.06 * (6.4 / cell)))
+        if (Math.floor(h / 80) !== Math.floor(H[j * S + Math.min(S - 1, i + 1)] / 80) || Math.floor(h / 80) !== Math.floor(H[Math.min(S - 1, j + 1) * S + i] / 80)) k *= 0.92
+        const o = (j * S + i) * 4
+        img.data[o] = Math.min(255, (r * k * 0.86 + 0.95 * 0.14) * 255)
+        img.data[o + 1] = Math.min(255, (gg * k * 0.86 + 0.9 * 0.14) * 255)
+        img.data[o + 2] = Math.min(255, (b * k * 0.86 + 0.78 * 0.14) * 255)
+        img.data[o + 3] = 255
+      }
+      if ((j & 15) === 15) yield
+    }
+    g.putImageData(img, 0, 0)
   }
 }
+const FAR_S = 768
 
 /** The other world's baked chart (null if it isn't there: the map draws its tracks on plain paper). */
 const baked = new Map<WorldId, Promise<HTMLImageElement | null>>()
@@ -90,6 +131,47 @@ export const ROUTE = '#a24dff'
 
 /** A projection: world (x, z) → canvas px. */
 export type Project = (x: number, z: number) => [number, number]
+
+/** THE OUTLAND'S ROADS (meta.outland.trails): gravel roads — drawn as the tracks are, a little wider. */
+export function drawRoads(g: CanvasRenderingContext2D, meta: MapMeta, P: Project, w: number): void {
+  const lines = meta.outland?.trails?.lines
+  if (!lines) return
+  g.lineJoin = g.lineCap = 'round'; g.setLineDash([])
+  for (const pass of [0, 1]) {
+    g.strokeStyle = pass ? 'rgba(150, 100, 58, 0.95)' : 'rgba(250, 236, 205, 0.9)'; g.lineWidth = pass ? w : w * 2
+    g.beginPath()
+    for (const L of lines) L.forEach(([x, z], k) => { const [px, py] = P(x, z); if (k) g.lineTo(px, py); else g.moveTo(px, py) })
+    g.stroke()
+  }
+}
+/** THE STAGES (meta.outland.stages): each road's own line drawn again in the rally's red, a start flag where it
+ *  begins, its name and length at its middle (`names`: when the map is close enough to read them). */
+export function drawStages(g: CanvasRenderingContext2D, meta: MapMeta, P: Project, w: number, k: number, names: boolean): void {
+  const lines = meta.outland?.trails?.lines
+  for (const s of meta.outland?.stages ?? []) {
+    const L = lines?.[s.line]
+    if (!L) continue
+    g.lineJoin = g.lineCap = 'round'; g.setLineDash([w * 2.2, w * 1.6]); g.strokeStyle = 'rgba(196, 44, 30, 0.9)'; g.lineWidth = w * 0.7
+    g.beginPath()
+    L.forEach(([x, z], i) => { const [px, py] = P(x, z); if (i) g.lineTo(px, py); else g.moveTo(px, py) })
+    g.stroke(); g.setLineDash([])
+    const [sx, sy] = P(L[Math.min(3, L.length - 1)][0], L[Math.min(3, L.length - 1)][1])
+    g.fillStyle = '#c42c1e'; g.font = `600 ${Math.round(13 * k)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('⚑', sx, sy - 6 * k)
+    if (names) { const m = L[L.length >> 1], [mx, my] = P(m[0], m[1]); label(g, `${s.name} · ${s.km.toFixed(1)} km`, mx, my - 9 * k, '#a02216', Math.round(10 * k), true) }
+  }
+}
+
+/** A place of the outland (the World Tree, the crater, the mesa, the arch, a view, a lake) and a peak: its mark. */
+const OUT_ICON: Record<OutPlace['kind'], string> = { worldtree: '♣', crater: '◎', mesa: '▬', arch: '∩', peak: '▲', view: '◭', pass: '⇡', lake: '≈', canyon: '⋁', rocks: '∎', bog: '∴', ford: '≋' }
+export function drawOutPlace(g: CanvasRenderingContext2D, kind: OutPlace['kind'], x: number, y: number, k: number): void {
+  const big = kind === 'worldtree'
+  g.fillStyle = big ? 'rgba(232, 246, 214, 0.97)' : 'rgba(255, 246, 228, 0.95)'
+  g.beginPath(); g.arc(x, y, (big ? 11 : 9) * k, 0, Math.PI * 2); g.fill()
+  g.strokeStyle = big ? '#2f6a22' : '#8a3a1c'; g.lineWidth = 1.6 * k; g.stroke()
+  g.fillStyle = big ? '#2a5a1e' : '#5a2a14'
+  g.font = `600 ${Math.round((big ? 15 : 12) * k)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'
+  g.fillText(OUT_ICON[kind], x, y + 0.5 * k)
+}
 
 /** The tracks (rock-crawling routes dashed) and the bridges, `w` px wide, the ones whose box meets the view. */
 export function drawTracks(g: CanvasRenderingContext2D, meta: MapMeta, P: Project, w: number, view: { x0: number; z0: number; x1: number; z1: number }): void {

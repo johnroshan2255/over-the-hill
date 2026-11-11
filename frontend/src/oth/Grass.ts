@@ -3,7 +3,7 @@ import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import { PAINT_GLSL } from './paint'
 import type { Tier } from './quality'
-import { HEIGHT_GLSL, SHAPE_GLSL, shapeDefines, type Terrain } from './Terrain'
+import { HEIGHT_GLSL, ROAD_GLSL, SHAPE_GLSL, shapeDefines, type Terrain } from './Terrain'
 import { SHADOW_GLSL } from './TerrainShadow'
 import { PAVE_FRAME_GLSL } from './paveTex'
 
@@ -90,7 +90,7 @@ export class Grass {
     const uniforms: Record<string, GFX.IUniform> = {
       ...atmos.uniforms,
       uHIn: t.uHIn, uHFar: t.uHFar, uInGrid: t.uInGrid, uFarGrid: t.uFarGrid, uInScale: t.uInScale, uFarScale: t.uFarScale,
-      uBoxHalf: t.uBoxHalf, uNIn: t.uNIn,
+      uBoxHalf: t.uBoxHalf, uNIn: t.uNIn, uNFar: t.uNFar,
       uShBox: t.uShBox, uShWorld: t.uShWorld, uShBoxGrid: t.uShBoxGrid, uShOn: t.uShOn,
       uTreeSh: t.uTreeSh, uTreeShGrid: t.uTreeShGrid, uTreeShOn: t.uTreeShOn,
       uMask: { value: map.maskTex },
@@ -98,6 +98,8 @@ export class Grass {
       uRocks: { value: rockFootprint },
       uTrail: { value: map.trailTex },
       uTrailHW: { value: map.meta.trails.hw },
+            uRoad: t.uRoad, uRoadG: t.uRoadG, uSnowAt: t.uSnowAt,       // (the outland's roads and early snow: the field's bake keeps the grass off them)
+      ...Object.fromEntries(Object.entries(t).filter(([k]) => /^uLake|^uBog$|^uStony$|^uMeadow/.test(k))),   // (… its lakes, its bog, its flower meadows)
       uMaskGrid: { value: new GFX.Vector4(mg.n, mg.step, mg.origin, 0) },
       uD0: { value: D0 },
       uRadius: { value: R },
@@ -266,6 +268,7 @@ ${SHADOW_GLSL}
 ${SHAPE_GLSL}
 uniform sampler2D uMask;
 uniform sampler2D uNIn;
+uniform sampler2D uNFar;
 uniform sampler2D uRocks;
 uniform sampler2D uTrail;
 uniform float uTrailHW;
@@ -329,6 +332,16 @@ void main() {
 #else
   vec3 N = unpackN(textureLod(uNIn, ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x, 2.5).rg);
 #endif
+  // (THE OUTLAND: the box's normals end at its edge — its rim texel lit every blade beyond it. The world's own there)
+  {
+    float ebn = uBoxHalf - uInGrid.y;
+    if (abs(root.x) > ebn || abs(root.y) > ebn) {
+      N = unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).rg);
+#ifdef OTH_SHAPE
+      Nb = unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 2.5).rg);
+#endif
+    }
+  }
   // the root's paint and growth: the FIELD's two texels (GrassField — baked from the map as the camera moves)
   vec4 FA = textureLod(uFieldA, root * uField.z, 0.0), FB = textureLod(uFieldB, root * uField.z, 0.0);
   vec3 col0 = FA.rgb * FA.rgb;
@@ -523,9 +536,12 @@ ${SHADOW_GLSL}
 uniform sampler2D uMask;
 uniform sampler2D uOwn;
 uniform sampler2D uNIn;
+uniform sampler2D uNFar;
 uniform sampler2D uRocks;
 uniform sampler2D uTrail;
 uniform float uTrailHW;
+#define ROAD_TEX(uv) textureLod(uRoad, uv, 0.0)
+${ROAD_GLSL}
 uniform vec4 uMaskGrid;
 uniform vec4 uField;
 uniform vec4 uWin; // the window's first texel (x, z) now, and before
@@ -558,12 +574,14 @@ void main() {
   // THE OUTLAND (2026-11-10 — the playable land beyond the box, MapData.play): the box's normal, mask and track
   // textures end at its edge (their rim texel was read for everything beyond: grass grew up the gorges' cliffs). Out
   // there the ground's own slope, from its heights (this is the bake — a few texels a frame, not the blades' shader)
+  // (2026-11-11: … and the ground's own MASK — the terrain's outlandMask, from the same normal the terrain paints with
+  //  and the same noises: the blades take the field's gold or green, thin on the forest's floor, none on its rock)
+  Paint pn = paintNoise(root);
   {
     float eb = uBoxHalf - uInGrid.y;
     if (abs(root.x) > eb || abs(root.y) > eb) {
-      const float E = 4.0;
-      N = normalize(vec3(terrainHeight(root - vec2(E, 0.0)) - terrainHeight(root + vec2(E, 0.0)), 2.0 * E, terrainHeight(root - vec2(0.0, E)) - terrainHeight(root + vec2(0.0, E))));
-      m = vec4(0.0); trail = 99.0; trailT = vec4(0.0);
+      N = unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).rg);
+      m = outlandMask(1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); m.r = max(m.r, st); m.a *= 1.0 - st; } trail = 99.0; trailT = vec4(0.0, 0.0, bogMud(root, pn.mid.r), meadowAt(root, pn.mid.b));
     }
   }
 #ifdef CAVE_GRASS
@@ -575,7 +593,12 @@ void main() {
   }
 #endif
   // (the blade's colour is the FIELD's: painted without the track, so the blades at its edge don't take the earth)
-  Ground g = groundPaint(root, m, h, 1.0 - N.y, paintNoise(root), 0.0, 99.0, uTrailHW, 0.0); // (no painted shrub dots under the grass: the bushes are real there)
+  // (an outland road — scripts/oth/wilds.py — is a track here: its edge where the box's tracks' is)
+  { float rd = roadCentre(root) - (uRoadG.z - uTrailHW); if (rd < trail) trail = rd; }
+  Ground g = groundPaint(root, m, h, 1.0 - N.y, pn, 0.0, 99.0, uTrailHW, 0.0); // (no painted shrub dots under the grass: the bushes are real there)
+  // (the early snow, Terrain.ts earlySnow: where it lies solid, no blade; in the dusting the tips stand through it)
+  // (… and none in a lake or on its wet shore)
+  { float eb2 = uBoxHalf - uInGrid.y; if (abs(root.x) > eb2 || abs(root.y) > eb2) { float sline; g.snow = max(max(g.snow, smoothstep(0.5, 0.9, snowFall(root, h, pn.big.r, pn.mid.g, pn.fine.g, pn.mid.b, sline))), smoothstep(-0.45, -0.1, lakeDepth(root, h))); } }
   float tx = trail < uTrailHW + 3.5 ? trackEdge(root, trail) : trail; // (beyond its reach the edge changes nothing: exact)
   float onTrack = 1.0 - smoothstep(uTrailHW - 0.35, uTrailHW + 0.15, tx); // (trackMask, its ragged distance kept)
   // (none on rock, snow, the water's gravel and the earth band along it; thinner under the forest)

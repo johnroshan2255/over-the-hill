@@ -1,6 +1,7 @@
 import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
+import { ROAD_REACH } from './mapPrep'
 import { PAINT_GLSL } from './paint'
 import { ROCK_RELIEF_GLSL } from './rockRelief'
 import type { Tier } from './quality'
@@ -8,6 +9,9 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 import { gameParams } from '../settings'
 import { GroundCache } from './GroundCache'
 import { createPaveTexture, PAVE_FRAME_GLSL } from './paveTex'
+
+/** ?zones=0: the outland's boulder field, bog and flower meadows unpainted (the A/B). */
+const ZONES_ON = () => new URLSearchParams(location.search).get('zones') !== '0'
 
 /** The paving's texture (paveTex.ts): made once, shared by every world. */
 let paveTex: GFX.DataTexture | null = null
@@ -114,6 +118,18 @@ export class Terrain {
       uWater: { value: map.meta.water.lake.level },
       uTrail: { value: map.trailTex },
       uTrailHW: { value: map.meta.trails.hw },
+      // (the outland's roads: the field, then its half side, 1 / its side, the roads' half width, the field's reach —
+      //  and the early snow: x, z, its radius, the snow line there; radius 0: none)
+      uRoad: { value: map.roadTex },
+      uRoadG: { value: new GFX.Vector4(map.roadHalf, 1 / (2 * map.roadHalf), map.roadHW, ROAD_REACH) },
+      uSnowAt: { value: new GFX.Vector4(map.meta.outland?.snow?.x ?? 0, map.meta.outland?.snow?.z ?? 0, gameParams().get('snow') === '0' ? 0 : map.meta.outland?.snow?.r ?? 0, map.meta.outland?.snow?.line ?? 900) },   // (?snow=0: no early snow — the A/B)
+      // (the outland's lakes, up to six: x, z, reach, level — reach 0: none)
+      ...Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7].flatMap((k) => { const L = map.meta.outland?.lakes?.[k]; return [[`uLake${k}`, { value: L ? new GFX.Vector4(L.x, L.z, L.r, L.level) : new GFX.Vector4(0, 0, 0, 0) }], [`uLakeB${k}`, { value: L ? new GFX.Vector4(L.x1 ?? L.x, L.z1 ?? L.z, 0, 0) : new GFX.Vector4(0, 0, 0, 0) }]] })),
+      // (the outland's bog — x, z, reach — and its flower meadows, up to three)
+      // (?zones=0: no boulder field's bed, bog or flower meadows painted — the A/B)
+      uStony: { value: (() => { const Z = ZONES_ON() ? map.meta.outland?.zones?.find((q) => q.kind === 'rocks') : undefined; return Z ? new GFX.Vector4(Z.x, Z.z, Z.r * 1.12, 0) : new GFX.Vector4(0, 0, 0, 0) })() },
+      uBog: { value: (() => { const Z = ZONES_ON() ? map.meta.outland?.zones?.find((q) => q.kind === 'bog') : undefined; return Z ? new GFX.Vector4(Z.x, Z.z, Z.r, 0) : new GFX.Vector4(0, 0, 0, 0) })() },
+      ...Object.fromEntries([0, 1, 2].map((k) => { const M = ZONES_ON() ? map.meta.outland?.meadows?.[k] : undefined; return [`uMeadow${k}`, { value: M ? new GFX.Vector4(M.x, M.z, M.r, 0) : new GFX.Vector4(0, 0, 0, 0) }] })),
       uGrassR: { value: tier.grassRadius },
       uBushR: { value: tier.bushReach },
       uPave: { value: paveTexture() },
@@ -482,6 +498,90 @@ void main() {
  * code path, so the cached ground and the live ground are the same paint. The includer declares uInGrid, uFarGrid,
  * uBoxHalf (and, for the far ground, the noise: ATMOS_GLSL), then PAINT_GLSL, then this.
  */
+/**
+ * THE OUTLAND'S ROADS and its EARLY SNOW (2026-11-11 — scripts/oth/wilds.py), for the ground and for the grass's bake.
+ * roadCentre: metres to the nearest outland road's centre line (its field holds the signed distance to the road's
+ * EDGE, uRoadG: the field's half side, 1 / its side, the roads' half width, the field's reach) — 99 where there is none.
+ * earlySnow: 0 … 1 — within uSnowAt's radius the snow line comes down from the far ranges' 900 m to uSnowAt.w: above
+ * it a DUSTING first (in patches, by the paint's noises: the hollows hold it, the grass shows through between), solid
+ * 110–230 m higher; on a steep face only in streaks, none where it's too steep to hold any. Needs the paint's noises (big.r, mid.g, fine.g, mid.b).
+ */
+export const ROAD_GLSL = /* glsl */ `
+uniform vec4 uRoadG;
+uniform vec4 uSnowAt;
+// THE OUTLAND'S MASK (rock, dryness, wet, forest — what mask.bin holds inside the box), from the slope, the height and
+// the paint's two broad noises: the ground paints with it — and the grass's bake asks the SAME (2026-11-11, the user:
+// "it does not grow grass based on terrain colour": the bake had taken a mask of zeros out there — lush green blades
+// over golden ground, grass on the grey rock)
+vec4 outlandMask(float steep, float h, vec4 big, vec4 mid) {
+  float rock = smoothstep(0.1, 0.24, steep + (big.b - 0.5) * 0.12) + smoothstep(700.0, 1100.0, h) * smoothstep(0.04, 0.14, steep);
+  float forest = smoothstep(0.52, 0.62, big.r + mid.g * 0.25) * (1.0 - smoothstep(560.0, 820.0, h + (mid.r - 0.5) * 160.0));
+  return vec4(clamp(rock, 0.0, 1.0), 0.6 + (big.g - 0.5) * 0.6, 0.0, forest);
+}
+// THE OUTLAND'S LAKES (meta.outland.lakes — x, z, reach, level each; six uniforms: the gfx layer has no uniform arrays):
+// the water's depth over ground at height h (metres; negative: that far above it, −9 away from every lake)
+uniform vec4 uLake0; uniform vec4 uLake1; uniform vec4 uLake2; uniform vec4 uLake3; uniform vec4 uLake4; uniform vec4 uLake5; uniform vec4 uLake6; uniform vec4 uLake7;
+// (each lake's other end — uLakeB.xy: a long lake lies within its reach of the LINE between the two, the canyon's; a
+//  round one's is its own middle)
+uniform vec4 uLakeB0; uniform vec4 uLakeB1; uniform vec4 uLakeB2; uniform vec4 uLakeB3; uniform vec4 uLakeB4; uniform vec4 uLakeB5; uniform vec4 uLakeB6; uniform vec4 uLakeB7;
+float lakeOne(vec4 L, vec4 B, vec2 xz, float h) {
+  if (L.z <= 0.0) return -9.0;
+  vec2 pa = xz - L.xy, ba = B.xy - L.xy;
+  vec2 d = pa - ba * clamp(dot(pa, ba) / max(dot(ba, ba), 1e-4), 0.0, 1.0);
+  return dot(d, d) < L.z * L.z ? L.w - h : -9.0;
+}
+float lakeDepth(vec2 xz, float h) {
+  return max(max(max(lakeOne(uLake0, uLakeB0, xz, h), lakeOne(uLake1, uLakeB1, xz, h)), max(lakeOne(uLake2, uLakeB2, xz, h), lakeOne(uLake3, uLakeB3, xz, h))),
+             max(max(lakeOne(uLake4, uLakeB4, xz, h), lakeOne(uLake5, uLakeB5, xz, h)), max(lakeOne(uLake6, uLakeB6, xz, h), lakeOne(uLake7, uLakeB7, xz, h))));
+}
+// THE OUTLAND'S BOG and its FLOWER MEADOWS (meta.outland.zones / meadows — what mud.bin's two channels hold inside the
+// box): the mud thick at the bog's middle, broken by the paint's noise; the flowers in patches inside each meadow
+uniform vec4 uBog; uniform vec4 uStony; uniform vec4 uMeadow0; uniform vec4 uMeadow1; uniform vec4 uMeadow2;
+float bogMud(vec2 xz, float n) { if (uBog.z <= 0.0) return 0.0; float d = distance(xz, uBog.xy) / uBog.z; return d < 1.0 ? clamp((1.0 - d * d) * (0.45 + 1.1 * n), 0.0, 1.0) : 0.0; }
+// (the BOULDER FIELD's bed — the zone 'rocks': bare grey stone under its boulders, whole at its middle, broken into
+//  islands of grass toward its rim)
+float stonyAt(vec2 xz, float n) { if (uStony.z <= 0.0) return 0.0; float d = distance(xz, uStony.xy) / uStony.z; return d < 1.0 ? smoothstep(0.44, 0.6, n * 0.62 + 0.78 * (1.0 - d * d)) : 0.0; }
+float meadowOne(vec4 M, vec2 xz) { return M.z > 0.0 ? 1.0 - smoothstep(0.6, 1.0, distance(xz, M.xy) / M.z) : 0.0; }
+float meadowAt(vec2 xz, float n) { return max(max(meadowOne(uMeadow0, xz), meadowOne(uMeadow1, xz)), meadowOne(uMeadow2, xz)) * smoothstep(0.32, 0.62, n); }
+#ifndef OTH_NO_ROAD
+#ifndef ROAD_TEX
+#define ROAD_TEX(uv) texture(uRoad, uv)
+#endif
+uniform sampler2D uRoad;
+float roadCentre(vec2 xz) {
+  if (max(abs(xz.x), abs(xz.y)) >= uRoadG.x) return 99.0;
+  float sd = ROAD_TEX(xz * uRoadG.y + 0.5).r * 2.0 * uRoadG.w - uRoadG.w;
+  return sd > uRoadG.w - 0.2 ? 99.0 : sd + uRoadG.z;
+}
+#else
+// (a draw already at WebGPU's 16 textures a stage — the cave's skin, the patches round its openings: no road is read)
+float roadCentre(vec2 xz) { return 99.0; }
+#endif
+// (how much snow has FALLEN here, 0 … 1 — before the slope sheds any: the grass's bake asks this: no blade in the snow's
+//  country, on a face too steep to stay white either)
+float snowFall(vec2 xz, float h, float nBig, float nMid, float nFine, float nMid2, out float line) {
+  line = 900.0;
+  if (uSnowAt.z <= 0.0) return 0.0;
+  float k = 1.0 - smoothstep(0.45 * uSnowAt.z, uSnowAt.z, distance(xz, uSnowAt.xy));
+  if (k <= 0.0) return 0.0;
+  line = mix(900.0, uSnowAt.w, k) + (nBig - 0.5) * 150.0 + (nMid - 0.5) * 60.0;
+  if (h < line) return 0.0;
+  float full = smoothstep(line + 110.0, line + 230.0, h);
+  float dust = smoothstep(line, line + 110.0, h) * smoothstep(0.4, 0.58, nFine * 0.55 + nMid2 * 0.45 + 0.28 * smoothstep(line, line + 200.0, h));
+  return max(full, dust * 0.88);
+}
+float earlySnow(vec2 xz, float h, float steep, float nBig, float nMid, float nFine, float nMid2) {
+  float line;
+  float fall = snowFall(xz, h, nBig, nMid, nFine, nMid2, line);
+  if (fall <= 0.0) return 0.0;
+  // (it lies whole to ~45°; steeper, in the gullies and on the ledges only — streaks down a face — and none past ~65° but near the summits)
+  float hold = 1.0 - smoothstep(0.3, 0.62, steep + (nMid2 - 0.5) * 0.34 + (nFine - 0.5) * 0.1);
+  // (… but high on the massif the wind plasters it on anything: the summits stand white)
+  hold = max(hold, smoothstep(line + 200.0, line + 420.0, h) * (0.8 + 0.2 * nMid2));
+  return fall * hold;
+}
+`
+
 export const SURF_GLSL = /* glsl */ `
 #ifdef OTH_SKIN
 // (the skin's — Terrain.skinMaterial: set by the fragment shader before surfaceAt: the least rock, how far inside)
@@ -494,6 +594,10 @@ uniform sampler2D uMask;
 uniform sampler2D uTrail;
 uniform vec4 uMaskGrid;
 uniform float uTrailHW;
+#if defined(OTH_SKIN) || defined(OTH_HOLES)
+#define OTH_NO_ROAD
+#endif
+${ROAD_GLSL}
 // where the grass stands (the grass shader's rule: not on rock, not in water, thinner in the forest)
 float grassy0(vec4 m, float rk, float fo) { return (1.0 - smoothstep(0.02, 0.1, rk)) * (1.0 - smoothstep(0.9, 0.97, m.b)) * (1.0 - 0.55 * fo); }
 vec2 gridUv(vec4 g, vec2 xz) { return ((xz - g.z) / g.y + 0.5) / g.x; }
@@ -545,15 +649,51 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
     float rock = smoothstep(0.12, 0.26, steep + (p.big.b - 0.5) * 0.12);
     m = vec4(rock, 0.55 + (p.big.g - 0.5) * 0.7, 0.0, 0.0);
 #else
-    float rock = smoothstep(0.1, 0.24, steep + (p.big.b - 0.5) * 0.12) + smoothstep(700.0, 1100.0, h) * smoothstep(0.04, 0.14, steep);
-    float forest = smoothstep(0.52, 0.62, p.big.r + p.mid.g * 0.25) * (1.0 - smoothstep(560.0, 820.0, h + (p.mid.r - 0.5) * 160.0));
-    m = vec4(clamp(rock, 0.0, 1.0), 0.6 + (p.big.g - 0.5) * 0.6, 0.0, forest);
+    m = outlandMask(steep, h, p.big, p.mid);
+    { float st = stonyAt(xz, p.mid.g); m.r = max(m.r, st); m.a *= 1.0 - st; }
 #endif
   }
   vec4 trailT = box ? texture(uTrail, gridUv(uInGrid, xz)) : vec4(1.0, 0.0, 0.0, 0.0); // (R the track, B A the mud, flowers)
+  if (!box) { trailT.b = bogMud(xz, p.mid.r); trailT.a = meadowAt(xz, p.mid.b); } // (the outland's bog and flower meadows)
   float trail = trailT.r * 8.0;
-  Ground g = groundPaint(xz, m, h, steep, p, foot, trail, uTrailHW, farG ? 0.0 : farDots); // (painted shrub dots only beyond the real bushes)
+  float thw = uTrailHW;
+  // (an outland road, where it's nearer than a track of the box: the same earth, its own width)
+  float rd = roadCentre(xz), outRoad = 0.0;
+  if (rd - uRoadG.z < trail - thw) { trail = rd; thw = uRoadG.z; outRoad = 1.0; }
+  Ground g = groundPaint(xz, m, h, steep, p, foot, trail, thw, farG ? 0.0 : farDots); // (painted shrub dots only beyond the real bushes)
   vec3 col = g.col;
+  // (a road of the outland is not one earth from end to end: grey GRAVEL as it climbs — whole by ~560 m — and darker,
+  //  damp, under the forest's patches; the valley runs keep the tracks' tan)
+  if (outRoad > 0.5 && g.trail > 0.01) col = mix(col, col * mix(vec3(1.0), vec3(0.7, 0.73, 0.78), smoothstep(360.0, 560.0, h + (p.mid.r - 0.5) * 60.0)) * (1.0 - 0.2 * g.forest), g.trail);
+  // THE EARLY SNOW (uSnowAt — the outland's high massif): the first fall of the year
+  if (!box) {
+    float sn = earlySnow(xz, h, steep, p.big.r, p.mid.g, p.fine.g, p.mid.b) * (1.0 - 0.8 * g.trail);
+    col = mix(col, SNOW, sn);
+    g.snow = max(g.snow, sn);
+    // THE CLIFFS' BEDS (2026-11-11, the user: "amazing cliff views … huge cliffs"): out here a cliff was one flat grey — the
+    // box's faint beds fade by a few metres off. Three scales of bed by height (≈ 46 m, 15 m and — near — 5 m thick, none
+    // sharing a period, each bent a little by the broad noises so no line runs level for a kilometre): each bed its own
+    // tone between slate, warm buff and pale grey; a dark line under each ledge (the bed above overhangs); the gentler
+    // ledges between keep their grass or snow. Read by a rock face steeper than ~40°, from any distance.
+    float face = g.rock * smoothstep(0.22, 0.42, steep) * (1.0 - g.trail);
+    if (face > 0.01) {
+      float q = h + (p.big.r - 0.5) * 26.0 + (p.mid.g - 0.5) * 7.0;
+      float b1 = strataN(q / 46.0 + 3.1), b2 = strataN(q / 15.0 + 7.7), b3 = foot < 2.5 ? strataN(q / 5.0 + 1.3) : 0.5;
+      float tone = 0.5 * b1 + 0.32 * b2 + 0.18 * b3;
+      vec3 bed = mix(vec3(0.27, 0.29, 0.33), mix(vec3(0.47, 0.4, 0.31), vec3(0.5, 0.49, 0.46), smoothstep(0.45, 0.8, b2)), smoothstep(0.25, 0.7, tone));
+      float e1 = fract(q / 46.0 + 3.1), e2 = fract(q / 15.0 + 7.7);
+      float ledge = max(1.0 - smoothstep(0.0, 0.07, e1), 0.6 * (1.0 - smoothstep(0.0, 0.1, e2)) * (1.0 - smoothstep(6.0, 22.0, foot)));
+      bed *= 1.0 - 0.38 * ledge;
+      col = mix(col, bed * (0.92 + 0.16 * p.mid.r), face * 0.8 * (1.0 - g.snow));
+    }
+    // a LAKE's shore and bed: wet gravel from half a metre over the water down
+    float lw = lakeDepth(xz, h);
+    if (lw > -0.55) {
+      float shore = smoothstep(-0.55, 0.05, lw + (p.fine.r - 0.5) * 0.3);
+      col = mix(col, BED * (0.8 + 0.2 * p.fine.g + 0.14 * p.mid.r) * mix(1.0, 0.7, smoothstep(0.0, 2.5, lw)), shore * (1.0 - 0.7 * g.rock));
+      g.bed = max(g.bed, shore); g.snow *= 1.0 - shore; g.trail *= 1.0 - shore;
+    }
+  }
   // (2026-11-04 — the user: "I can see lots of triangles instead of a smooth surface": no low-poly facets — the smooth
   //  normal everywhere, no per-triangle tone; the light rolls over the land in soft gradients)
   // HIGH / ULTRA on PCs: the rock's (and the scree's) crumpled 3D relief — the light only (the terrain applies it)
@@ -988,12 +1128,12 @@ void main() {
 #endif
   c += headlight(lit, N, vWorld);
   // PUDDLES (the rain): pools in the tracks' ruts and dips, a still dark mirror of the sky, spreading as it gets wetter
-#ifdef TC_PUD
-  if (false) {
-#else
   // (and on bare FLAT rock — 2026-11-07, the user: "just some water on the ground": where the rain lies and shows; the
   //  grass hides its own)
   float pudOn = max(s.trail, s.rock * smoothstep(0.955, 0.985, Ns.y));
+#ifdef TC_PUD
+  if (false) {   // (?tcut=pud — pudOn declared above it: in the other arm the cut did not compile, 2026-11-11)
+#else
   if ((uWet > 0.05 && pudOn > 0.2) || s.bog > 0.0) {
 #endif
     float pud = smoothstep(0.71, 0.76, s.pudN + (uWet - 1.0) * 0.35) * pudOn * step(0.05, uWet);

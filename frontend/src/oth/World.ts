@@ -10,6 +10,7 @@ import { Glow } from './Glow'
 import { Grass } from './Grass'
 import { Horizon } from './Horizon'
 import { Landmarks, pavePatch } from './Landmarks'
+import { Wonders } from './Wonders'
 import { type Landmark, MapData } from './MapData'
 import { gameParams } from '../settings'
 import { placeThings } from './Places'
@@ -62,6 +63,8 @@ export class World {
   readonly timings: Record<string, number> = {}
   /** The cave's floor's grass (CaveWorld.grassFloor): its own field, drawn with the cave's inside. */
   caveGrass: Grass | null = null
+  /** The outland's wonders (Wonders.ts: the World Tree, the stone arch). */
+  wonders: Wonders | null = null
 
   private constructor(
     readonly id: WorldId,
@@ -183,6 +186,11 @@ export class World {
     terrain.setPaved(landmarks.paved) // (the places' flagstones laid square to each)
     const props = await step('props', () => new Props(placed.props, places, placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner, map.desert))
     landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
+    // the outland's wonders (the World Tree, the stone arch): drawn, and run into, as the landmarks are
+    const wonders = await step('wonders', () => new Wonders(map, atmos, shadow, tier, env.farGrid))
+    wonders.horizon = horizon
+    landmarks.colliders.push(...wonders.colliders)
+    wonders.addLakes(water.poolMaterial())
     const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
     // (the desert's sandstone slabs: fetched, Draco-decoded in the loader's workers)
     const tf = performance.now()
@@ -204,6 +212,8 @@ export class World {
     w.farGrid.copy(farGrid)
     Object.assign(w.timings, timings)
     w.caveGrass = caveGrass
+    w.wonders = wonders
+    w.group.add(wonders.group)
     if (caveGrass) w.group.add(caveGrass.group)
     w.group.add(props.group, landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group)
     if (glow) w.group.add(glow.group)
@@ -254,6 +264,8 @@ export class World {
     if (this.caveGrass) { const on = !!this.cave?.insideShown; this.caveGrass.group.visible = on; if (on) this.caveGrass.update(camera) }
     if (this.glow) this.glow.group.visible = !this.cave?.cameraInside // (no sun's glare through the hill)
     this.landmarks.cull(camera.position)
+    this.wonders?.cull(camera.position)
+    this.wonders?.update(carX, carZ, t)
     this.bridges.cull()
     this.falls.cull()
   }

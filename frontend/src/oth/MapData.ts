@@ -1,5 +1,6 @@
 import * as GFX from './gfx'
-import type { PreparedMap } from './mapPrep'
+import { NO_ROADS, type PreparedMap, ROAD_REACH, ROAD_STEP } from './mapPrep'
+import { gameParams } from '../settings'
 
 /** The map loader's worker (one for every load) and its request count. */
 let loader: Worker | null = null
@@ -93,7 +94,36 @@ export interface MapMeta {
   hidden?: { kind: 'falls' | 'meadow'; name: string; x: number; z: number; r: number; ro: number; open: number; gw: number; F: number; pool?: { cx: number; cz: number; rx: number; rz: number; rot: number; level: number } }[]
   /** The valley's spurs ([nose x, z, root x, z]). */
   spurs?: [number, number, number, number][]
+  /** THE OUTLAND (scripts/oth/outland.py, wilds.py): the playable land's half side; its peaks; where the EARLY SNOW lies
+   *  (the snow line lowered to `line` m within r of x, z — Terrain.ts); its PLACES (Wonders.ts draws them); its gravel
+   *  ROADS (centre lines every ~8 m, half width hw — mapPrep.ts roadField). */
+  outland?: {
+    play: number
+    peaks: { x: number; z: number; h: number; name?: string }[]
+    snow?: { x: number; z: number; r: number; line: number }
+    places?: OutPlace[]
+    trails?: { hw: number; lines: [number, number][][] }
+    /** Its LAKES (each a bowl dug by wilds.py: the water at `level` within r of x, z — Wonders.ts draws it, `lakeAt`). */
+    /** (x1, z1: a LONG lake — the canyon's — the water within r of the line from x, z to there, not of a point) */
+    lakes?: OutLake[]
+    /** Its rally STAGES: a road each (`line`: its index in trails.lines), its length (km) and climb (m). */
+    stages?: { name: string; line: number; km: number; climb: number; crests?: [number, number][] }[]
+    /** Its OFF-ROAD places: a round of boulders (`rocks` — Rocks.ts), a hollow of mud (`bog` — `mudAt`, the ground's paint), a ford. */
+    zones?: { kind: 'rocks' | 'bog' | 'ford'; name: string; x: number; z: number; r: number }[]
+    /** Where the wildflowers grow out there (the ground's paint and the blades: within r of x, z, in patches). */
+    meadows?: { x: number; z: number; r: number }[]
+  }
 }
+/** A lake of the outland (wilds.py): its water at `level` within r of (x, z) — or of the line to (x1, z1). */
+export interface OutLake { name: string; x: number; z: number; r: number; level: number; depth: number; x1?: number; z1?: number }
+/** Metres from (x, z) to a lake's point / line. */
+export function lakeOff(L: OutLake, x: number, z: number): number {
+  if (L.x1 === undefined || L.z1 === undefined) return Math.hypot(x - L.x, z - L.z)
+  const bx = L.x1 - L.x, bz = L.z1 - L.z, t = Math.max(0, Math.min(1, ((x - L.x) * bx + (z - L.z) * bz) / Math.max(1e-6, bx * bx + bz * bz)))
+  return Math.hypot(x - L.x - bx * t, z - L.z - bz * t)
+}
+/** A place of the outland: the World Tree, the crater, the mesa, the stone arch, a peak, a view, a pass, a lake. */
+export interface OutPlace { id: number; kind: 'worldtree' | 'crater' | 'mesa' | 'arch' | 'peak' | 'view' | 'pass' | 'lake' | 'canyon' | 'rocks' | 'bog' | 'ford'; deck?: boolean; name: string; x: number; z: number; y: number; r: number; rot?: number; h?: number; seed?: number; floor?: number; breach?: number; top?: number; peak?: string }
 
 class HeightGrid {
   readonly h: Float32Array
@@ -147,6 +177,13 @@ export class MapData {
    *  dirt, the grass keeps off it; G the PAVING (0 … 1: the places' stone floors — Landmarks stamps it, Terrain.ts lays
    *  it); B A the mud and the wildflowers (`mud`, resampled). */
   readonly trailTex: GFX.DataTexture
+  /** THE OUTLAND'S ROADS (mapPrep.ts roadField): R8, the signed distance to the nearest road's edge over ± roadHalf;
+   *  their half width. The ground paints them wherever they run — the stretches inside the box too. */
+  readonly roadTex: GFX.DataTexture
+  readonly roadHalf: number
+  readonly roadHW: number
+  private readonly road: Uint8Array
+  private readonly roadN: number
   /** MUD over the box (the mask's 4 m grid, RG: R mud 0 … 1 — the ground paints it, the grass keeps off, the tyres
    *  sink — G wildflowers: the grass blossoms). The GPU reads it in trailTex's B A. */
   readonly mud: Uint8Array
@@ -208,6 +245,16 @@ export class MapData {
     this.trailTex.magFilter = GFX.LinearFilter
     this.trailTex.generateMipmaps = true
     this.trailTex.needsUpdate = true
+    // (?roads=0: none painted, asked or kept clear — the A/B)
+    const road = gameParams().get('roads') === '0' ? NO_ROADS() : p.road
+    this.road = road.tex; this.roadN = road.n; this.roadHalf = road.half; this.roadHW = road.hw
+    this.roadTex = new GFX.DataTexture(road.tex, road.n, road.n, GFX.RedFormat, GFX.UnsignedByteType)
+    this.roadTex.minFilter = road.n > 2 ? GFX.LinearMipmapLinearFilter : GFX.LinearFilter
+    this.roadTex.magFilter = GFX.LinearFilter
+    this.roadTex.generateMipmaps = road.n > 2
+    this.roadTex.unpackAlignment = 1
+    this.roadTex.wrapS = this.roadTex.wrapT = GFX.ClampToEdgeWrapping
+    this.roadTex.needsUpdate = true
     this.waterTex = new GFX.DataTexture(p.water, mn, mn, GFX.RGBAFormat, GFX.UnsignedByteType)
     this.waterTex.minFilter = this.waterTex.magFilter = GFX.LinearFilter
     this.waterTex.generateMipmaps = false
@@ -280,6 +327,8 @@ export class MapData {
    *  the seeded placement (camps, props, trees, the GPS) keeps waterLevel — every candidate it rejects shifts the
    *  rest, and the camps' ids are saved. */
   waterAt(x: number, z: number): number | null {
+    const lk = this.lakeAt(x, z)
+    if (lk !== null) return lk
     const lv = this.stillLevel(x, z)
     if (lv !== null && this.height(x, z) < lv) return lv
     return this.waterLevel(x, z)
@@ -289,7 +338,11 @@ export class MapData {
   mudAt(x: number, z: number): number {
     const g = this.meta.mask, n = g.n
     const fx = (x - g.origin) / g.step, fz = (z - g.origin) / g.step
-    if (fx < 0 || fz < 0 || fx >= n - 1 || fz >= n - 1) return 0
+    if (fx < 0 || fz < 0 || fx >= n - 1 || fz >= n - 1) {
+      // (the outland's BOG — meta.outland.zones, scripts/oth/wilds.py: thick at its middle, thinning to its rim — what the tyres sink in)
+      for (const Z of this.meta.outland?.zones ?? []) if (Z.kind === 'bog') { const d = Math.hypot(x - Z.x, z - Z.z) / Z.r; if (d < 1) return Math.min(1, (1 - d * d) * 1.15) }
+      return 0
+    }
     const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, k = (j * n + i) * 2, M = this.mud, r = n * 2
     return ((M[k] * (1 - u) + M[k + 2] * u) * (1 - v) + (M[k + r] * (1 - u) + M[k + r + 2] * u) * v) / 255
   }
@@ -361,6 +414,31 @@ export class MapData {
     if (i < 0 || j < 0 || i >= g.n || j >= g.n) return 8
     return ((this.trailTex.image.data as Uint8Array)[(j * g.n + i) * 4] / 255) * 8
   }
+
+  /** An outland LAKE's level at (x, z) where its water lies over the ground (meta.outland.lakes), else null. */
+  lakeAt(x: number, z: number): number | null {
+    for (const L of this.meta.outland?.lakes ?? []) if (lakeOff(L, x, z) < L.r && this.height(x, z) < L.level) return L.level
+    return null
+  }
+  /** In an outland lake at (x, z) on ground at y, or within `over` m of height above its water (the wet shore)? */
+  lakeShore(x: number, z: number, y: number, over: number): boolean {
+    for (const L of this.meta.outland?.lakes ?? []) if (y < L.level + over && lakeOff(L, x, z) < L.r) return true
+    return false
+  }
+
+  /** Metres from x, z to the nearest OUTLAND ROAD's edge (negative on it; +ROAD_REACH and beyond: far from any) — the
+   *  field read bilinear, as the ground paints it. */
+  roadEdge(x: number, z: number): number {
+    const n = this.roadN
+    if (this.roadHalf <= 1) return ROAD_REACH
+    const fx = (x + this.roadHalf) / ROAD_STEP - 0.5, fz = (z + this.roadHalf) / ROAD_STEP - 0.5
+    if (fx < 0 || fz < 0 || fx > n - 1.001 || fz > n - 1.001) return ROAD_REACH
+    const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, a = j * n + i, R = this.road
+    return (((R[a] * (1 - u) + R[a + 1] * u) * (1 - v) + (R[a + n] * (1 - u) + R[a + n + 1] * u) * v) / 255) * 2 * ROAD_REACH - ROAD_REACH
+  }
+  /** Metres from x, z to the nearest track's or road's EDGE, either kind (negative on it): what the tyres, the dust
+   *  and the woods ask. (`trailDist` stays the box's tracks alone: the box's own placement reads it.) */
+  wayEdge(x: number, z: number): number { return Math.min(this.trailDist(x, z) - this.meta.trails.hw, this.roadEdge(x, z)) }
 
   /** The box's mask at x, z (0..1 each: rock, dryness, wet, forest), nearest 4 m cell; zeros outside the box. */
   maskAt(x: number, z: number, out: [number, number, number, number]): [number, number, number, number] {

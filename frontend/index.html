@@ -243,6 +243,12 @@
       /* messages: a square banner */
       .oth-toast { position: fixed; left: 50%; top: 64px; transform: translate(-50%, -8px); padding: 8px 18px 7px; border-left: 4px solid #f2a93b; background: rgba(8, 8, 10, .72); color: #f4efe6; font: 700 17px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; opacity: 0; transition: opacity .35s, transform .35s; pointer-events: none; z-index: 6; white-space: nowrap; }
       .oth-toast.on { opacity: 1; transform: translate(-50%, 0); }
+      /* a rally stage's clock: its name, the time running, the best to beat */
+      .oth-stage { position: fixed; left: 50%; top: 112px; transform: translateX(-50%); display: flex; align-items: baseline; gap: 14px; padding: 6px 16px 5px; border-left: 4px solid #f2a93b; background: rgba(8, 8, 10, .78); color: #f4efe6; font: 700 13px 'Barlow Condensed', system-ui; letter-spacing: .14em; text-transform: uppercase; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 6; white-space: nowrap; }
+      .oth-stage.on { opacity: 1; }
+      .oth-stage-time { font-size: 30px; letter-spacing: .04em; color: #f2a93b; font-variant-numeric: tabular-nums; min-width: 86px; text-align: center; }
+      .oth-stage.behind .oth-stage-time { color: #f4efe6; }
+      .oth-stage-best { color: rgba(244, 239, 230, .62); }
       /* a crossing's arrival: the region's name, big, over the mist */
       .oth-region { position: fixed; left: 0; right: 0; top: 26%; text-align: center; color: #f4efe6; font: 400 clamp(38px, 7vw, 86px)/1 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .05em; text-transform: uppercase; -webkit-text-stroke: 1.5px rgba(8, 8, 10, .6); text-shadow: 0 3px 0 rgba(8, 8, 10, .35), 0 0 28px rgba(8, 8, 10, .5); opacity: 0; transform: translateY(10px); transition: opacity 1.2s, transform 1.2s; pointer-events: none; z-index: 6; }
       .oth-region small { display: table; margin: 0 auto 12px; padding: 3px 12px 2px; background: rgba(8, 8, 10, .72); -webkit-text-stroke: 0; text-shadow: none; color: #f2a93b; font: 700 clamp(14px, 1.6vw, 20px) 'Barlow Condensed', system-ui; letter-spacing: .32em; }

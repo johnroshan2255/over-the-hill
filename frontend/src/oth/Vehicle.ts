@@ -242,7 +242,7 @@ export class Vehicle {
       return
     }
     const m = this.map.maskAt(x, z, this.mk)
-    const track = Math.max(0, Math.min(1, (this.map.meta.trails.hw + 0.3 - this.map.trailDist(x, z)) / 0.6))
+    const track = Math.max(0, Math.min(1, (0.3 - this.map.wayEdge(x, z)) / 0.6))       // (a track of the valley's or a road of the outland's)
     const water = m[2] > 0.9 ? 1 : 0
     const rock = Math.min(1, m[0] * 1.5) * (1 - track)
     const rest = Math.max(0, 1 - track - water - rock)
@@ -487,7 +487,7 @@ export class Vehicle {
     const lvl = this.map.waterAt(p.x, p.z)
     if (lvl !== null && lvl - ground > 0.2 && p.y < lvl + 0.6) { this.coat -= (dt / 3.5) * (0.3 + speed); return }
     const m = this.map.maskAt(p.x, p.z, this.mk), onGround = p.y - ground < 1.5
-    const track = Math.max(0, Math.min(1, (this.map.meta.trails.hw + 0.3 - this.map.trailDist(p.x, p.z)) / 0.6))
+    const track = Math.max(0, Math.min(1, (0.3 - this.map.wayEdge(p.x, p.z)) / 0.6))
     const desert = this.map.desert
     const sand = desert && onGround ? m[1] * (1 - Math.min(1, m[0] * 2)) * (1 - 0.6 * track) : 0
     const dirt = onGround ? track * (desert ? 0.5 : 0.35) * (1 - u.uWet.value) : 0

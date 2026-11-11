@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
-import { type Chart, drawGate, drawPin, drawPlace, drawRoute, drawTracks, type ClaimMark, drawClaim } from './Chart'
+import { type Chart, drawGate, drawOutPlace, drawPin, drawPlace, drawRoads, drawRoute, drawStages, drawTracks, type ClaimMark, drawClaim } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, turnArrow } from './Nav'
@@ -185,6 +185,14 @@ export class Radar {
     g.fillStyle = '#3b3a31'
     g.fillRect(0, 0, D, D)
     const chart = this.o.chart
+    // (the outland's own chart under the box's — 2026-11-11: the playable land beyond the box)
+    if (chart.ready && chart.far) {
+      const fh = chart.farHalf, x0 = Math.max(-fh, view.x0), z0 = Math.max(-fh, view.z0), x1 = Math.min(fh, view.x1), z1 = Math.min(fh, view.z1)
+      if (x1 > x0 && z1 > z0) {
+        const cs = chart.far.width / (2 * fh), [ax, ay] = P(x0, z0)
+        g.drawImage(chart.far, (x0 + fh) * cs, (z0 + fh) * cs, (x1 - x0) * cs, (z1 - z0) * cs, ax, ay, (x1 - x0) / mpp, (z1 - z0) / mpp)
+      }
+    }
     if (chart.ready) {
       const x0 = Math.max(-half, view.x0), z0 = Math.max(-half, view.z0), x1 = Math.min(half, view.x1), z1 = Math.min(half, view.z1)
       if (x1 > x0 && z1 > z0) {
@@ -192,6 +200,8 @@ export class Radar {
         g.drawImage(chart.canvas, (x0 + half) * cs, (z0 + half) * cs, (x1 - x0) * cs, (z1 - z0) * cs, ax, ay, (x1 - x0) / mpp, (z1 - z0) / mpp)
       }
     }
+    drawRoads(g, meta, P, 2.6)
+    drawStages(g, meta, P, 2.6, 0.62, false)
     drawTracks(g, meta, P, 2.2, view)
     // the route ahead
     const gd = this.o.guide, r = gd.route
@@ -200,6 +210,7 @@ export class Radar {
     const up = (x: number, y: number, f: () => void) => { g.save(); g.translate(x, y); g.rotate(head); f(); g.restore() }
     const inView = (x: number, z: number) => x > view.x0 && x < view.x1 && z > view.z0 && z < view.z1
     for (const l of this.o.lm.list) if (inView(l.x, l.z)) { const [x, y] = P(l.x, l.z); up(x, y, () => drawPlace(g, l, this.o.lm.found.has(l.id), 0, 0, 0.62)) }
+    for (const q of meta.outland?.places ?? []) if (inView(q.x, q.z)) { const [x, y] = P(q.x, q.z); up(x, y, () => drawOutPlace(g, q.kind, 0, 0, 0.62)) }
     const G = meta.gate
     if (G && inView(G.x, G.z)) { const [x, y] = P(G.x, G.z); drawGate(g, x, y, 0.62, G.heading, head) }
     // (co-op) the land claimed: its circle and its flag (upright)

@@ -5,6 +5,61 @@ will give const 60+ in ultra"*; *"we can hide things from far"*; *"do all the st
 preserve the visual appearance while reducing the actual rendering cost"*; *"check the cheapest way to create water"*.
 This is step 8 of `MIGRATION.md`, with the phone made a goal of its own.
 
+## 2026-11-11 — the wilds: outland roads, the early snow, the World Tree (`docs/NEXT.md` §7)
+
+`abq.mjs "|roads=0&snow=0&wonders=0" spawn,lake,oroad,wtree,osnow 4` (M4, 1080p uncapped, interleaved; base = with them):
+
+| view | ULTRA base | ULTRA without | LOW base | LOW without |
+|---|---|---|---|---|
+| spawn | 1.50 ms | 1.553 (+0.05: noise) | 0.968 | 0.932 (−0.04) |
+| lake | 1.885 | 1.851 (−0.03) | — | — |
+| oroad (on an outland road) | 1.242 | 1.184 (−0.06) | 0.698 | 0.577 (−0.12) |
+| wtree (190 m from the World Tree) | 0.856 | 0.779 (−0.08) | 0.629 | 0.562 (−0.07) |
+| osnow (the Frostfang view, in the snow) | 0.916 | 0.922 (0) | 0.638 | 0.616 (−0.02) |
+
+One more texture read in the ground's paint (the road field, mip-mapped R8 3072²: 12.6 MB), the snow's arithmetic, two
+meshes (~8.5 k triangles). Not measured on a phone.
+
+Later the same day (lakes, 14 rally stages' gates / posts / boards, the outland's bushes and boulders, a road to
+Whitecrown's pass) — `abq.mjs "|roads=0&snow=0&wonders=0&obush=0&orocks=0|obush=0|orocks=0" spawn,oroad,wtree,osnow 3`:
+
+| view | ULTRA with all | without any | without bushes | without boulders | LOW with all | LOW without any |
+|---|---|---|---|---|---|---|
+| spawn | 1.482 ms | 1.475 | 1.452 | 1.480 | 0.966 | 0.950 |
+| oroad | 1.171 | 1.114 | 1.137 | 1.146 | 0.588 | 0.572 |
+| wtree | 0.945 | 0.792 | 0.861 | 0.916 | 0.623 | 0.556 |
+| osnow | 1.144 | 1.065 | 1.182 | 1.124 | 0.725 | 0.704 |
+
+Evening (Skyfall Canyon, the World Tree at 320 m with its falling leaves and night glow, the boulder field, the bog,
+the ford, three flower meadows, crest boards, the stage clock — `docs/NEXT.md` §7) —
+`abq.mjs "|roads=0&snow=0&wonders=0&obush=0&orocks=0&zones=0|zones=0|leaves=0" spawn,wtree,canyon,orocks,obog,omeadow,oroad 4`,
+then the same with `TIER=low` and `mobile=1` in every variant (M4, 1080p uncapped, interleaved):
+
+| view | ULTRA with all | without any | LOW (phone profile) with all | without any |
+|---|---|---|---|---|
+| spawn | 1.509 ms (663 fps) | 1.470 | 1.024 | 1.007 |
+| wtree (190 m from the tree, under its leaves) | 1.058 (945) | 0.820 | 0.697 | 0.596 |
+| canyon (the overlook's deck, facing the fall) | 1.798–1.903 (525–556) | 1.779 | 1.097–1.120 | 1.063 |
+| orocks (in the boulder field) | 1.337 (748) | 1.072 | 0.740 | 0.553 |
+| obog (in the bog) | 1.399 (715) | 1.255 | 0.878 | 0.658 |
+| omeadow (a flower meadow) | 1.333 (750) | 1.289 | 0.811 | 0.759 |
+| oroad | 1.248 (801) | 1.212 | — | — |
+
+- The falling leaves: ULTRA 900 quads −0.035 ms without, LOW 260 quads 0 (noise). 520 on MEDIUM.
+- The boulder field and the bog cost what BARE ground costs anywhere (the valley's own rock and marsh): the ground's
+  whole fragment shader on every pixel, where a meadow's ground is behind its grass. The stones themselves: 0
+  (`orocks=0` at the field: +0.01).
+- The canyon is the outland's dearest view and none of it is the new content (−0.02 without): it is a frame of bare
+  rock. ULTRA: the rock relief 0.30 ms of it (`tcut=relief` 1.585 ms, 631 fps); water and the fall within noise. LOW
+  has no relief.
+- **`?tcut=pud` did not compile until today** (`pudOn` was declared in the arm it cut): the ground went undrawn and the
+  variant read 0.2–1.2 ms "cheaper" — for an hour that looked like a puddle cost in every view. `abq.mjs` prints
+  "Failed to transpile" for exactly this; a grep had hidden it. Fixed; the puddles' real cost at the canyon: −0.06.
+- Every new view is over 500 fps at ULTRA on the M4 (the canyon the lowest, 525–556) and under the spawn view's frame on
+  LOW except the canyon (+8 %). **Not measured on a phone** — by "The phone, by the numbers" (≈ 1.0 ms of M4 time at the
+  phone's resolution) the LOW frames fit, the canyon with the least room; `phone.mjs` on a real Snapdragon 6 is still
+  the only proof.
+
 ## 2026-11-10 — THE YARDSTICK WAS WRONG since 2026-11-07: every "GPU-drained" number read ~+2–3 ms too high
 
 The user: *"make sure … in pc 500+ ultra const"*. `fps.mjs ultra` read 3.48 ms (287 fps) on the M4 against 1.885 on

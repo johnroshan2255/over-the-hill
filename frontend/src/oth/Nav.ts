@@ -160,7 +160,8 @@ export class RoadGraph {
   }
 
   private constructor(meta: MapMeta) {
-    const lines = meta.trails.lines, rough = new Set(meta.trails.rough ?? [])
+    // (the box's tracks, then the outland's roads — scripts/oth/wilds.py: `rough` indexes the first)
+    const lines = [...meta.trails.lines, ...(meta.outland?.trails?.lines ?? [])], rough = new Set(meta.trails.rough ?? [])
     this.roughLine = Uint8Array.from(lines, (_, i) => (rough.has(i) ? 1 : 0))
     let n = 0
     for (const L of lines) n += L.length
@@ -208,6 +209,13 @@ export class RoadGraph {
         if (!o || d < o[1]) best.set(this.line[b], [b, d])
       }
       for (const [b] of best.values()) link(a, b)
+    }
+    // (a GORGE BRIDGE of the outland: a road ends at each of its ends, 60 m apart — joined across the deck)
+    for (const B of meta.bridges ?? []) {
+      if (!(B as { outland?: boolean }).outland) continue
+      const end = (x: number, z: number) => { let best = -1, bd = 14 * 14; for (const o of this.near(x, z, 14)) { const d = (this.x[o] - x) ** 2 + (this.z[o] - z) ** 2; if (d < bd) { bd = d; best = o } } return best }
+      const a = end(B.x0, B.z0), b2 = end(B.x1, B.z1)
+      if (a >= 0 && b2 >= 0) add(a, b2, Math.hypot(B.x1 - B.x0, B.z1 - B.z0) / V_TRACK, 0)
     }
     // (CSR)
     this.off = new Int32Array(n + 1)
@@ -347,7 +355,8 @@ function offRoad(ax: number, az: number, bx: number, bz: number, map?: MapData, 
   let t = 0, h0 = map.height(ax, az)
   for (let i = 1; i <= n; i++) {
     const x = ax + ((bx - ax) * i) / n, z = az + ((bz - az) * i) / n
-    if (!map.inBox(x, z)) return Infinity
+    if (Math.max(Math.abs(x), Math.abs(z)) > map.play - 60) return Infinity     // (the playable land's edge — the outland is ground too, 2026-11-11)
+    if (map.lakeAt(x, z) !== null) return Infinity
     const h = map.height(x, z), grade = Math.abs(h - h0) / seg
     if (grade > 0.7) return Infinity
     map.maskAt(x, z, mk)
