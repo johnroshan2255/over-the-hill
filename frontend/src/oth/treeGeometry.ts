@@ -143,6 +143,8 @@ export function spruceGeometry(lod: number, seed = 7): GFX.BufferGeometry {
   g.setAttribute('normal', new GFX.Float32BufferAttribute(nor, 3))
   g.setAttribute('color', new GFX.Float32BufferAttribute(col, 3))
   g.setAttribute('leaf', new GFX.Float32BufferAttribute(leaf, 3))
+  // (cardC: a leaf card's CENTRE on each of its vertices — the vertex itself everywhere else; Trees.ts oakShape)
+  g.setAttribute('cardC', new GFX.Float32BufferAttribute(pos, 3))
   g.setIndex(idx)
   return g
 }
@@ -165,9 +167,9 @@ const OCT_R = 0.96 / Math.cos(Math.PI / 8)
 
 export function broadleafGeometry(lod: number, seed = 11): GFX.BufferGeometry {
   const rnd = rng(seed + lod * 53)
-  const pos: number[] = [], nor: number[] = [], col: number[] = [], leaf: number[] = [], idx: number[] = []
-  const vert = (p: GFX.Vector3, n: GFX.Vector3, ao: number, fol: number, lu = 0, lv = 0, lz = 0) => {
-    pos.push(p.x, p.y, p.z); nor.push(n.x, n.y, n.z); col.push(ao, fol, Math.max(0, Math.min(1, p.y))); leaf.push(lu, lv, lz)
+  const pos: number[] = [], nor: number[] = [], col: number[] = [], leaf: number[] = [], idx: number[] = [], cardC: number[] = []
+  const vert = (p: GFX.Vector3, n: GFX.Vector3, ao: number, fol: number, lu = 0, lv = 0, lz = 0, cc: GFX.Vector3 = p) => {
+    pos.push(p.x, p.y, p.z); nor.push(n.x, n.y, n.z); col.push(ao, fol, Math.max(0, Math.min(1, p.y))); leaf.push(lu, lv, lz); cardC.push(cc.x, cc.y, cc.z)
     return pos.length / 3 - 1
   }
   /** A tapered limb a → b (radii ra, rb), `sides` sided. */
@@ -241,7 +243,7 @@ export function broadleafGeometry(lod: number, seed = 11): GFX.BufferGeometry {
     for (let k = 0; k < 8; k++) {
       const an = (k + 0.5) * (Math.PI / 4), ua = Math.cos(an) * OCT_R, vb = Math.sin(an) * OCT_R
       tmp.copy(c).addScaledVector(a1, ua * h).addScaledVector(a2, vb * h)
-      vert(tmp, sn, ao, 1, ua, vb, lz)
+      vert(tmp, sn, ao, 1, ua, vb, lz, c)
     }
     for (let k = 1; k < 7; k++) idx.push(base, base + k, base + k + 1)
   }
@@ -270,6 +272,8 @@ export function broadleafGeometry(lod: number, seed = 11): GFX.BufferGeometry {
   g.setAttribute('normal', new GFX.Float32BufferAttribute(nor, 3))
   g.setAttribute('color', new GFX.Float32BufferAttribute(col, 3))
   g.setAttribute('leaf', new GFX.Float32BufferAttribute(leaf, 3))
+  // (cardC: a leaf card's CENTRE on each of its vertices — the vertex itself everywhere else; Trees.ts oakShape)
+  g.setAttribute('cardC', new GFX.Float32BufferAttribute(cardC, 3))
   g.setIndex(idx)
   return g
 }
@@ -338,6 +342,8 @@ export function palmGeometry(lod: number, seed = 23): GFX.BufferGeometry {
   g.setAttribute('normal', new GFX.Float32BufferAttribute(nor, 3))
   g.setAttribute('color', new GFX.Float32BufferAttribute(col, 3))
   g.setAttribute('leaf', new GFX.Float32BufferAttribute(leaf, 3))
+  // (cardC: a leaf card's CENTRE on each of its vertices — the vertex itself everywhere else; Trees.ts oakShape)
+  g.setAttribute('cardC', new GFX.Float32BufferAttribute(pos, 3))
   g.setIndex(idx)
   return g
 }

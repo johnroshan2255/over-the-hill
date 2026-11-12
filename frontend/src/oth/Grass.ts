@@ -53,6 +53,29 @@ export class Grass {
     this.carHalf.value.set(halfX, halfZ)
   }
 
+  /** STONE FLOORS in the outland (Wardens.ts — 2026-11-12, docs/NEXT_outland.md "grass under the floors": out past
+   *  the box there's no footprint texture, so the blades came up through a temple's platform, a plinth, a vault's floor
+   *  wherever it stood low): each floor a turned rectangle (x, z, half sizes, rot) — kept in a grid of 48 m cells, ONE
+   *  rectangle a cell (the last given; the sites stand far apart), as an R32F texture of n × 6n texels (six values a
+   *  cell, stacked). The FIELD's bake looks at the 3 × 3 cells round a root: no blade inside a rectangle. Nothing per
+   *  blade, nothing per frame — the bake only. */
+  private readonly floors: GFX.IUniform = { value: new GFX.DataTexture(new Float32Array(6), 1, 6, GFX.RedFormat, GFX.FloatType) }
+  private readonly floorGrid: GFX.IUniform = { value: new GFX.Vector4(0, 48, 0, 0) }
+  setFloors(list: readonly [number, number, number, number, number][], half: number): void {
+    const cell = 48, n = Math.ceil((2 * half) / cell), d = new Float32Array(n * n * 6)
+    for (const [x, z, hw, hd, rot] of list) {
+      const i = Math.floor((x + half) / cell), j = Math.floor((z + half) / cell)
+      if (i < 0 || j < 0 || i >= n || j >= n) continue
+      const k = j * n + i, v = [x, z, hw, hd, Math.cos(rot), Math.sin(rot)]
+      for (let q = 0; q < 6; q++) d[q * n * n + k] = v[q]
+    }
+    const tex = new GFX.DataTexture(d, n, n * 6, GFX.RedFormat, GFX.FloatType)
+    tex.minFilter = tex.magFilter = GFX.NearestFilter; tex.generateMipmaps = false; tex.needsUpdate = true
+    this.floors.value = tex
+    ;(this.floorGrid.value as GFX.Vector4).set(n, cell, -half, 0)
+    this.field.refresh()
+  }
+
   /** THE CAVE'S HILL (CaveWorld.ts — 2026-11-07, the user: "why no grass over the cave? there must be grass"): its top's
    *  height over the ground on a world-aligned grid (x0, z0, step, n — n 0: none); the blades stand on it. */
   private readonly hill: GFX.IUniform = { value: new GFX.DataTexture(new Float32Array(1), 1, 1, GFX.RedFormat, GFX.FloatType) }
@@ -99,7 +122,7 @@ export class Grass {
       uTrail: { value: map.trailTex },
       uTrailHW: { value: map.meta.trails.hw },
             uRoad: t.uRoad, uRoadG: t.uRoadG, uSnowAt: t.uSnowAt,       // (the outland's roads and early snow: the field's bake keeps the grass off them)
-      ...Object.fromEntries(Object.entries(t).filter(([k]) => /^uLake|^uBog$|^uStony$|^uMeadow/.test(k))),   // (… its lakes, its bog, its flower meadows)
+      ...Object.fromEntries(Object.entries(t).filter(([k]) => /^uLake|^uBog$|^uStony$|^uMeadow|^uMire/.test(k))),   // (… its lakes, its bog, its flower meadows)
       uMaskGrid: { value: new GFX.Vector4(mg.n, mg.step, mg.origin, 0) },
       uD0: { value: D0 },
       uRadius: { value: R },
@@ -107,6 +130,7 @@ export class Grass {
       uWidthK: { value: Math.max(1, Math.sqrt((REF_DENSITY * REF_FAN) / (tier.grassDensity * tier.grassFan))) },
       uCarBox: this.carBox, uCarHalf: this.carHalf,
       uHill: this.hill, uHillGrid: this.hillGrid,
+      uFloors: this.floors, uFloorGrid: this.floorGrid,
       // (the places' paving — the field grows a tuft between its stones now and then: Terrain.ts PAVE_GLSL's own)
       uPave: t.uPave, uPave0: t.uPave0, uPave1: t.uPave1, uPave2: t.uPave2, uPave3: t.uPave3,
     }
@@ -556,8 +580,32 @@ uniform vec4 uWin; // the window's first texel (x, z) now, and before
 #ifdef OTH_PAVE
 ${PAVE_FRAME_GLSL}
 #endif
+uniform highp sampler2D uFloors;
+uniform vec4 uFloorGrid; // cells a side (0: none), metres a cell, the grid's first corner
 layout(location = 0) out highp vec4 oA;
 layout(location = 1) out highp vec4 oB;
+
+// (the outland's mud at a root: its bog, and the mires on its roads — Terrain.ts mireMud; the terrain paints the same)
+float mudOut(vec2 root, float nb, float n, float n2) { float b = bogMud(root, nb), mk = mireK(root); return mk > 0.0 ? max(b, mireMud(mk, roadCentre(root), n, n2)) : b; }
+// (a stone floor of the outland here? — Grass.setFloors: the 3 × 3 cells round the root, a turned rectangle each)
+float onFloor(vec2 root) {
+  int n = int(uFloorGrid.x);
+  if (n < 1) return 0.0;
+  ivec2 c = ivec2(floor((root - uFloorGrid.z) / uFloorGrid.y));
+  float k = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    ivec2 q = c + ivec2(i, j);
+    if (q.x < 0 || q.y < 0 || q.x >= n || q.y >= n) continue;
+    float hw = texelFetch(uFloors, ivec2(q.x, q.y + 2 * n), 0).r;
+    if (hw <= 0.0) continue;
+    vec2 d = root - vec2(texelFetch(uFloors, q, 0).r, texelFetch(uFloors, ivec2(q.x, q.y + n), 0).r);
+    float cs = texelFetch(uFloors, ivec2(q.x, q.y + 4 * n), 0).r, sn = texelFetch(uFloors, ivec2(q.x, q.y + 5 * n), 0).r;
+    // (world → the floor's own frame: Wardens' at() turned back — x' = x cos − z sin, z' = x sin + z cos)
+    vec2 l = vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+    if (abs(l.x) < hw && abs(l.y) < texelFetch(uFloors, ivec2(q.x, q.y + 3 * n), 0).r) k = 1.0;
+  }
+  return k;
+}
 
 vec3 unpackN(vec2 e) { vec2 n = e * 2.0 - 1.0; return vec3(n.x, sqrt(max(1.0 - dot(n, n), 0.0)), n.y); }
 
@@ -585,11 +633,13 @@ void main() {
   // (2026-11-11: … and the ground's own MASK — the terrain's outlandMask, from the same normal the terrain paints with
   //  and the same noises: the blades take the field's gold or green, thin on the forest's floor, none on its rock)
   Paint pn = paintNoise(root);
+  float floorK = 0.0;
   {
     float eb = uBoxHalf - uInGrid.y;
     if (abs(root.x) > eb || abs(root.y) > eb) {
       N = unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).rg);
-      m = outlandMask(1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); m.r = max(m.r, st); m.a *= 1.0 - st; } trail = 99.0; trailT = vec4(0.0, 0.0, bogMud(root, pn.mid.r), meadowAt(root, pn.mid.b));
+      m = outlandMask(1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); m.r = max(m.r, st); m.a *= 1.0 - st; } trail = 99.0; trailT = vec4(0.0, 0.0, mudOut(root, pn.mid.r, pn.fine.r, textureLod(uNoise, root * 0.034 + 0.21, 0.0).g), meadowAt(root, pn.mid.b));
+      floorK = onFloor(root);
     } else {
       // (the box's rim: its mask and normal handed over to the outland's, as the ground's — Terrain.ts boxRim / boxRimN)
       float rim = boxRim(root, (pn.big.g - 0.5) * 100.0 + (pn.mid.r - 0.5) * 40.0), kn = boxRimN(root);
@@ -597,7 +647,7 @@ void main() {
       if (rim > 0.0) {
         vec4 mo = outlandMask(1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); mo.r = max(mo.r, st); mo.a *= 1.0 - st; }
         m = mix(m, mo, rim);
-        trailT.ba = mix(trailT.ba, vec2(bogMud(root, pn.mid.r), meadowAt(root, pn.mid.b)), rim);
+        trailT.ba = mix(trailT.ba, vec2(mudOut(root, pn.mid.r, pn.fine.r, textureLod(uNoise, root * 0.034 + 0.21, 0.0).g), meadowAt(root, pn.mid.b)), rim);
       }
     }
   }
@@ -622,6 +672,7 @@ void main() {
   // (never on rock: none where the ground shows any rock or scree tint at all — the user: "never put grass on rock")
   float grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * (1.0 - 0.6 * g.forest) * (1.0 - g.snow) * (1.0 - smoothstep(0.02, 0.1, g.scree));
   grow *= (1.0 - smoothstep(0.3, 0.6, onTrack)); // (off the track)
+  grow *= 1.0 - floorK; // (… and off a stone floor of the outland)
   // (and a little short of the scree: the terrain's far paint reads its noise blurred, which moves a patch's edge a
   //  metre or two from where this sharp bake puts it — the blades stop before the grey starts, wherever it's drawn;
   //  they were already shortened to a third there: approach)

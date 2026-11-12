@@ -22,11 +22,9 @@ import { gameParams } from '../settings'
  *   THE LAKES        (meta.outland.lakes) the valley's own still water — Water.poolMaterial — over each bowl wilds.py
  *                    dug: a sheet at the lake's level, its depth at every corner the ground's (so the shore is where
  *                    the land comes up through it).
- *   THE STAGES       (meta.outland.stages — "Dirt Rally like places") each a road of the net: a START gate (an amber
- *                    banner between two posts) 30 m in, a FINISH gate (black and white checks) 30 m from its end,
- *                    a red-topped marker post every 100 m on alternate sides, red-and-white boards round the outside
- *                    of every sharp bend. Drive through a start gate and the clock runs to that stage's finish (`onStage`:
- *                    the game's toast; the best time kept in localStorage).
+ *   (THE RALLY STAGES — start / finish gates, marker posts, bend boards, the clock — were here 2026-11-11 and taken
+ *                    out 2026-11-12: the user wanted dirt roads, "not a racing thing". The roads stay; the mud
+ *                    on them is MapData.findMires.)
  *
  * (The crater, the mesa, the peaks and the views are the land's own shape: nothing to draw.) Built here, once, with the
  * landmarks' Builder — flat facets, a colour each, the landmarks' material (this world's light, shadow and haze): a
@@ -99,23 +97,14 @@ export class Wonders {
   /** What a car runs into / over (boxes; `ground`: the wheels climb it) — joined to the landmarks' (World.ts). */
   readonly colliders: LandmarkCollider[] = []
   horizon: Horizon | null = null
-  /** A stage begun, finished or left (the game shows it). */
-  onStage: ((msg: string) => void) | null = null
   private readonly parts: CullPart[] = []
-  /** The stages' own meshes: drawn only from within 900 m of them. */
-  private readonly dressed: CullPart[] = []
-  private readonly gates: { name: string; km: number; sx: number; sz: number; fx: number; fz: number }[] = []
-  private run: { k: number; t0: number } | null = null
-  private atStart = -1
-  private now = 0
   private readonly mat: GFX.ShaderMaterial | null = null
   /** The World Tree's falling leaves (one draw, moved in the vertex shader): shown from within `r` of it. */
   private leaves: { mesh: GFX.Mesh; c: V3; r: number } | null = null
 
   constructor(private readonly map: MapData, private readonly atmos: Atmosphere, shadow: TerrainShadow, private readonly tier: Tier, farGrid: GFX.Vector4) {
     const places = gameParams().get('wonders') === '0' ? [] : map.meta.outland?.places ?? []   // (?wonders=0: none — the A/B)
-    const stages = gameParams().get('wonders') === '0' || gameParams().get('stages') === '0' ? [] : map.meta.outland?.stages ?? []   // (?stages=0: no gates, posts or boards)
-    if (!places.some((p) => p.kind === 'worldtree' || p.kind === 'arch' || p.kind === 'view' || p.kind === 'pass') && !stages.length) return
+    if (!places.some((p) => p.kind === 'worldtree' || p.kind === 'arch' || p.kind === 'view' || p.kind === 'pass')) return
     const b = new Builder(20261111), ranges: [number, number][] = []
     for (const p of places) {
       const from = b.count
@@ -126,9 +115,6 @@ export class Wonders {
     }
     this.mat = woodMaterial(atmos, shadow, tier, farGrid)
     this.parts = splitMeshes(b, ranges, this.mat, this.group)
-    const sb = new Builder(20261112), sr: [number, number][] = []
-    for (const s of stages) { const from = sb.count; this.stage(sb, s); if (sb.count > from) sr.push([from, sb.count]) }
-    this.dressed = splitMeshes(sb, sr, this.mat, this.group)
   }
 
   /** The lakes' water (World.ts hands the valley's still-water material: Water.poolMaterial). */
@@ -162,42 +148,7 @@ export class Wonders {
 
   cull(cam?: GFX.Vector3): void {
     cullHidden(this.parts, this.horizon)
-    cullHidden(this.dressed, this.horizon)
-    if (cam) for (const p of this.dressed) if (p.obj.visible && p.box.distanceToPoint(cam) > 900) p.obj.visible = false
     if (this.leaves && cam) this.leaves.mesh.visible = cam.distanceTo(this.leaves.c) < this.leaves.r
-  }
-
-  /** The stage being run now: its name, the seconds on its clock, its best (0: none yet) — or null. */
-  get clock(): { name: string; t: number; best: number } | null {
-    if (!this.run) return null
-    const g = this.gates[this.run.k]
-    return { name: g.name, t: this.now - this.run.t0, best: Number(localStorage.getItem(`oth.stage.${g.name}`)) || 0 }
-  }
-
-  /** The stages' clock: through a START gate it runs; at that stage's FINISH it stops and is told (the best kept). */
-  update(carX: number, carZ: number, t: number): void {
-    this.now = t
-    if (!this.gates.length) return
-    const R2 = 8 * 8
-    if (this.run) {
-      const g = this.gates[this.run.k], dt = t - this.run.t0
-      if ((carX - g.fx) ** 2 + (carZ - g.fz) ** 2 < R2) {
-        const key = `oth.stage.${g.name}`, best = Number(localStorage.getItem(key)) || 0, fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`
-        if (!best || dt < best) localStorage.setItem(key, dt.toFixed(2))
-        this.onStage?.(`FINISH · ${g.name}   ${fmt(dt)}` + (best ? (dt < best ? `   new best (was ${fmt(best)})` : `   best ${fmt(best)}`) : '   first time set'))
-        this.run = null
-      } else if (dt > 1800) this.run = null
-    }
-    // (a start gate counts when the car comes INTO it: standing on the line starts nothing again)
-    let inside = -1
-    for (let k = 0; k < this.gates.length; k++) { const g = this.gates[k]; if ((carX - g.sx) ** 2 + (carZ - g.sz) ** 2 < R2) { inside = k; break } }
-    if (inside >= 0 && inside !== this.atStart) {
-      const g = this.gates[inside]
-      this.run = { k: inside, t0: t }
-      const best = Number(localStorage.getItem(`oth.stage.${g.name}`)) || 0
-      this.onStage?.(`START · ${g.name}   ${g.km.toFixed(1)} km` + (best ? `   best ${Math.floor(best / 60)}:${(best % 60).toFixed(1).padStart(4, '0')}` : ''))
-    }
-    this.atStart = inside
   }
 
   // ------------------------------------------------------------------------------------------------ THE LOOKOUTS
@@ -246,82 +197,6 @@ export class Wonders {
     const px = p.x + 5, pz = p.z - 3, py = map.height(px, pz)
     b.box(v3(px, py + 2.6, pz), v3(1, 0, 0), UP, v3(0, 0, 1), 0.05, 2.7, 0.05, [0.3, 0.31, 0.33])
     b.box(v3(px + 0.55, py + 4.85, pz), v3(1, 0, 0), UP, v3(0, 0, 1), 0.5, 0.3, 0.015, [0.9, 0.55, 0.08])
-    b.setSurf(SURF.wood)
-  }
-
-  // ------------------------------------------------------------------------------------------------ THE STAGES
-  private stage(b: Builder, s: { name: string; line: number; km: number; crests?: [number, number][] }): void {
-    const map = this.map, L = map.meta.outland?.trails?.lines[s.line], hw = map.meta.outland?.trails?.hw ?? 3.3
-    if (!L || L.length < 12) return
-    const cum = [0]
-    for (let k = 1; k < L.length; k++) cum.push(cum[k - 1] + Math.hypot(L[k][0] - L[k - 1][0], L[k][1] - L[k - 1][1]))
-    const len = cum[cum.length - 1]
-    /** the road at d metres along it: where, and which way it runs */
-    const at = (d: number) => {
-      let k = 1
-      while (k < L.length - 1 && cum[k] < d) k++
-      const f = Math.max(0, Math.min(1, (d - cum[k - 1]) / Math.max(1e-6, cum[k] - cum[k - 1])))
-      const dx = L[k][0] - L[k - 1][0], dz = L[k][1] - L[k - 1][1], l = Math.hypot(dx, dz) || 1
-      return { x: L[k - 1][0] + dx * f, z: L[k - 1][1] + dz * f, ux: dx / l, uz: dz / l }
-    }
-    const UP = v3(0, 1, 0), WHITE: RGB = [0.86, 0.86, 0.84], BLACK: RGB = [0.05, 0.05, 0.055], AMBER: RGB = [0.9, 0.55, 0.08], RED: RGB = [0.72, 0.07, 0.05], STEEL: RGB = [0.3, 0.31, 0.33]
-    b.setSurf(SURF.plain)
-    // a GATE: two posts 5.4 m to each side of the middle, a banner between their heads — amber for the start, black
-    // and white checks for the finish
-    const gateAt = (d: number, finish: boolean) => {
-      const p = at(d), ax = v3(-p.uz, 0, p.ux), fw = v3(p.ux, 0, p.uz), W = 5.4, Hh = 5.2
-      for (const sd of [-1, 1]) {
-        const x = p.x + ax.x * W * sd, z = p.z + ax.z * W * sd, y = map.height(x, z)
-        b.box(v3(x, y + Hh / 2 - 0.3, z), ax, UP, fw, 0.16, Hh / 2 + 0.3, 0.16, STEEL)
-        this.box(x, y + 1.2, z, 0.22, 1.6, 0.22, 0, false)
-      }
-      const y0 = Math.max(map.height(p.x + ax.x * W, p.z + ax.z * W), map.height(p.x - ax.x * W, p.z - ax.z * W)) + Hh - 1.0, N = 12, tw = (2 * W) / N
-      for (let i = 0; i < N; i++) for (let r = 0; r < 2; r++) {
-        const o = -W + (i + 0.5) * tw, c = v3(p.x + ax.x * o, y0 + (r + 0.5) * 0.5, p.z + ax.z * o)
-        const col: RGB = finish ? ((i + r) % 2 ? BLACK : WHITE) : i === 0 || i === N - 1 ? BLACK : AMBER
-        b.box(c, ax, UP, fw, tw / 2, 0.25, 0.05, col)
-      }
-      return p
-    }
-    const S0 = gateAt(Math.min(30, len * 0.1), false), F0 = gateAt(len - Math.min(30, len * 0.1), true)
-    this.gates.push({ name: s.name, km: s.km, sx: S0.x, sz: S0.z, fx: F0.x, fz: F0.z })
-    // MARKER POSTS: every 100 m, on alternate sides, white with a red head
-    for (let d = 100, k = 0; d < len - 60; d += 100, k++) {
-      const p = at(d), sd = k % 2 ? 1 : -1, x = p.x - p.uz * (hw + 1.3) * sd, z = p.z + p.ux * (hw + 1.3) * sd, y = map.height(x, z)
-      b.box(v3(x, y + 0.45, z), v3(1, 0, 0), UP, v3(0, 0, 1), 0.06, 0.55, 0.06, WHITE)
-      b.box(v3(x, y + 1.1, z), v3(1, 0, 0), UP, v3(0, 0, 1), 0.075, 0.11, 0.075, RED)
-    }
-    // BOARDS on the bends: where the road turns more than ~35° in 40 m, three red-and-white boards round the outside,
-    // facing the car that comes to it (either way: both faces are painted)
-    let last = -1e9
-    for (let d = 60; d < len - 60; d += 10) {
-      const a = at(d - 20), c = at(d + 20), turn = Math.atan2(a.ux * c.uz - a.uz * c.ux, a.ux * c.ux + a.uz * c.uz)
-      if (Math.abs(turn) < 0.6 || d - last < 70) continue
-      last = d
-      const out = turn > 0 ? -1 : 1                       // (the outside of the bend: away from the way it turns)
-      for (const o of [-9, 0, 9]) {
-        const p = at(d + o), x = p.x - p.uz * (hw + 2.2) * out, z = p.z + p.ux * (hw + 2.2) * out, y = map.height(x, z)
-        const fw = v3(p.ux, 0, p.uz), ax = v3(-p.uz, 0, p.ux)
-        for (let i = 0; i < 4; i++) b.box(v3(x + ax.x * (i - 1.5) * 0.3, y + 1.0, z + ax.z * (i - 1.5) * 0.3), ax, UP, fw, 0.15, 0.3, 0.03, i % 2 ? WHITE : RED)
-        for (const e of [-0.5, 0.5]) b.box(v3(x + ax.x * e, y + 0.35, z + ax.z * e), ax, UP, fw, 0.04, 0.38, 0.04, STEEL)
-      }
-    }
-    // a CREST ahead (the road's own humps — wilds.py: the car goes light over them): 70 m before it from each side, an
-    // amber diamond on a post with a black bar and dot — "!" — on the driver's side of the road
-    for (const [cx, cz] of s.crests ?? []) {
-      let kb = 0, db = 1e9
-      for (let k = 0; k < L.length; k++) { const d = Math.hypot(L[k][0] - cx, L[k][1] - cz); if (d < db) { db = d; kb = k } }
-      for (const sd of [-1, 1]) {
-        const d = cum[kb] - 70 * sd
-        if (d < 20 || d > len - 20) continue
-        const q = at(d), x = q.x - q.uz * (hw + 1.6) * sd, z = q.z + q.ux * (hw + 1.6) * sd, y = map.height(x, z)
-        const fw = v3(q.ux, 0, q.uz), ax = v3(-q.uz, 0, q.ux), D1 = v3(ax.x * 0.7071, 0.7071, ax.z * 0.7071), D2 = v3(-ax.x * 0.7071, 0.7071, -ax.z * 0.7071)
-        b.box(v3(x, y + 0.75, z), ax, UP, fw, 0.045, 0.85, 0.045, STEEL)
-        b.box(v3(x, y + 1.75, z), D1, D2, fw, 0.42, 0.42, 0.03, AMBER)
-        b.box(v3(x, y + 1.82, z), ax, UP, fw, 0.05, 0.19, 0.04, BLACK)
-        b.box(v3(x, y + 1.52, z), ax, UP, fw, 0.05, 0.05, 0.04, BLACK)
-      }
-    }
     b.setSurf(SURF.wood)
   }
 

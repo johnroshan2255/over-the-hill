@@ -2,7 +2,7 @@ import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
 import { Builder, SURF, woodMaterial } from './Bridges'
 import type { Horizon } from './Horizon'
-import type { Landmark, MapData } from './MapData'
+import { type Landmark, lakeOff, type MapData } from './MapData'
 import type { PropCollider } from './Props'
 import type { Tier } from './quality'
 import { cellSeed, type Rocks } from './Rocks'
@@ -43,7 +43,7 @@ const STONE: RGB = [0.55, 0.53, 0.48], STONE_D: RGB = [0.42, 0.41, 0.38], STATUE
 const AMBER: RGB = [0.95, 0.58, 0.16], LAMP: RGB = [0.9, 0.78, 0.55]
 
 /** The kit's pieces (an InstancedMesh each). */
-const KINDS = ['block', 'column', 'stump', 'arch', 'statue', 'kneel', 'head', 'lantern', 'obelisk', 'stone', 'tower', 'stair', 'roof', 'crystal', 'capital', 'dome'] as const
+const KINDS = ['block', 'column', 'stump', 'arch', 'statue', 'kneel', 'head', 'lantern', 'obelisk', 'stone', 'tower', 'stair', 'roof', 'crystal', 'capital', 'dome', 'crystalDark', 'door', 'keystone', 'paving', 'hand', 'wallwin', 'walldoor', 'wallbrk'] as const
 type Kind = (typeof KINDS)[number]
 
 // ------------------------------------------------------------------------------------------------------------ the kit
@@ -87,6 +87,29 @@ function ball(b: Builder, c: V3, rx: number, ry: number, rz: number, la: number,
 }
 const box = (b: Builder, cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, c: RGB) => b.box(V(cx, cy, cz), X, Y, Z, hx, hy, hz, c)
 const shade = (c: RGB, k: number): RGB => [c[0] * k, c[1] * k, c[2] * k]
+/** A LIMB: `n` sides from a (radius ra) to c (radius rc), its section flattened `flat` across the axis `wide` lies
+ *  along (1: round); capped; every face turned outward whatever the winding. */
+function limb(b: Builder, a: V3, c: V3, ra: number, rc: number, n: number, col: RGB, flat = 1, wide: V3 = X): void {
+  const ax = new GFX.Vector3().subVectors(c, a).normalize()
+  const u = wide.clone().addScaledVector(ax, -wide.dot(ax))
+  if (u.lengthSq() < 1e-6) u.set(0, 0, 1).addScaledVector(ax, -ax.z)
+  u.normalize()
+  const w = new GFX.Vector3().crossVectors(ax, u)
+  const ring = (o: V3, r: number, k: number) => { const t = (k / n) * Math.PI * 2 + 0.26; return o.clone().addScaledVector(u, Math.cos(t) * r).addScaledVector(w, Math.sin(t) * r * flat) }
+  const out = (p0: V3, p1: V3, p2: V3, p3: V3 | null, from: V3, cc: RGB) => {
+    const nn = new GFX.Vector3().subVectors(p1, p0).cross(new GFX.Vector3().subVectors(p2, p0))
+    const mid = p3 ? new GFX.Vector3().addVectors(p0, p2).multiplyScalar(0.5) : new GFX.Vector3().add(p0).add(p1).add(p2).multiplyScalar(1 / 3)
+    const good = nn.dot(mid.sub(from)) >= 0
+    if (p3) { if (good) b.quad(p0, p1, p2, p3, cc); else b.quad(p0, p3, p2, p1, cc) }
+    else if (good) b.tri(p0, p1, p2, cc); else b.tri(p0, p2, p1, cc)
+  }
+  const m = new GFX.Vector3().addVectors(a, c).multiplyScalar(0.5)
+  for (let k = 0; k < n; k++) {
+    out(ring(a, ra, k), ring(a, ra, k + 1), ring(c, rc, k + 1), ring(c, rc, k), m, shade(col, k % 2 ? 0.95 : 1.03))
+    out(a, ring(a, ra, k), ring(a, ra, k + 1), null, m, col)
+    out(c, ring(c, rc, k), ring(c, rc, k + 1), null, m, col)
+  }
+}
 
 /** Each piece, unit sized (on the ground at y 0, facing +z), and what it collides as (local box: centre y, half sizes —
  *  null: drive through / over it). */
@@ -145,33 +168,95 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
     },
     col: [0.4, 0.17, 0.4, 0.17],
   },
-  // A KNEELING WARDEN, holding a stone sun up over its head — unit tall
+  // A KNEELING WARDEN, holding a stone sun up over her head — unit tall (the sun's top at 1), facing +z.
+  // (2026-11-12, round 2 — "box legs, a ball on two sticks": a FIGURE now. Down on her left knee, the shin and the foot
+  //  lying back; the right knee up, its foot flat in front; the body leaning back under the weight, the head thrown
+  //  back to look at what she holds; the arms out and up, bent at the elbow, the palms under the sun; a hood and a
+  //  cape as the Sword-Bearer's; the sun a faceted ball in a ring of rays. ~560 triangles.)
   kneel: {
     build: (b) => {
       b.setSurf(SURF.stone)
-      const c = STATUE
-      box(b, 0, 0.09, -0.04, 0.17, 0.09, 0.2, c)                                         // the folded legs
-      box(b, 0.08, 0.2, 0.12, 0.06, 0.2, 0.06, shade(c, 0.94))                           // the raised knee
-      prism(b, 8, 0.13, 0.15, 0.16, 0.55, (i) => shade(c, i % 2 ? 0.93 : 1.02))           // the body
-      ball(b, V(0, 0.62, 0), 0.06, 0.07, 0.065, 4, 8, c)                                  // the head
-      box(b, 0, 0.52, 0, 0.17, 0.03, 0.08, shade(c, 1.04))                               // the shoulders
-      for (const s of [-1, 1]) { b.log(V(s * 0.16, 0.52, 0), V(s * 0.2, 0.7, 0.02), 0.034, c); b.log(V(s * 0.2, 0.7, 0.02), V(s * 0.12, 0.86, 0.02), 0.03, c) } // the arms, up to the sun
-      ball(b, V(0, 0.89, 0.02), 0.12, 0.11, 0.12, 5, 10, shade(c, 1.08))                  // the stone sun
-      prism(b, 12, 0.135, 0.135, 0.875, 0.905, () => shade(c, 0.85), undefined, false)  // its band
+      const c = STATUE, d = shade(STATUE, 0.84), lt = shade(STATUE, 1.06)
+      const hipL = V(-0.075, 0.25, -0.02), hipR = V(0.075, 0.25, -0.02), kneeL = V(-0.085, 0.045, 0.13), kneeR = V(0.095, 0.3, 0.2)
+      // the left leg: the thigh down to the knee on the ground, the shin lying back, the foot on its toes
+      limb(b, hipL, kneeL, 0.062, 0.05, 6, c)
+      limb(b, kneeL, V(-0.085, 0.04, -0.17), 0.045, 0.034, 6, c)
+      box(b, -0.085, 0.045, -0.2, 0.03, 0.045, 0.022, d)
+      // the right leg: the thigh level, forward; the shin down; the foot flat
+      limb(b, hipR, kneeR, 0.062, 0.052, 6, c)
+      limb(b, kneeR, V(0.095, 0.04, 0.235), 0.047, 0.034, 6, c)
+      box(b, 0.095, 0.02, 0.265, 0.032, 0.02, 0.055, d)
+      // the hips, the body (leaning back a little, wider at the shoulders), the belt
+      hexa(b, [V(-0.115, 0.2, -0.085), V(0.115, 0.2, -0.085), V(0.115, 0.2, 0.045), V(-0.115, 0.2, 0.045), V(-0.1, 0.3, -0.085), V(0.1, 0.3, -0.085), V(0.1, 0.3, 0.05), V(-0.1, 0.3, 0.05)], d)
+      hexa(b, [V(-0.1, 0.29, -0.08), V(0.1, 0.29, -0.08), V(0.1, 0.29, 0.05), V(-0.1, 0.29, 0.05), V(-0.15, 0.55, -0.105), V(0.15, 0.55, -0.105), V(0.15, 0.55, 0.035), V(-0.15, 0.55, 0.035)], c)
+      box(b, 0, 0.3, -0.015, 0.108, 0.014, 0.074, d)
+      // the cape: from the shoulders down her back to the ground, wider below
+      hexa(b, [V(-0.2, 0.01, -0.25), V(0.2, 0.01, -0.25), V(0.2, 0.01, -0.21), V(-0.2, 0.01, -0.21), V(-0.15, 0.55, -0.135), V(0.15, 0.55, -0.135), V(0.15, 0.55, -0.1), V(-0.15, 0.55, -0.1)], d)
+      // the shoulders, the pauldrons
+      box(b, 0, 0.555, -0.035, 0.185, 0.026, 0.075, lt)
+      for (const s2 of [-1, 1]) ball(b, V(s2 * 0.185, 0.565, -0.035), 0.052, 0.046, 0.058, 3, 8, lt)
+      // the neck and the head (thrown back: she looks up), its hood, the eyes' shade
+      limb(b, V(0, 0.57, -0.035), V(0, 0.615, -0.045), 0.03, 0.028, 6, c)
+      ball(b, V(0, 0.655, -0.05), 0.05, 0.062, 0.056, 4, 8, c)
+      hexa(b, [V(-0.058, 0.6, -0.12), V(0.058, 0.6, -0.12), V(0.058, 0.63, -0.055), V(-0.058, 0.63, -0.055), V(-0.05, 0.71, -0.115), V(0.05, 0.71, -0.115), V(0.045, 0.725, -0.04), V(-0.045, 0.725, -0.04)], d)
+      box(b, 0, 0.672, -0.002, 0.034, 0.008, 0.01, CARVE)
+      // the arms: out and up to the elbows, in and up to the palms under the sun
+      for (const s2 of [-1, 1]) {
+        const sh = V(s2 * 0.185, 0.56, -0.035), el = V(s2 * 0.25, 0.685, -0.01), ha = V(s2 * 0.105, 0.79, -0.02)
+        limb(b, sh, el, 0.036, 0.03, 6, c)
+        limb(b, el, ha, 0.03, 0.025, 6, c)
+        box(b, s2 * 0.09, 0.797, -0.02, 0.034, 0.011, 0.03, lt)
+      }
+      // THE STONE SUN: a faceted ball, a band round it, eight rays in the plane she faces
+      const sy = 0.895, sz = -0.02
+      ball(b, V(0, sy, sz), 0.088, 0.088, 0.088, 5, 10, shade(c, 1.1))
+      for (let k = 0; k < 8; k++) {
+        const a0 = (k / 8) * Math.PI * 2 + 0.39, ca = Math.cos(a0), sa = Math.sin(a0), w = 0.024
+        const base = [V(ca * 0.082 - sa * w, sy + sa * 0.082 + ca * w, sz - 0.02), V(ca * 0.082 + sa * w, sy + sa * 0.082 - ca * w, sz - 0.02), V(ca * 0.082 + sa * w, sy + sa * 0.082 - ca * w, sz + 0.02), V(ca * 0.082 - sa * w, sy + sa * 0.082 + ca * w, sz + 0.02)]
+        const tip = V(ca * 0.142, Math.min(1, sy + sa * 0.142), sz), mid = V(ca * 0.05, sy + sa * 0.05, sz)
+        for (let q = 0; q < 4; q++) {
+          const p0 = base[q], p1 = base[(q + 1) % 4]
+          const nn = new GFX.Vector3().subVectors(p1, p0).cross(new GFX.Vector3().subVectors(tip, p0))
+          const fc = new GFX.Vector3().add(p0).add(p1).add(tip).multiplyScalar(1 / 3).sub(mid)
+          if (nn.dot(fc) >= 0) b.tri(p0, p1, tip, lt); else b.tri(p0, tip, p1, lt)
+        }
+      }
     },
     col: [0.35, 0.2, 0.35, 0.25],
   },
-  // A GIANT'S HEAD (fallen — lying on its cheek or sunk to the chin): unit, its face toward +z
+  // A GIANT'S HEAD (fallen — lying on its cheek or sunk to the chin): unit, its face toward +z.
+  // (2026-11-12, round 2 — a face that reads at 200 m: a HELM over the skull to the brow, a ridge along its crown, a
+  //  nasal bar down the nose and cheek plates; deep eye sockets under a heavy brow; a long BEARD in strands; the neck's
+  //  broken stump. ~420 triangles.)
   head: {
     build: (b) => {
       b.setSurf(SURF.stone)
-      const c = STATUE
-      ball(b, V(0, 0.5, 0), 0.4, 0.5, 0.42, 6, 12, c)
-      box(b, 0, 0.66, 0.36, 0.3, 0.05, 0.07, shade(c, 1.04))                              // the brow
-      hexa(b, [V(-0.06, 0.4, 0.38), V(0.06, 0.4, 0.38), V(0.04, 0.4, 0.5), V(-0.04, 0.4, 0.5), V(-0.03, 0.62, 0.4), V(0.03, 0.62, 0.4), V(0.02, 0.62, 0.43), V(-0.02, 0.62, 0.43)], shade(c, 1.03)) // the nose
-      for (const s of [-1, 1]) box(b, s * 0.15, 0.56, 0.37, 0.07, 0.035, 0.03, CARVE)      // the eyes (shut)
-      box(b, 0, 0.29, 0.37, 0.1, 0.012, 0.03, CARVE)                                      // the mouth
-      prism(b, 12, 0.43, 0.4, 0.78, 0.88, () => shade(c, 0.9))                            // the circlet
+      const c = STATUE, d = shade(STATUE, 0.8), lt = shade(STATUE, 1.06), dk = shade(STATUE, 0.62)
+      ball(b, V(0, 0.52, 0), 0.36, 0.42, 0.4, 6, 12, c)                                   // the skull and the face
+      // the helm: a cap over the top half (a little proud of the skull), its rim a band, a ridge along the crown
+      const HL = 5, HO = 12
+      const Hp = (i: number, j: number) => { const t = (i / HL) * (Math.PI * 0.5), f = (j / HO) * Math.PI * 2; return V(Math.sin(t) * Math.cos(f) * 0.39, 0.6 + Math.cos(t) * 0.385, Math.sin(t) * Math.sin(f) * 0.43) }
+      for (let i = 0; i < HL; i++) for (let j = 0; j < HO; j++) {
+        const p0 = Hp(i, j), p1 = Hp(i + 1, j), p2 = Hp(i + 1, j + 1), p3 = Hp(i, j + 1), cc = shade(d, (i + j) % 2 ? 0.96 : 1.04)
+        if (i === 0) b.tri(p0, p2, p1, cc); else b.quad(p0, p3, p2, p1, cc)
+      }
+      prism(b, 12, 0.4, 0.4, 0.555, 0.615, () => dk, undefined, false)                    // the rim
+      for (const [z0, z1, y0, y1] of [[-0.4, -0.2, 0.78, 0.93], [-0.2, 0.05, 0.93, 1.0], [0.05, 0.3, 1.0, 0.9]]) hexa(b, [V(-0.03, y0 - 0.12, z0), V(0.03, y0 - 0.12, z0), V(0.03, y1 - 0.12, z1), V(-0.03, y1 - 0.12, z1), V(-0.012, y0, z0), V(0.012, y0, z0), V(0.012, y1, z1), V(-0.012, y1, z1)], dk)
+      // the brow (heavy, jutting), the nasal bar down to the nose's tip, the nose behind it
+      hexa(b, [V(-0.31, 0.585, 0.3), V(0.31, 0.585, 0.3), V(0.27, 0.57, 0.47), V(-0.27, 0.57, 0.47), V(-0.3, 0.66, 0.28), V(0.3, 0.66, 0.28), V(0.26, 0.66, 0.44), V(-0.26, 0.66, 0.44)], d)
+      hexa(b, [V(-0.05, 0.36, 0.42), V(0.05, 0.36, 0.42), V(0.035, 0.36, 0.52), V(-0.035, 0.36, 0.52), V(-0.045, 0.6, 0.4), V(0.045, 0.6, 0.4), V(0.03, 0.6, 0.47), V(-0.03, 0.6, 0.47)], lt)
+      // the eye sockets: deep, dark, under the brow (wide: they must read from far)
+      for (const s2 of [-1, 1]) hexa(b, [V(s2 * 0.07, 0.47, 0.36), V(s2 * 0.26, 0.485, 0.3), V(s2 * 0.25, 0.485, 0.345), V(s2 * 0.07, 0.47, 0.405), V(s2 * 0.07, 0.575, 0.36), V(s2 * 0.27, 0.575, 0.29), V(s2 * 0.26, 0.575, 0.335), V(s2 * 0.07, 0.575, 0.4)], CARVE)
+      // the cheek plates of the helm, down the sides of the face
+      for (const s2 of [-1, 1]) hexa(b, [V(s2 * 0.3, 0.3, 0.1), V(s2 * 0.36, 0.3, 0.1), V(s2 * 0.31, 0.3, 0.31), V(s2 * 0.25, 0.3, 0.31), V(s2 * 0.33, 0.58, 0.05), V(s2 * 0.4, 0.58, 0.05), V(s2 * 0.34, 0.58, 0.33), V(s2 * 0.28, 0.58, 0.33)], d)
+      // the mouth (a dark line) over the BEARD: five strands, falling from the cheeks and the lip past the chin
+      box(b, 0, 0.315, 0.405, 0.1, 0.012, 0.02, CARVE)
+      for (let k = -2; k <= 2; k++) {
+        const x0 = k * 0.085, wdt = 0.04, top = 0.3 - Math.abs(k) * 0.012, bot = -0.02 + Math.abs(k) * 0.07, zt = 0.4 - Math.abs(k) * 0.045, zb = 0.33 - Math.abs(k) * 0.05
+        hexa(b, [V(x0 - wdt * 0.6, bot, zb - 0.08), V(x0 + wdt * 0.6, bot, zb - 0.08), V(x0 + wdt * 0.6, bot, zb), V(x0 - wdt * 0.6, bot, zb), V(x0 - wdt, top, zt - 0.14), V(x0 + wdt, top, zt - 0.14), V(x0 + wdt, top, zt + 0.02), V(x0 - wdt, top, zt + 0.02)], shade(c, k % 2 ? 0.9 : 1.02))
+      }
+      // the neck: a broken stump
+      prism(b, 8, 0.2, 0.17, -0.02, 0.2, (i) => shade(d, i % 2 ? 0.92 : 1.02), [0.2, 0.12, 0.17, 0.08, 0.15, 0.2, 0.1, 0.16])
     },
     col: [0.5, 0.4, 0.5, 0.42],
   },
@@ -244,6 +329,103 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
     },
     col: null,
   },
+  // … and the same crystal ASLEEP (a beacon not reached yet — Wardens.light): dull smoked amber, no light of its own
+  crystalDark: {
+    build: (b) => {
+      b.setSurf(SURF.plain)
+      const m = [V(0.3, 0.42, 0), V(0, 0.42, 0.3), V(-0.3, 0.42, 0), V(0, 0.42, -0.3)], top = V(0, 1, 0), bot = V(0, 0, 0), dull: RGB = [0.2, 0.15, 0.1]
+      for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; b.tri(m[i], top, m[j], shade(dull, i % 2 ? 1.15 : 0.9)); b.tri(m[j], bot, m[i], shade(dull, 0.7)) }
+    },
+    col: null,
+  },
+  // A HOUSE'S WALL (±0.5 across, y 0 … 1, ±0.5 thick — scaled to a panel ~3.3 m × 3.5 m × 0.55 m): with a WINDOW …
+  wallwin: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      box(b, -0.36, 0.5, 0, 0.14, 0.5, 0.5, STONE); box(b, 0.36, 0.5, 0, 0.14, 0.5, 0.5, shade(STONE, 0.97))
+      box(b, 0, 0.19, 0, 0.22, 0.19, 0.5, shade(STONE, 0.95)); box(b, 0, 0.86, 0, 0.22, 0.14, 0.5, shade(STONE, 1.03))
+      box(b, 0, 0.395, 0, 0.27, 0.02, 0.62, STONE_D)                                       // the sill
+    },
+    col: null,
+  },
+  // … with a DOORWAY …
+  walldoor: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      box(b, -0.36, 0.5, 0, 0.14, 0.5, 0.5, STONE); box(b, 0.36, 0.5, 0, 0.14, 0.5, 0.5, shade(STONE, 0.97))
+      box(b, 0, 0.87, 0, 0.22, 0.13, 0.5, shade(STONE, 1.03))
+      box(b, 0, 0.72, 0, 0.26, 0.025, 0.6, STONE_D)                                        // the lintel
+    },
+    col: null,
+  },
+  // … and BROKEN OFF: four courses of different heights, the break ragged
+  wallbrk: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      const hs = [0.92, 0.58, 0.74, 0.3, 0.46]
+      hs.forEach((hh, i) => box(b, -0.4 + i * 0.2, hh / 2, 0, 0.1, hh / 2, 0.5, shade(STONE, i % 2 ? 0.94 : 1.03)))
+      box(b, 0.12, 0.07, 0.62, 0.16, 0.07, 0.14, STONE_D); box(b, -0.3, 0.05, -0.66, 0.12, 0.05, 0.12, STONE_D)   // fallen stones at its foot
+    },
+    col: null,
+  },
+  // A GIANT'S HAND, up out of a lake (the wrist at y 0, the fingertips at 1, the palm toward +z): the fingers a little
+  // curled, the thumb out — unit tall
+  hand: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      const c = STATUE, d = shade(STATUE, 0.86)
+      prism(b, 8, 0.15, 0.13, 0, 0.34, (i) => shade(c, i % 2 ? 0.93 : 1.02))
+      prism(b, 8, 0.165, 0.165, 0.2, 0.25, () => d, undefined, false)                       // a bracer's band
+      hexa(b, [V(-0.16, 0.32, -0.07), V(0.16, 0.32, -0.07), V(0.16, 0.32, 0.06), V(-0.16, 0.32, 0.06), V(-0.21, 0.64, -0.06), V(0.2, 0.64, -0.06), V(0.2, 0.64, 0.07), V(-0.21, 0.64, 0.07)], c)
+      const len = [0.25, 0.33, 0.36, 0.3]
+      for (let i = 0; i < 4; i++) {
+        const x = -0.165 + i * 0.108, Lf = len[i], k0 = V(x, 0.63, 0.005), k1 = V(x * 1.06, 0.63 + Lf * 0.55, 0.035), k2 = V(x * 1.1, 0.63 + Lf, 0.125)
+        limb(b, k0, k1, 0.047, 0.041, 5, c); limb(b, k1, k2, 0.041, 0.031, 5, c)
+      }
+      limb(b, V(0.17, 0.4, 0.02), V(0.3, 0.55, 0.075), 0.055, 0.045, 5, c); limb(b, V(0.3, 0.55, 0.075), V(0.335, 0.7, 0.12), 0.045, 0.034, 5, c)
+      for (const y of [0.42, 0.5]) box(b, -0.02, y, 0.072, 0.13, 0.006, 0.006, CARVE)       // the palm's lines
+    },
+    col: [0.3, 0.2, 0.32, 0.14],
+  },
+  // PAVING: a slab (±0.5, y 0 … 1) whose top is 8 × 8 flags, each its own tone — a court's floor, the top of its ring
+  // (one piece a floor: a plain block that wide read as a sheet of white)
+  paving: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      for (const [nx, nz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const n = V(nx, 0, nz), t = V(-nz, 0, nx); b.quad(V(0, 0, 0).addScaledVector(n, 0.5).addScaledVector(t, 0.5), V(0, 0, 0).addScaledVector(n, 0.5).addScaledVector(t, -0.5), V(0, 1, 0).addScaledVector(n, 0.5).addScaledVector(t, -0.5), V(0, 1, 0).addScaledVector(n, 0.5).addScaledVector(t, 0.5), shade(STONE, 0.92)) }
+      const N = 8
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+        const x0 = -0.5 + i / N, x1 = x0 + 1 / N, z0 = -0.5 + j / N, z1 = z0 + 1 / N, tone = 0.6 + 0.24 * b.rnd() + ((i + j) % 2) * 0.05
+        b.quad(V(x0, 1, z0), V(x0, 1, z1), V(x1, 1, z1), V(x1, 1, z0), shade(STONE_D, tone))
+      }
+    },
+    col: [0.5, 0.5, 0.5, 0.5], ground: true,
+  },
+  // A VAULT'S DOOR: one slab (±0.5 across, y 0 … 1, ±0.5 thick), its face (+z) carved — a sun in a ring, a seam down
+  // the middle, a border
+  door: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      box(b, 0, 0.5, 0, 0.5, 0.5, 0.5, STONE_D)
+      const z = 0.51
+      for (const [cx, cy, hx, hy] of [[0, 0.06, 0.44, 0.012], [0, 0.94, 0.44, 0.012], [-0.44, 0.5, 0.012, 0.44], [0.44, 0.5, 0.012, 0.44]]) box(b, cx, cy, z, hx, hy, 0.012, CARVE)
+      box(b, 0, 0.2, z, 0.006, 0.12, 0.012, CARVE); box(b, 0, 0.85, z, 0.006, 0.07, 0.012, CARVE)
+      for (let k = 0; k < 12; k++) { const a0 = (k / 12) * Math.PI * 2; box(b, Math.cos(a0) * 0.2, 0.55 + Math.sin(a0) * 0.2 * 0.9, z, 0.03, 0.016, 0.012, CARVE) }
+      for (let k = 0; k < 8; k++) { const a0 = (k / 8) * Math.PI * 2 + 0.39, c = Math.cos(a0), sn = Math.sin(a0); b.box(V(c * 0.3, 0.55 + sn * 0.3 * 0.9, z), V(c, sn, 0), V(-sn, c, 0), Z, 0.045, 0.01, 0.012, CARVE) }
+    },
+    col: [0.5, 0.5, 0.5, 0.5],
+  },
+  // … and its KEYSTONE: a wedge of paler stone proud of the door, an iron ring through it — what the winch takes
+  keystone: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      hexa(b, [V(-0.36, 0, -0.5), V(0.36, 0, -0.5), V(0.3, 0, 0.3), V(-0.3, 0, 0.3), V(-0.5, 1, -0.5), V(0.5, 1, -0.5), V(0.42, 1, 0.3), V(-0.42, 1, 0.3)], shade(STONE, 1.1))
+      b.setSurf(SURF.metal)
+      const iron: RGB = [0.1, 0.09, 0.085]
+      for (let k = 0; k < 8; k++) { const a0 = (k / 8) * Math.PI * 2, a1 = ((k + 1) / 8) * Math.PI * 2; b.log(V(Math.cos(a0) * 0.3, 0.42 + Math.sin(a0) * 0.3, 0.42), V(Math.cos(a1) * 0.3, 0.42 + Math.sin(a1) * 0.3, 0.42), 0.05, iron) }
+    },
+    col: null,
+  },
   // a COLUMN's CAPITAL: a slab over a narrower one (⌀ 1 column → 1.3 wide)
   capital: { build: (b) => { b.setSurf(SURF.stone); box(b, 0, 0.3, 0, 0.42, 0.3, 0.42, STONE_D); box(b, 0, 0.8, 0, 0.65, 0.2, 0.65, STONE) }, col: null },
   // a DOME (a shrine's): a half ball, ⌀ 1, y 0 … 0.5
@@ -252,9 +434,23 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
 
 // ------------------------------------------------------------------------------------------------------------ the plan
 /** A piece placed: kind, where (its foot), turned rot (about y), tilted (about its own x, then z), scaled. */
-export interface Piece { k: Kind; x: number; y: number; z: number; rot: number; sx: number; sy: number; sz: number; tx?: number; tz?: number }
+export interface Piece { k: Kind; x: number; y: number; z: number; rot: number; sx: number; sy: number; sz: number; tx?: number; tz?: number
+  /** (a beacon's crystal) the site it burns for — dark until that site is found; seen as far as a thing `far` m big */
+  site?: number; far?: number }
 export interface WardenText { id: number; x: number; z: number; place: string; title: string; text: string }
-export interface WardenPlan { sites: Landmark[]; pieces: Piece[]; cols: PropCollider[]; keep: [number, number, number][]; texts: WardenText[] }
+/** A SEALED VAULT: its site, the door's and the keystone's pieces (indices), the door's two boxes (standing; fallen),
+ *  where the winch takes the keystone, the way it faces and its floor. */
+export interface Vault { site: number; name: string; door: number; key: number; standing: PropCollider; fallen: PropCollider; ax: number; ay: number; az: number
+  /** (the door fallen: its tilt — past flat where the ground in front is lower: a RAMP up to the floor — and how far it sinks, so its top meets the floor) */
+  fallTx: number; sink: number }
+export interface WardenPlan { sites: Landmark[]; pieces: Piece[]; cols: PropCollider[]; keep: [number, number, number][]; texts: WardenText[]; vaults: Vault[]; mapId: string
+  /** The stone FLOORS (x, z, half sizes, rot): the grass keeps off them (Grass.setFloors). */
+  floors: [number, number, number, number, number][]
+  /** THE REGIONS (x, z, radius — 0 the Frozen Court, 1 the World Tree's, 2 the canyon's, 3 the lakes'; radius 0: none):
+   *  the stone's tone there (Bridges.ts regionTint), and what stands there (below). */
+  regions: [number, number, number][] }
+/** The styles of site that are SECRET: not on the map, the compass or a signpost until found. */
+export const SECRET = new Set(['court', 'vault', 'vale'])
 
 const PLANS = new WeakMap<MapData, WardenPlan>()
 
@@ -296,6 +492,79 @@ const WRITINGS: [string, string][] = [
   ['On a statue\'s foot', 'Carved in the likeness of Warden Halde, who held this pass alone for a night and a day. She said it was mostly waiting.'],
   ['A short one', 'Rest here.'],
   ['On the Sleeper\'s plinth', 'Do not be afraid of the sleeping ones. Be afraid of the day they are needed.'],
+  // (2026-11-12, round 2 — 62 more, so the 538 stones repeat far less: the Tree, the Grey, the beacons, the giants, the
+  //  leaving; and the small ones — builders, children, lovers, lists. Our own words.)
+  // — the Tree
+  ['The first law', 'No axe within sight of the Tree. No fire within its shade. No lie within its hearing.'],
+  ['A gardener\'s note', 'Watered the east roots. Talked to it a while. It did not answer, but the wind picked up, which I take as yes.'],
+  ['Under a root', 'The Tree drinks from four rivers and gives back one cloud. We thought that a fair trade.'],
+  ['A measure', 'Round the trunk: three hundred paces. Round the shade at noon: a day\'s walk. Round its age: do not try.'],
+  ['A lesson for children', 'What does the Tree teach? To stay. To reach. To let go of every leaf, every year, and not grieve.'],
+  ['Carved with care', 'When the first Warden came here there was only the Tree and the weather. She asked which of them was in charge. It rained.'],
+  ['On a root arch', 'Pass under and be counted. The Tree has counted everyone who ever came. It has not told us the number.'],
+  ['A seed-keeper\'s stone', 'Nine seeds kept in the dry vault, against the day the Tree falls. May the vault never be opened.'],
+  // — the Grey
+  ['A watchman\'s tally', 'Grey on the north ridge at dawn. Gone by noon. Back at dusk, closer. Lit the beacon. Waited.'],
+  ['Scratched in haste', 'It is not fog. Fog does not turn round when you call out.'],
+  ['A field order', 'When the Grey comes down: lamps lit, doors open, nobody alone. It does not like company.'],
+  ['After the long winter', 'The Grey took the high farms and the names of the people in them. We cut the names here so something would keep them.'],
+  ['A scholar\'s line', 'I have decided the Grey is only weather that has forgotten how to stop. This comforts me a little, at night.'],
+  ['On a north-facing stone', 'Stand here and look north. If you can see the white peaks, all is well. If you cannot, go home quickly.'],
+  ['A truce', 'In the ninth year the Grey stopped at the stone rings and came no further. We do not know why. We have not asked.'],
+  // — the beacons
+  ['A keeper\'s rule', 'The beacon is lit by standing under it and meaning it. Nothing else has ever worked.'],
+  ['A signal book, in stone', 'One flame: all is well. Two: come. Three: come armed. None: come anyway; we may be asleep.'],
+  ['A tower\'s first stone', 'Raised in the year of the two comets by forty hands and one stubborn mule called Duty.'],
+  ['On a tower door', 'Whoever keeps this beacon keeps the next one too, for a flame nobody sees is only a fire.'],
+  ['A keeper\'s diary', 'Day two hundred. Saw the far beacon blink twice. Blinked back. Best conversation this month.'],
+  ['Low on a wall', 'I was the last keeper of this light. I left it burning. If it is dark now, forgive me; I did try.'],
+  ['A count', 'Seven on the east ridges. Seven on the west. Seven to the snow. Seven to the Tree. The rest we lost count of, gladly.'],
+  // — the giants
+  ['At a giant\'s foot', 'We asked the giants what they dreamed of. The ground shook a little. We stopped asking.'],
+  ['A carver\'s confession', 'I was told to free the face from the hill. I swear the nose was already there.'],
+  ['A lullaby', 'Sleep, tall one, under the grass. The sun is held. The road is kept. Sleep, and let the small folk pass.'],
+  ['On a broken plinth', 'This one fell in the night without a sound. In the morning the birds were already nesting in his ear.'],
+  ['A warning to carvers', 'Do not carve the eyes open. We did that once.'],
+  ['The Kneeling One\'s verse', 'She does not kneel to anyone. She kneels to get under the weight. There is a difference; remember it.'],
+  ['Twin stones', 'Two guardians face each other so that neither ever has to watch alone.'],
+  ['A measure of giants', 'From heel to helm: forty men. From shoulder to shoulder: a house. From then to now: nobody knows.'],
+  // — the leaving
+  ['A farewell', 'The wells are capped, the lamps are trimmed, the gates are left open. We did not lock anything. It was never ours to lock.'],
+  ['The last overseer', 'I counted everyone out through the west gate. Then I counted the giants. All present. Then I went too.'],
+  ['On a threshold', 'We took the songs and the seed-corn. We left the stones, because stones are better at waiting.'],
+  ['A promise', 'One of us will come back each spring to sweep the temple steps. If the steps are dusty, spring is late.'],
+  ['Carved by many hands', 'Everyone who left cut one letter of this line. That is why it wanders. So did we.'],
+  ['A map, of a kind', 'We went west, then we went on. If you are following us: you are kind, and you are late.'],
+  // — builders and masons
+  ['A quarry mark', 'Cut from the Harrow face. Dragged eleven miles. Dropped once. Do not tell the overseer where the chip is.'],
+  ['A mason\'s boast', 'Not one drop of mortar in this wall. It stands on fit and spite.'],
+  ['An apprentice\'s line', 'My first straight edge. Master says the second will be straighter. Master says a lot of things.'],
+  ['On an unfinished block', 'Left for tomorrow.'],
+  ['The overseer\'s reply', 'It leans, Orrin.'],
+  ['A work song', 'Lift on the word. Set on the breath. Stone goes up, sun goes down, and supper is at the bottom.'],
+  ['A column\'s number', 'Nineteenth of forty. The other thirty-nine are someone else\'s problem.'],
+  // — children
+  ['Scratched low', 'Tam can jump from this stone to that one. Mira says she can too. She cannot.'],
+  ['A game\'s rules', 'Touch the lantern, run to the ring, hide behind the Watcher. Whoever the Watcher sees is out. He sees everyone.'],
+  ['A wobbly line', 'This is my stone. I found it. Go and find your own.'],
+  ['A lesson, copied badly', 'The beecons are lit by standing under them and meening it. Teacher says I spelled it rong.'],
+  ['Mira again', 'Mira was here AGAIN. Still the fastest.'],
+  // — lovers and letters
+  ['Two hands', 'Meet me at the Needles when the second lantern is lit. — I was there. Where were you? — At the wrong Needles.'],
+  ['A bench-stone', 'Sat here forty years with the same woman, watching the same hill. Never once got bored of either.'],
+  ['For someone gone', 'You said the valley would still be green when I was old. It is gold, love. But you were close.'],
+  ['A reply, cut later', 'Ilse heard you. She says the thunder was never as loud as your carving.'],
+  // — lists, records, small things
+  ['A weather stone', 'Frost early. Larches gold by the ninth moon. Geese gone south and complaining about it.'],
+  ['A recipe', 'Barley, salt, the small blue berries from the snow line. Boil until someone asks what the smell is.'],
+  ['A toll', 'To pass this gate: one true thing, said aloud. The gate keeps them. It has heard some strange ones.'],
+  ['A traveller\'s tally', 'Days walked: thirty. Boots: two pairs. Blisters: do not ask. Views worth it: all of them.'],
+  ['A lost-and-found', 'Found by the spring: one glove, one flute, one very patient goat. Ask at the temple.'],
+  ['A rule of the road', 'Uphill gives way to downhill. Carts give way to children. Everyone gives way to the goat.'],
+  ['A star-watcher\'s note', 'Counted again: four thousand and thirteen. Either a new star or I blinked last time.'],
+  ['On a well-head', 'Sweet water, forty spans down. Lower the bucket slowly; the well does not like to be surprised.'],
+  ['A blessing for wheels', 'May your axle hold, your road run dry, and the hill ahead be smaller than it looks.'],
+  ['A last small one', 'If you have read this far, you have learned our letters. Then you are one of us. Keep the lamp lit.'],
 ]
 
 /** Names (our own words), each kind its own pattern. */
@@ -305,10 +574,26 @@ const WORDS = ['Ash', 'Ember', 'Hollow', 'Long Dawn', 'Quiet Hours', 'Last Light
 export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   const hit = PLANS.get(map)
   if (hit) return hit
-  const plan: WardenPlan = { sites: [], pieces: [], cols: [], keep: [], texts: [] }
+  const plan: WardenPlan = { sites: [], pieces: [], cols: [], keep: [], texts: [], vaults: [], mapId: map.meta.id, floors: [], regions: [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]] }
   PLANS.set(map, plan)
   if (map.desert || map.play <= map.half + 100 || gameParams().get('wardens') === '0') return plan
   const hb = map.half + 90, ho = map.play - 130
+  // THE REGIONS' CHARACTER (docs/NEXT_outland.md §1 — "every region gets the same mix and the same stone"): four
+  // countries round the outland, each its own stone (the material's tint) and its own leaning —
+  //  0 THE FROZEN COURT (the early snow, under Whitecrown): pale stone; the beacons stand closer, more giants' heads
+  //  1 THE TREE'S COUNTRY (round the World Tree): mossed green stone; gardens and lanterns, hardly an obelisk
+  //  2 THE SCRIBES' (round Skyfall Canyon): ochre stone; standing stones with writing by every road, needles
+  //  3 THE DROWNED SHRINES (the eastern lakes): dark damp slate; the ruins in the lakes themselves (above)
+  {
+    const O = map.meta.outland, pl = (k: string) => O?.places?.find((q) => q.kind === k), still = O?.lakes?.find((q) => q.name === 'Stillwater') ?? O?.lakes?.[0]
+    const sn = O?.snow, wt = pl('worldtree'), cy = pl('canyon')
+    if (sn) plan.regions[0] = [sn.x, sn.z, Math.min(2600, sn.r * 1.1)]
+    if (wt) plan.regions[1] = [wt.x, wt.z, 2300]
+    if (cy) plan.regions[2] = [cy.x, cy.z, 2100]
+    if (still) plan.regions[3] = [still.x - 400, still.z + 700, 1900]
+  }
+  /** The region (0–3) that holds (x, z) — inside 80 % of its radius — or −1. */
+  const region = (x: number, z: number): number => { for (let k = 0; k < 4; k++) { const [rx, rz, rr] = plan.regions[k]; if (rr > 0 && (x - rx) ** 2 + (z - rz) ** 2 < (rr * 0.8) ** 2) return k } return -1 }
   const H = (x: number, z: number) => map.height(x, z)
   const slopeAt = (x: number, z: number, d = 5) => Math.hypot(H(x + d, z) - H(x - d, z), H(x, z + d) - H(x, z - d)) / (2 * d)
   const keepOff: [number, number, number][] = [
@@ -354,28 +639,213 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     }
     return hi - lo > maxSpread ? null : { lo, hi }
   }
-  let sid = 900000, tid = 0
+  // A site's ID is WHERE IT STANDS (2026-11-12 — it was its order in the plan, 900000 + n: any change to the plan
+  // re-numbered every site, and a save's found set, lit beacons, read stones and opened vaults pointed at others): its
+  // 4 m cell, 1 000 000 up (two sites never share one: they stand tens of metres apart); a writing's its 2 m cell.
+  const idAt = (x: number, z: number) => 1000000 + (Math.round(x / 4) + 2048) * 4096 + Math.round(z / 4) + 2048
+  const usedIds = new Set<number>()
   const P = (k: Kind, x: number, y: number, z: number, rot: number, sx: number, sy: number, sz: number, tx = 0, tz = 0) => plan.pieces.push({ k, x, y, z, rot, sx, sy, sz, tx, tz })
   /** A collider box (world centre, half sizes, turned rot; ground: the wheels climb it). */
-  const C = (x: number, y: number, z: number, rot: number, hx: number, hy: number, hz: number, ground = false) => plan.cols.push({ x, y, z, rot, hx, hy, hz, ...(ground ? { ground: true } : {}) })
-  /** A piece with its KIT collider (scaled). */
-  const PC = (k: Kind, x: number, y: number, z: number, rot: number, sx: number, sy: number, sz: number, tx = 0, tz = 0) => {
+  const C = (x: number, y: number, z: number, rot: number, hx: number, hy: number, hz: number, ground = false, q?: GFX.Quaternion) => plan.cols.push({ x, y, z, rot, hx, hy, hz, ...(ground ? { ground: true } : {}), ...(q ? { q: [q.x, q.y, q.z, q.w] as [number, number, number, number] } : {}) })
+  const eul = new GFX.Euler()
+  /** A piece with its KIT collider (scaled) — turned and TILTED with the piece (2026-11-12, round 2: a leaning stone, a
+   *  fallen column, the toppled giant were driven through, or stood in for by a box square to the world); a STAIR is a
+   *  ramp along its steps, GROUND to the wheels (the car drove through every flight). */
+  const PC = (k: Kind, x: number, y: number, z: number, rot: number, sx: number, sy: number, sz: number, tx = 0, tz = 0, ground = !!KIT[k].ground) => {
     P(k, x, y, z, rot, sx, sy, sz, tx, tz)
+    if (k === 'stair' && !tx && !tz) {
+      // (the steps climb toward the piece's −z, from y 0 at z +½ to y 1 at z −½: a slab `t` thick under that line)
+      const t = 0.7, L = Math.hypot(sy, sz), q = new GFX.Quaternion().setFromEuler(eul.set(Math.atan2(sy, sz), rot, 0, 'YXZ'))
+      const o = V(0, -t / 2, 0).applyQuaternion(q)
+      C(x + o.x, y + sy / 2 + o.y, z + o.z, rot, sx / 2, t / 2, L / 2, true, q)
+      return
+    }
     const c = KIT[k].col
-    if (c && !tx && !tz) C(x, y + c[0] * sy, z, rot, c[1] * sx, c[2] * sy, c[3] * sz, !!KIT[k].ground)
+    if (!c) return
+    if (!tx && !tz) { C(x, y + c[0] * sy, z, rot, c[1] * sx, c[2] * sy, c[3] * sz, ground); return }
+    const q = new GFX.Quaternion().setFromEuler(eul.set(tx, rot, tz, 'YXZ')), o = V(0, c[0] * sy, 0).applyQuaternion(q)
+    C(x + o.x, y + o.y, z + o.z, rot, c[1] * sx, c[2] * sy, c[3] * sz, ground, q)
   }
-  const site = (name: string, style: string, x: number, z: number, r: number, note?: [string, string]) => {
-    const l: Landmark = { id: sid++, kind: 'warden', name, x, z, y: H(x, z), rot: 0, r, style, ...(note ? { note: { title: note[0], text: note[1] } } : {}) }
+  const site = (name: string, style: string, x: number, z: number, r: number, note?: [string, string], face = 0) => {
+    let id = idAt(x, z)
+    while (usedIds.has(id)) id += 1   // (never: a guard)
+    usedIds.add(id)
+    const l: Landmark = { id, kind: 'warden', name, x, z, y: H(x, z), rot: 0, r, style, face, ...(note ? { note: { title: note[0], text: note[1] } } : {}) }
     plan.sites.push(l)
     plan.keep.push([x, z, r + 4])
     take(x, z, r)
     return l
   }
   let wi = 0
-  const writing = (x: number, z: number, place: string) => { const [title, text] = WRITINGS[wi++ % WRITINGS.length]; plan.texts.push({ id: tid++, x, z, place, title, text }) }
+  const writing = (x: number, z: number, place: string, own?: [string, string]) => { const [title, text] = own ?? WRITINGS[wi++ % WRITINGS.length]; plan.texts.push({ id: (Math.round(x / 2) + 4096) * 8192 + Math.round(z / 2) + 4096, x, z, place, title, text }) }
+  /** (a local point's world (x, z), its height y → the piece's (x, y, z). 2026-11-12, round 2: nine calls spread
+   *  `...L(…)` straight into (x, y, z) — the z landed in y: every temple's steps and statue, the giants' steps and
+   *  lanterns, the toppled Warden were drawn kilometres up, or under the ground. They stand where they were meant now.) */
+  const up = (p: [number, number], y: number): [number, number, number] => [p[0], y, p[1]]
+  /** A stone floor here (the grass keeps off it): centre, full sizes, turned rot. */
+  const F = (x: number, z: number, w: number, d: number, rot: number) => plan.floors.push([x, z, w / 2 + 0.25, d / 2 + 0.25, rot])
   /** Local → world for a site at (x, z) turned a. */
   const at = (x: number, z: number, a: number) => (lx: number, lz: number): [number, number] => [x + lx * Math.cos(a) + lz * Math.sin(a), z - lx * Math.sin(a) + lz * Math.cos(a)]
 
+  // ---- THE HIDDEN VALES (secret — mapPrep.carveVales cut each: a hollow in a hill, a bent ravine into it): in its
+  // middle a ring of tall stones round a flagged dais where five crystals burn; against the far wall a Kneeling Warden
+  // on her plinth, facing the way in; two lanterns just inside the mouth. Nothing outside says it's there.
+  const VALE_TEXTS: [string, string][] = [
+    ['On the tallest stone', 'The hill kept this place for itself for ten thousand years. We only asked to borrow it. Be a good guest.'],
+    ['Cut where the ring opens', 'No road comes here on purpose. If you found the way in, the hill let you. Say thank you on the way out.'],
+  ]
+  map.vales.forEach((v, vi) => {
+    kindNow = 'vale'
+    let s = cellSeed(Math.round(v.x), Math.round(v.z), 147)
+    const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+    const a = Math.atan2(v.ex - v.x, v.ez - v.z), L = at(v.x, v.z, a), f = v.floor
+    // (the way in kept CLEAR: no tree, bush, rock, crag or ruin in the ravine or across the hollow's mouth — a crag on
+    //  the ravine's floor stopped the autopilot's car three times)
+    for (const [px, pz] of v.path) { plan.keep.push([px, pz, 11]); keepOff.push([px, pz, 16]) }
+    for (let d = 0; d <= v.r; d += 10) { const q = L(0, d); plan.keep.push([q[0], q[1], 9]) }
+    keepOff.push([v.x, v.z, v.r + 6])
+    PC('paving', v.x, f - 0.4, v.z, a + 0.785, 7.5, 1.1, 7.5)
+    F(v.x, v.z, 7.5, 7.5, a + 0.785)
+    for (const [lx, lz, sc, tx, tz] of [[0, 0, 1, 0, 0], [-1.7, 0.6, 0.62, 0.28, 0.22], [1.5, -0.9, 0.55, -0.24, -0.3], [0.5, 1.9, 0.4, 0.35, 0.1], [-0.9, -1.8, 0.45, -0.3, 0.2]]) { const q = L(lx, lz); P('crystal', ...up(q, f + 0.65), rnd() * 6.28, 2 * sc, 7 * sc, 2 * sc, tx, tz) }
+    const n = 9, a0 = rnd() * 6.28
+    for (let k = 0; k < n; k++) {
+      // (the ring opens toward the way in: the stone that would stand there left out)
+      const ang = a0 + (k / n) * 6.28, px = v.x + Math.cos(ang) * 15, pz = v.z + Math.sin(ang) * 15
+      if (Math.cos(ang) * Math.sin(a) + Math.sin(ang) * Math.cos(a) > 0.9) continue
+      PC('stone', px, H(px, pz) - 0.7, pz, -ang + 1.571, 2.4 + rnd() * 0.8, 5 + rnd() * 2.6, 2.4, (rnd() - 0.5) * 0.1, (rnd() - 0.5) * 0.12)
+    }
+    const [kx, kz] = L(0, -40), ky = H(kx, kz)
+    PC('block', kx, ky - 0.8, kz, a, 9, 2.6, 9)
+    F(kx, kz, 9, 9, a)
+    PC('kneel', kx, ky + 1.8, kz, a, 13, 13, 13)
+    for (const sd of [-1, 1]) { const q = L(sd * 7, 47); PC('lantern', ...up(q, H(...q) - 0.1), a, 1.7, 2.1, 1.7) }
+    for (const sd of [-1, 1]) { const q = L(sd * 6.5, -31); PC('lantern', ...up(q, H(...q) - 0.1), a, 1.5, 1.8, 1.5) }
+    const nm = word(rnd, (w) => `The Hidden Vale of ${w}`)
+    site(nm, 'vale', v.x, v.z, 26, ['In the hollow', 'A round meadow inside the hill, walled by its own rock. Nine stones, five lights, and one who kneels at the far end holding up a sun nobody outside can see.'], a)
+    writing(...L(4.6, 4.6), nm, VALE_TEXTS[vi % VALE_TEXTS.length])
+  })
+  // ---- THE SUNKEN COURTS (secret — mapPrep.sinkCourts cut the ground for each: a 16 m floor 5 m down): a ring of
+  // stone round the pit (its top the rim: the one cell of slope round the floor is inside it), a stair down the side
+  // that faces the road, columns at the corners; in it a dais with three crystals burning, four Wardens in the corners
+  // looking at them, a stone with the court's own words. Not on the map or the compass until found; no path leads here.
+  const COURT_TEXTS: [string, string][] = [
+    ['Cut into the back wall', 'We dug down because the wind could not follow. Here we kept what must not blow away: seeds, names, the small fire.'],
+    ['Under the stair', 'If you found this place you were not looking at the road. Good. Neither were we.'],
+    ['Round the dais', 'Three lights for three promises: to stay, to watch, to leave gently. We kept two.'],
+    ['On the floor, worn', 'Stand in the middle at midsummer noon and you have no shadow. That is when we judged disputes: nobody could hide behind theirs.'],
+    ['Scratched by the corner', 'Quiet down here, isn\'t it? We came for that too.'],
+    ['Above the crystals', 'These burn without oil. Do not ask us how. We found them burning and built the court round them.'],
+  ]
+  map.courts.forEach((ct, ci) => {
+    kindNow = 'court'
+    const a = (ct.side * Math.PI) / 2, L = at(ct.x, ct.z, a), f = ct.floor, top = ct.rim + 0.25, y0 = f - 0.6, hb = top - y0
+    let s = cellSeed(Math.round(ct.x), Math.round(ct.z), 141)
+    const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+    // (the ring in tiles of ~8 m, each 8 × 8 flags; the floor one slab of flags 0.3 m proud of the ground)
+    for (const [lx, lz, w, d] of [[-12.375, -12.25, 8.25, 8.5], [-4.125, -12.25, 8.25, 8.5], [4.125, -12.25, 8.25, 8.5], [12.375, -12.25, 8.25, 8.5], [-12.25, -4, 8.5, 8], [-12.25, 4, 8.5, 8], [12.25, -4, 8.5, 8], [12.25, 4, 8.5, 8], [-13.125, 12.25, 6.75, 8.5], [-6.375, 12.25, 6.75, 8.5], [6.375, 12.25, 6.75, 8.5], [13.125, 12.25, 6.75, 8.5]]) PC('paving', ...up(L(lx, lz), y0), a, w, hb, d)
+    PC('paving', ...up(L(0, 0), y0), a, 16, 0.9, 16)
+    F(ct.x, ct.z, 33.4, 33.4, a)
+    // (the stair's head at the GROUND outside it, not at the ring's top — the ring stands a little proud where the land
+    //  falls away, and a stair up to its top ended in a ledge the car hit)
+    PC('stair', ...up(L(0, 12.25), f + 0.3), a + Math.PI, 6, Math.min(top, H(...L(0, 16.6)) + 0.12) - f - 0.3, 8.5)
+    // (a coping along the pit's edge, darker; columns at its corners — some broken)
+    for (const [lx, lz, w, d] of [[0, -8.35, 18, 0.7], [-8.35, 0, 0.7, 16], [8.35, 0, 0.7, 16], [-5.85, 8.35, 5.7, 0.7], [5.85, 8.35, 5.7, 0.7]]) P('capital', ...up(L(lx, lz), top - 0.05), a, w / 1.3, 0.45, d / 1.3)
+    for (const [lx, lz] of [[-10, -10], [10, -10], [-10, 10], [10, 10]]) {
+      const q = L(lx, lz)
+      if (rnd() < 0.6) { PC('column', ...up(q, top), 0, 1.3, 5.5, 1.3); P('capital', ...up(q, top + 5.5), 0, 1.3, 1, 1.3) } else PC('stump', ...up(q, top), 0, 1.3, 1.2 + rnd() * 2.6, 1.3)
+    }
+    for (const sd of [-1, 1]) { const q = L(sd * 4.4, 18.2); PC('lantern', ...up(q, H(...q) - 0.1), a, 1.5, 1.8, 1.5) }
+    // in the pit
+    PC('block', ...up(L(0, 0), f + 0.2), a + 0.785, 4.6, 0.9, 4.6)
+    P('crystal', ...up(L(0, 0), f + 1.1), a, 1.5, 3.4, 1.5)
+    P('crystal', ...up(L(-1.2, 0.5), f + 1.05), a + 1, 0.9, 2, 0.9, 0.3, 0.25)
+    P('crystal', ...up(L(1.1, -0.7), f + 1.05), a + 2, 0.8, 1.7, 0.8, -0.25, -0.3)
+    for (const [lx, lz] of [[-5.9, -5.9], [5.9, -5.9], [-5.9, 5.9], [5.9, 5.9]]) {
+      const q = L(lx, lz)
+      PC('block', ...up(q, f + 0.2), a, 1.7, 0.8, 1.7)
+      P(rnd() < 0.5 ? 'statue' : 'kneel', ...up(q, f + 1.0), a + Math.atan2(-lx, -lz), 3.3, 3.3, 3.3)
+    }
+    PC('stone', ...up(L(0, -6.9), f + 0.1), a, 2.6, 3.4, 2.2)
+    // (two broken shafts by the stone — nothing lying across the floor: a fallen column at the stair's foot beached the car)
+    for (const sd of [-1, 1]) PC('stump', ...up(L(sd * 3.6, -6.5), f + 0.3), 0, 1.1, 1.2 + rnd() * 2.2, 1.1)
+    const nm = word(rnd, (w) => `The Sunken Court of ${w}`)
+    site(nm, 'court', ct.x, ct.z, 21, ['In the court', 'A square pit, walled in dressed stone, hidden until you stand on its edge. Three crystals burn on the dais. Nobody has swept the stair in a very long time.'], a)
+    writing(...L(0, -5), nm, COURT_TEXTS[ci % COURT_TEXTS.length])
+  })
+  // ---- THE DROWNED PLACES (docs/NEXT_outland.md "sites near water"): each real lake of the outland has one ruin IN it —
+  // THE HAND (a giant's, up out of the water, its palm to the shore), a DROWNED TEMPLE (two rows of columns standing
+  // in the shallows, steps going down into the water, a Warden on her plinth at the far end), or an ISLAND SHRINE (a
+  // platform out in the lake, stepping stones to it from the shore). From the shore nearest a road, into the lake.
+  ;(map.meta.outland?.lakes ?? []).filter((Lk) => Lk.x1 === undefined && Lk.r > 60).forEach((Lk, li) => {
+    kindNow = 'water'
+    let s = cellSeed(Math.round(Lk.x), Math.round(Lk.z), 143)
+    const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+    // the shores: out from the middle along 32 bearings, where the bed comes up through the water
+    let bestS: { x: number; z: number; ux: number; uz: number; sc: number } | null = null
+    for (let k = 0; k < 32; k++) {
+      const dx = Math.cos(k * 0.19635), dz = Math.sin(k * 0.19635)
+      for (let d = 8; d < Lk.r; d += 3) {
+        const x = Lk.x + dx * d, z = Lk.z + dz * d
+        if (lakeOff(Lk, x, z) === Infinity) break
+        if (H(x, z) < Lk.level) continue
+        // (deep enough 30 m in from this shore, the land behind it gentle, and near a road if any is)
+        const dIn = Lk.level - H(x - dx * 30, z - dz * 30), back = H(x + dx * 14, z + dz * 14) - Lk.level
+        if (d < 45 || dIn < 1.6 || back > 6 || back < 0.2) break
+        const sc = -Math.min(160, Math.max(0, map.roadEdge(x + dx * 10, z + dz * 10))) + rnd() * 30
+        if (!bestS || sc > bestS.sc) bestS = { x, z, ux: -dx, uz: -dz, sc }
+        break
+      }
+    }
+    if (!bestS) return
+    const { x: sx0, z: sz0, ux, uz } = bestS, a = Math.atan2(ux, uz), L = at(sx0, sz0, a), lv = Lk.level
+    const bed = (lx: number, lz: number) => H(...L(lx, lz))
+    const kind = li % 3
+    if (kind === 0) {
+      // THE HAND: where the water is ~3 m deep, 25–45 m out
+      let d = 26
+      while (d < 46 && lv - bed(0, d) < Math.min(3, Lk.depth * 0.6)) d += 3
+      const S = 15 + rnd() * 4, [hx, hz] = L(0, d)
+      PC('hand', hx, bed(0, d) - 1.2, hz, a + Math.PI, S, S, S, 0.1, (rnd() - 0.5) * 0.24)
+      for (let k = 0; k < 4; k++) { const q = L((rnd() - 0.5) * 16, d * (0.2 + rnd() * 0.5)); P('block', ...up(q, H(...q) - 0.5), rnd() * 6.28, 2 + rnd() * 2.5, 1.4 + rnd() * 1.6, 1.6 + rnd() * 2, (rnd() - 0.5) * 0.5) }
+      for (const sd of [-1, 1]) { const q = L(sd * 3.2, -5); PC('lantern', ...up(q, H(...q) - 0.1), a, 1.6, 1.9, 1.6) }
+      const nm = `The Hand in ${Lk.name}`
+      site(nm, 'giant', hx, hz, 12, ['Carved on the shore', 'She went down with the valley\'s water in her arms and never let go of it. The lake is what she still holds.'], a + Math.PI)
+      writing(...L(3.2, -3), nm, ['By the water', 'When the lake is low you can see her shoulder. When it is very low, you should leave.'])
+    } else if (kind === 1) {
+      // THE DROWNED TEMPLE: columns from 6 m out to 30 m, 5 m either side of the line; steps down from the shore
+      const n = 6
+      PC('stair', ...up(L(0, 2.5), lv - 2.2), a + Math.PI, 7, Math.max(1.2, H(...L(0, -1.5)) - lv + 2.3), 8)
+      for (const sd of [-1, 1]) for (let k = 0; k < n; k++) {
+        const lz = 7 + k * 4.6, [px, pz] = L(sd * 5, lz), by = bed(sd * 5, lz) - 0.6, r = rnd()
+        if (r < 0.6) { PC('column', px, by, pz, 0, 1.4, lv - by + 5.5, 1.4); P('capital', px, lv + 5.5, pz, 0, 1.4, 1.1, 1.4) }
+        else if (r < 0.85) PC('stump', px, by, pz, 0, 1.4, lv - by + 0.6 + rnd() * 2.4, 1.4)
+        else PC('stump', px, by, pz, 0, 1.4, Math.max(0.5, lv - by - 0.4), 1.4)   // (broken off under the water)
+      }
+      for (let k = 0; k + 1 < n; k += 2) { const lz = 7 + (k + 0.5) * 4.6, sd = k % 4 ? 1 : -1, [px, pz] = L(sd * 5, lz); if (rnd() < 0.6) P('block', px, lv + 6.6, pz, a, 1.6, 0.9, 5.6) }
+      const [ex, ez] = L(0, 7 + n * 4.6 + 1), eb = bed(0, 7 + n * 4.6 + 1) - 0.6
+      PC('block', ex, eb, ez, a, 3, lv - eb + 0.5, 3)
+      P('kneel', ex, lv + 0.5, ez, a + Math.PI, 5, 5, 5)
+      for (const sd of [-1, 1]) { const q = L(sd * 4.6, -3.5); PC('lantern', ...up(q, H(...q) - 0.1), a, 1.6, 1.9, 1.6) }
+      const nm = word(rnd, (w) => `The Drowned Temple of ${w}`), [cx, cz] = L(0, 14)
+      site(nm, 'temple', cx, cz, 18, ['On the top step', 'The lake rose a hand\'s breadth a year, and we moved the lamps up one step each spring. Then there were no more steps.'], a + Math.PI)
+      writing(...L(4.4, -2), nm, ['Under the water line', 'If you can read this, the lake is low. Go and tell someone: it has not been this low since we left.'])
+    } else {
+      // THE ISLAND SHRINE: stepping stones (their tops just clear of the water) out to a platform 30 m from the shore
+      const D = 30
+      for (let d = 1.5, k = 0; d < D - 5; d += 3.3, k++) { const lx = Math.sin(k * 1.3) * 0.9, [px, pz] = L(lx, d), by = Math.min(bed(lx, d), lv) - 0.6; PC('block', px, by, pz, a + (rnd() - 0.5) * 0.5, 2.3 + rnd() * 0.5, lv - by + 0.22, 2.2 + rnd() * 0.4) }
+      const [ix, iz] = L(0, D), ib = bed(0, D) - 0.8, top = lv + 0.55
+      PC('paving', ix, ib, iz, a, 10, top - ib, 10)
+      for (const [lx, lz] of [[-1.6, -1.6], [1.6, -1.6], [1.6, 1.6], [-1.6, 1.6]]) { const q = L(lx, D + lz); PC('column', ...up(q, top), 0, 0.5, 3.4, 0.5) }
+      P('block', ix, top + 3.4, iz, a, 4.2, 0.4, 4.2); P('dome', ix, top + 3.8, iz, a, 3.8, 2.8, 3.8)
+      P('statue', ix, top, iz, a + Math.PI, 2.4, 2.4, 2.4)
+      for (const [lx, lz, sc] of [[-3.6, 3.4, 1], [3.5, 3.2, 0.8], [3.8, -3.4, 0.6]]) { const q = L(lx, D + lz); P('crystal', ...up(q, top), rnd() * 6.28, 0.9 * sc, 2.2 * sc, 0.9 * sc, (rnd() - 0.5) * 0.4, (rnd() - 0.5) * 0.4) }
+      for (const sd of [-1, 1]) { const q = L(sd * 4.2, D - 4.2); PC('lantern', ...up(q, top), a, 1.3, 1.6, 1.3) }
+      for (const sd of [-1, 1]) { const q = L(sd * 3, -4); PC('lantern', ...up(q, H(...q) - 0.1), a, 1.6, 1.9, 1.6) }
+      const nm = word(rnd, (w) => `The Island Shrine of ${w}`)
+      site(nm, 'shrine', ix, iz, 9, ['On the island', 'Walk out on the stones. Do not hurry; the lake has swallowed everyone who hurried.'], a + Math.PI)
+      writing(...L(2.4, D + 1), nm, ['Round the dome', 'We built it out here so that coming to pray took a little courage. It was a small test, and nearly everyone passed.'])
+    }
+  })
   // ---- candidates: a jittered 70 m grid, each its own seed; what the ground there is like
   type Cand = { x: number; z: number; y: number; sl: number; prom: number; rnd: () => number }
   const cands: Cand[] = []
@@ -393,18 +863,296 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   // (a site's own random stream: from its candidate's)
   const byScore = (f: (c: Cand) => number) => cands.map((c) => ({ c, s: f(c) })).filter((o) => o.s > 0).sort((a, b) => b.s - a.s).map((o) => o.c)
 
+  // ---- THE SEALED VAULTS (secret): a stone chamber built against the foot of a steep face — a carved frame, a great
+  // door slab in it, a KEYSTONE with an iron ring proud of the door. The WINCH takes the ring (Winch.ts `extra`): hold
+  // the car against the cable and the keystone comes out, the door falls flat (Wardens.openVault) — inside, a Warden,
+  // crystals burning, the vault's own words. ~2.4 km apart, ten at most; not on the map or the compass until found.
+  const VAULT_TEXTS: [string, string][] = [
+    ['Inside the door', 'Sealed in the last autumn. Inside: the seed-corn of nine harvests, the names of the keepers, and one very good cheese. If the cheese is gone, we forgive you.'],
+    ['On the back wall', 'We shut this door from the outside and walked away. It was the hardest thing we built: a door meant for someone else.'],
+    ['Under the crystals', 'Whoever pulled the stone: you had help, or a strong beast, or one of those wagons that growl. We wondered what you would bring.'],
+    ['A keeper\'s last line', 'The keystone is cut to come out, not to stay in. Nothing we made was meant to be shut for ever.'],
+    ['Low, by the floor', 'I hid in here once as a girl, for a whole afternoon. Nobody found me. I have been a little proud of it ever since.'],
+  ]
+  {
+    let nv = 0
+    for (const c of byScore((c) => {
+      if (c.sl > 0.22) return 0
+      let best = 0
+      for (let k = 0; k < 8; k++) best = Math.max(best, H(c.x + Math.cos(k * 0.785) * 19, c.z + Math.sin(k * 0.785) * 19) - c.y)
+      return best >= 7 ? best + c.rnd() * 4 : 0
+    })) {
+      kindNow = 'vault'
+      if (nv >= 10) break
+      if (near(c.x, c.z, 2400, 'vault') || busy(c.x, c.z)) continue
+      const g = ground(c.x, c.z, 9, 3.2)
+      if (!g) continue
+      // (its back to the hill: the way the ground rises most, 19 m out)
+      let hx = 0, hz = 0, rise = 0
+      for (let k = 0; k < 16; k++) { const dx = Math.cos(k * 0.3927), dz = Math.sin(k * 0.3927), r = H(c.x + dx * 19, c.z + dz * 19) - c.y; if (r > rise) { rise = r; hx = dx; hz = dz } }
+      if (rise < 7) continue
+      // (… and open in front: the car has to stand there, square to the door, within the winch's reach)
+      if (H(c.x - hx * 16, c.z - hz * 16) - c.y > 2.5 || map.roadEdge(c.x - hx * 14, c.z - hz * 14) < 2) continue
+      nv++
+      const a = Math.atan2(-hx, -hz), L = at(c.x, c.z, a), y0 = g.lo - 0.6, fl = g.hi + 0.2
+      PC('block', ...up(L(0, -4), y0), a, 10, fl - y0, 9.8)                                // the podium (its floor)
+      F(...L(0, -1.2), 10.6, 15.4, a)                                                      // (… and where its door falls)
+      for (const sd of [-1, 1]) PC('block', ...up(L(sd * 4.1, -4.1), fl), a, 1.6, 5, 8)    // the side walls
+      PC('block', ...up(L(0, -8.3), fl), a, 9.8, 5, 1.4)                                   // the back wall (in the hill)
+      for (const sd of [-1, 1]) PC('block', ...up(L(sd * 3.6, 0.2), fl), a, 1.8, 5, 1.4)   // the front piers: a 5.4 m opening (a car's width and a metre a side)
+      PC('block', ...up(L(0, -4), fl + 5), a, 10.6, 1, 10.2)                               // the roof slab
+      P('roof', ...up(L(0, -4), fl + 6), a, 10.6, 2.3, 10.2)
+      P('arch', ...up(L(0, 1.25), fl - 0.3), a, 9.1, 6.2, 0.9)                             // the carved frame
+      const door = plan.pieces.length
+      P('door', ...up(L(0, 0.25), fl), a, 5.4, 4.9, 0.6)
+      const [dx0, dz0] = L(0, 0.25)
+      const qd = new GFX.Quaternion().setFromEuler(eul.set(0, a, 0, 'YXZ'))
+      const standing: PropCollider = { x: dx0, y: fl + 2.45, z: dz0, rot: a, hx: 2.7, hy: 2.45, hz: 0.3, q: [qd.x, qd.y, qd.z, qd.w] }
+      // (fallen: flat on level ground; where the ground in front is lower than the floor, on down to it — the slab is
+      //  the ramp up into the vault. Sunk 0.3 m as it goes, so its top face meets the floor's edge.)
+      const [ex, ez] = L(0, 0.25 + 4.9), fallTx = Math.PI / 2 + Math.asin(Math.max(-0.12, Math.min(0.62, (fl - 0.1 - H(ex, ez)) / 4.9)))
+      const qf = new GFX.Quaternion().setFromEuler(eul.set(fallTx, a, 0, 'YXZ')), of = V(0, 2.45, 0).applyQuaternion(qf)
+      const fallen: PropCollider = { x: dx0 + of.x, y: fl - 0.3 + of.y, z: dz0 + of.z, rot: a, hx: 2.7, hy: 2.45, hz: 0.3, q: [qf.x, qf.y, qf.z, qf.w], ground: true, off: true }
+      plan.cols.push(standing, fallen)
+      const key = plan.pieces.length, [kx, kz] = L(0, 0.78)
+      P('keystone', kx, fl + 2.1, kz, a, 1.0, 1.0, 0.7)
+      // inside: a Warden at the back, crystals at her feet, the floor's flags
+      PC('block', ...up(L(0, -6.6), fl), a, 2, 0.7, 2)
+      P('statue', ...up(L(0, -6.6), fl + 0.7), a, 3.6, 3.6, 3.6)
+      P('crystal', ...up(L(-2.1, -6.4), fl), a + 0.4, 1.0, 2.4, 1.0, 0.12, 0.2)
+      P('crystal', ...up(L(2.0, -6.2), fl), a + 1.3, 1.1, 2.7, 1.1, -0.1, -0.22)
+      P('crystal', ...up(L(2.6, -5.2), fl), a + 2.1, 0.6, 1.3, 0.6, 0.3, 0.1)
+      for (const sd of [-1, 1]) { const q = L(sd * 5.6, 3.4); PC('lantern', ...up(q, H(...q) - 0.1), a, 1.5, 1.8, 1.5) }
+      for (let k = 0; k < 5; k++) { const q = L((c.rnd() - 0.5) * 9, 4 + c.rnd() * 7); P('block', ...up(q, H(...q) - 0.35), c.rnd() * 6.28, 1 + c.rnd() * 1.4, 0.7, 0.9 + c.rnd(), (c.rnd() - 0.5) * 0.4) }
+      const nm = word(c.rnd, (w) => `The Sealed Vault of ${w}`)
+      plan.vaults.push({ site: idAt(c.x, c.z), name: nm, door, key, standing, fallen, ax: kx, ay: fl + 2.5, az: kz, fallTx, sink: 0.3 })
+      site(nm, 'vault', c.x, c.z, 12, ['On the door', 'A slab of stone in a carved frame, a wedge with an iron ring set proud of it. The ring is worn bright on one side — by rope, or by chain.'], a)
+      writing(...L(0, -3.2), nm, VAULT_TEXTS[(nv - 1) % VAULT_TEXTS.length])
+    }
+  }
+  // ==== THE BUILT COUNTRY (2026-11-12, the user after playing it: "all the outside part of the map is huge and nothing
+  // placed on it — we need buildings, broken places, like Genshin … make it CONGESTED, not a big plain place"): the
+  // Wardens LIVED here. So, before the monuments take their ground:
+  //   RUINED TOWNS    ~1 a km of road country: a street (or a cross of two) of roofless stone houses — walls with
+  //                   windows and doorways, some two storeys, some under half a roof, some fallen in — a square with a
+  //                   well, an obelisk or a statue, lanterns down the street, stretches of a town wall and a gate where
+  //                   the street leaves; the bigger ones a tower or a small temple. 12–40 houses each.
+  //   FARMSTEADS      between them, every ~380 m: a house or three inside a yard of low dry-stone walls, a well.
+  //   FORTS           on the gentle hilltops: a square curtain wall, a round tower at each corner, a gate, a keep.
+  //   FIELD WALLS     low dry-stone walls along the roads' verges in runs — the road is a LANE between them.
+  // All of the kit's pieces (three new: a wall with a window, with a doorway, broken off), one instanced draw a kind.
+  const rdLines = map.meta.outland?.trails?.lines ?? [], rhw = map.roadHW
+  const rdHash = new Map<number, [number, number][]>()
+  for (const Ln of rdLines) for (const q of Ln) { const k = Math.floor(q[0] / 128) * 4096 + Math.floor(q[1] / 128); const l = rdHash.get(k); if (l) l.push(q); else rdHash.set(k, [q]) }
+  const roadPt = (x: number, z: number, r: number): [number, number] | null => {
+    const ci = Math.floor(x / 128), cj = Math.floor(z / 128), m = Math.ceil(r / 128)
+    let best: [number, number] | null = null, bd = r * r
+    for (let i = ci - m; i <= ci + m; i++) for (let j = cj - m; j <= cj + m; j++) for (const q of rdHash.get(i * 4096 + j) ?? []) { const d = (q[0] - x) ** 2 + (q[1] - z) ** 2; if (d < bd) { bd = d; best = q } }
+    return best
+  }
+  /** A wall panel's piece: seen as far as a thing 9 m big (a town reads from ~800 m, not 400). */
+  const WP = (k: Kind, x: number, y: number, z: number, rot: number, sx: number, sy: number, sz: number) => {
+    plan.pieces.push({ k, x, y, z, rot, sx, sy, sz, far: 9 })
+    if (k === 'walldoor') { for (const sd of [-1, 1]) C(x + Math.cos(rot) * sd * sx * 0.36, y + sy / 2, z - Math.sin(rot) * sd * sx * 0.36, rot, sx * 0.14, sy / 2, sz / 2) }
+    else C(x, y + sy * (k === 'wallbrk' ? 0.3 : 0.5), z, rot, sx / 2, sy * (k === 'wallbrk' ? 0.3 : 0.5), sz / 2)
+  }
+  /** A RUINED HOUSE: w × d, its front (the door) toward local +z of `a`; false if the ground won't take it. */
+  const house = (x: number, z: number, a: number, w: number, d: number, rnd: () => number, tall = false): boolean => {
+    const g = ground(x, z, Math.hypot(w, d) / 2 + 1, 2.6)
+    if (!g) return false
+    const L = at(x, z, a), y0 = g.lo - 0.5, h = 3.3 + rnd() * 1.1, T = 0.55, two = tall || rnd() < 0.42, ruin = rnd()
+    // (the four sides: [the side's middle (local), its length, the way its panels face])
+    for (const [mx, mz, len, ra, front] of [[0, d / 2, w, 0, 1], [0, -d / 2, w, Math.PI, 0], [w / 2, 0, d, Math.PI / 2, 0], [-w / 2, 0, d, -Math.PI / 2, 0]] as [number, number, number, number, number][]) {
+      const n = Math.max(2, Math.round(len / 3.3)), pw = len / n
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n - 0.5, lx = mx + (ra === 0 || ra === Math.PI ? t * len * (ra === 0 ? 1 : -1) : 0), lz = mz + (ra === 0 || ra === Math.PI ? 0 : t * len * (ra > 0 ? -1 : 1))
+        const [px, pz] = L(lx, lz), r = rnd(), door = front && i === Math.floor(n / 2)
+        const k: Kind | null = door ? 'walldoor' : r < 0.36 ? 'wallwin' : r < 0.62 ? 'block' : r < 0.86 + ruin * 0.1 ? 'wallbrk' : null
+        if (k) WP(k, px, y0, pz, a + ra, pw + 0.04, h + (g.hi - g.lo) * 0.5, T)
+        else P('block', px + (rnd() - 0.5) * 2, H(px, pz) - 0.4, pz + (rnd() - 0.5) * 2, rnd() * 6.28, 1.4 + rnd(), 0.8 + rnd() * 0.6, 1 + rnd(), (rnd() - 0.5) * 0.5, (rnd() - 0.5) * 0.5)
+        // the upper storey: more of it gone
+        if (two && k && rnd() < 0.62) WP(rnd() < 0.45 ? 'wallwin' : rnd() < 0.5 ? 'wallbrk' : 'block', px, y0 + h + (g.hi - g.lo) * 0.5, pz, a + ra, pw + 0.04, h * 0.86, T)
+      }
+    }
+    // half a roof on some; a fallen beam's worth of rubble in the others
+    if (ruin < 0.26) { const [rx, rz] = L(0, -d * 0.22); P('roof', rx, y0 + (two ? h * 1.86 : h) + (g.hi - g.lo) * 0.5, rz, a, w + 0.7, w * 0.36, d * 0.56) }
+    for (let q = 0; q < 2; q++) { const [bx, bz] = L((rnd() - 0.5) * (w - 2), (rnd() - 0.5) * (d - 2)); P('block', bx, H(bx, bz) - 0.3, bz, rnd() * 6.28, 1 + rnd() * 1.2, 0.6 + rnd() * 0.5, 0.8 + rnd(), (rnd() - 0.5) * 0.5, (rnd() - 0.5) * 0.4) }
+    plan.keep.push([x, z, Math.hypot(w, d) / 2 + 1.5])
+    return true
+  }
+  /** A stretch of low dry-stone wall from (ax, az) to (bx, bz): 6 m pieces, a gap now and then, lower where it's fallen. */
+  const lowWall = (ax: number, az: number, bx: number, bz: number, rnd: () => number, hgt = 1.15) => {
+    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 6)), rot = Math.atan2(bx - ax, bz - az) + Math.PI / 2
+    for (let i = 0; i < n; i++) {
+      if (rnd() < 0.16) continue
+      const t = (i + 0.5) / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t, y = H(x, z)
+      if (map.roadEdge(x, z) < 1.2 || map.lakeShore(x, z, y, 0.6) || rocks.onCrag(x, z, 1) || slopeAt(x, z, 3) > 0.55) continue
+      // (… nor a piece with an END on a road: a verge's wall ran across the mouth of the road that joins there)
+      { const hx = ((bx - ax) / len) * (len / n) * 0.5, hz = ((bz - az) / len) * (len / n) * 0.5; let on = false; for (let q = -1; q <= 1 && !on; q += 0.5) on = map.roadEdge(x + hx * q, z + hz * q) < 1; if (on || map.mudAt(x, z) > 0.15) continue }   // (… nor in a mire's mud)
+      PC('block', x, y - 0.35, z, rot, len / n + 0.3, (hgt + 0.35) * (rnd() < 0.2 ? 0.55 : 0.9 + rnd() * 0.25), 0.75, 0, (rnd() - 0.5) * 0.05)
+    }
+  }
+  const well = (x: number, z: number, rnd: () => number) => {
+    const y = H(x, z)
+    PC('stump', x, y - 0.3, z, 0, 2.6, 1.3, 2.6)
+    for (const sd of [-1, 1]) PC('column', x + sd * 1.5, y - 0.2, z, 0, 0.3, 2.9, 0.3)
+    P('block', x, y + 2.6, z, rnd() * 0.3, 3.6, 0.28, 0.4)
+  }
+  // ---- THE TOWNS: gentle ground 30–260 m from a road, ~750 m apart
+  const townWords = ['Old', 'Lower', 'Upper', 'Lost', 'Grey', 'Far', 'High', 'Broken']
+  let nTown = 0
+  for (const c of byScore((c) => (c.sl < 0.15 && c.y < 520 && roadPt(c.x, c.z, 260) ? 30 - c.sl * 80 + c.rnd() * 20 : 0))) {
+    kindNow = 'town'
+    if (near(c.x, c.z, 750, 'town') || busy(c.x, c.z)) continue
+    const rp = roadPt(c.x, c.z, 260)!
+    if (Math.hypot(rp[0] - c.x, rp[1] - c.z) < 34 || !ground(c.x, c.z, 30, 9)) continue
+    const big = c.rnd() < 0.4, R = big ? 78 + c.rnd() * 26 : 46 + c.rnd() * 22
+    // (its street points at the road it stands by; a cross street in the bigger ones)
+    const a = Math.atan2(rp[0] - c.x, rp[1] - c.z), L = at(c.x, c.z, a)
+    let built = 0
+    // (two rows a side: the houses on the street, and a back row behind them across a lane — a town is CROWDED)
+    for (const [axis, len] of big ? [[0, R], [1, R * 0.72]] : [[0, R]]) for (const side of [-1, 1]) for (const row of [0, 1]) {
+      for (let sd = -len * (row ? 0.8 : 1); sd < len * (row ? 0.8 : 1); ) {
+        const w = 6 + c.rnd() * 5, d = 5 + c.rnd() * 3.6, mid = sd + w / 2, off = side * (5.2 + d / 2 + c.rnd() * 1.6 + row * 13.5)
+        sd += w + 1 + c.rnd() * (c.rnd() < (row ? 0.4 : 0.15) ? 9 : 2.2)
+        if (Math.abs(mid) < (row ? 30 : 15)) continue                             // (the square; the cross street's own rows)
+        const [hx, hz] = axis ? L(mid, off) : L(off, mid)
+        // (a house's front faces its street)
+        const ha = a + (axis ? (side > 0 ? Math.PI : 0) : side > 0 ? -Math.PI / 2 : Math.PI / 2)
+        if (axis && Math.abs(off) < 0 ) continue
+        if (near(hx, hz, 4.5 + Math.max(w, d) * 0.5)) continue
+        kindNow = 'house'
+        if (house(hx, hz, ha, w, d, c.rnd, c.rnd() < 0.08)) { built++; take(hx, hz, Math.max(w, d) * 0.5) }
+        kindNow = 'town'
+      }
+    }
+    if (built < 6) continue
+    nTown++
+    // the streets' flags and lanterns
+    for (const [axis, len] of big ? [[0, R], [1, R * 0.72]] : [[0, R]]) for (let sd = -len, k = 0; sd < len; sd += 2.7, k++) {
+      const [px, pz] = axis ? L(sd, (c.rnd() - 0.5) * 1.6) : L((c.rnd() - 0.5) * 1.6, sd)
+      if (map.roadEdge(px, pz) < 1 || slopeAt(px, pz, 2) > 0.5) continue
+      if (c.rnd() < 0.8) P('block', px, H(px, pz) - 0.13, pz, a + (axis ? 1.571 : 0) + (c.rnd() - 0.5) * 0.4, 1.5 + c.rnd() * 0.7, 0.3, 1.2 + c.rnd() * 0.6, (c.rnd() - 0.5) * 0.07, (c.rnd() - 0.5) * 0.07)
+      if (k % 7 === 3) { const [qx, qz] = axis ? L(sd, 3.4 * (k % 14 === 3 ? 1 : -1)) : L(3.4 * (k % 14 === 3 ? 1 : -1), sd); PC('lantern', qx, H(qx, qz) - 0.1, qz, a, 1.4, 1.75, 1.4) }
+    }
+    // the square: a well, an obelisk or a Warden
+    const sq = c.rnd()
+    if (sq < 0.4) well(c.x, c.z, c.rnd)
+    else if (sq < 0.7) PC('obelisk', c.x, H(c.x, c.z) - 0.4, c.z, c.rnd() * 6.28, 1.4, 11 + c.rnd() * 5, 1.4)
+    else { PC('block', c.x, H(c.x, c.z) - 0.4, c.z, a, 3, 1.6, 3); P(c.rnd() < 0.6 ? 'statue' : 'kneel', c.x, H(c.x, c.z) + 1.2, c.z, a, 5.5, 5.5, 5.5) }
+    // the town's wall: stretches of it round the edge, a gate where the street goes out toward the road
+    const RW = (big ? R : R * 0.9) + 9, nW = Math.round((6.28 * RW) / 9)
+    for (let k = 0; k < nW; k++) {
+      const an = (k / nW) * 6.28, lx = Math.sin(an) * RW, lz = Math.cos(an) * RW, [px, pz] = L(lx, lz)
+      if (Math.abs(lx) < 7 && lz > 0) continue                                    // (the gate's gap)
+      if (c.rnd() < 0.42 || map.roadEdge(px, pz) < 6 || slopeAt(px, pz, 4) > 0.45 || map.lakeShore(px, pz, H(px, pz), 0.6) || rocks.onCrag(px, pz, 1)) continue
+      WP(c.rnd() < 0.55 ? 'block' : 'wallbrk', px, H(px, pz) - 0.6, pz, a + an + Math.PI / 2 + Math.PI / 2, 9.4, 3.4 + c.rnd() * 1.6, 1.1)
+    }
+    { const [gx, gz] = L(0, RW); if (map.roadEdge(gx, gz) > 6 && slopeAt(gx, gz, 4) < 0.4) { P('arch', gx, H(gx, gz) - 0.5, gz, a, 9, 8, 2.2); for (const sd of [-1, 1]) { const q = L(sd * 3.6, RW); C(q[0], H(gx, gz) + 2.5, q[1], a, 0.9, 3, 1.1) } } }
+    // the bigger ones: a tower at one end, or a small temple
+    if (big) {
+      const [tx, tz] = L((c.rnd() < 0.5 ? -1 : 1) * (R * 0.72 + 9), -8), tg = ground(tx, tz, 7, 5)
+      if (tg) { const Hh = 13 + c.rnd() * 9; PC('tower', tx, tg.lo - 1, tz, c.rnd() * 6.28, 9, Hh, 9); take(tx, tz, 7) }
+    }
+    const nm = word(c.rnd, (w) => (c.rnd() < 0.5 ? `${townWords[Math.floor(c.rnd() * townWords.length)]} ${w}` : `Ruins of ${w}`))
+    site(nm, 'town', c.x, c.z, Math.min(40, R * 0.45), undefined, a)
+    writing(...L(3.5, 3.5), nm)
+  }
+  // ---- THE FORTS: gentle hilltops, ~2.2 km apart, a dozen at most
+  let nFort = 0
+  for (const c of byScore((c) => (c.prom > 14 && c.sl < 0.2 && c.y < 620 ? c.prom + c.rnd() * 10 : 0))) {
+    kindNow = 'fort'
+    if (nFort >= 12) break
+    if (near(c.x, c.z, 2200, 'fort') || busy(c.x, c.z)) continue
+    const S = 21 + c.rnd() * 6, g = ground(c.x, c.z, S * 1.35, 8.5)
+    if (!g) continue
+    nFort++
+    const a = c.rnd() * 6.28, L = at(c.x, c.z, a), wh = 6.5 + c.rnd() * 2
+    for (const [mx, mz, ra] of [[0, S, 0], [0, -S, Math.PI], [S, 0, Math.PI / 2], [-S, 0, -Math.PI / 2]] as [number, number, number][]) {
+      const n = Math.round((2 * S) / 7.4), pw = (2 * S) / n
+      for (let i = 0; i < n; i++) {
+        const t = (i + 0.5) / n - 0.5, lx = mx + (mz !== 0 ? t * 2 * S : 0), lz = mz + (mx !== 0 ? t * 2 * S : 0), [px, pz] = L(lx, lz)
+        if (mz > 0 && Math.abs(lx) < 4.5) { P('arch', px, H(px, pz) - 0.6, pz, a, pw + 1.2, wh + 1.2, 2.4); for (const sd of [-1, 1]) { const q = L(lx + sd * pw * 0.42, lz); C(q[0], H(px, pz) + wh / 2, q[1], a, pw * 0.1, wh / 2, 1.2) } continue }
+        const r = c.rnd()
+        if (r < 0.1) continue
+        WP(r < 0.36 ? 'wallbrk' : 'block', px, H(px, pz) - 0.8, pz, a + ra, pw + 0.1, (r < 0.36 ? wh * 0.75 : wh) + 0.8, 1.6)
+      }
+    }
+    for (const [lx, lz] of [[S, S], [-S, S], [S, -S], [-S, -S]]) { const [px, pz] = L(lx, lz); PC('tower', px, H(px, pz) - 1.2, pz, c.rnd() * 6.28, 7.4, wh + 3.5 + c.rnd() * 5, 7.4) }
+    kindNow = 'house'
+    house(...L(0, -S * 0.35), a, 13, 10, c.rnd, true)
+    house(...L(-S * 0.52, S * 0.3), a + Math.PI / 2, 8, 6, c.rnd)
+    kindNow = 'fort'
+    well(...L(S * 0.4, S * 0.25), c.rnd)
+    const nm = word(c.rnd, (w) => `Fort ${w}`)
+    site(nm, 'fort', c.x, c.z, S * 1.2, ['Over the gate', 'Held for as long as there was anyone to hold it for.'], a)
+    writing(...L(3, S + 4), nm)
+  }
+  // ---- THE FARMSTEADS: every ~380 m of the gentle land that has nothing — a house or three in a walled yard
+  for (let gz = -ho + 190; gz < ho; gz += 380) for (let gx = -ho + 190; gx < ho; gx += 380) {
+    if (Math.abs(gx) < hb + 120 && Math.abs(gz) < hb + 120) continue
+    let s = cellSeed(gx, gz, 151)
+    const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+    for (let t = 0; t < 8; t++) {
+      const x = gx + (rnd() - 0.5) * 300, z = gz + (rnd() - 0.5) * 300
+      kindNow = 'farm'
+      if (H(x, z) > 560 || slopeAt(x, z, 8) > 0.2 || near(x, z, 90) || !ground(x, z, 20, 5)) continue
+      const a = rnd() * 6.28, L = at(x, z, a), yw = 15 + rnd() * 9, yd = 12 + rnd() * 8
+      kindNow = 'house'
+      let nb = 0
+      if (house(...L(-yw * 0.35, -yd * 0.3), a, 6.5 + rnd() * 3, 5 + rnd() * 2, rnd)) nb++
+      if (rnd() < 0.55 && house(...L(yw * 0.38, yd * 0.1), a - Math.PI / 2, 5.5 + rnd() * 2.5, 4.6 + rnd() * 1.6, rnd)) nb++
+      if (rnd() < 0.25 && house(...L(-yw * 0.2, yd * 0.5), a + Math.PI, 5 + rnd() * 2, 4.4 + rnd(), rnd)) nb++
+      kindNow = 'farm'
+      if (!nb) continue
+      const cr: [number, number][] = [[-yw, -yd], [yw, -yd], [yw, yd], [-yw, yd]]
+      for (let k = 0; k < 4; k++) { const p0 = L(...cr[k]), p1 = L(...cr[(k + 1) % 4]); if (k === 2) { const m0 = L(cr[2][0] * 0.25, yd), m1 = L(cr[3][0] * 0.25, yd); lowWall(p0[0], p0[1], m0[0], m0[1], rnd); lowWall(m1[0], m1[1], p1[0], p1[1], rnd) } else lowWall(p0[0], p0[1], p1[0], p1[1], rnd) }
+      if (rnd() < 0.5) well(...L(yw * 0.1, -yd * 0.1), rnd)
+      take(x, z, Math.max(yw, yd))
+      break
+    }
+  }
+  // ---- THE FIELD WALLS along the roads: runs of 50–180 m on one verge or both, a gap of as much between
+  {
+    let run = 0, gap = 0, both = false, sideNow = 1
+    for (const Ln of rdLines) for (let k = 1; k + 1 < Ln.length; k++) {
+      const [x, z] = Ln[k], [x0, z0] = Ln[k - 1], [x1, z1] = Ln[k + 1], seg = Math.hypot(x1 - x, z1 - z)
+      if (run <= 0 && gap <= 0) {
+        let s = cellSeed(Math.round(x), Math.round(z), 153)
+        const r1 = ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296), r2 = ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+        run = 50 + r1 * 130; gap = 40 + r2 * 150; both = r1 > 0.45; sideNow = r2 < 0.5 ? -1 : 1
+      }
+      if (run > 0) {
+        run -= seg
+        // (not at a road's ends: where it meets another, their verges' walls crossed the junction)
+        if (k < 6 || k > Ln.length - 7 || !inLand(x, z, 10) || H(x, z) > 600) continue
+        const dx = x1 - x0, dz = z1 - z0, l = Math.hypot(dx, dz) || 1, nx = -dz / l, nz = dx / l
+        let s = cellSeed(Math.round(x), Math.round(z), 155)
+        const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+        for (const sd of both ? [-1, 1] : [sideNow]) {
+          const o = rhw + 3.4, ax = x + nx * o * sd, az = z + nz * o * sd, bx = x1 + nx * o * sd, bz = z1 + nz * o * sd
+          if (near(ax, az, 3) || keepOff.some(([kx, kz, kr]) => (ax - kx) ** 2 + (az - kz) ** 2 < kr * kr)) continue
+          lowWall(ax, az, bx, bz, rnd, 1.05)
+        }
+      } else gap -= seg
+    }
+  }
   // ---- THE BEACON TOWERS: on the crests (the most prominent, gentle enough to stand on), ~1.4 km apart
   for (const c of byScore((c) => (c.prom > 22 && c.sl < 0.5 ? c.prom : 0))) {
     kindNow = 'tower'
-    if (near(c.x, c.z, 1250, 'tower') || busy(c.x, c.z)) continue
+    if (near(c.x, c.z, region(c.x, c.z) === 0 ? 800 : 1250, 'tower') || busy(c.x, c.z)) continue
     const R = 5 + c.rnd() * 3, g = ground(c.x, c.z, R + 3, 7)
     if (!g) continue
-    const Hh = 16 + c.rnd() * 16, lit = c.rnd() < 0.7, foot = g.lo - 1.5
+    const Hh = 16 + c.rnd() * 16, foot = g.lo - 1.5
+    c.rnd()   // (was: lit or not, at random — the stream kept, so no tower moved)
     PC('tower', c.x, foot, c.z, c.rnd() * 6.28, R * 2, Hh + 1.5, R * 2)
-    if (lit) { P('crystal', c.x, foot + Hh + 1.2, c.z, 0, 2.4, 4.2, 2.4); P('block', c.x, foot + Hh + 0.6, c.z, 0.4, 3, 0.8, 3) }
+    // EVERY beacon has its crystal (2026-11-12, round 2 — "light the chain"): ASLEEP until the player reaches the tower
+    // (Wardens.light, from the landmarks' found set), burning for good after; seen as far as its tower
+    plan.pieces.push({ k: 'crystal', x: c.x, y: foot + Hh + 1.2, z: c.z, rot: 0, sx: 3.4, sy: 6.6, sz: 3.4, site: idAt(c.x, c.z), far: Hh + 6 })
+    P('block', c.x, foot + Hh + 0.6, c.z, 0.4, 3, 0.8, 3)
     for (let k = 0; k < 7; k++) { const a = c.rnd() * 6.28, d = R + 2 + c.rnd() * 9, s = 0.8 + c.rnd() * 1.6; const px = c.x + Math.cos(a) * d, pz = c.z + Math.sin(a) * d; P('block', px, H(px, pz) - s * 0.3, pz, c.rnd() * 6.28, s * 1.3, s, s, (c.rnd() - 0.5) * 0.4, (c.rnd() - 0.5) * 0.4) }
     const nm = word(c.rnd, (w) => `${w} Beacon`)
-    site(nm, 'tower', c.x, c.z, R + 6, lit ? ['The beacon\'s plaque', 'One of the seven-times-seven beacons. Its crystal still burns — someone has been keeping it clean.'] : undefined)
+    site(nm, 'tower', c.x, c.z, R + 6, ['The beacon\'s plaque', 'One of the seven-times-seven beacons. Its crystal sleeps until someone stands under it — then it burns, and the next tower along the ridge can see it.'])
     writing(c.x + R + 4, c.z, nm)
   }
   // ---- THE GIANTS: on open ground seen from far (prominent or wide floors), ~2 km apart
@@ -414,41 +1162,41 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     kindNow = 'giant'
     if (near(c.x, c.z, 1500, 'giant') || busy(c.x, c.z)) continue
     const kind = giantKinds[gk % giantKinds.length], R = kind === 'twin' ? 34 : 22
-    const g = ground(c.x, c.z, R, kind === 'head' || kind === 'fallen' ? 12 : 7)
+    const g = ground(c.x, c.z, R, kind === 'fallen' ? 12 : kind === 'head' ? 9 : 7)
     if (!g) continue
     gk++
     const a = c.rnd() * 6.28, L = at(c.x, c.z, a), foot = g.lo - 1
     if (kind === 'sword' || kind === 'kneel') {
       const S = kind === 'sword' ? 34 + c.rnd() * 14 : 26 + c.rnd() * 8
       PC('block', c.x, foot, c.z, a, 16, 4 + (g.hi - g.lo), 16)                    // the plinth (ground: drive up onto it… if you can)
-      PC('stair', ...L(0, 10.5), foot, a, 8, 4 + (g.hi - g.lo) * 0.5, 5)
+      F(...L(0, 2.5), 16, 21, a)
+      PC('stair', ...up(L(0, 10.5), foot), a, 8, 4 + (g.hi - g.lo) * 0.5, 5)
       PC(kind === 'sword' ? 'statue' : 'kneel', c.x, foot + 4 + (g.hi - g.lo), c.z, a, S, S, S)
       const nm = kind === 'sword' ? word(c.rnd, (w) => `The Sword-Bearer of ${w}`) : word(c.rnd, (w) => `The Kneeling Warden of ${w}`)
-      site(nm, 'giant', c.x, c.z, 16, ['On the plinth', kind === 'sword' ? 'He rests his hands on the blade because the fight is over. Do not wake him to start another.' : 'She holds the sun up for us. Be grateful, and go round.'])
-      for (const s of [-1, 1]) PC('lantern', ...L(s * 6, 14), H(...L(s * 6, 14)) - 0.1, a, 2.2, 2.6, 2.2)
+      site(nm, 'giant', c.x, c.z, 16, ['On the plinth', kind === 'sword' ? 'He rests his hands on the blade because the fight is over. Do not wake him to start another.' : 'She holds the sun up for us. Be grateful, and go round.'], a)
+      for (const s of [-1, 1]) PC('lantern', ...up(L(s * 6, 14), H(...L(s * 6, 14)) - 0.1), a, 2.2, 2.6, 2.2)
     } else if (kind === 'head') {
       const S = 14 + c.rnd() * 8
-      P('head', c.x, foot - S * 0.25, c.z, a, S, S, S, 0, 0.5 + c.rnd() * 0.5)     // on its cheek, half sunk
-      C(c.x, foot + S * 0.18, c.z, a, S * 0.42, S * 0.3, S * 0.45, true)
+      P('head', c.x, H(c.x, c.z) - S * 0.07, c.z, a, S, S, S, 0, (0.45 + c.rnd() * 0.35) * (c.rnd() < 0.5 ? -1 : 1))   // on its cheek, sunk a little (its face clear of the grass)
+      C(c.x, H(c.x, c.z) + S * 0.25, c.z, a, S * 0.42, S * 0.3, S * 0.45, true)
       for (let k = 0; k < 6; k++) { const q = L((c.rnd() - 0.5) * S * 2.4, (c.rnd() - 0.5) * S * 2.4); P('block', q[0], H(...q) - 0.6, q[1], c.rnd() * 6.28, 2 + c.rnd() * 3, 1.5 + c.rnd() * 2, 2 + c.rnd() * 2, (c.rnd() - 0.5) * 0.5) }
-      site(word(c.rnd, (w) => `The Fallen Head of ${w}`), 'giant', c.x, c.z, S * 0.8, ['Near the giants', 'The giants were not made. They were found asleep in the hills, and we only uncovered their faces.'])
+      site(word(c.rnd, (w) => `The Fallen Head of ${w}`), 'giant', c.x, c.z, S * 0.8, ['Near the giants', 'The giants were not made. They were found asleep in the hills, and we only uncovered their faces.'], a)
     } else if (kind === 'fallen') {
       // a toppled Warden in three pieces lying in the grass, its sword beside it
       const S = 30 + c.rnd() * 10
-      P('statue', ...L(-S * 0.1, 0), foot + S * 0.12, a + 1.571, S * 0.9, S * 0.55, S * 0.9, 1.571, 0)
-      const [bx, bz] = L(0, 0)
-      C(bx, foot + S * 0.12, bz, a, S * 0.3, S * 0.13, S * 0.1, true)
-      P('head', ...L(S * 0.45, 4), foot - S * 0.05, a, S * 0.2, S * 0.2, S * 0.2, 0.2, 1.2)
-      site(word(c.rnd, (w) => `The Fallen Warden of ${w}`), 'giant', c.x, c.z, S * 0.45, ['On a fallen column', 'Built in a summer, fell in a winter, still here in the spring. Not bad, for a column.'])
+      PC('statue', ...up(L(-S * 0.1, 0), foot + S * 0.12), a + 1.571, S * 0.9, S * 0.55, S * 0.9, 1.571, 0, true)
+      P('head', ...up(L(S * 0.45, 4), foot - S * 0.05), a, S * 0.2, S * 0.2, S * 0.2, 0.2, 1.2)
+      site(word(c.rnd, (w) => `The Fallen Warden of ${w}`), 'giant', c.x, c.z, S * 0.45, ['On a fallen column', 'Built in a summer, fell in a winter, still here in the spring. Not bad, for a column.'], a)
     } else {
       // THE TWIN GUARDIANS: two Sword-Bearers facing each other across a gap
       const S = 26 + c.rnd() * 8
       for (const s of [-1, 1]) {
         const [px, pz] = L(s * 22, 0), fy = H(px, pz) - 1
         PC('block', px, fy, pz, a, 10, 4, 10)
+        F(px, pz, 10, 10, a)
         PC('statue', px, fy + 4, pz, a + (s > 0 ? -1.571 : 1.571), S, S, S)
       }
-      site(word(c.rnd, (w) => `The Twin Guardians of ${w}`), 'giant', c.x, c.z, 30, ['Between them', 'Count the towers from the gate: one for each Warden who walked into the Grey and came back.'])
+      site(word(c.rnd, (w) => `The Twin Guardians of ${w}`), 'giant', c.x, c.z, 30, ['Between them', 'Count the towers from the gate: one for each Warden who walked into the Grey and came back.'], a)
     }
   }
   // ---- THE TEMPLES: on benches (flat, a little raised), ~900 m apart
@@ -460,21 +1208,22 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     if (!g) continue
     const a = c.rnd() * 6.28, L = at(c.x, c.z, a), top = g.hi + 0.9, base = g.lo - 1
     PC('block', c.x, base, c.z, a, W, top - base, D)                                   // the platform (ground)
-    PC('stair', ...L(0, D / 2 + 2), base, a, W * 0.5, top - base, 4)                    // the steps up, at its front
+    F(...L(0, 2.2), W, D + 4.4, a)                                                     // (… with its steps)
+    PC('stair', ...up(L(0, D / 2 + 2), base), a, W * 0.5, top - base, 4)                    // the steps up, at its front
     const nC = 4 + Math.floor(c.rnd() * 3), roofed = c.rnd() < 0.45
     for (const s of [-1, 1]) for (let k = 0; k < nC; k++) {
       const lz = -D / 2 + 1.6 + (k / (nC - 1)) * (D - 3.2), [px, pz] = L(s * (W / 2 - 1.5), lz), r = c.rnd()
       if (r < 0.62 || roofed) { PC('column', px, top, pz, 0, 1.4, 8, 1.4); P('capital', px, top + 8, pz, 0, 1.4, 1.1, 1.4) }
       else if (r < 0.85) PC('stump', px, top, pz, 0, 1.4, 2 + c.rnd() * 4, 1.4)
-      else { const [fx, fz] = L(s * (W / 2 + 4 + c.rnd() * 3), lz + (c.rnd() - 0.5) * 4); P('column', fx, H(fx, fz) + 0.5, fz, a + (c.rnd() - 0.5) * 0.6, 1.4, 7, 1.4, 1.571, 0); C(fx, H(fx, fz) + 0.7, fz, a, 0.75, 0.7, 3.5) }
+      else { const [fx, fz] = L(s * (W / 2 + 4 + c.rnd() * 3), lz + (c.rnd() - 0.5) * 4); PC('column', fx, H(fx, fz) + 0.5, fz, a + (c.rnd() - 0.5) * 0.6, 1.4, 7, 1.4, 1.571, 0) }
     }
     if (roofed) {
       for (const s of [-1, 1]) for (let k = 0; k < nC - 1; k++) { const lz = -D / 2 + 1.6 + ((k + 0.5) / (nC - 1)) * (D - 3.2), [px, pz] = L(s * (W / 2 - 1.5), lz); P('block', px, top + 9.1, pz, a, 1.6, 0.9, (D - 3.2) / (nC - 1) + 0.2) }
       P('roof', c.x, top + 10, c.z, a, W, 3.4, D - 1)
     }
-    PC('statue', ...L(0, -D / 2 + 3.5), top, a, 4.2, 4.2, 4.2)
-    PC('block', ...L(0, -D / 2 + 3.5), top - 0.2, a, 2, 0.8, 2)
-    for (const s of [-1, 1]) PC('lantern', ...L(s * (W * 0.25 + 1), D / 2 + 5), H(...L(s * (W * 0.25 + 1), D / 2 + 5)) - 0.1, a, 1.6, 1.9, 1.6)
+    PC('statue', ...up(L(0, -D / 2 + 3.5), top), a, 4.2, 4.2, 4.2)
+    PC('block', ...up(L(0, -D / 2 + 3.5), top - 0.2), a, 2, 0.8, 2)
+    for (const s of [-1, 1]) PC('lantern', ...up(L(s * (W * 0.25 + 1), D / 2 + 5), H(...L(s * (W * 0.25 + 1), D / 2 + 5)) - 0.1), a, 1.6, 1.9, 1.6)
     const nm = word(c.rnd, (w) => `Temple of the ${w}`)
     site(nm, 'temple', c.x, c.z, R)
     writing(...L(W * 0.3 + 3, D / 2 + 6), nm)
@@ -508,7 +1257,8 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   for (const c of byScore((c) => (c.sl < 0.2 ? 5 + c.rnd() * 30 : 0))) {
     kindNow = 'mix'
     if (near(c.x, c.z, 620, 'mix') || busy(c.x, c.z)) continue
-    const kind = mix % 3
+    // (its kind: in turn — but the Tree's country grows GARDENS, the Scribes' raises NEEDLES)
+    const rg = region(c.x, c.z), kind = rg === 1 && mix % 3 !== 1 && c.rnd() < 0.7 ? 1 : rg === 2 && mix % 3 !== 2 && c.rnd() < 0.6 ? 2 : mix % 3
     const R = kind === 0 ? 30 : kind === 1 ? 14 : 16
     const g = ground(c.x, c.z, R, kind === 0 ? 6 : 3.5)
     if (!g) continue
@@ -520,7 +1270,7 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
         const [px, pz] = L(s * 4.5, -R + (k / (n - 1)) * R * 2), r = c.rnd(), y = H(px, pz) - 0.3
         if (r < 0.55) { PC('column', px, y, pz, 0, 1.1, 6.5, 1.1); P('capital', px, y + 6.5, pz, 0, 1.1, 0.9, 1.1) }
         else if (r < 0.85) PC('stump', px, y, pz, 0, 1.1, 1.5 + c.rnd() * 3.5, 1.1)
-        else { const fy = H(px, pz); P('column', px + 3 * s, fy + 0.45, pz, a + (c.rnd() - 0.5), 1.1, 6, 1.1, 1.571, 0) }
+        else { const fy = H(px, pz); PC('column', px + 3 * s, fy + 0.45, pz, a + (c.rnd() - 0.5), 1.1, 6, 1.1, 1.571, 0) }
       }
       for (let k = 0; k < Math.floor(R / 2.4); k++) { const [px, pz] = L((c.rnd() - 0.5) * 2, -R + k * 4.8 + c.rnd()); P('block', px, H(px, pz) - 0.08, pz, a + (c.rnd() - 0.5) * 0.3, 2.2, 0.26, 1.8) }
       const nm = word(c.rnd, (w) => `The ${w} Walk`)
@@ -541,7 +1291,7 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
         PC('block', px, y - 0.4, pz, a, 1.8, 1.4, 1.8)
         P(c.rnd() < 0.7 ? 'statue' : 'kneel', px, y + 1, pz, a + Math.atan2(-lx, -lz), 3.2, 3.2, 3.2)
       }
-      for (const s of [-1, 1]) PC('lantern', ...L(s * 2.4, S + 1.5), H(...L(s * 2.4, S + 1.5)) - 0.1, a, 1.5, 1.8, 1.5)
+      for (const s of [-1, 1]) PC('lantern', ...up(L(s * 2.4, S + 1.5), H(...L(s * 2.4, S + 1.5)) - 0.1), a, 1.5, 1.8, 1.5)
       const nm = word(c.rnd, (w) => `Garden of the ${w}`)
       site(nm, 'garden', c.x, c.z, 14)
       writing(...L(0, S + 3), nm)
@@ -593,7 +1343,8 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     for (let k = 1; k + 1 < line.length; k++) {
       const [x, z] = line[k], [x0, z0] = line[k - 1], [x1, z1] = line[k + 1]
       along += Math.hypot(x - x0, z - z0)
-      if (along < 450 || !inLand(x, z, 12)) continue
+      const rg = region(x, z)
+      if (along < (rg === 2 || rg === 1 ? 260 : 450) || !inLand(x, z, 12)) continue
       const dx = x1 - x0, dz = z1 - z0, l = Math.hypot(dx, dz)
       if (l < 1) continue
       let s = cellSeed(Math.round(x), Math.round(z), 133)
@@ -602,10 +1353,13 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
       kindNow = 'shrine'
       if (!ground(px, pz, 3.5, 2.5) || near(px, pz, 60)) continue
       along = 0
-      const face = Math.atan2(-(px - x), -(pz - z)), r = rnd(), y = H(px, pz)
+      const face = Math.atan2(-(px - x), -(pz - z)), r0 = rnd(), y = H(px, pz)
+      // (the Scribes' country: a written stone nearly every time; the Tree's: lanterns)
+      const r = rg === 2 ? 0.4 + r0 * 0.4 : rg === 1 ? (r0 < 0.3 ? r0 : 0.76 + r0 * 0.2) : r0
       if (r < 0.4) {
         // a SHRINE: a plinth, a small Warden under a dome on four posts, two lanterns
         PC('block', px, y - 0.4, pz, face, 3.2, 0.7, 3.2)
+        F(px, pz, 3.2, 3.2, face)
         for (const [lx, lz] of [[-1.2, -1.2], [1.2, -1.2], [1.2, 1.2], [-1.2, 1.2]]) { const [qx, qz] = at(px, pz, face)(lx, lz); PC('column', qx, y + 0.3, qz, 0, 0.35, 2.6, 0.35) }
         P('block', px, y + 2.9, pz, face, 3, 0.35, 3); P('dome', px, y + 3.25, pz, face, 2.6, 2, 2.6)
         P('statue', px, y + 0.3, pz, face, 1.7, 1.7, 1.7)
@@ -656,6 +1410,7 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   const rh = new Map<number, [number, number][]>()
   for (const p of roadPts) { const k = Math.floor(p[0] / 100) * 4096 + Math.floor(p[1] / 100); const l = rh.get(k); if (l) l.push(p); else rh.set(k, [p]) }
   for (const l of plan.sites) {
+    if (SECRET.has(l.style ?? '')) continue   // (no path gives a secret away)
     let best: [number, number] | null = null, bd = 260
     const ci = Math.floor(l.x / 100), cj = Math.floor(l.z / 100)
     for (let i = ci - 3; i <= ci + 3; i++) for (let j = cj - 3; j <= cj + 3; j++) for (const p of rh.get(i * 4096 + j) ?? []) { const d = Math.hypot(p[0] - l.x, p[1] - l.z); if (d < bd) { bd = d; best = p } }
@@ -675,6 +1430,14 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
       if (k % 14 === 7) { const qx = px - uz * 2.2 * side, qz = pz + ux * 2.2 * side; PC('lantern', qx, H(qx, qz) - 0.1, qz, 0, 1.2, 1.5, 1.2) }
     }
   }
+  // (?wkit=<size>: THE KIT ON PARADE — every piece `size` m tall in a row by the first temple, facing ?wkitrot (rad), for
+  //  the harness to look each over: scripts/harness/wardens.mjs "x=@<x>:<z>,…"; the row's start is logged)
+  const kitS = Number(gameParams().get('wkit') ?? 0)
+  if (kitS > 0) {
+    const t = plan.sites.find((l) => l.style === 'temple') ?? plan.sites[0], rot = Number(gameParams().get('wkitrot') ?? 0)
+    KINDS.forEach((k, i) => { const x = t.x + 60 + i * kitS * 1.6, z = t.z; P(k, x, Math.max(H(x, z), H(x - kitS / 2, z), H(x + kitS / 2, z)) + 0.2, z, rot, kitS, kitS, kitS, Number(gameParams().get('wkittx') ?? 0), Number(gameParams().get('wkittz') ?? 0)) })
+    console.log(`wkit: ${KINDS.map((k, i) => `${k} @${(t.x + 60 + i * kitS * 1.6).toFixed(0)}:${t.z.toFixed(0)}`).join('  ')}`)
+  }
   return plan
 }
 
@@ -688,7 +1451,7 @@ export class Wardens {
   private readonly mats: Float32Array
   private readonly size: Float32Array
   private readonly kindOf: Uint8Array
-  private readonly cells = new Map<number, { idx: number[]; y0: number; y1: number }>()
+  private readonly cells = new Map<number, { idx: number[]; y0: number; y1: number; big: number }>()
   private readonly reachK: number
   private readonly lastPos = new GFX.Vector3(Number.NaN, 0, 0)
   private readonly lastDir = new GFX.Vector3()
@@ -696,17 +1459,33 @@ export class Wardens {
   private readonly frustum = new GFX.Frustum()
   private readonly pv = new GFX.Matrix4()
   private readonly cellBox = new GFX.Box3()
+  /** (the beacons) each crystal's site (−1: not one), the sites lit, the two crystal kinds' meshes */
+  private readonly siteOf: Int32Array
+  private readonly lit = new Set<number>()
+  private readonly allLit = gameParams().get('beacons') === 'lit'
+  private readonly kCrystal = KINDS.indexOf('crystal')
+  private readonly kDark = KINDS.indexOf('crystalDark')
+  /** THE SEALED VAULTS: each one's pieces and boxes (the plan's), open or not, its door falling (seconds in; −1: still) */
+  private readonly vaults: (Vault & { open: boolean; t: number })[]
+  private readonly pieces: Piece[]
+  private readonly mapId: string
+  /** A vault's boxes changed (World: the physics re-streams the props'). */
+  onColliders: (() => void) | null = null
   private readonly texts: WardenText[]
   private readonly textHash = new Map<number, WardenText[]>()
 
   constructor(plan: WardenPlan, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     const P = plan.pieces
+    this.pieces = P
+    this.mapId = plan.mapId
+    this.vaults = plan.vaults.map((v) => ({ ...v, open: false, t: -1 }))
     this.texts = plan.texts
     for (const t of plan.texts) { const k = this.key(Math.floor(t.x / 64), Math.floor(t.z / 64)); const l = this.textHash.get(k); if (l) l.push(t); else this.textHash.set(k, [t]) }
     this.reachK = (tier.rockReach / 900) * (tier.weakGpu ? 0.7 : 1)   // (a weak GPU — the phones: nearer)
     const mat = woodMaterial(atmos, shadow, tier, farGrid)
+    if (gameParams().get('wregions') !== '0') plan.regions.forEach(([x, z, r], k) => { if (r > 0) (mat.uniforms[`uRegion${k}`].value as GFX.Vector4).set(x, z, r, 1) })   // (?wregions=0: one stone everywhere — the A/B)
     KINDS.forEach((k, ki) => {
-      const n = P.filter((p) => p.k === k).length
+      const n = P.filter((p) => p.k === (k === 'crystalDark' ? 'crystal' : k)).length
       const b = new Builder(0x3a7d + ki * 977)
       KIT[k].build(b)
       const mesh = new GFX.InstancedMesh(b.geometry(), mat, Math.max(1, n))
@@ -718,22 +1497,76 @@ export class Wardens {
     this.mats = new Float32Array(P.length * 16)
     this.size = new Float32Array(P.length)
     this.kindOf = new Uint8Array(P.length)
-    const m = new GFX.Matrix4(), q = new GFX.Quaternion(), e = new GFX.Euler()
+    this.siteOf = new Int32Array(P.length).fill(-1)
     P.forEach((p, i) => {
-      q.setFromEuler(e.set(p.tx ?? 0, p.rot, p.tz ?? 0, 'YXZ'))
-      m.compose(V(p.x, p.y, p.z), q, V(p.sx, p.sy, p.sz)).toArray(this.mats, i * 16)
-      this.size[i] = Math.max(p.sx, p.sy, p.sz)
+      this.place(i)
+      this.size[i] = p.far ?? Math.max(p.sx, p.sy, p.sz)
+      if (p.site !== undefined) this.siteOf[i] = p.site
       this.kindOf[i] = KINDS.indexOf(p.k)
       const k = this.key(Math.floor(p.x / CELL), Math.floor(p.z / CELL))
       let c = this.cells.get(k)
-      if (!c) this.cells.set(k, (c = { idx: [], y0: Infinity, y1: -Infinity }))
+      if (!c) this.cells.set(k, (c = { idx: [], y0: Infinity, y1: -Infinity, big: 0 }))
       c.idx.push(i)
+      c.big = Math.max(c.big, this.size[i])
       c.y0 = Math.min(c.y0, p.y - 2)
       c.y1 = Math.max(c.y1, p.y + Math.max(p.sy, p.sx) + 2)
     })
   }
 
   private key(i: number, j: number): number { return (i + 4096) * 8192 + (j + 4096) }
+
+  private readonly m4 = new GFX.Matrix4()
+  private readonly q4 = new GFX.Quaternion()
+  private readonly e4 = new GFX.Euler()
+  /** Piece i's matrix from its plan entry (as built; a vault's door as it falls). */
+  private place(i: number): void {
+    const p = this.pieces[i]
+    this.q4.setFromEuler(this.e4.set(p.tx ?? 0, p.rot, p.tz ?? 0, 'YXZ'))
+    this.m4.compose(V(p.x, p.y, p.z), this.q4, V(p.sx, p.sy, p.sz)).toArray(this.mats, i * 16)
+  }
+
+  // ------------------------------------------------------------------------------------------------ the sealed vaults
+  /** The vaults opened so far on this map (localStorage `oth.wvaults.<map>`: their sites' ids) — fallen at once. */
+  restoreVaults(): void {
+    let ids: number[] = []
+    try { ids = JSON.parse(localStorage.getItem(`oth.wvaults.${this.mapId}`) ?? '[]') as number[] } catch { /* (nothing kept) */ }
+    for (const v of this.vaults) if (ids.includes(v.site)) this.openVault(v.site, true)
+  }
+  /** What the WINCH can take (Winch.extra): each sealed vault's keystone — its ring, the vault's site. */
+  keystones(): { x: number; y: number; z: number; site: number; name: string }[] {
+    return this.vaults.filter((v) => !v.open).map((v) => ({ x: v.ax, y: v.ay, z: v.az, site: v.site, name: v.name }))
+  }
+  get vaultCount(): [number, number] { return [this.vaults.filter((v) => v.open).length, this.vaults.length] }
+  /** THE KEYSTONE OUT: the vault's door falls flat in front of it (1.1 s; `instant`: already down — a vault opened
+   *  before). Its standing box goes, the fallen slab's comes (ground: drive in over it). False: no such vault, or open. */
+  openVault(site: number, instant = false): boolean {
+    const v = this.vaults.find((q) => q.site === site)
+    if (!v || v.open) return false
+    v.open = true
+    v.t = instant ? 1e9 : 0
+    v.standing.off = true
+    this.pieces[v.key].y -= 1e4   // (the keystone: gone — on the winch's hook)
+    this.place(v.key)
+    if (instant) { this.pieces[v.door].tx = v.fallTx; this.pieces[v.door].y -= v.sink; this.place(v.door); v.fallen.off = false; v.t = -1 }
+    else try { localStorage.setItem(`oth.wvaults.${this.mapId}`, JSON.stringify(this.vaults.filter((q) => q.open).map((q) => q.site))) } catch { /* (not kept) */ }
+    this.onColliders?.()
+    this.lastPos.x = Number.NaN
+    return true
+  }
+  /** A door falling: its tilt eased (a slab going over: slow, then fast, a small bounce). */
+  private fall(dt: number): void {
+    for (const v of this.vaults) {
+      if (v.t < 0) continue
+      v.t += dt
+      const k = Math.min(1, v.t / 1.1), e = k * k * k, bounce = k >= 1 ? 0 : Math.max(0, Math.sin((k - 0.86) * 22)) * 0.04 * (k > 0.86 ? 1 : 0)
+      const p = this.pieces[v.door], was = p.tx ?? 0
+      p.tx = v.fallTx * Math.min(1, e / 0.64) - bounce
+      p.y -= v.sink * (Math.min(1, p.tx / v.fallTx) - Math.min(1, was / v.fallTx))
+      this.place(v.door)
+      this.lastPos.x = Number.NaN
+      if (k >= 1) { v.t = -1; p.y -= v.sink * (1 - Math.min(1, p.tx / v.fallTx)); p.tx = v.fallTx; this.place(v.door); v.fallen.off = false; this.onColliders?.() }
+    }
+  }
 
   /** The writing within 9 m of (x, z) — stopped by it, the game shows it (main.ts). */
   textNear(x: number, z: number): WardenText | null {
@@ -743,8 +1576,21 @@ export class Wardens {
   }
   get textCount(): number { return this.texts.length }
 
+  /** THE BEACONS: these sites' crystals burn from now on (World: the landmarks found so far; main.ts: one just found). */
+  light(sites: Iterable<number>): void {
+    for (const id of sites) this.lit.add(id)
+    this.lastPos.x = Number.NaN   // (re-picked at the next update)
+  }
+  /** How many beacons burn, of how many. */
+  beacons(): [number, number] {
+    let n = 0, lit = 0
+    for (let i = 0; i < this.siteOf.length; i++) if (this.siteOf[i] >= 0) { n++; if (this.allLit || this.lit.has(this.siteOf[i])) lit++ }
+    return [lit, n]
+  }
+
   /** Re-pick what's drawn when the camera has moved 8 m or turned. */
-  update(camera: GFX.PerspectiveCamera): void {
+  update(camera: GFX.PerspectiveCamera, dt = 0): void {
+    if (dt > 0) this.fall(dt)
     camera.getWorldDirection(this.dir)
     if (camera.position.distanceToSquared(this.lastPos) < 64 && this.dir.dot(this.lastDir) > 0.9985) return
     this.lastPos.copy(camera.position); this.lastDir.copy(this.dir)
@@ -760,6 +1606,8 @@ export class Wardens {
       const x0 = i * CELL, z0 = j * CELL
       const nx = Math.max(x0 - cx, 0, cx - x0 - CELL), nz = Math.max(z0 - cz, 0, cz - z0 - CELL)
       if (nx * nx + nz * nz > R * R) continue
+      // (a cell of small things — a town's houses: past the reach of its BIGGEST piece nothing in it is drawn — not walked)
+      { const cr = (120 + c.big * 75) * this.reachK; if (nx * nx + nz * nz > cr * cr) continue }
       this.cellBox.min.set(x0 - 30, c.y0, z0 - 30)
       this.cellBox.max.set(x0 + CELL + 30, c.y1, z0 + CELL + 30)
       if (!this.frustum.intersectsBox(this.cellBox)) continue
@@ -769,8 +1617,14 @@ export class Wardens {
         // (each piece's reach grows with its size: a slab ~160 m, a lantern ~250, a column ~600, a tower or a giant 2.6 km+)
         const reach = Math.min(R, (120 + s * 75) * this.reachK)
         if (d2 > reach * reach || s * s < minRatio * minRatio * d2) continue
-        const mesh = this.meshes[this.kindOf[k]]
-        ;(mesh.instanceMatrix.array as Float32Array).set(this.mats.subarray(o, o + 16), mesh.count * 16)
+        let ki = this.kindOf[k]
+        if (ki === this.kCrystal && this.siteOf[k] >= 0 && !this.allLit && !this.lit.has(this.siteOf[k])) ki = this.kDark   // (a crystal of no beacon — a court's, a vault's — always burns)
+        const mesh = this.meshes[ki]
+        const A = mesh.instanceMatrix.array as Float32Array, t = mesh.count * 16
+        A.set(this.mats.subarray(o, o + 16), t)
+        // (a BURNING crystal never looks smaller than it does from 380 m: a spark on its ridge from two kilometres —
+        //  grown about its foot as the camera backs away, so it's the same few pixels of light)
+        if (ki === this.kCrystal && d2 > 380 * 380) { const g = Math.sqrt(d2) / 380; for (let e = 0; e < 11; e++) if (e % 4 !== 3) A[t + e] *= g }
         mesh.count++
       }
     }

@@ -161,23 +161,6 @@ export function drawRoads(g: CanvasRenderingContext2D, meta: MapMeta, P: Project
     g.stroke()
   }
 }
-/** THE STAGES (meta.outland.stages): each road's own line drawn again in the rally's red, a start flag where it
- *  begins, its name and length at its middle (`names`: when the map is close enough to read them). */
-export function drawStages(g: CanvasRenderingContext2D, meta: MapMeta, P: Project, w: number, k: number, names: boolean): void {
-  const lines = meta.outland?.trails?.lines
-  for (const s of meta.outland?.stages ?? []) {
-    const L = lines?.[s.line]
-    if (!L) continue
-    g.lineJoin = g.lineCap = 'round'; g.setLineDash([w * 2.2, w * 1.6]); g.strokeStyle = 'rgba(196, 44, 30, 0.9)'; g.lineWidth = w * 0.7
-    g.beginPath()
-    L.forEach(([x, z], i) => { const [px, py] = P(x, z); if (i) g.lineTo(px, py); else g.moveTo(px, py) })
-    g.stroke(); g.setLineDash([])
-    const [sx, sy] = P(L[Math.min(3, L.length - 1)][0], L[Math.min(3, L.length - 1)][1])
-    g.fillStyle = '#c42c1e'; g.font = `600 ${Math.round(13 * k)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('⚑', sx, sy - 6 * k)
-    if (names) { const m = L[L.length >> 1], [mx, my] = P(m[0], m[1]); label(g, `${s.name} · ${s.km.toFixed(1)} km`, mx, my - 9 * k, '#a02216', Math.round(10 * k), true) }
-  }
-}
-
 /** A place of the outland (the World Tree, the crater, the mesa, the arch, a view, a lake) and a peak: its mark. */
 const OUT_ICON: Record<OutPlace['kind'], string> = { worldtree: '♣', crater: '◎', mesa: '▬', arch: '∩', peak: '▲', view: '◭', pass: '⇡', lake: '≈', canyon: '⋁', rocks: '∎', bog: '∴', ford: '≋' }
 export function drawOutPlace(g: CanvasRenderingContext2D, kind: OutPlace['kind'], x: number, y: number, k: number): void {
@@ -323,6 +306,11 @@ export function label(g: CanvasRenderingContext2D, t: string, x: number, y: numb
   g.lineWidth = 3; g.strokeStyle = 'rgba(255, 248, 232, 0.85)'; g.strokeText(t, x, y)
   g.fillStyle = color; g.fillText(t, x, y)
 }
+
+/** Is this place on the MAP at all? (2026-11-12, round 2 — the Wardens' 502 ruins crowded the chart with "?"s: a
+ *  small ruin is drawn once FOUND; the ones seen from far — the beacon towers, the giants — always, as the other places.) */
+export const wardenBig = (l: Landmark): boolean => l.style === 'tower' || l.style === 'giant' || l.style === 'town' || l.style === 'fort'
+export const onMap = (l: Landmark, found: boolean): boolean => l.kind !== 'warden' || found || wardenBig(l)
 
 /** A place's icon: a pale disc with its glyph once found, a dark one with "?" until then. */
 export function drawPlace(g: CanvasRenderingContext2D, l: Landmark, found: boolean, x: number, y: number, k: number): void {

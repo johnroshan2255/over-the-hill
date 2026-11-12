@@ -5,6 +5,55 @@ will give const 60+ in ultra"*; *"we can hide things from far"*; *"do all the st
 preserve the visual appearance while reducing the actual rendering cost"*; *"check the cheapest way to create water"*.
 This is step 8 of `MIGRATION.md`, with the phone made a goal of its own.
 
+## 2026-11-12, late — the built country, more woods, the lowlands re-sculpted, the stone forests (`docs/NEXT.md` §14)
+
+`abq.mjs "|sculpt=0&pillars=0|woods=0" oroad,town,spawn` (the Mac, 1080p uncapped, interleaved, 4–5 reps), ms:
+
+| view | ULTRA base | sculpt + pillars off | woods off | LOW base | sculpt + pillars off | woods off |
+|---|---|---|---|---|---|---|
+| oroad | 1.498 (668 fps) | 1.575 | 1.382 (−0.116) | 0.922 | 0.883 | 0.822 (−0.099) |
+| town (a ruined town from its street) | 1.479 (676) | 1.407 | 1.431 | 0.854 | 0.793 | 0.817 |
+| spawn | 1.623 (616) | 1.653 | 1.606 | 1.132 | 1.086 | 1.053 |
+
+The WOODS are what costs: ~0.1 ms at an outland road view on both tiers (163 k → 250 k+ trees). The mesas and the
+pillars are inside the spread; the ruins (69 k pieces; `wardens=0&courts=0` at the town: 1.602 vs 1.476 — noise, the
+empty ground costing as much as the walls) too: a cell of small pieces is skipped past the reach of its biggest.
+(The first ULTRA oroad run of this set read 7.8 ms with reps from −1 to 10: the game was being played on the Mac's GPU
+at the time — discarded, re-run alone.) NOT on a phone: the woods' +0.1 ms here will be several times that there.
+
+## 2026-11-12, night — the hidden vales, the crags by the roads, the oak, the banks (`docs/NEXT.md` §13)
+
+`abq.mjs "|cragsroad=0|vales=0&banks=0"` (the Mac, 1080p uncapped, interleaved, 4 reps), ms: ULTRA canyon 2.084 / 2.102 /
+2.031, oroad 1.489 / 1.448 / 1.450, wtree 0.852 / 0.874 / 0.876; LOW canyon 1.150 / 1.178 / 1.146, oroad 0.720 / 0.705 /
+0.713, spawn 1.065 / 1.093 / 1.095 — all inside the reps' spread. 11 k more crags (27.4 k → 38.6 k) are in cells that were
+already walked and mostly out of any one view; the vales and the banks are heights; the oak one more vertex attribute.
+The canyon overlook is 480 fps at ULTRA here with or without any of it (the fall and the long lake: it was before).
+Spawn, taken apart (`abq "|crags=0|cragsroad=0|hide=rocks|hide=grass|hide=trees" spawn 5`): 1.647 base, crags 1.624,
+no rocks 1.522 (−0.125), no trees 1.550 (−0.10), no grass 1.611 (−0.04): 607 fps on this Mac — nothing of the outland in it.
+
+## 2026-11-12, later — the outland, round 2: secrets, lake sites, regions, crag caps, meadows, the mires (`docs/NEXT.md` §11–§12)
+
+The Mac (M-series, Chrome / Metal), 1080p uncapped, interleaved, 4 reps, `abq.mjs`; ms a frame (fps):
+
+| view | ULTRA base | ULTRA without | LOW base | LOW without |
+|---|---|---|---|---|
+| oroad | 1.333 (750) | `wardens=0&courts=0` 1.339 · `cragcaps=0&meadows=0&wregions=0` 1.311 | 0.719 | 0.693 · 0.692 |
+| giant (2200, 250) | 1.149 (870) | 1.156 · 1.113 | 0.704 | 0.705 · 0.694 |
+| ring | 1.508 (663) | 1.536 · 1.506 | 0.861 | 0.875 · 0.866 |
+| spawn | 1.581 (632) | 1.593 · 1.604 | 1.006 | 0.980 · 0.986 |
+| court (a sunken court from its rim) | 1.304 (767) | `wardens=0&courts=0` 1.382 | 0.864 | 0.822 |
+| hand (the Hand in Mirror Pool) | 1.578 (634) | `wardens=0&courts=0` 1.678 | 1.012 | 1.063 |
+| **mire** (a mud place on a road, 34 m off) | **1.499 (667)** | **`mires=0` 1.433 (+0.066)** | **0.988** | **0.870 (+0.118)** |
+
+Everything but the mire is inside the spread between reps (±0.05 ms): the secrets are a few hundred instances more in
+the Wardens' 21 draws, the regions' tint and the crags' caps a handful of ALU and two noise reads on pixels that were
+drawn anyway, the floors a look-up in the grass field's BAKE only, the five meadows five distances a pixel.
+THE MIRES: where one fills the view, the mud's paint (three noise reads more than the old flat brown) and its pools
+(the puddles' pass, on at any weather there) cost ~0.07 ms ULTRA / ~0.12 ms LOW; away from them, twelve squared
+distances a pixel of the outland — not measurable (court / hand with `mires=0`: ±0.04–0.1, both signs).
+(These absolute numbers are this Mac's — spawn 632 fps here, where the Windows laptop reads 2.0–2.26 ms: compare A/B only.)
+NOT measured: a phone. Load: not timed (the Wardens' plan grew: courts, vaults, lake sites; `World.timings`).
+
 ## 2026-11-12 — the outland dressed: crags, parkland, the Wardens' ruins (`docs/NEXT.md` §10)
 
 `abq.mjs "|wardens=0&park=0&crags=0"` (the laptop, 1080p uncapped, interleaved, 4–5 reps): ULTRA ring 1.164 vs 1.265, giant 1.985 vs 1.831,

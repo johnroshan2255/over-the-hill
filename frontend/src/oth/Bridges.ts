@@ -43,7 +43,9 @@ export function woodMaterial(atmos: Atmosphere, shadow: TerrainShadow, tier: Tie
     glslVersion: GFX.GLSL3,
     uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid },
       // (the cave world's hill paints from the land's MASK, as the terrain does — CaveWorld sets these; x 0: off)
-      uMask: { value: new GFX.DataTexture(new Uint8Array(4), 1, 1, GFX.RGBAFormat, GFX.UnsignedByteType) }, uMaskGrid: { value: new GFX.Vector4(0, 0, 0, 0) } },
+      uMask: { value: new GFX.DataTexture(new Uint8Array(4), 1, 1, GFX.RGBAFormat, GFX.UnsignedByteType) }, uMaskGrid: { value: new GFX.Vector4(0, 0, 0, 0) },
+      // (the Wardens' REGIONS — Wardens.ts sets them on ITS material: x, z, radius, on; all off here)
+      uRegion0: { value: new GFX.Vector4(0, 0, 1, 0) }, uRegion1: { value: new GFX.Vector4(0, 0, 1, 0) }, uRegion2: { value: new GFX.Vector4(0, 0, 1, 0) }, uRegion3: { value: new GFX.Vector4(0, 0, 1, 0) } },
     defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}) },
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -399,6 +401,22 @@ in vec3 vWorld;
 in vec3 vN;
 in vec3 vCol;
 in float vGlow;
+// THE WARDENS' REGIONS (Wardens.ts, 2026-11-12 — "every region the same stone"): the stone's tone by where it stands —
+// 0 the Frozen Court under the white peaks (pale, blue-white), 1 the World Tree's country (warm, mossed green),
+// 2 the canyon's (ochre sandstone), 3 the lakes' (dark, damp slate); each fades out over the last 45 % of its radius.
+// Four vec4s (the gfx layer drops uniform arrays); off (w 0) on every other material.
+uniform vec4 uRegion0;
+uniform vec4 uRegion1;
+uniform vec4 uRegion2;
+uniform vec4 uRegion3;
+vec3 regionTint(vec2 p) {
+  vec3 t = vec3(1.0);
+  t = mix(t, vec3(1.14, 1.17, 1.27), uRegion0.w * (1.0 - smoothstep(0.55, 1.0, distance(p, uRegion0.xy) / uRegion0.z)));
+  t = mix(t, vec3(0.86, 0.98, 0.72), uRegion1.w * (1.0 - smoothstep(0.55, 1.0, distance(p, uRegion1.xy) / uRegion1.z)));
+  t = mix(t, vec3(1.16, 0.93, 0.7), uRegion2.w * (1.0 - smoothstep(0.55, 1.0, distance(p, uRegion2.xy) / uRegion2.z)));
+  t = mix(t, vec3(0.74, 0.82, 0.9), uRegion3.w * (1.0 - smoothstep(0.55, 1.0, distance(p, uRegion3.xy) / uRegion3.z)));
+  return t;
+}
 void main() {
   vec3 N = normalize(vN);
   vec3 V = normalize(uCamPos - vWorld);
@@ -419,6 +437,7 @@ void main() {
     float b1 = texture(uNoise, q * 0.31).g, b2 = texture(uNoise, q * 1.7 + 0.3).r;
     albedo *= 0.74 + 0.36 * b1 + 0.16 * (b2 - 0.5);
     albedo = mix(albedo, vec3(0.2, 0.23, 0.12) * 0.55, smoothstep(0.62, 0.8, b2) * smoothstep(0.55, 0.95, N.y) * 0.6);
+    albedo *= regionTint(vWorld.xz);
     rough = 0.92; wrap = 0.3;
   } else if (surf < 2.5) {
     // PAINTED METAL: smooth, a little sheen, RUST bleeding in where a slow noise says (its edges and low down most)
@@ -553,7 +572,11 @@ void main() {
   c += headlight(albedo, N, vWorld);
   // a lit window / a lantern / embers: OFF by day, on from dusk (uLamps), above white at night (the bloom takes it)
   c += vec3(1.0, 0.62, 0.28) * glow * 2.6 * uLamps;
-  gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
+  vec3 hz = applyAtmos(c, vWorld);
+  // (a LAMP burning is a light, not a lit thing: the haze dims it less — a Warden beacon's crystal is a spark on its
+  //  ridge from two kilometres, by day and at night; up close nothing changes)
+  if (surf > 4.5 && surf < 5.5) hz = mix(hz, c, 0.6);
+  gl_FragColor = vec4(hz, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }

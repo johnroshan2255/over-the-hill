@@ -15,11 +15,22 @@ import type { Vehicle } from './Vehicle'
 const REACH = 35
 const SEG = 16
 
+/** Something ELSE the winch can take (2026-11-12 — a Warden vault's keystone, Wardens.ts): where its ring is, what to
+ *  call it, and what happens when it has been PULLED — the cable held taut against the car for long enough. */
+export interface WinchAnchor { x: number; y: number; z: number; what: string; onPulled: () => void }
+/** The load on the cable (in the car's weights × seconds) that pulls such a thing out: ~1.2 s with the brake held. */
+const PULL = 1.5
+
 export class Winch {
   /** E toggles it (off while the player is on foot or on a bike). */
   keysOn = true
   readonly mesh: GFX.Mesh
   private anchor: GFX.Vector3 | null = null
+  /** (the anchor is one of `extra`'s: pulled out, not pulled toward) */
+  private target: WinchAnchor | null = null
+  private pulled = 0
+  /** More anchors than trees and boulders (main.ts: the vaults' keystones near the car). */
+  extra: (() => WinchAnchor[]) | null = null
   private what = ''
   private len = 0
   private readonly hook = new GFX.Vector3()
@@ -50,22 +61,25 @@ export class Winch {
   /** Another world's trees and rocks (the crossing); a line still hooked lets go. */
   setWorld(trees: Trees, rocks: Rocks): void {
     if (this.attached) this.toggle()
+    this.target = null
     this.trees = trees
     this.rocks = rocks
   }
 
   toggle(): void {
-    if (this.anchor) { this.anchor = null; this.mesh.visible = false; this.onMessage?.('Winch released'); return }
+    if (this.anchor) { this.anchor = null; this.target = null; this.mesh.visible = false; this.onMessage?.('Winch released'); return }
     const sim = this.car.sim
     if (!sim || this.car.parked) return // (no winching from the bike)
     this.hookPoint()
     const f = this.forward()
-    let best: GFX.Vector3 | null = null, bd = 1e9, what = ''
-    const consider = (x: number, y: number, z: number, kind: string) => {
+    let best: GFX.Vector3 | null = null, bd = 1e9, what = '', target: WinchAnchor | null = null
+    const consider = (x: number, y: number, z: number, kind: string, t: WinchAnchor | null = null) => {
       const dx = x - this.hook.x, dz = z - this.hook.z, d = Math.hypot(dx, dz)
       if (d > REACH || d < 2.5 || (dx * f.x + dz * f.z) / d < 0.34) return
-      if (d < bd) { bd = d; best = new GFX.Vector3(x, y, z); what = kind }
+      // (a keystone ahead is what the player came for: it wins over a tree that happens to be nearer)
+      if (d < bd || (t && !target)) { if (target && !t) return; bd = d; best = new GFX.Vector3(x, y, z); what = kind; target = t }
     }
+    for (const a of this.extra?.() ?? []) consider(a.x, a.y, a.z, a.what, a)
     const t = this.trees.data
     for (let i = 0; i < this.trees.count; i++) {
       const o = i * TREE_STRIDE
@@ -75,10 +89,12 @@ export class Winch {
     for (const r of this.rocks.all) if (r.s > 1.2) consider(r.x, this.map.height(r.x, r.z) + Math.min(1.2, r.s * r.sy * 0.5), r.z, 'a boulder')
     if (!best) { this.onMessage?.('Winch: nothing to hook within 35 m ahead'); return }
     this.anchor = best
+    this.target = target
+    this.pulled = 0
     this.what = what
     this.len = bd
     this.mesh.visible = true
-    this.onMessage?.(`Winch hooked to ${what} · ${Math.round(bd)} m — reeling in`)
+    this.onMessage?.(target ? `Winch hooked to ${what} · ${Math.round(bd)} m — hold the brake while it pulls` : `Winch hooked to ${what} · ${Math.round(bd)} m — reeling in`)
   }
 
   /** Physics step: reel in, pull while taut. */
@@ -89,13 +105,18 @@ export class Winch {
     this.v.subVectors(a, this.hook)
     const d = this.v.length()
     this.len = Math.max(2.5, this.len - 1.5 * dt)
-    if (d < 3.2 && this.len <= 2.6) { this.anchor = null; this.mesh.visible = false; this.onMessage?.(`Winched up to ${this.what}`); return }
+    if (d < 3.2 && this.len <= 2.6) { this.anchor = null; this.mesh.visible = false; this.onMessage?.(this.target ? `${this.what[0].toUpperCase()}${this.what.slice(1)} didn't move — hold the brake (or reverse) while the winch pulls` : `Winched up to ${this.what}`); this.target = null; return }
     if (d <= this.len) return
     const b = sim.body, m = b.mass(), lv = b.linvel()
     this.v.divideScalar(d)
     const along = lv.x * this.v.x + lv.y * this.v.y + lv.z * this.v.z
     const F = Math.min(m * 9.81 * 1.3, m * 9.81 * 2.2 * (d - this.len) - m * 1.6 * along)
     if (F <= 0) return
+    // (a keystone: the load on the cable adds up — pulled out once it has held the car's weight ~1.2 s)
+    if (this.target) {
+      this.pulled += (F / (m * 9.81)) * dt
+      if (this.pulled >= PULL) { const t = this.target; this.anchor = null; this.target = null; this.mesh.visible = false; t.onPulled(); return }
+    }
     b.applyImpulseAtPoint({ x: this.v.x * F * dt, y: this.v.y * F * dt, z: this.v.z * F * dt }, { x: this.hook.x, y: this.hook.y, z: this.hook.z }, true)
   }
 

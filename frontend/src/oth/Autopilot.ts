@@ -63,6 +63,9 @@ export class Autopilot {
   /** progress watch: where it was at the last look (every 4 s) */
   private watchT = 0
   private watchX = NaN
+  /** (BEACHED: where it first stuck — a back-off that leaves it within 0.8 m of there moved nothing: the reset at once) */
+  private stuckX = NaN
+  private stuckZ = 0
   private watchZ = 0
   private rolledT = 0
   private lastRoute: Route | null = null
@@ -219,7 +222,12 @@ export class Autopilot {
       this.watchX = t.x; this.watchZ = t.z; this.watchT = 0
       if (moved < 1.5) {
         this.tries++
-        if (this.tries >= 6) { this.tries = 0; this.reset(r); c.throttle = 0; c.brake = true; c.steer = 0; return true }
+        // BEACHED (2026-11-12 — up on a boulder on a 40° face, its wheels in the air: six back-offs, 38 s, before the
+        // reset): stuck again within 0.8 m of where it first stuck — the back-off moved nothing, nor will the next
+        // five. The reset now (~11 s in, not 38).
+        const beached = this.tries >= 2 && Math.hypot(t.x - this.stuckX, t.z - this.stuckZ) < 0.8
+        if (this.tries === 1 || !beached) { this.stuckX = t.x; this.stuckZ = t.z }
+        if (this.tries >= 6 || beached) { this.tries = 0; this.stuckX = NaN; this.reset(r); c.throttle = 0; c.brake = true; c.steer = 0; return true }
         // (something it can't get round right in front — a wall, a stack of rock: the GPS told to keep off it from now
         //  on, and a way round planned from here; else, every third time, another way anyway)
         if (room < 5) this.guide.replan({ x: t.x + (fx / fh) * (room + 4), z: t.z + (fz / fh) * (room + 4), r: 5 })

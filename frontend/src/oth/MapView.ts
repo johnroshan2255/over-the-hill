@@ -1,6 +1,7 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
-import { bakedChart, type Chart, type ClaimMark, claimTag, drawClaim, drawGate, drawOutPlace, drawPin, drawPlace, drawRoads, drawRoute, drawStages, drawTracks, foundIn, ICON, label, ROUTE } from './Chart'
+import { SECRET } from './Wardens'
+import { bakedChart, type Chart, type ClaimMark, claimTag, drawClaim, drawGate, drawOutPlace, drawPin, drawPlace, drawRoads, drawRoute, drawTracks, foundIn, ICON, label, onMap, ROUTE, wardenBig } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { Landmark, MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, type Waypoint, worldMeta } from './Nav'
@@ -215,7 +216,8 @@ export class MapView {
       const m = this.marks.get(l.id)
       if (!m) continue
       // (the Wardens' ruins — hundreds of them — on the strip within 1.2 km; the other places within 2.5)
-      const d = Math.hypot(l.x - p.x, l.z - p.z), x = d < (l.kind === 'warden' ? 1200 : 2500) ? at(bearing(l.x, l.z)) : null
+      // (a SECRET — a sunken court, a sealed vault: not on the strip until found)
+      const d = Math.hypot(l.x - p.x, l.z - p.z), x = d < (l.kind === 'warden' ? 1200 : 2500) && (!SECRET.has(l.style ?? '') || lm.found.has(l.id)) ? at(bearing(l.x, l.z)) : null
       place(m, x)
       if (x === null) continue
       const found = lm.found.has(l.id), txt = found ? ICON[l.kind] : '?'
@@ -355,7 +357,7 @@ export class MapView {
       else this.setWaypoint({ world: this.tab, x: G.x, z: G.z, name: WORLDS[this.tab].name })
       return
     }
-    for (const l of s.places) if (hit(l.x, l.z)) { this.setWaypoint({ world: this.tab, x: l.x, z: l.z, name: s.found.has(l.id) ? l.name : 'Unexplored place' }); return }
+    for (const l of s.places) if (onMap(l, s.found.has(l.id)) && hit(l.x, l.z)) { this.setWaypoint({ world: this.tab, x: l.x, z: l.z, name: s.found.has(l.id) ? l.name : 'Unexplored place' }); return }
     const [x, z] = this.unproject(px, py)
     this.setWaypoint({ world: this.tab, x, z, name: 'Waypoint' })
   }
@@ -403,7 +405,6 @@ export class MapView {
     if (s) {
       const zoomK = Math.max(0.55, 1 + 0.8 * (1 - V.v / half))
       drawRoads(g, s.meta, P, 1.9 * k * zoomK)
-      drawStages(g, s.meta, P, 1.9 * k * zoomK, k, V.v < 3600)
       drawTracks(g, s.meta, P, 1.6 * k * zoomK, { x0: V.cx - V.v, z0: V.cz - V.v, x1: V.cx + V.v, z1: V.cz + V.v })
       const ms = s.meta.mud?.marsh
       if (ms) { const [mx, my] = P(ms.x, ms.z); label(g, 'The Bog', mx, my, '#4a3423', Math.round(12 * k), true) }
@@ -413,8 +414,11 @@ export class MapView {
       // the places
       for (const l of s.places) {
         const [x, y] = P(l.x, l.z), found = s.found.has(l.id)
-        drawPlace(g, l, found, x, y, k)
-        if (found) label(g, l.name, x, y + 17 * k, '#3a2414', Math.round(10.5 * k), false)
+        if (!onMap(l, found)) continue
+        // (a small ruin: a smaller disc, its name only when the map is zoomed in — the big ones as every other place)
+        const small = l.kind === 'warden' && !wardenBig(l)
+        drawPlace(g, l, found, x, y, small ? k * 0.72 : k)
+        if (found && (!small || V.v < 2200)) label(g, l.name, x, y + (small ? 13 : 17) * k, '#3a2414', Math.round((small ? 9 : 10.5) * k), false)
       }
       // the outland's places and its great peaks (always named: they are what there is to drive out to)
       for (const q of s.meta.outland?.places ?? []) {

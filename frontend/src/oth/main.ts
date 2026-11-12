@@ -1,6 +1,8 @@
 import * as GFX from './gfx'
 import { isMobileDevice } from '../rendering/quality/DeviceProfile'
 import { loadJournal, REWARD, saveJournal } from '../journal'
+import { lettersKnown, lettersTaught, wardenHtml } from './wardenScript'
+import { SECRET } from './Wardens'
 import { type Camp, continueRequested, loadProgress, requestContinue, saveProgress } from '../save'
 import { gameParams, type Settings } from '../settings'
 import { Menu } from '../ui/Menu'
@@ -158,11 +160,21 @@ async function boot() {
       journal.coins += pay
       keepJournal()
       readouts.coins(journal.coins, pay)
-      toast(`Discovered · ${l.name}   +${pay} ◆   ${n} / ${total}`, 4200)
+      toast(`${SECRET.has(l.style ?? '') ? 'Secret place found' : 'Discovered'} · ${l.name}   +${pay} ◆   ${n} / ${total}`, 4200)
       audio.chime('place')
+      // A BEACON reached: its crystal wakes (Wardens.light) — "light the chain"; the last one pays for them all
+      if (l.kind === 'warden' && l.style === 'tower' && w.wardens) {
+        w.wardens.light([l.id])
+        const [lit, all] = w.wardens.beacons()
+        setTimeout(() => {
+          toast(lit < all ? `Beacon lit · ${lit} / ${all}` : `The last beacon burns — the chain is whole   +${REWARD.place * 10} ◆`, 5200)
+          audio.chime('place')
+          if (lit === all) { journal.coins += REWARD.place * 10; keepJournal(); readouts.coins(journal.coins, REWARD.place * 10) }
+        }, 4400)
+      }
     }
-    // (a rally stage begun or finished — Wonders.ts)
-    if (w.wonders) w.wonders.onStage = (m) => { toast(m, 5200); audio.chime('place') }
+    // (a Warden vault's door fallen / standing: the physics re-streams the props' boxes)
+    if (w.wardens) w.wardens.onColliders = () => physics.propsDirty()
     atmos.desert = w.map.desert
     // (a pinned ?weather= settled at once, in the first world's own kind: rain or a sandstorm)
     if (wq && !settled) { settled = true; atmos.settleWeather() }
@@ -400,6 +412,21 @@ async function boot() {
   scene.add(tyreTracks.mesh)
   const winch = new Winch(map, car, world.trees, world.rocks)
   winch.onMessage = (m) => toast(m)
+  // THE SEALED VAULTS' KEYSTONES (Wardens.ts): what else the winch takes — pulled out, the vault's door falls
+  winch.extra = () => (world.wardens?.keystones() ?? []).filter((k) => (k.x - car.root.position.x) ** 2 + (k.z - car.root.position.z) ** 2 < 60 * 60).map((k) => ({
+    x: k.x, y: k.y, z: k.z, what: 'the keystone',
+    onPulled: () => {
+      const w = world.wardens
+      if (!w?.openVault(k.site)) return
+      physics.propsDirty()
+      const pay = REWARD.place * 4, [n, all] = w.vaultCount
+      journal.coins += pay
+      keepJournal()
+      readouts.coins(journal.coins, pay)
+      toast(`The keystone comes free — ${k.name} stands open   +${pay} ◆   ${n} / ${all}`, 6000)
+      audio.chime('place')
+    },
+  }))
   scene.add(winch.mesh)
   // THE MAP, THE RADAR and THE GPS (Nav.ts: the waypoint and the fastest way there — it lasts across worlds; the
   // chart, the map and the radar are each world's)
@@ -804,6 +831,8 @@ async function boot() {
     apBtn.innerHTML = html
     apBtn.classList.toggle('show', show)
     apBtn.classList.toggle('on', autopilot.on)
+    // (on a phone the CAMP button stood ON this one — a tap on AUTOPILOT pitched a camp: it moves up while this shows)
+    document.body.classList.toggle('oth-ap-shown', show)
   }
   // SOUND: the engine, the tyres, the music and the valley's ambience (starts on the first key / tap — Audio.ts)
   const audio = new OthAudio(map, car, atmos)
@@ -1057,7 +1086,7 @@ async function boot() {
     if (!s) { readouts.sign(null); return }
     camera.getWorldDirection(signDir)
     const head = Math.atan2(signDir.x, -signDir.z)
-    const near = world.places.map((l) => ({ l, d: Math.hypot(l.x - s.x, l.z - s.z) })).filter((o) => o.d > 60).sort((a, b) => a.d - b.d).slice(0, 4)
+    const near = world.places.filter((l) => !SECRET.has(l.style ?? '') || world.landmarks.found.has(l.id)).map((l) => ({ l, d: Math.hypot(l.x - s.x, l.z - s.z) })).filter((o) => o.d > 60).sort((a, b) => a.d - b.d).slice(0, 4)
     readouts.sign(near.map(({ l, d }) => ({ name: l.name, d, turn: Math.atan2(l.x - s.x, -(l.z - s.z)) - head })))
   }
   const signDir = new GFX.Vector3()
@@ -1065,25 +1094,36 @@ async function boot() {
   // the NOTES (Sites.ts): stopped (or on foot) within 11 m of a place that has one — its card; the first read pays and
   // is kept (localStorage `oth.notes.<map>`)
   const notesRead = (id: string) => { try { return new Set(JSON.parse(localStorage.getItem(`oth.notes.${id}`) ?? '[]') as number[]) } catch { return new Set<number>() } }
+  let wardenSeen: Set<number> | null = null, wardenSeenKey = ''
   const noteHud = () => {
     const p = ride.pos, slow = onFoot || Math.abs(ride.speedKmh) < 12
     const l = slow ? world.places.find((q) => q.note && (q.x - p.x) ** 2 + (q.z - p.z) ** 2 < 11 * 11) : undefined
     // (or the WARDENS' WRITING on a stone — Wardens.ts: stopped within 9 m of one; the first read pays, kept apart)
     const wt = !l && slow ? world.wardens?.textNear(p.x, p.z) ?? null : null
-    readouts.note(l?.note ? { place: l.name, ...l.note } : wt ? { place: wt.place, title: wt.title, text: wt.text } : null)
     if (wt) {
+      // THE WARDENS' SCRIPT (wardenScript.ts): the stone's words in their letters — the ones learned so far plain. Each
+      // stone read for the first time teaches three more (this one's are known as its card comes up).
       const key = `oth.wtexts.${world.map.meta.id}`
-      let seen: Set<number>
-      try { seen = new Set(JSON.parse(localStorage.getItem(key) ?? '[]') as number[]) } catch { seen = new Set() }
-      if (seen.has(wt.id)) return
-      seen.add(wt.id)
-      try { localStorage.setItem(key, JSON.stringify([...seen])) } catch { /* (not kept) */ }
+      if (!wardenSeen || wardenSeenKey !== key) { wardenSeenKey = key; try { wardenSeen = new Set(JSON.parse(localStorage.getItem(key) ?? '[]') as number[]) } catch { wardenSeen = new Set() } }
+      const seen = wardenSeen, fresh = !seen.has(wt.id)
+      if (fresh) {
+        seen.add(wt.id)
+        try { localStorage.setItem(key, JSON.stringify([...seen])) } catch { /* (not kept) */ }
+      }
+      // (2026-11-12, the user after playing it: "you made some story restriction … boring, I want exploration" — the
+      //  stones read PLAIN now; the script that had to be learned stone by stone is ?wscript=1)
+      const plain = q.get('wscript') !== '1'
+      readouts.note({ place: wt.place, title: wt.title, text: plain ? wt.text : wardenHtml(wt.text, seen.size) })
+      if (!fresh) return
       journal.coins += 10
       keepJournal()
       readouts.coins(journal.coins, 10)
-      toast(`Warden writing read · ${seen.size} / ${world.wardens?.textCount ?? 0}`, 2800)
+      const taught = plain ? '' : lettersTaught(seen.size)
+      toast(`Warden writing read · ${seen.size} / ${world.wardens?.textCount ?? 0}${taught ? ` · learned ${taught}` : ''}`, 3600)
+      if (!plain && lettersKnown(seen.size) >= 26 && lettersKnown(seen.size - 1) < 26) setTimeout(() => { toast('You can read the Wardens\' script now', 5200); audio.chime('place') }, 3800)
       return
     }
+    readouts.note(l?.note ? { place: l.name, ...l.note } : null)
     if (!l) return
     const read = notesRead(world.map.meta.id)
     if (read.has(l.id)) return
@@ -1254,7 +1294,6 @@ async function boot() {
     world.trees.seeThrough(ride.pos, driving && !inFpp && !mapView.isOpen ? (onFoot ? 1.1 : riding ? 1.5 : 2.8) : 0)
     const t0 = performance.now()
     world.update(camera, dt, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, ride.pos.x, ride.pos.z)
-    stageClock(world.wonders?.clock ?? null)
     // (what's out of view or behind the hills isn't drawn: 2026-11-02)
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     view.setFromProjectionMatrix(viewPV, GFX.WebGLCoordinateSystem, camera.reversedDepth)
@@ -1685,29 +1724,6 @@ boot().catch((e) => {
 })
 
 /** A short message at the top of the screen (the weather, a discovery), fading out after a few seconds. */
-/** THE STAGE CLOCK (Wonders.clock): while a rally stage is being run, its name and its time under the top bar — and the
- *  best to beat. Written when its tenth of a second changes; gone when the stage is finished or left. */
-let stageEl: HTMLDivElement | null = null, stageKey = ''
-function stageClock(c: { name: string; t: number; best: number } | null): void {
-  const fmt = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`
-  const key = c ? `${c.name}|${Math.floor(c.t * 10)}` : ''
-  if (key === stageKey) return
-  stageKey = key
-  if (!c) { stageEl?.classList.remove('on'); return }
-  if (!stageEl) {
-    stageEl = document.createElement('div'); stageEl.className = 'oth-stage'
-    stageEl.innerHTML = '<span class="oth-stage-name"></span><b class="oth-stage-time"></b><span class="oth-stage-best"></span>'
-    document.body.appendChild(stageEl)
-  }
-  const [nm, tm, bs] = stageEl.children as unknown as HTMLElement[]
-  if (nm.textContent !== c.name) nm.textContent = c.name
-  tm.textContent = fmt(c.t)
-  const best = c.best ? `BEST ${fmt(c.best)}` : 'NO TIME SET'
-  if (bs.textContent !== best) bs.textContent = best
-  stageEl.classList.toggle('behind', c.best > 0 && c.t > c.best)
-  stageEl.classList.add('on')
-}
-
 let toastEl: HTMLDivElement | null = null, toastT = 0
 export function toast(msg: string, ms = 2600): void {
   if (!toastEl) { toastEl = document.createElement('div'); toastEl.className = 'oth-toast'; document.body.appendChild(toastEl) }

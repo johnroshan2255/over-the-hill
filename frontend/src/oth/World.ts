@@ -210,6 +210,9 @@ export class World {
     props.colliders.push(...wplan.cols)
     const wardens = await step('wardens', () => new Wardens(wplan, atmos, shadow, tier, env.farGrid))
     wardens.horizon = horizon
+    if (wplan.floors.length) grass.setFloors(wplan.floors, map.play)   // (no blades up through a platform, a plinth, a court)
+    wardens.light(landmarks.found)   // (the beacons reached before burn)
+    wardens.restoreVaults()          // (the vaults opened before stand open)
     const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
     // (the desert's sandstone slabs: fetched, Draco-decoded in the loader's workers)
     const tf = performance.now()
@@ -280,14 +283,13 @@ export class World {
     this.trees.update(camera)
     this.bushes.update(camera)
     this.props.update(camera)
-    this.wardens?.update(camera)
+    this.wardens?.update(camera, dt)
     this.formations?.update(camera)
     this.cave?.update(camera.position)
     if (this.caveGrass) { const on = !!this.cave?.insideShown; this.caveGrass.group.visible = on; if (on) this.caveGrass.update(camera) }
     if (this.glow) this.glow.group.visible = !this.cave?.cameraInside // (no sun's glare through the hill)
     this.landmarks.cull(camera.position)
     this.wonders?.cull(camera.position)
-    this.wonders?.update(carX, carZ, t)
     this.bridges.cull()
     this.falls.cull()
   }

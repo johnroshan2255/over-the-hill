@@ -128,8 +128,12 @@ export class Terrain {
       // (the outland's bog — x, z, reach — and its flower meadows, up to three)
       // (?zones=0: no boulder field's bed, bog or flower meadows painted — the A/B)
       uStony: { value: (() => { const Z = ZONES_ON() ? map.meta.outland?.zones?.find((q) => q.kind === 'rocks') : undefined; return Z ? new GFX.Vector4(Z.x, Z.z, Z.r * 1.12, 0) : new GFX.Vector4(0, 0, 0, 0) })() },
+      // (the MIRES on the outland's roads — MapData.findMires: x, z, radius; twelve vec4s, no arrays in the gfx layer)
+      ...Object.fromEntries(Array.from({ length: 12 }, (_, k) => { const M = map.mires[k]; return [`uMire${k}`, { value: M ? new GFX.Vector4(M.x, M.z, M.r, 0) : new GFX.Vector4(0, 0, 0, 0) }] })),
       uBog: { value: (() => { const Z = ZONES_ON() ? map.meta.outland?.zones?.find((q) => q.kind === 'bog') : undefined; return Z ? new GFX.Vector4(Z.x, Z.z, Z.r, 0) : new GFX.Vector4(0, 0, 0, 0) })() },
-      ...Object.fromEntries([0, 1, 2].map((k) => { const M = ZONES_ON() ? map.meta.outland?.meadows?.[k] : undefined; return [`uMeadow${k}`, { value: M ? new GFX.Vector4(M.x, M.z, M.r, 0) : new GFX.Vector4(0, 0, 0, 0) }] })),
+      // (2026-11-12, docs/NEXT_outland.md §2 "flowers": five more than wilds.py's three — MORE_MEADOWS, by the lakes
+      //  and on the shoulders; ?meadows=0: the three)
+      ...Object.fromEntries([0, 1, 2, 3, 4, 5, 6, 7].map((k) => { const M = ZONES_ON() && map.meta.outland?.meadows ? [...map.meta.outland.meadows.slice(0, 3), ...(gameParams().get('meadows') === '0' ? [] : MORE_MEADOWS)][k] : undefined; return [`uMeadow${k}`, { value: M ? new GFX.Vector4(M.x, M.z, M.r, 0) : new GFX.Vector4(0, 0, 0, 0) }] })),
       uGrassR: { value: tier.grassRadius },
       uBushR: { value: tier.bushReach },
       uPave: { value: paveTexture() },
@@ -370,6 +374,10 @@ function tcut(): Record<string, string> {
 }
 
 /** Height lookup shared by the terrain and the grass vertex shaders (needs uHIn/uHFar, uInGrid/uFarGrid, scales). */
+/** The outland's flower meadows beyond wilds.py's three (meta.outland.meadows): the shores of Long Mere and Stillwater,
+ *  the two western shoulders' saddles, the open south-west. (x, z, radius — the paint's noise breaks each into drifts.) */
+const MORE_MEADOWS = [{ x: -3456, z: 160, r: 340 }, { x: 5376, z: -1120, r: 380 }, { x: -4700, z: 3950, r: 300 }, { x: -1700, z: -3100, r: 280 }, { x: -2100, z: 4700, r: 400 }]
+
 export const HEIGHT_GLSL = /* glsl */ `
 uniform highp usampler2D uHIn;
 uniform highp usampler2D uHFar;
@@ -552,13 +560,13 @@ float lakeDepth(vec2 xz, float h) {
 }
 // THE OUTLAND'S BOG and its FLOWER MEADOWS (meta.outland.zones / meadows — what mud.bin's two channels hold inside the
 // box): the mud thick at the bog's middle, broken by the paint's noise; the flowers in patches inside each meadow
-uniform vec4 uBog; uniform vec4 uStony; uniform vec4 uMeadow0; uniform vec4 uMeadow1; uniform vec4 uMeadow2;
+uniform vec4 uBog; uniform vec4 uStony; uniform vec4 uMeadow0; uniform vec4 uMeadow1; uniform vec4 uMeadow2; uniform vec4 uMeadow3; uniform vec4 uMeadow4; uniform vec4 uMeadow5; uniform vec4 uMeadow6; uniform vec4 uMeadow7;
 float bogMud(vec2 xz, float n) { if (uBog.z <= 0.0) return 0.0; float d = distance(xz, uBog.xy) / uBog.z; return d < 1.0 ? clamp((1.0 - d * d) * (0.45 + 1.1 * n), 0.0, 1.0) : 0.0; }
 // (the BOULDER FIELD's bed — the zone 'rocks': bare grey stone under its boulders, whole at its middle, broken into
 //  islands of grass toward its rim)
 float stonyAt(vec2 xz, float n) { if (uStony.z <= 0.0) return 0.0; float d = distance(xz, uStony.xy) / uStony.z; return d < 1.0 ? smoothstep(0.44, 0.6, n * 0.62 + 0.78 * (1.0 - d * d)) : 0.0; }
 float meadowOne(vec4 M, vec2 xz) { return M.z > 0.0 ? 1.0 - smoothstep(0.6, 1.0, distance(xz, M.xy) / M.z) : 0.0; }
-float meadowAt(vec2 xz, float n) { return max(max(meadowOne(uMeadow0, xz), meadowOne(uMeadow1, xz)), meadowOne(uMeadow2, xz)) * smoothstep(0.32, 0.62, n); }
+float meadowAt(vec2 xz, float n) { return max(max(max(meadowOne(uMeadow0, xz), meadowOne(uMeadow1, xz)), max(meadowOne(uMeadow2, xz), meadowOne(uMeadow3, xz))), max(max(meadowOne(uMeadow4, xz), meadowOne(uMeadow5, xz)), max(meadowOne(uMeadow6, xz), meadowOne(uMeadow7, xz)))) * smoothstep(0.32, 0.62, n); }
 #ifndef OTH_NO_ROAD
 #ifndef ROAD_TEX
 #define ROAD_TEX(uv) texture(uRoad, uv)
@@ -573,6 +581,25 @@ float roadCentre(vec2 xz) {
 // (a draw already at WebGPU's 16 textures a stage — the cave's skin, the patches round its openings: no road is read)
 float roadCentre(vec2 xz) { return 99.0; }
 #endif
+// THE MIRES (MapData.findMires — 2026-11-12, the user: "dirt roads … a mixture of mud and watery, slippery places"):
+// where a road crosses a low hollow it turns to mud. mireK: how deep into a mire xz is (0 outside all twelve — most of
+// the land: twelve squared distances and out); mireMud: the mud there — whole on the road and out over its verges
+// (ragged: the paint's noise moves the edge ±1.5 m), and in WALLOWS in the grass beside it (the noise's blobs, more of
+// them toward the middle) — what mud.bin holds inside the box.
+uniform vec4 uMire0; uniform vec4 uMire1; uniform vec4 uMire2; uniform vec4 uMire3; uniform vec4 uMire4; uniform vec4 uMire5;
+uniform vec4 uMire6; uniform vec4 uMire7; uniform vec4 uMire8; uniform vec4 uMire9; uniform vec4 uMire10; uniform vec4 uMire11;
+float mireOne(vec4 M, vec2 xz) { vec2 d = xz - M.xy; return M.z > 0.0 ? max(0.0, 1.0 - dot(d, d) / (M.z * M.z)) : 0.0; }
+float mireK(vec2 xz) {
+  return max(max(max(max(mireOne(uMire0, xz), mireOne(uMire1, xz)), max(mireOne(uMire2, xz), mireOne(uMire3, xz))), max(max(mireOne(uMire4, xz), mireOne(uMire5, xz)), max(mireOne(uMire6, xz), mireOne(uMire7, xz)))),
+    max(max(mireOne(uMire8, xz), mireOne(uMire9, xz)), max(mireOne(uMire10, xz), mireOne(uMire11, xz))));
+}
+float mireMud(float k, float rd, float n, float n2) {
+  float core = smoothstep(0.0, 0.35, k);
+  float onRoad = 1.0 - smoothstep(uRoadG.z + 0.6, uRoadG.z + 4.2, rd + (n - 0.5) * 3.0);
+  float wallow = smoothstep(0.6, 0.7, n2 + k * 0.2) * smoothstep(0.1, 0.5, k) * 0.9;
+  // (never over 0.78: past ~0.8 the ground takes mud for a marsh's open water — the whole road one pool)
+  return clamp(core * max(onRoad, wallow) * (0.8 + 0.4 * n), 0.0, 0.78);
+}
 // (how much snow has FALLEN here, 0 … 1 — before the slope sheds any: the grass's bake asks this: no blade in the snow's
 //  country, on a face too steep to stay white either)
 float snowFall(vec2 xz, float h, float nBig, float nMid, float nFine, float nMid2, out float line) {
@@ -687,6 +714,8 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   // (an outland road, where it's nearer than a track of the box: the same earth, its own width)
   float rd = roadCentre(xz), outRoad = 0.0;
   if (rd - uRoadG.z < trail - thw) { trail = rd; thw = uRoadG.z; outRoad = 1.0; }
+  // (the outland's MIRES: mud on the road and round it — ROAD_GLSL mireMud)
+  if (rim > 0.0) { float mk = mireK(xz); if (mk > 0.0) trailT.b = max(trailT.b, rim * mireMud(mk, rd, p.fine.r, texture(uNoise, xz * 0.034 + 0.21).g)); }   // (the wallows: round blotches ~15 m — the noise's G; its B is streaks)
   Ground g = groundPaint(xz, m, h, steep, p, foot, trail, thw, farG ? 0.0 : farDots); // (painted shrub dots only beyond the real bushes)
   vec3 col = g.col;
   // (a road of the outland is not one earth from end to end: grey GRAVEL as it climbs — whole by ~560 m — and darker,
@@ -793,13 +822,30 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
     float spk = mix(dotsAt(xz, 1.6, 0.42, 0.42, max(0.12, foot * 0.45)), 0.62, smoothstep(0.4, 1.6, foot));
     s.flower = min(1.0, mudB.g * 1.15) * beyond * (1.0 - g.trail) * (1.0 - g.rock) * min(1.0, spk * 1.6) * 0.3;
   }
-  float mudA = 0.0;
+  float mudA = 0.0, mudPool = 0.0;
   if (mud > 0.01) {
+    // (2026-11-12, the user: "that brown colour thing does not look like a real one" — it was one dark brown, flat.
+    //  REAL MUD is two things: a WET core — near black-brown, glossy, churned into clods and smears — and a DRYING
+    //  rim, paler clay; and it holds WATER: long thin pools in the wheels' ruts, round ones in its dips, in any
+    //  weather — the sky in them (the puddles' pass, s.bog). The marsh, the mud holes and the outland's mires alike.)
     mudA = smoothstep(0.1, 0.45, mud + (p.mid.r - 0.5) * 0.3);
-    vec3 MUDC = mix(vec3(0.075, 0.056, 0.038), vec3(0.135, 0.1, 0.066), texture(uNoise, xz * vec2(0.31, 0.11)).b);
+    float pn = texture(uNoise, xz * 0.085).g;                       // (the pools: ~12 m)
+    vec4 ch = texture(uNoise, xz * 0.47 + vec2(0.37, 0.11));        // (the churn: ~2 m)
+    float wetK = smoothstep(0.3, 0.72, mud + (pn - 0.5) * 0.45);
+    vec3 MUDC = mix(vec3(0.2, 0.125, 0.062) * (0.86 + 0.28 * ch.r), vec3(0.085, 0.05, 0.026) * (0.78 + 0.5 * ch.g), wetK);   // (BROWN: warm clay … dark wet earth)
+    MUDC *= 1.0 - 0.24 * smoothstep(0.55, 0.8, ch.r);               // (clods, the smears' shadows)
+    MUDC *= 1.0 + 0.18 * smoothstep(0.62, 0.9, texture(uNoise, xz * vec2(0.31, 0.11)).b) * (1.0 - wetK);   // (dry crusts, dragged)
+    // the RUTS (on a track or a road: the wheels' lines either side of the middle — a road's two pairs): deeper, darker
+    float off = abs(trail);
+    float rutK = g.trail > 0.05 ? max(1.0 - smoothstep(0.16, 0.5, abs(off - (outRoad > 0.5 ? 0.95 : 0.85))), outRoad * (1.0 - smoothstep(0.16, 0.5, abs(off - 2.05)))) : 0.0;
+    MUDC *= 1.0 - 0.3 * rutK;
     col = mix(col, MUDC, mudA);
-    rough = mix(rough, 0.3, mudA);
+    rough = mix(rough, mix(0.7, 0.4, wetK), mudA);                    // (no hard sheen: a sky-grey glaze read as tarmac)
     s.flower *= 1.0 - mudA;
+    // … and the standing water: the ruts' (broken along their length by a slow noise), the dips' (the wet core's)
+    float rutW = rutK * smoothstep(0.46, 0.56, texture(uNoise, xz * 0.027 + 0.5).r + wetK * 0.12);
+    float dips = smoothstep(0.66, 0.72, pn + wetK * 0.12) * wetK;
+    mudPool = max(rutW, dips) * mudA;
   }
   s.col = col;
   s.rock = g.rock;
@@ -811,7 +857,7 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   s.grassy = (1.0 - g.rock) * (1.0 - g.forest) * (1.0 - g.snow) * (1.0 - g.bed);
   s.trail = g.trail;
   // the puddles' inputs: the bog (thick mud: water at any weather) and the ruts' pools' noise (filled by the rain)
-  s.bog = smoothstep(0.8, 0.92, mud + (texture(uNoise, xz * 0.05).g - 0.5) * 0.3);
+  s.bog = max(smoothstep(0.8, 0.92, mud + (texture(uNoise, xz * 0.05).g - 0.5) * 0.3), mudPool);
   s.pudN = pud && (g.trail > 0.2 || g.rock > 0.3) ? texture(uNoise, xz * 0.085).g + texture(uNoise, xz * 0.31).r * 0.16 : 0.0;
   s.dots = g.dots;
   s.shape = 0.0;
@@ -1163,7 +1209,10 @@ void main() {
     pud = max(pud, s.bog * 0.85);
     float fr = 0.12 + 0.6 * pow(1.0 - max(V.y, 0.0), 4.0);
     // (dark muddy water: the bed shows through, the sky in it at a glance; the bed LIT — at night the water dark too)
-    vec3 mirror = c * 0.14 + skyColor(reflect(-V, vec3(0.0, 1.0, 0.0))) * fr * 0.55 + headlight(vec3(0.5), vec3(0.0, 1.0, 0.0), vWorld) * 0.6;
+    // (a MUD pool — s.bog — is TURBID: from above it's milky brown, paler than the wet mud round it, not a black
+    //  hole; and it takes more of the sky at a glance than a film of rain does)
+    float tb = s.bog * 0.75;
+    vec3 mirror = mix(c * 0.14, c * vec3(1.7, 1.5, 1.22), tb) + skyColor(reflect(-V, vec3(0.0, 1.0, 0.0))) * mix(fr * 0.55, 0.1 + 0.62 * pow(1.0 - max(V.y, 0.0), 3.0), tb) + headlight(vec3(0.5), vec3(0.0, 1.0, 0.0), vWorld) * 0.6;
     c = mix(c, mirror, pud * 0.9);
   }
   // the fields' sheen: grass back-lit by a low sun glows warm

@@ -131,10 +131,10 @@ export class Rocks {
     this.stackDiam = stacks?.diam ?? []
     this.reach = tier.rockReach
     this.near = tier.rockNear
-    const mk = (stack: boolean) => new GFX.ShaderMaterial({
+    const mk = (stack: boolean, crag = false) => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
-      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid } },
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...(stack ? { OTH_STACK: '' } : {}) },
+      uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, ...(crag ? { uCragSnow: { value: new GFX.Vector4(map.meta.outland?.snow?.x ?? 0, map.meta.outland?.snow?.z ?? 0, map.meta.outland?.snow?.r ?? 0, map.meta.outland?.snow?.line ?? 1e5) } } : {}) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...(stack ? { OTH_STACK: '' } : {}), ...(crag ? { OTH_CRAG: '' } : {}) },
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
@@ -203,9 +203,11 @@ export class Rocks {
     this.footprint.needsUpdate = true
     // THE CRAGS' meshes: the blocks' shapes again, their own instances (drawn out to cragReach — update)
     this.cragReach = tier.rockReach * 2.8 * (tier.weakGpu ? 0.65 : 1)   // (a weak GPU — the phones: a third nearer)
+    // (their own material: GRASS CAPS — OTH_CRAG in FRAG; ?cragcaps=0: bare grey tops, the A/B)
+    const cragMat = gameParams().get('cragcaps') === '0' ? mat : mk(false, true)
     for (let v = 0; v < VARIANTS; v++) {
       const n = all.filter((r) => r.crag && r.v === v).length
-      const mesh = new GFX.InstancedMesh(this.meshes[v].geometry, mat, Math.max(1, n))
+      const mesh = new GFX.InstancedMesh(this.meshes[v].geometry, cragMat, Math.max(1, n))
       mesh.count = 0; mesh.frustumCulled = false
       mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
       this.cragMeshes.push(mesh)
@@ -335,6 +337,9 @@ export class Rocks {
     this.all.length = 0
     this.all.push(...kept)
     for (const [k, list] of this.grid) this.grid.set(k, list.filter((r) => !gone.has(r)))
+    // (… and the crags' own grid: a crag in a kept place — a hidden vale's ravine — was taken off the list, and drawn still)
+    for (const [k, list] of this.cragGrid) this.cragGrid.set(k, list.filter((r) => !gone.has(r)))
+    this.cragBox.clear()
     this.cellBox.clear()
   }
 
@@ -710,6 +715,15 @@ export class Rocks {
         ...(map.meta.landmarks ?? []).filter((l) => Math.abs(l.x) > map.half || Math.abs(l.z) > map.half).map((l) => [l.x, l.z, l.r + 30] as [number, number, number]),
       ]
       const grad = (x: number, z: number): [number, number] => [(map.height(x + 4, z) - map.height(x - 4, z)) / 8, (map.height(x, z + 4) - map.height(x, z - 4)) / 8]
+      // THE STEEPEST FACES BY THE ROADS (2026-11-12, docs/NEXT_outland.md §2 — over ~37° only 0.42 of the cells took a
+      // band: big faces still showed stretches of smooth painted rock): where such a face is within ~450 m of a road —
+      // where it's LOOKED at — nearly every cell takes one (0.9), and its second band always. The far faces stay as
+      // they were (their count, and their cost). The roads' reach: 128 m cells, widened four each way. ?cragsroad=0: off.
+      const byRoad = new Set<number>()
+      if (gameParams().get('cragsroad') !== '0') for (const L of map.meta.outland?.trails?.lines ?? []) for (let k = 0; k < L.length; k += 8) {
+        const ci = Math.floor(L[k][0] / 128), cj = Math.floor(L[k][1] / 128)
+        for (let j = -4; j <= 4; j++) for (let i = -4; i <= 4; i++) if (i * i + j * j <= 14) byRoad.add((ci + i + 512) * 1024 + cj + j + 512)
+      }
       /** A block set into the hill at (x, z), its face toward (dx, dz) (downhill): w wide along the contour, d deep, h of
        *  it standing over the ground at its face. */
       const block = (x: number, z: number, dx: number, dz: number, w: number, d: number, h: number, v: number, lean: number): boolean => {
@@ -736,7 +750,8 @@ export class Rocks {
         const y = map.height(x, z)
         const dx = -gxs / sl, dz = -gzs / sl                           // (down the hill)
         const steep = sl > 0.52
-        if (rnd() > (steep ? 0.42 : 0.12 + 0.24 * Math.min(1, (sl - 0.16) / 0.36))) continue
+        const seen = sl > 0.75 && byRoad.has((Math.floor(x / 128) + 512) * 1024 + Math.floor(z / 128) + 512)
+        if (rnd() > (seen ? 0.9 : steep ? 0.42 : 0.12 + 0.24 * Math.min(1, (sl - 0.16) / 0.36))) continue
         if (!steep && y > 900) continue
         // (a band's size: the steep faces are 100–400 m tall — their blocks 18–42 m wide, 7–30 m of face showing)
         const n = steep ? 2 + Math.floor(rnd() * 3) : 2 + Math.floor(rnd() * 3), big = steep ? 18 + rnd() * 24 : 7 + rnd() * 9
@@ -753,11 +768,38 @@ export class Rocks {
           if (al < 0.12) continue
           block(bx, bz, -ax / al, -az / al, w, d, h, v, lean)
           // (the steepest: a second, smaller band above — the cliff in steps)
-          if (steep && al > 0.85 && rnd() < 0.55) {
+          if (steep && al > 0.85 && (rnd() < 0.55 || seen)) {
             const up = h / al * 0.9 + d * 0.4, ux = bx + (ax / al) * up, uz = bz + (az / al) * up
             const [bx2, bz2] = grad(ux, uz), bl = Math.hypot(bx2, bz2)
             if (bl > 0.6) block(ux, uz, -bx2 / bl, -bz2 / bl, w * (0.7 + 0.3 * rnd()), d * 0.8, h * (0.6 + 0.4 * rnd()), Math.floor(rnd() * VARIANTS), lean)
           }
+        }
+      }
+      // THE STONE FORESTS (2026-11-12, the user: "Genshin-like landscapes, not a plain place"): out on the lowlands,
+      // every ~600 m or so, a CLUSTER of 3–8 tall stone PILLARS — 12–26 m thick, 30–95 m high, the tallest in the
+      // middle, each leaning a hair its own way, turf on their tops (the crags' material), a few fallen blocks at their
+      // feet. The crags' blocks stood on end: the same draws, the same hulls (ground to the wheels — nothing climbs
+      // them). Off the roads, the lakes, the courts and vales, what's placed. ?pillars=0: none.
+      if (gameParams().get('pillars') !== '0') for (let gz = -ho; gz < ho; gz += 620) for (let gx = -ho; gx < ho; gx += 620) {
+        if (gx > -hb - 200 && gx < hb + 200 && gz > -hb - 200 && gz < hb + 200) continue
+        s = cellSeed(Math.round(gx), Math.round(gz), 83)
+        if (rnd() > 0.62) continue
+        for (let t = 0; t < 6; t++) {
+          const cx = gx + 60 + rnd() * 500, cz = gz + 60 + rnd() * 500, cy = map.height(cx, cz)
+          const [g0, g1] = grad(cx, cz)
+          if (cy > 400 || Math.hypot(g0, g1) > 0.3 || Math.max(Math.abs(cx), Math.abs(cz)) > ho - 80) continue
+          if (keepOff.some(([kx, kz, kr]) => (cx - kx) ** 2 + (cz - kz) ** 2 < (kr + 70) ** 2) || [...map.courts, ...map.vales].some((c) => (c.x - cx) ** 2 + (c.z - cz) ** 2 < 220 * 220)) continue
+          const n = 3 + Math.floor(rnd() * 6)
+          for (let i = 0; i < n; i++) {
+            const a = rnd() * 6.2832, d = i === 0 ? 0 : 16 + rnd() * 46, x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d
+            const w = (i === 0 ? 19 : 12) + rnd() * 9, hgt = (i === 0 ? 62 : 30) + rnd() * (i === 0 ? 34 : 38), y = map.height(x, z)
+            let road = false
+            for (let q = 0; q < 8 && !road; q++) road = map.roadEdge(x + Math.cos(q * 0.785) * (w * 0.5 + 6), z + Math.sin(q * 0.785) * (w * 0.5 + 6)) < 7.9
+            if (road || map.roadEdge(x, z) < 7.9 || map.lakeShore(x, z, y, 2)) continue
+            out.push({ x, y: y + hgt * 0.5 - 4, z, s: w, sy: (hgt + 8) / 0.72, rot: rnd() * 6.2832, tilt: (rnd() - 0.5) * 0.08, v: Math.floor(rnd() * VARIANTS), ax: 1, az: 0.8 + rnd() * 0.35, crag: true })
+            if (rnd() < 0.6) { const fa = rnd() * 6.2832, fx = x + Math.cos(fa) * (w * 0.5 + 5), fz = z + Math.sin(fa) * (w * 0.5 + 5), fs = 5 + rnd() * 6; if (map.roadEdge(fx, fz) >= 7.9) out.push({ x: fx, y: map.height(fx, fz) + fs * 0.1, z: fz, s: fs, sy: fs * 1.3, rot: rnd() * 6.2832, tilt: (rnd() - 0.5) * 0.5, v: Math.floor(rnd() * VARIANTS), ax: 1, az: 0.7 + rnd() * 0.5, crag: true }) }
+          }
+          break
         }
       }
     }
@@ -1056,6 +1098,9 @@ ${SHADOW_GLSL}
 in vec3 vWorld;
 in vec3 vN;
 in float vUp;
+#ifdef OTH_CRAG
+uniform vec4 uCragSnow; // the early snow: x, z, radius, the line's height
+#endif
 #ifdef OTH_STACK
 in float vTone;
 in float vUpM;
@@ -1091,6 +1136,27 @@ void main() {
 #else
   vec3 albedo = STONE * mix(0.72, 1.0, smoothstep(0.0, 0.45, vUp)) * mix(0.86, 1.1, smoothstep(0.2, 0.9, N.y)); // (no per-face tone: smooth; a slab's top lighter than its side)
   float ao = mix(0.6, 1.0, smoothstep(0.0, 0.5, vUp));
+#endif
+#ifdef OTH_CRAG
+  // GRASS CAPS (2026-11-12, docs/NEXT_outland.md §2 — the references' cliffs wear grass on every top; ours were grey
+  // blocks): what faces UP on a crag is turf — the hillside's own gold, green where the paint's slow noise says (as the
+  // meadows' patches), ragged at its rim (the noise breaks the line where the top turns to the face), a little moss
+  // creeping down the face under it. Two reads of the paint noise; the faces keep their grey.
+  {
+    vec4 cn = texture(uNoise, vWorld.xz * (1.0 / 37.0) + vec2(0.31, 0.77));
+    vec4 cf = texture(uNoise, vWorld.xz * (1.0 / 5.3) + vWorld.y * vec2(0.11, 0.07));
+    // (the FACE's own normal, from the surface itself: a crag is a block stretched wide and squashed flat, and the
+    //  vertex normal — turned by the instance's matrix, not its inverse — leans a top face over toward its side)
+    float upK = abs(normalize(cross(dFdx(vWorld), dFdy(vWorld))).y);
+    float cap = smoothstep(0.62, 0.84, upK + (cf.g - 0.5) * 0.3);
+    vec3 turf = mix(vec3(0.3, 0.176, 0.05), vec3(0.047, 0.11, 0.038), smoothstep(0.52, 0.7, cn.r)) * (0.82 + 0.36 * cf.b);
+    // (… under the early snow — the white peaks' country, above its line — the caps are SNOW)
+    float sk = uCragSnow.z > 1.0 ? smoothstep(uCragSnow.w - 25.0, uCragSnow.w + 45.0, vWorld.y + (cn.g - 0.5) * 40.0) * (1.0 - smoothstep(0.8, 1.0, distance(vWorld.xz, uCragSnow.xy) / uCragSnow.z)) : 0.0;
+    turf = mix(turf, vec3(0.74, 0.78, 0.86), sk);
+    albedo = mix(albedo, turf, cap * 0.92);
+    albedo = mix(albedo, vec3(0.06, 0.1, 0.045), (1.0 - cap) * smoothstep(0.25, 0.6, upK) * smoothstep(0.45, 0.7, cf.r) * 0.45);
+    paintK *= 1.0 - cap;
+  }
 #endif
   // HIGH / ULTRA on PCs: the crumpled 3D relief over every face (the light only: the colour above is the face's own)
   float cav = 1.0;

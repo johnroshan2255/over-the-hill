@@ -1,5 +1,5 @@
 import * as GFX from './gfx'
-import { NO_ROADS, type PreparedMap, ROAD_REACH, ROAD_STEP } from './mapPrep'
+import { type Court, NO_ROADS, type Vale, type PreparedMap, ROAD_REACH, ROAD_STEP } from './mapPrep'
 import { gameParams } from '../settings'
 
 /** The map loader's worker (one for every load) and its request count. */
@@ -26,6 +26,8 @@ export interface Landmark {
     // (2026-11-12, Wardens.ts — the outland's ruins: a beacon, a giant, a temple, a ring … its style says which)
     | 'warden'
   name: string; x: number; z: number; y: number; rot: number; r: number
+  /** (a Warden site) the bearing its figure looks along (rad: (sin, cos) in x, z) */
+  face?: number
   /** Its style (a camp's: expedition / hikers / fishers / abandoned; a cabin's story). */
   style?: string
   /** A FIRE burning at this local (x, z) (Props.ts: flames, sparks, smoke, its light) — camps and others. */
@@ -99,6 +101,8 @@ export interface MapMeta {
   /** THE OUTLAND (scripts/oth/outland.py, wilds.py): the playable land's half side; its peaks; where the EARLY SNOW lies
    *  (the snow line lowered to `line` m within r of x, z — Terrain.ts); its PLACES (Wonders.ts draws them); its gravel
    *  ROADS (centre lines every ~8 m, half width hw — mapPrep.ts roadField). */
+  /** (made as the map loads — the ways into the hidden vales: lines the route finder may take, Nav.ts; never drawn) */
+  navExtra?: [number, number][][]
   outland?: {
     play: number
     peaks: { x: number; z: number; h: number; name?: string }[]
@@ -108,7 +112,8 @@ export interface MapMeta {
     /** Its LAKES (each a bowl dug by wilds.py: the water at `level` within r of x, z — Wonders.ts draws it, `lakeAt`). */
     /** (x1, z1: a LONG lake — the canyon's — the water within r of the line from x, z to there, not of a point) */
     lakes?: OutLake[]
-    /** Its rally STAGES: a road each (`line`: its index in trails.lines), its length (km) and climb (m). */
+    /** (wilds.py's rally STAGES — a road each: `line` its index in trails.lines. Not drawn or timed any more: the user,
+     *  2026-11-12, "dirt roads, not a racing thing". The file still lists them.) */
     stages?: { name: string; line: number; km: number; climb: number; crests?: [number, number][] }[]
     /** Its OFF-ROAD places: a round of boulders (`rocks` — Rocks.ts), a hollow of mud (`bog` — `mudAt`, the ground's paint), a ford. */
     zones?: { kind: 'rocks' | 'bog' | 'ford'; name: string; x: number; z: number; r: number }[]
@@ -210,12 +215,31 @@ export class MapData {
 
   /** The terrain quadtree's min / max heights (mapPrep.ts: computed with the map, for Terrain's leaf size). */
   readonly pyramid: PreparedMap['pyramid']
+  /** The Wardens' SUNKEN COURTS (mapPrep.sinkCourts cut the ground for them; Wardens.ts dresses them). */
+  readonly courts: Court[]
+  /** The HIDDEN VALES (mapPrep.carveVales: a hollow in a hill, a ravine into it; Wardens.ts dresses them). ?vales=0: none. */
+  readonly vales: Vale[]
 
   private constructor(p: PreparedMap) {
     const meta = (this.meta = p.meta), mask = p.mask, trail = p.trail, mud = p.mud
     this.inner = new HeightGrid(meta.inner, p.innerRaw, p.innerH, p.innerNormals)
     this.far = new HeightGrid(meta.far, p.farRaw, p.farH, p.farNormals)
     this.pyramid = p.pyramid
+    this.courts = p.courts ?? []
+    this.vales = p.vales ?? []
+    // (each vale's way in, for the route finder: from the nearest road point within 700 m, over the open ground to the
+    //  ravine's mouth, through its bend to the hollow's middle — a point every 8 m)
+    if (this.vales.length) {
+      const roads = meta.outland?.trails?.lines ?? []
+      meta.navExtra = this.vales.map((v) => {
+        let rp: [number, number] | null = null, bd = 700 * 700
+        for (const L of roads) for (const q of L) { const d = (q[0] - v.ex) ** 2 + (q[1] - v.ez) ** 2; if (d < bd) { bd = d; rp = q } }
+        const way: [number, number][] = [...(rp ? [rp] : []), ...v.path, [v.x, v.z]], line: [number, number][] = []
+        for (let k = 0; k + 1 < way.length; k++) { const [ax, az] = way[k], [bx, bz] = way[k + 1], n = Math.max(1, Math.round(Math.hypot(bx - ax, bz - az) / 8)); for (let i = 0; i < n; i++) line.push([ax + ((bx - ax) * i) / n, az + ((bz - az) * i) / n]) }
+        line.push([v.x, v.z])
+        return line
+      })
+    }
     this.trackFar = p.fields.track
     this.riverFar = p.fields.river
     this.farN = p.fields.n
@@ -270,6 +294,53 @@ export class MapData {
     this.waterTex.needsUpdate = true
     this.waterBody = p.waterBody
     this.cutLakes()
+    this.mires = this.findMires()
+  }
+
+  /** THE MIRES (2026-11-12, the user: "I want dirt roads, not a racing thing — a mixture of mud and watery, slippery
+   *  places"): where an outland road runs through a low, level hollow it turns to MUD — a round of it 30–60 m across
+   *  centred on the road: the road itself and its verges churned, wallows in the grass beside it, water standing in the
+   *  ruts and the dips (the ground's paint: Terrain.ts mireMud; no grass in it, reeds at its rim; the tyres: mudAt).
+   *  Chosen as the map loads from the roads themselves — up to 12, the deepest hollows first, 800 m+ apart, the road
+   *  level there (under 3.5 % over 80 m), below 430 m (the valleys, not the passes), clear of the bridges, the places,
+   *  the lakes' water and the box. ?mires=0: none. */
+  readonly mires: { x: number; z: number; r: number }[]
+  private findMires(): { x: number; z: number; r: number }[] {
+    const O = this.meta.outland, lines = O?.trails?.lines
+    if (!O || !lines?.length || this.desert || this.play <= this.half + 100 || gameParams().get('mires') === '0') return []
+    const keep: [number, number, number][] = [
+      ...(this.meta.bridges ?? []).flatMap((b) => [[b.x0, b.z0, 130], [b.x1, b.z1, 130]] as [number, number, number][]),
+      ...(O.places ?? []).filter((q) => q.kind !== 'lake').map((q) => [q.x, q.z, q.kind === 'worldtree' ? 260 : q.kind === 'canyon' || q.kind === 'crater' || q.kind === 'mesa' || q.kind === 'peak' ? 0 : q.r + 90] as [number, number, number]),
+      ...(this.meta.landmarks ?? []).map((l) => [l.x, l.z, l.r + 90] as [number, number, number]),
+      ...(O.zones ?? []).map((Z) => [Z.x, Z.z, Z.r + 150] as [number, number, number]),
+      ...this.courts.map((c) => [c.x, c.z, 120] as [number, number, number]),
+      ...this.vales.flatMap((v) => [[v.x, v.z, 220], [v.ex, v.ez, 120]] as [number, number, number][]),
+    ]
+    const cand: { x: number; z: number; sc: number }[] = []
+    for (const L of lines) for (let k = 6; k < L.length - 6; k += 3) {
+      const [x, z] = L[k]
+      if (Math.max(Math.abs(x), Math.abs(z)) > this.play - 220 || (Math.abs(x) < this.half + 160 && Math.abs(z) < this.half + 160)) continue
+      const h = this.height(x, z)
+      if (h > 430 || this.lakeShore(x, z, h, 0.4)) continue
+      const a = L[k - 5], b = L[k + 5]
+      if (Math.abs(this.height(a[0], a[1]) - this.height(b[0], b[1])) / Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1])) > 0.035) continue
+      // (how low it lies: the land 110 m round it, over it)
+      let ring = 0
+      for (let q = 0; q < 8; q++) ring += this.height(x + Math.cos(q * 0.785) * 110, z + Math.sin(q * 0.785) * 110)
+      const hollow = ring / 8 - h
+      if (hollow < 1.2) continue
+      if (keep.some(([kx, kz, kr]) => kr > 0 && (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) continue
+      cand.push({ x, z, sc: hollow })
+    }
+    cand.sort((p, q) => q.sc - p.sc)
+    const out: { x: number; z: number; r: number }[] = []
+    for (const c of cand) {
+      if (out.length >= 12) break
+      if (out.some((m) => (m.x - c.x) ** 2 + (m.z - c.z) ** 2 < 800 * 800)) continue
+      const s = Math.abs(Math.sin(c.x * 12.9898 + c.z * 78.233) * 43758.5453) % 1
+      out.push({ x: c.x, z: c.z, r: 32 + s * 30 })
+    }
+    return out
   }
 
   /**
@@ -395,6 +466,13 @@ export class MapData {
     if (fx < 0 || fz < 0 || fx >= n - 1 || fz >= n - 1) {
       // (the outland's BOG — meta.outland.zones, scripts/oth/wilds.py: thick at its middle, thinning to its rim — what the tyres sink in)
       for (const Z of this.meta.outland?.zones ?? []) if (Z.kind === 'bog') { const d = Math.hypot(x - Z.x, z - Z.z) / Z.r; if (d < 1) return Math.min(1, (1 - d * d) * 1.15) }
+      // (… and the MIRES on its roads — findMires: thick on the road and its verges, a little in the wallows beside it)
+      for (const M of this.mires) {
+        const q = ((x - M.x) ** 2 + (z - M.z) ** 2) / (M.r * M.r)
+        if (q >= 1) continue
+        const k = Math.min(1, (1 - q) / 0.35), e = this.roadEdge(x, z)
+        return k * Math.max(0.35, Math.min(1, 1 - (e - 1) / 4)) * 0.95
+      }
       return 0
     }
     const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, k = (j * n + i) * 2, M = this.mud, r = n * 2
@@ -417,7 +495,7 @@ export class MapData {
         else resolve(e.data.map as PreparedMap)
       }
       w.addEventListener('message', on)
-      w.postMessage({ id, base, leaf })
+      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') !== '0' })   // (?courts=0: no sunken courts cut — the A/B)
     })
     return new MapData(p)
   }

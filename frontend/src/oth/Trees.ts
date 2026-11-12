@@ -148,7 +148,7 @@ export class Trees {
       // (the desert: its palms in the broadleaf family's place — their LODs, their impostors)
       const src = l === 4 ? impostorQuad() : l < 2 ? spruceGeometry(l) : map.desert ? palmGeometry(l - 2) : broadleafGeometry(l - 2)
       const geo = new GFX.InstancedBufferGeometry()
-      for (const n of l < 4 ? ['position', 'normal', 'color', 'leaf'] : ['position']) geo.setAttribute(n, src.getAttribute(n))
+      for (const n of l < 4 ? ['position', 'normal', 'color', 'leaf', 'cardC'] : ['position']) geo.setAttribute(n, src.getAttribute(n))
       geo.setIndex(src.getIndex()) // (indexed: the near tree is 947 shared vertices)
       const a0 = new GFX.InstancedBufferAttribute(new Float32Array(max * 4), 4), a1 = new GFX.InstancedBufferAttribute(new Float32Array(max * 4), 4)
       a0.setUsage(GFX.DynamicDrawUsage); a1.setUsage(GFX.DynamicDrawUsage)
@@ -243,7 +243,7 @@ export class Trees {
     const L = Math.hypot(dx, dz) || 1
     const src = this.lods[family(sp) * 2].geo
     const geo = new GFX.InstancedBufferGeometry()
-    for (const n of ['position', 'normal', 'color', 'leaf']) geo.setAttribute(n, src.getAttribute(n))
+    for (const n of ['position', 'normal', 'color', 'leaf', 'cardC']) geo.setAttribute(n, src.getAttribute(n))
     geo.setIndex(src.getIndex())
     const a0 = new GFX.InstancedBufferAttribute(new Float32Array([d[o], d[o + 1], d[o + 2], d[o + 3]]), 4)
     const a1 = new GFX.InstancedBufferAttribute(new Float32Array([d[o + 4], sp, d[o + 6], 1]), 4)
@@ -560,15 +560,17 @@ vec3 barkLight(vec3 albedo, float h01, vec3 n) {
 // broadleaf's leaves let the light in
 // THE OAK (species 6 — 2026-11-12): the broadleaf geometry made a wide round DOME on a short, stout trunk — the crown
 // 1.5× as wide and pulled down a little, the trunk 2.4× as thick below the fork, its limbs spread with the crown
-vec3 oakShape(vec3 p, float fol) {
+// (2026-11-12, round 2 — up close the crown was big dark OVALS: the whole crown was stretched 1.5× across, and every leaf
+//  card with it. Now each card's CENTRE goes where the wide crown puts it (cc: the card's middle, on all its vertices —
+//  treeGeometry cardC) and the card keeps its own shape about it, a fifth bigger each way to fill the wider dome: round
+//  leaves again.)
+vec3 oakShape(vec3 p, float fol, vec3 cc) {
   if (fol < 0.5) {
     if (p.y < 0.33) { p.xz *= 2.4; p.y *= 0.86; }
     else { p.xz *= 1.6; p.y = 0.284 + (p.y - 0.33) * 0.84; }
     return p;
   }
-  p.xz *= 1.5;
-  p.y = 0.27 + (p.y - 0.3) * 0.86;
-  return p;
+  return vec3(cc.x * 1.5, 0.27 + (cc.y - 0.3) * 0.86, cc.z * 1.5) + (p - cc) * 1.22;
 }
 float aoFloor(float species) { return species > 2.5 ? 0.4 : species > 0.5 ? 0.36 : 0.22; }
 vec3 treeAlbedo(float species, float fol, float j) {
@@ -606,6 +608,7 @@ ${SHADOW_GLSL}
 in vec4 aT0; // x, y, z, height
 in vec4 aT1; // rotation, species, seed, grow
 in vec3 leaf; // a broadleaf leaf's disc coordinates + its tint (0 0 0 elsewhere)
+in vec3 cardC; // a leaf card's centre (the vertex itself off a card)
 uniform vec4 uSee;
 uniform vec4 uSeeD;
 uniform vec4 uSeeK;
@@ -630,7 +633,7 @@ void main() {
   // a snag: the trunk alone, thick and BROKEN OFF under half the height (not a needle up to the sky), the foliage
   // collapsed away
   if (species > 1.5 && species < 2.5) { p = fol > 0.5 ? vec3(0.0) : vec3(p.x * 2.2, min(p.y, 0.42) * 0.9, p.z * 2.2); }
-  if (species > 5.5) p = oakShape(p, fol);
+  if (species > 5.5) p = oakShape(p, fol, cardC);
   // a broadleaf's own crown, from the tree's seed (one geometry, every tree a different outline): its base raised a
   // little (the top kept), its width ×0.8–1.2 — each way its own, an oval from above, not a ball — and its depth
   // ×0.88–1.12 about its middle; and the whole tree LEANS a little (up to ~4°, the foot kept) — 2026-11-06: the one
@@ -789,6 +792,7 @@ uniform sampler2D uNoise;
 ${SPECIES_GLSL}
 uniform float uSpecies;
 in vec3 leaf;
+in vec3 cardC;
 out vec3 vLeaf;
 out float vFol;
 out vec3 vP;
@@ -804,7 +808,7 @@ void main() {
   vAo = color.r;
   vH = color.b;
   vAlb = treeAlbedo(uSpecies, color.g, 0.0);
-  vec3 p = uSpecies > 5.5 ? oakShape(position, color.g) : position;
+  vec3 p = uSpecies > 5.5 ? oakShape(position, color.g, cardC) : position;
   vP = p;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
 }
@@ -1103,6 +1107,12 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
   // noises alone before the ground is asked. The tiles (64 m) keep the frame's cost to what is near.
   if (map.play > map.half + 100) {
     const GO = 11, ho = map.play - 60, hb = map.half - 50
+    // MORE WOODS (2026-11-12, the user after playing it: "make it congested, not a big plain place … check out the initial
+    // place for that" — the valley's box is forest with clearings; the outland was clearings with a few stands): the
+    // wooded country starts lower on the slow noise (0.14, was 0.34: most of the land, not a third), its thinnest
+    // cells hold more (0.13 of them a tree, was 0.03), and the open country takes a grove in more of its cells.
+    // ?woods=0: as it was (the A/B).
+    const WOODS = gameParams().get('woods') !== '0', R0 = WOODS ? 0.14 : 0.34, R1 = WOODS ? 0.42 : 0.6, THIN = WOODS ? 0.13 : 0.03
     // (clear of the outland's places — the ranger towers — and of the gorge bridges' ends)
     const keepOff: [number, number, number][] = [...(map.meta.landmarks ?? []).filter((l) => Math.abs(l.x) > map.half || Math.abs(l.z) > map.half).map((l) => [l.x, l.z, 18] as [number, number, number]),
       ...(map.meta.bridges ?? []).flatMap((b) => (Math.abs(b.x0) > map.half || Math.abs(b.z0) > map.half ? [[b.x0, b.z0, 12], [b.x1, b.z1, 12]] as [number, number, number][] : [])),
@@ -1113,11 +1123,11 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
     for (let gz = -ho; gz < ho; gz += GO, yield) for (let gx = -ho; gx < ho; gx += GO) {
       if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }       // (the box: placed above)
       const region = vn(gx / 420 + 7.3, gz / 420 - 2.1)
-      if (region < 0.34) continue
+      if (region < R0) continue
       const stand = smooth(0.44, 0.6, vn(gx / 58 - 11, gz / 58 + 4))
       let q = cellSeed(Math.round(gx), Math.round(gz), 91)
       const r1 = () => ((q = (Math.imul(q ^ (q >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
-      const pw = smooth(0.34, 0.6, region) * (0.03 + 0.6 * stand)
+      const pw = smooth(R0, R1, region) * (THIN + 0.6 * stand)
       if (r1() > pw) continue
       const x = gx + (r1() * 1.6 - 0.3) * GO, z = gz + (r1() * 1.6 - 0.3) * GO
       if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) continue
@@ -1149,7 +1159,7 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
         let q = cellSeed(Math.round(gx), Math.round(gz), 97)
         const r1 = () => ((q = (Math.imul(q ^ (q >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
         const region = vn(gx / 420 + 7.3, gz / 420 - 2.1)
-        if (r1() > (region < 0.34 ? 0.78 : 0.34)) continue
+        if (r1() > (WOODS ? (region < R0 ? 0.9 : 0.5) : region < 0.34 ? 0.78 : 0.34)) continue
         const cx = gx + (0.1 + 0.8 * r1()) * PG, cz = gz + (0.1 + 0.8 * r1()) * PG
         const ok = (x: number, z: number) => {
           if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr) || map.roadEdge(x, z) < 6.5 || rocks.onCrag(x, z, 2)) return null

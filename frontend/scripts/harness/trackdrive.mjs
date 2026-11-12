@@ -4,7 +4,7 @@
 // car STALLS (< 2 m in 5 s), FLIPS, leaves the line (> 6 m) or gets thrown (> 2.5 m above the ground) it logs the spot
 // — what's there: the grade ahead, the rock / trunk / prop nearest — and goes on 14 m further.
 //   node scripts/harness/trackdrive.mjs [out.json]    env: WORLD=valley  TRACKS=0,3,7 (default all; not LINES: zsh owns it)  DIRS=fwd,rev
-//                                                      PORT=5200  CAR=<id>  (needs `npm run dev`; ?save=0)
+//                                                      PORT=5200  CAR=<id>  Q=<extra URL params>  (needs `npm run dev`; ?save=0)
 //   SET=outland : the outland's ROADS instead (meta.outland.trails.lines — scripts/oth/wilds.py), the same bot
 //   SET=bridges : across each of the outland's gorge bridges (its approach, its deck, the far side)
 import puppeteer from 'puppeteer-core'
@@ -17,7 +17,7 @@ const ANGLE = process.platform === 'win32' ? 'd3d11' : 'metal'
 const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', protocolTimeout: 600000, args: [`--use-angle=${ANGLE}`, '--ignore-gpu-blocklist', '--mute-audio', '--window-size=640,360'], defaultViewport: { width: 640, height: 360 } })
 const p = await b.newPage()
 const errs = []; p.on('pageerror', (e) => errs.push(e.message)); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text().slice(0, 300)); else if (m.text().startsWith('TRACE')) console.log(m.text()) })
-await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=low&dpr=fixed&time=0&hour=12&weather=clear&world=${WORLD}&sound=0&save=0${process.env.CAR ? '&car=' + process.env.CAR : ''}`, { waitUntil: 'load' })
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=low&dpr=fixed&time=0&hour=12&weather=clear&world=${WORLD}&sound=0&save=0${process.env.CAR ? '&car=' + process.env.CAR : ''}${process.env.Q ? '&' + process.env.Q : ''}`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car.sim, { timeout: 120000, polling: 200 })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 await sleep(1500)

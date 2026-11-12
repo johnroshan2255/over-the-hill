@@ -174,6 +174,8 @@ export class OthPhysics {
     for (const i of list) { const cs = this.rocks.get(i); if (cs) { for (const c of cs) this.pw.world.removeCollider(c, false); this.rocks.delete(i) } }
     this.lastRockCell = Number.NaN
   }
+  /** A prop's box switched on / off (PropCollider.off — a Warden vault's door): re-streamed at the next follow. */
+  propsDirty(): void { this.lastRockCell = Number.NaN }
   /** Trees back (regrown): the trunks rebuilt at the next follow. */
   trunksDirty(): void { this.lastRockCell = Number.NaN }
 
@@ -248,12 +250,12 @@ export class OthPhysics {
       const pk = new Set<number>()
       for (let i = 0; i < this.props.length; i++) {
         const b = this.props[i]
-        if ((b.x - x) ** 2 + (b.z - z) ** 2 > PROP_REACH * PROP_REACH) continue
+        if (b.off || (b.x - x) ** 2 + (b.z - z) ** 2 > PROP_REACH * PROP_REACH) continue
         pk.add(i)
         if (this.propCols.has(i)) continue
         const h = b.rot / 2
         this.propCols.set(i, this.pw.world.createCollider(
-          this.R.ColliderDesc.cuboid(b.hx, b.hy, b.hz).setTranslation(b.x, b.y, b.z).setRotation({ x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) })
+          this.R.ColliderDesc.cuboid(b.hx, b.hy, b.hz).setTranslation(b.x, b.y, b.z).setRotation(b.q ? { x: b.q[0], y: b.q[1], z: b.q[2], w: b.q[3] } : { x: 0, y: Math.sin(h), z: 0, w: Math.cos(h) })
             .setCollisionGroups(b.ground ? group(Groups.Static | Groups.StaticMesh, STATIC_MESH_FILTER) : group(Groups.Static, 0xffff)).setFriction(0.7),
           this.rockBody,
         ))

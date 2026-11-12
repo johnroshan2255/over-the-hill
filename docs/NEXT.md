@@ -256,3 +256,124 @@ Checked by driving it (headless, real time, the chase camera): spawn → Copper 
 | fixed on the way | the compass rewrote every marker's style 10× a second (only on change now; the ruins on it within 1.2 km); `caveUniforms` rebuilt the caves' list from every place every frame (cached) | `MapView.ts`, `Sites.ts` | — |
 
 **Cost** (`docs/PERF.md`): outland views ULTRA +0.05–0.18 ms (≥ 500 fps everywhere measured: 504 at a giant filling the view, 720–860 elsewhere), LOW +0.05–0.19 ms; the box's spawn unchanged. **Still to do:** the giants' shapes (the Kneeling Warden reads crudely), a cipher for the writings, the beacons lighting when reached, more kinds of site (a sealed door in a hillside, a sunken stair), grass caps on the crags, the phone measured on a phone.
+
+## 11. The outland, round 2 (2026-11-12, later) — `docs/NEXT_outland.md` worked through
+
+| what | how | where | A/B |
+|---|---|---|---|
+| **A BUG in §10 first: nine pieces drawn kilometres off** — every temple's steps, statue and plinth, the giants' steps and lanterns, the gardens' lanterns, the whole toppled Warden: `PC('stair', ...L(0, 10.5), foot, …)` spread a local point's world (x, z) into the piece's (x, **y**) — the z landed in the height | `up(L(…), y)` puts them where they were meant | `Wardens.ts` | — |
+| **The giants' shapes** | THE KNEELING WARDEN: a figure — down on one knee (thigh, shin, foot each side), the body leaning back, the head thrown back, the arms out and up to the palms, a hood and a cape, the sun a faceted ball in eight rays (~560 triangles). THE FALLEN HEAD: a helm to the brow with a crown ridge, a nasal bar, cheek plates, deep eye sockets, a beard in five strands, the neck's broken stump (~420); set on the ground at its middle (it was sunk to the brow on a slope), its face clear. A limb helper (`limb`: tapered, any axis, wound outward) | `KIT.kneel`, `KIT.head` | `?wkit=<m>` lays the whole kit out by the first temple (`&wkitrot`, `&wkittx`, `&wkittz`) |
+| **The beacons light when reached** | every tower has its crystal: ASLEEP (dull smoked amber, `crystalDark`) until the tower is found, burning for good after (`Wardens.light`, from the landmarks' found set). A burning crystal never looks smaller than from 380 m (grown about its foot as the camera backs off) and the haze dims a lamp 60 % less (`Bridges.ts` FRAG): a spark on its ridge from 2 km, day and night. "Beacon lit · n / 50"; the last one pays 10 places | `Wardens.ts`, `main.ts` onDiscover | `?beacons=lit` |
+| **The writing's cipher** | the Wardens' script: 26 glyphs of our own (a stem and 1–3 strokes on a 3 × 3 lattice, seeded; one hidden SVG sprite — no font to be missing on a phone). A letter not learned yet is its glyph; each stone read for the first time teaches three (the commonest first): nine stones and it's plain. Old stones read better when you come back | `wardenScript.ts`, `main.ts` noteHud, `index.html` `.wg` | `?wscript=0` |
+| **More writings** | 98 texts (36 + 62: the Tree, the Grey, the beacons, the giants, the leaving; builders, children, lovers, lists) — plus each secret's own | `WRITINGS` | — |
+| **SECRET PLACES** (not on the map, the compass or a signpost until found; no path leads to one) | THE SUNKEN COURTS (4): a 16 m floor 5 m down — the ground CUT as the map loads (`mapPrep.sinkCourts`: 3 × 3 samples of the 8 m grid set to the floor, before anything is derived: the drawn ground, normals, quadtree, physics, grass and chart all read one shape; `far.bin` untouched), a ring of flagged stone over the one cell of slope, a stair down the side facing the road (a ramp: the car drives in and out), three crystals burning on a dais, four Wardens in the corners, the court's own words. Invisible from 150 m. THE SEALED VAULTS (7): a chamber against the foot of a steep face, a carved frame, a door slab, a KEYSTONE with an iron ring. The WINCH takes the ring (`Winch.extra`); hold the brake while it pulls (~1.2 s of the car's weight on the cable) and the door falls — a ramp down to the ground in front — the car drives in: a Warden, crystals, the vault's words; +4 places. Kept (`oth.wvaults.<map>`) | `mapPrep.ts`, `MapData.courts`, `Wardens.ts` (planWardens, `openVault`), `Winch.ts`, `Physics.propsDirty`, `PropCollider.off` | `?courts=0` |
+| **Colliders that turn with their piece** | `PropCollider.q` (a full quaternion; Physics streams it): a STAIR is a ramp along its steps, GROUND to the wheels (the car climbs a temple's steps onto its platform); fallen columns and the toppled giant lie where they're drawn; every leaning stone has its box (a ring's stones had none: any tilt dropped the collider) | `Props.ts`, `Physics.ts`, `Wardens.ts` PC | — |
+| **The names on the map** | a small ruin is on the map once FOUND (a smaller disc, its name when zoomed in); the towers and the giants always. 96 "?" out there, not 502 | `Chart.ts` `onMap`, `MapView.ts` | — |
+| **Grass under the floors** | the outland's stone floors as a list of turned rectangles in a 48 m grid (an R32F texture, six values a cell); the grass field's BAKE looks at the 3 × 3 cells round a root — no blade in a rectangle. Nothing per blade or per frame | `Grass.setFloors`, FIELD_FRAG `onFloor`, `WardenPlan.floors` | — |
+| **Sites in the lakes** | THE HAND (Mirror Pool, Long Mere: a giant's hand up out of the water, a new kit piece), THE DROWNED TEMPLE (Stillwater, Frost Tarn: columns in the shallows, steps going under, a Kneeling Warden at the far end), THE ISLAND SHRINE (Heron Lake: stepping stones out to a platform). From the shore nearest a road | `planWardens` (THE DROWNED PLACES) | — |
+| **The regions' character** | four countries: the FROZEN COURT (pale stone; beacons 800 m apart, not 1250), the TREE'S (mossed green; gardens, lanterns every 260 m of road), the SCRIBES' (ochre; written stones by the roads, needles), the DROWNED SHRINES (dark slate; the lake ruins). The tone is the material's, by where the stone stands (four `uRegion` vec4s on the Wardens' own material — no per-instance colour needed) | `Wardens.ts` (`region`), `Bridges.ts` `regionTint` | `?wregions=0` |
+| **Grass caps on the crags** | what faces up on a crag is turf — the hillside's gold, green in the paint's patches, ragged at its rim, a little moss down the face; SNOW above the early snow's line. The face's own normal (from the surface: the vertex normal of a stretched block leans) | `Rocks.ts` FRAG `OTH_CRAG` | `?cragcaps=0` |
+| **Flowers** | five more meadows (the shores of Long Mere and Stillwater, two saddles, the open south-west): `uMeadow3–7` | `Terrain.ts` `MORE_MEADOWS` | `?meadows=0` |
+
+**The harness:** `scripts/harness/wardens.mjs [dir] [tier] "name=<site regexp>,dist,up,f<rad round from its front>,pitch[,hour]" …`
+(a view per site, by name or style, from its front); `STONE=n SEEN=k` (a writing's card with k stones read), `BEACON=1`,
+`STAIR=1` (the car up a temple's steps), `VAULT=1` (the winch on a keystone, the brake held, the car in), `COURT=1` (down
+a court's stair and back out), `HEADFUL=1` (a real window), `Q=` (URL params), `EVAL=`.
+
+**Checked by driving** (headless, real time): up a temple's steps onto the platform; the winch on two vaults' keystones
+(opened after 2.5 s of brake, the car in over the fallen door); down a court's stair to the floor and out again forwards.
+
+**Cost** (`docs/PERF.md`): none measurable at any view, ULTRA or LOW (the Mac; 632–870 fps ULTRA, 990–1440 LOW).
+
+**Still to do:** `docs/NEXT_outland.md`.
+
+## 12. The mires (2026-11-12, evening) — "I want dirt roads, not a racing thing — a mixture of mud and watery, slippery places … the brown thing in the centre of the valley does not look like a real one"
+
+| what | how | where | A/B |
+|---|---|---|---|
+| **MUD THAT LOOKS LIKE MUD** — everywhere there is any (the valley's marsh and mud holes, the outland's bog, the mires): it was one flat dark brown | two muds: a WET core (dark earth, churned into clods and smears) and a DRYING rim (paler clay, crusts dragged along); the wheels' RUTS on a track or a road cut darker; and WATER standing in it at any weather — long thin pools in the ruts (broken along their length), round ones in the dips — TURBID (milky brown from above, the sky in it at a glance: the puddles' pass, `s.bog`), not a black mirror. No hard sheen (a sky-grey glaze read as tarmac) | `Terrain.ts` (MUD, the puddles) | — |
+| **THE MIRES** — twelve places where an outland road crosses a low, level hollow and turns to mud | chosen as the map loads (`MapData.findMires`): the deepest hollows first, 800 m+ apart, the road under 3.5 % there, below 430 m, clear of bridges, places, lakes and the box. Each a round 32–62 m across on the road: the road and its verges mud (the edge ragged ±1.5 m), WALLOWS in the grass beside it (round blotches ~15 m, more toward the middle). Twelve `uMire` vec4s; a pixel outside them all pays twelve squared distances. The grass's bake reads the same (no blades in it; reeds at its rim, as the marsh). The tyres: `mudAt` — the mud tyre (μ 0.45, soft, Crr 0.08) on the road, a third of it in the wallows | `MapData.ts`, `Terrain.ts` ROAD_GLSL `mireK` / `mireMud`, `Grass.ts` `mudOut` | `?mires=0` |
+
+Checked: the shots (a mire from 34 m, from the air, from the road at 2 m; the valley's marsh from 40 m and the air);
+driven through at full throttle (`MIRE=1 wardens.mjs`: mud 0.95 under the wheels across it, the car off the road at
+the bend after). Cost: +0.07 ms ULTRA / +0.12 ms LOW where a mire fills the view, nothing elsewhere.
+
+**Not done:** (the rally stages went the same night: §13); no SPRAY of mud / water from the wheels in a mire's pools beyond what the mud
+surface already throws (`Dust.ts`); the pools are paint — no depth, the car doesn't sink; the mires are level
+ground (real ruts would need the heights cut, as the courts').
+
+## 13. The rest of the list (2026-11-12, night) — "do all things in the Not done list and remove the rally stages"
+
+| what | how | where | A/B |
+|---|---|---|---|
+| **THE RALLY STAGES TAKEN OUT** | the start / finish gates, marker posts, bend boards, the stage clock and its toasts, the stages' red lines on the map and the radar — gone. The roads stay; `meta.outland.stages` is still in the file, unread | `Wonders.ts`, `main.ts`, `Chart.ts`, `MapView.ts`, `Radar.ts`, `index.html` | — |
+| **THE HIDDEN VALES** (2 — the third secret place) | a round hollow cut INTO a hill (a level floor 116 m across, 16 m+ of the hill's own rock all round) and a curving RAVINE into it from the low ground beside (12 m of floor; from its mouth you can't see in) — cut in the samples as the map loads (`mapPrep.carveVales`: only ever lowering, the lip a smooth minimum, the walls a parabola to 56°: no cell bends over ~9 m). The walls paint as rock and take crags; the floor is meadow and the trees find it. In it: nine tall stones round a flagged dais, five crystals burning, a Kneeling Warden at the far wall. The route finder knows the ravine (`meta.navExtra` → `Nav.ts` RoadGraph, drawn on no map): the autopilot drives in (both, ~50 s, no stall) | `mapPrep.ts`, `MapData.vales`, `Wardens.ts` (THE HIDDEN VALES), `Nav.ts` | `?vales=0` |
+| **Site ids are places, not turns** | a site's id is its 4 m cell (a writing's its 2 m cell): a change to the plan no longer re-numbers every site under a save's found set, lit beacons, read stones and opened vaults. (Saves from before today still point at the old numbers.) | `planWardens` `idAt` | — |
+| **The steepest faces by the roads** | a face over ~37° within ~450 m of a road takes a crag band in 0.9 of its cells (0.42 elsewhere, as before) and always its second band: 27.4 k → 38.6 k crags | `Rocks.ts` (`byRoad`) | `?cragsroad=0` |
+| a crag cleared from a site was still DRAWN | `removeWithin` took it off the list and the physics, not off the crags' own grid — every Warden site with a crag on it | `Rocks.ts` | — |
+| **The oak up close** | each leaf card's CENTRE goes where the wide crown puts it and the card keeps its own shape about it (×1.22): round leaves, not ovals stretched 1.5× across. A `cardC` attribute on the tree geometries (the card's middle; the vertex itself elsewhere) | `treeGeometry.ts`, `Trees.ts` `oakShape` | — |
+| **The autopilot, beached** | stuck again within 0.8 m of where it first stuck (a back-off that moved nothing — up on a boulder, wheels in the air): the reset at once — ~12 s, not six tries and 38 s | `Autopilot.ts` | — |
+| **The autopilot on a phone: CAMP stood on its button** | on the touch layout the CAMP button lay over AUTOPILOT — a tap pitched a camp. CAMP sits a row higher while the autopilot's button shows | `index.html`, `main.ts` (`oth-ap-shown`) | — |
+| **The roads meet** | ~20 outland roads ended 7–30 m short of the road they meet (the "track that stops ~20 m short" at (2048, −256) was one): each carried on to the other's nearest point, as the map loads; a road that begins on the box's edge with no track under it is carried in to the nearest one (up to 90° of turn, 120 m) | `mapPrep.joinRoads` | — |
+| **The roads' cut banks** | the samples 11.5–31 m from a road's centre (never the bed's own) that stand over 5 m off their four neighbours' mean — the spikes walls.mjs's 15 m keep-out left on the ledge roads' cliffs — brought to 5 m of it, three passes | `mapPrep.easeBanks` | `?banks=0` |
+
+**The autopilot, where it hadn't been** (`scripts/harness/ap.mjs`, `aptouch.mjs`, `apcoop.mjs`):
+THE PASS — set down 30 m before the valley's gate with a waypoint 290 m into the desert: through the crossing after
+9 s with the autopilot still on, arrived in 36 s. A PHONE (emulated: Pixel 5 landscape, touch events — not a phone's
+GPU or thumbs) — the button shows, a tap turns it on (45 km/h after 7 s), a touch on GAS gives the wheel back.
+CO-OP (two profiles, the server) — A under the autopilot 138 m in 14 s, B sees A's car within 1.06 m of where it is,
+B's own car untouched. Off-road: the temple → the Hand stall is 12.5 s now (one reset), not 38.5.
+
+**The spawn view** (`docs/NEXT_outland.md` §5 said "under 500 fps at ULTRA on the laptop"): on THIS Mac it is 607–632 fps
+(1.58–1.65 ms); `abq "|crags=0|cragsroad=0|hide=rocks|hide=grass|hide=trees" spawn 5` — the crags 0.02 ms (noise),
+all rocks 0.125, the trees 0.10, the grass 0.04. Nothing of the outland's work is in it. The Windows laptop's 2.0–2.26 ms
+could not be re-measured from here (`ablate.mjs` on this Mac swings by ±2 ms between parts — not usable).
+
+**The bot down every outland road** (`SET=outland DIRS=fwd trackdrive.mjs`, after all of the above): all 69 lines to their
+ends, 138.9 km, 7 events, all "off the line by 6 m", none a stall or a flip — five at the new joins (lines 4, 59 ×2, 65: a
+T-junction's corner, cut), two on steep pitches (line 44 at (−3767, −1512), 28 %; line 56 at (4460, 2221), 24 %) that
+are there with `banks=0&mires=0&crags=0&wardens=0&courts=0&vales=0` too — the roads' own, from before.
+
+**Cost** (`docs/PERF.md`): none measurable — `abq "|cragsroad=0|vales=0&banks=0"`, ULTRA canyon 2.084 vs 2.102 / 2.031,
+oroad 1.489 vs 1.448 / 1.450; LOW canyon 1.150 vs 1.178 / 1.146, oroad 0.720 vs 0.705 / 0.713, spawn 1.065 vs 1.093 / 1.095.
+
+## 14. After the user played it (2026-11-12, late) — "you made some story restriction … boring, I want exploration … all the outside part of the map is huge and nothing placed on it — buildings, broken places, like Genshin … check the initial place for that … make it CONGESTED, not a big plain place … the outer map's valley must be re-sculpted — the outer hills are okay"
+
+| what | how | where | A/B |
+|---|---|---|---|
+| **The writings read plain** | the Wardens' script that had to be learned stone by stone is off by default (it was the "story restriction") | `main.ts` noteHud | `?wscript=1` |
+| **THE BUILT COUNTRY** | RUINED TOWNS (71): a street — a cross of two in the bigger ones — of roofless stone houses in two rows a side (walls with windows and doorways, two storeys on four in ten, half a roof on a quarter), a square with a well / an obelisk / a Warden, lanterns down the street, stretches of a town wall and a gate toward the road, a tower on the big ones; 30–260 m from a road, ~750 m apart. FORTS (12) on the gentle hilltops: a square curtain wall, a round tower at each corner, a gate, a keep. FARMSTEADS every ~380 m of gentle land: one to three houses in a yard of low dry-stone walls, a well. FIELD WALLS along the roads' verges in runs of 50–180 m: the road a lane between them. Three new kit pieces (a wall with a window, with a doorway, broken off); 69 k pieces, 52 k boxes (25 k / 7 k before). Towns and forts are on the map from the start, as the towers and giants | `Wardens.ts` (THE BUILT COUNTRY: `house`, `lowWall`, `well`, the towns / forts / farmsteads / field walls) | `?wardens=0` |
+| — kept cheap | a cell of small things is skipped past the reach of its biggest piece (a town's cells aren't walked from 2 km); a wall panel reads to ~800 m | `Wardens.update` | — |
+| **MORE WOODS** | the outland's wooded country starts lower on its slow noise (0.14, was 0.34: most of the land, not a third), its thinnest cells hold four times the trees, the open country takes a grove in more cells: 163 k → ~250 k+ trees | `Trees.ts` (THE OUTLAND'S WOODS) | `?woods=0` |
+| **THE LOWLANDS RE-SCULPTED** | as the map loads (the samples, before anything is derived): ROLLING GROUND (hillocks ~110 m across, ±10 m), PLATEAUS (flat-topped outcrops 15–44 m high, 90–260 m across, ragged outlines, cliff sides the ground paints rock and the crags hang on — eight in ten 400 m cells), TERRACES (9 m steps in some country). Only where it's valley (below ~380 m, the broad slope gentle: the hills stay), never within 14 m of a road's centre, clear of the box, the lakes, the places. A third of the outland's samples move, 2–3 m on average, 15 m+ on the plateaus. The towns, forts and ruins are placed after — they take the new ground (some stand on plateau tops) | `mapPrep.sculptLowlands` | `?sculpt=0` |
+
+**Cost** (the Mac, ULTRA, `abq "|woods=0|wardens=0&courts=0" town,townair,oroad,giant`): a town from its street 1.476 ms
+(678 fps) vs 1.602 without the ruins — noise; from over it 1.588 vs 1.498; the woods +0.05–0.2 ms (oroad 1.625 vs 1.422).
+LOW: a town 0.79 vs 0.78 / 0.89; the rest of that run was disturbed — re-measure. Load: the Wardens' plan ~230 ms.
+
+**Not done / to look at:** the towns are one house kit in one stone — no variety of building (a mill, a hall, a
+market), no furniture, nothing to find INSIDE a house (a crate, a note) — the next thing if "exploration" is still thin;
+the sculpt and the denser woods are not on a phone; houses on a slope step awkwardly (each takes its own level).
+
+**… and the same night, after "not just roads — I need Genshin-like LANDSCAPES, not a plain place like our centre":**
+
+| what | how | where | A/B |
+|---|---|---|---|
+| **MESAS** (the plateaus, bolder) | 28–80 m of cliff, 120–360 m across, eight in ten 400 m cells of lowland; over half carry a SECOND tier (22–58 m more, set back): hills of stacked cliffs and ledges. A cliff's depth in plan grows with its height (≤ ~65° a cell) | `mapPrep.sculptLowlands` | `?sculpt=0` |
+| **STONE FORESTS** | clusters of 3–8 tall stone PILLARS (12–26 m thick, 30–95 m high, the tallest in the middle, turf on top, fallen blocks at their feet) every ~600 m of lowland — the crags' blocks stood on end: the same draws and hulls | `Rocks.ts` (THE STONE FORESTS) | `?pillars=0` |
+| the joined road ends are road to the sculpt | `joinRoads` runs first; a verge's wall no longer crosses the mouth of a road that joins there | `mapPrep.prepareMap`, `Wardens.lowWall` | — |
+
+**Still to do for the landscape** (the user's bar is Genshin): WATER in it — rivers down the valleys, waterfalls off the
+mesas, pools at their feet (the eight lake slots are full: the lakes need to be a list the shader walks, or a texture);
+natural ARCHES and overhangs (meshes: the heightfield can't); the mesas' tops and the pillars' are bare of anything to
+reach them for (a shrine, a chest, a view point on each); colour — the references are green and flowered, ours autumn
+gold (ask). Not on a phone; the cost of the sculpt, the pillars and the woods together is in `docs/PERF.md` once measured.
+
+**The bot down every outland road, after all of §14** (`SET=outland DIRS=fwd trackdrive.mjs`): 69 lines to their ends,
+138.9 km. Left the line at the joined junctions (corners cut) and on the two steep pitches of §13; the two STALLS it
+found are fixed (line 4: a join dropped 74 % down a bank between two roads — joins steeper than 22 % aren't made; line
+59: a verge's wall across the junction, in a mire — no field wall within six points of a road's end, on a road, or in
+mud). Open: line 63 FLIPPED once at (1512, 1632) on a 21 % pitch inside the box in three runs of five (not with
+`wardens=0` or `woods=0`, both far from it: the bot on the edge there); line 65 (the 50 m spur to the Skyfall Overlook)
+stalls at the deck's foot in some runs. Look at both by hand.
+
