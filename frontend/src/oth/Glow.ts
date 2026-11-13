@@ -1,5 +1,5 @@
 import * as GFX from './gfx'
-import type { Atmosphere } from './Atmosphere'
+import { type Atmosphere, LOOK } from './Atmosphere'
 import type { MapData } from './MapData'
 
 /**
@@ -154,7 +154,8 @@ export class Glow {
     else {
       // (one on the page however many worlds are built: the next is built while this one plays — Crossing.ts)
       const v = (this.overlay = vignette ??= document.createElement('div'))
-      v.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse 85% 100% at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.16) 100%)'
+      // (the look, 2026-11-13: a deeper, warm-brown vignette — the painted frames' dark-amber corners)
+      v.style.cssText = LOOK ? 'position:fixed;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse 80% 95% at 50% 48%, rgba(30,16,4,0) 50%, rgba(30,16,4,0.14) 75%, rgba(24,12,2,0.34) 100%)' : 'position:fixed;inset:0;pointer-events:none;z-index:1;background:radial-gradient(ellipse 85% 100% at 50% 50%, rgba(0,0,0,0) 55%, rgba(0,0,0,0.16) 100%)'
       if (vignettes++ === 0) document.body.appendChild(v)
     }
   }

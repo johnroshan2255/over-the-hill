@@ -78,6 +78,8 @@ export class Landmarks {
   /** The paved places (x, z, rot, the paving's reach each): the terrain lays each one's flagstones square to it, and
    *  draws paving only within a reach (Terrain.setPaved). */
   readonly paved: number[] = []
+  /** The places set down onto the ground as it is now (the audit — scripts/harness/audit.mjs). */
+  readonly settled: string[] = []
   /** Called when a landmark is first reached (main.ts: a toast, the map). */
   onDiscover: ((l: Landmark, found: number, total: number) => void) | null = null
   /** The hills' occlusion (main.ts). */
@@ -94,6 +96,13 @@ export class Landmarks {
     const pv = map.desert || PAVE_OFF ? null : (map.trailTex.image.data as Uint8Array) // (RGBA8: G the paving)
     this.reach = tier.rockReach + 100
     for (const l of this.list) {
+      // SETTLED ON THE GROUND AS IT IS NOW (2026-11-13 — the user: the Lookout Peak tower stood 9 m up in the air): a
+      // place keeps the height it was baked with, and the ground under it has been graded and sculpted since. One whose
+      // centre is over ~0.8 m off the ground now is set down on it (a TOWER on its centre: its legs reach 9 m down); the water's places keep theirs (their builds measure from the water). Logged: the audit.
+      if (!['shack', 'dock', 'wreck', 'cave'].includes(l.kind)) {
+        const gy = map.height(l.x, l.z)
+        if (Math.abs(l.y - gy) > 0.8) { this.settled.push(`${l.name} ${l.y.toFixed(1)} → ${gy.toFixed(1)}`); l.y = gy }
+      }
       const paved = !!pv && PAVED.has(l.kind)
       let paveR = 0 // (how far from its centre its paving reaches: the terrain's gate)
       const from = b.count, cols: [GFX.Vector3, GFX.Vector3, boolean][] = []
@@ -345,7 +354,10 @@ const KINDS: Partial<Record<Landmark['kind'], (b: Builder, l: Landmark, col: Col
   tower(b, _l, col) {
     const H = 13, base = 2.4, top = 1.7
     for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-      b.log(V(sx * base, -0.8, sz * base), V(sx * top, H, sz * top), 0.17, b.wood(0.85))
+      // (round 4: each leg runs on down 9 m along its own line — on a sharp peak the downhill legs reach the ground, the
+      //  uphill ones go into the hill: Landmarks sets a tower on its centre's ground)
+      const lo = base + (base - top) * (8.2 / (H + 0.8))
+      b.log(V(sx * lo, -9, sz * lo), V(sx * top, H, sz * top), 0.17, b.wood(0.85))
       col(sx * (base + top) / 2, H / 2, sz * (base + top) / 2, 0.3, H / 2, 0.3)
     }
     // X braces on each side at three levels

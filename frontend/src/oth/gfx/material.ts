@@ -125,7 +125,7 @@ function boundValue(b: Bound): unknown {
 }
 
 /** The renderer's per-render state the converted shaders read (tone mapping on / off, sRGB out or linear). */
-export const outputState = { toneMap: 1, srgb: 1, exposure: 1 }
+export const outputState = { toneMap: 1, srgb: 1, exposure: 1, grade: 0, warm: 1 }
 const scopeIds = new Map<string, pc.ScopeId>()
 let globalBinds: { b: Bound; id: pc.ScopeId }[] = [], globalsBound = 0
 export function pushGlobals(): void {
@@ -144,6 +144,8 @@ export function pushGlobals(): void {
   id('uOthToneMap').setValue(outputState.toneMap)
   id('uOthSRGB').setValue(outputState.srgb)
   id('toneMappingExposure').setValue(outputState.exposure)
+  id('uOthGrade').setValue(outputState.toneMap ? outputState.grade : 0)
+  id('uOthWarm').setValue(outputState.warm)
 }
 
 // ------------------------------------------------------------------------------------------------- the conversion
@@ -152,7 +154,32 @@ const OTH_OUTPUT_GLSL = /* glsl */ `
 uniform float uOthToneMap;
 uniform float uOthSRGB;
 uniform float toneMappingExposure;
-vec3 othToneMap(vec3 color) {
+uniform float uOthGrade;
+uniform float uOthWarm;
+vec3 othToneMap0(vec3 color);
+// THE GRADE (2026-11-13, the look — the user's painted frames: warm gold light, rich brown-olive darks, no cool greys):
+// on the tone-mapped colour, in a square-root (near perceptual) space — the greens pulled to olive, a little more
+// saturation, a soft S of contrast round the middle, the shadows tinted a warm brown and the highlights gold. uOthGrade:
+// how much (0 off — ?look=0).
+vec3 othGrade(vec3 c) {
+  vec3 g0 = sqrt(max(c, vec3(0.0))), g = g0;
+  float gd = g.g - max(g.r, g.b);
+  g.g -= max(gd, 0.0) * 0.45;
+  g.r += max(gd, 0.0) * 0.18;
+  float l = dot(g, vec3(0.2126, 0.7152, 0.0722));
+  g = max(mix(vec3(l), g, 1.2), vec3(0.0)); // (round 3, "the hardened colour": richer)
+  // (by night the S and the warmth fade (uOthWarm → 0): the night's blue kept, its darks not crushed)
+  g = mix(g, g * g * (3.0 - 2.0 * g), (0.14 + 0.38 * uOthWarm) * step(g, vec3(1.0)));
+  float sh = 1.0 - smoothstep(0.0, 0.5, l), hi = smoothstep(0.45, 0.95, l);
+  g *= mix(vec3(1.0), vec3(1.05, 0.96, 0.84), sh * 0.7 * uOthWarm);
+  // (the darks LIFTED a little toward a brown-olive — the frames' shade is rich, never black)
+  g += vec3(0.03, 0.02, 0.006) * sh * sh * uOthWarm; // (round 3: less lift — the shade deep, as Over the Hill's)
+  g *= mix(vec3(1.0), vec3(1.04, 1.0, 0.9), hi * 0.6 * uOthWarm);
+  g = mix(g0, g, uOthGrade);
+  return g * g;
+}
+vec3 othToneMap(vec3 color) { return uOthGrade > 0.0 ? othGrade(othToneMap0(color)) : othToneMap0(color); }
+vec3 othToneMap0(vec3 color) {
   const float StartCompression = 0.8 - 0.04;
   const float Desaturation = 0.15;
   color *= toneMappingExposure;

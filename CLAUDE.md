@@ -10,6 +10,7 @@
 | `docs/NEXT.md` | **the hand-off (2026-11-10): the garage, the 12 km valley and its outland, the flat look — what's done, what's next, what bites** (the one before, places and caves: `docs/NEXT_caves.md`) |
 | `docs/NEXT_outland.md` | **what's left out in the outland (2026-11-12, round 3 — done: `NEXT.md` §11 the Wardens' secrets, §12 the dirt roads' mires, §13 the rally stages out + the hidden vales + the rest): the phone, a real window, the secrets' rewards, the mires' depth and spray** |
 | `docs/DESERT_MATCH.md` | **matching Over the Hill's desert: the 0–100 score method (`scripts/oth/compare.py`), the loop, the content + terrain checks** |
+| `docs/LOOK.md` | **the look (2026-11-13): the warm height haze that hides the far land, the grade, brown tracks, the ruins' masonry + dressing, the ground clutter, the mist — `?look=0` the A/B, the costs** |
 | `docs/PERF.md` | **500 fps on the PC, a constant 60 on a Snapdragon 6-series phone at ULTRA: the measurements, the tools, the plan in phases, the log** |
 | `docs/VEHICLES.md` | **the garage to build: 21 vehicles (Over the Hill's roster, our own models of the real machines) — each one's real specs, physics, doors and parts** |
 | `docs/ASSETS.md` | every model / image / sound not made here: source, author, licence — add a row with each new one |

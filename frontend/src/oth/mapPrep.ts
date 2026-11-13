@@ -798,7 +798,92 @@ function joinRoads(meta: MapMeta, trail: Uint8Array, farRaw: Uint16Array): void 
 }
 
 /** Fetch a map's files and compute all of the above (the worker's job; also usable in place). */
-export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean } = {}): Promise<PreparedMap> {
+/** Each grid sample within R m of an outland road's centre line → that distance (m). */
+function roadDistances(meta: MapMeta, g: Grid, R: number): Map<number, number> {
+  const rd = new Map<number, number>(), n = g.n, st = g.step
+  for (const L of meta.outland?.trails?.lines ?? []) for (let k = 0; k + 1 < L.length; k++) {
+    const ax = L[k][0], az = L[k][1], dx = L[k + 1][0] - ax, dz = L[k + 1][1] - az, l2 = dx * dx + dz * dz || 1e-9
+    const i0 = Math.max(1, Math.floor((Math.min(ax, ax + dx) - R - g.origin) / st)), i1 = Math.min(n - 2, Math.ceil((Math.max(ax, ax + dx) + R - g.origin) / st))
+    const j0 = Math.max(1, Math.floor((Math.min(az, az + dz) - R - g.origin) / st)), j1 = Math.min(n - 2, Math.ceil((Math.max(az, az + dz) + R - g.origin) / st))
+    if (i0 > i1 || j0 > j1) continue
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const x = g.origin + i * st, z = g.origin + j * st, t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2)), d = Math.hypot(x - ax - t * dx, z - az - t * dz)
+      if (d > R) continue
+      const q = j * n + i, o = rd.get(q)
+      if (o === undefined || d < o) rd.set(q, d)
+    }
+  }
+  return rd
+}
+
+/**
+ * THE HILLS' ROCK SCULPTED (2026-11-13, the look, round 3 — the user: "on the hills we have box-like rocks — remove
+ * them; instead the actual terrain sculpted, with the rock texture"): wherever the ground is steep (from ~27°, whole by
+ * ~40°) its samples are stepped into STRATA — level-ish ledges and steep risers following the contours, the steps'
+ * height and their line wandering with slow noise (no two bands alike), a rough knobbly break on top — so a hillside
+ * reads as cliffs in bands with shelves between, in the ground itself: the drawn land, its normals, the shadows, the
+ * physics and the grass all read one shape (Rocks.ts no longer hangs crag blocks or outcrops there). The box's 2 m grid
+ * takes ~7 m steps, the world's 8 m grid ~20 m ones. Kept off (and eased in from): the box's tracks (24 m … 44 m), the
+ * roads (18 … 40 m), the water (30 … 60 m), the places, the bridges, the lakes, the land's edge; faded to nothing at the
+ * seam between the two grids (each its own sampling of one function there). A spike limiter after. ?cliffs=0: off.
+ */
+export function sculptCliffs(meta: MapMeta, raw: Uint16Array, g: Grid, inner: boolean, fields: PreparedMap['fields']): number {
+  if (meta.biome === 'desert') return 0
+  const n = g.n, st = g.step, kq = g.range / 65535, half = -meta.inner.origin
+  const play = meta.id === 'valley' ? Math.max(half, -meta.far.origin - 2048) : half
+  const src = raw.slice(), Hs = (i: number, j: number) => src[Math.max(0, Math.min(n - 1, j)) * n + Math.max(0, Math.min(n - 1, i))] * kq + g.min
+  const rd = roadDistances(meta, g, 40)
+  const keep = [
+    ...(meta.outland ? outlandKeep(meta, 0) : []),
+    ...(meta.landmarks ?? []).map((l) => [l.x, l.z, l.r + 40] as [number, number, number]),
+  ]
+  const kh = new Map<number, [number, number, number][]>()
+  for (const k of keep) { const m = Math.ceil((k[2] + 60) / 256); for (let j = -m; j <= m; j++) for (let i = -m; i <= m; i++) { const q = (Math.floor(k[0] / 256) + i) * 4096 + Math.floor(k[1] / 256) + j; const l = kh.get(q); if (l) l.push(k); else kh.set(q, [k]) } }
+  const d = inner ? 3 : 2                                          // (the slope over ±6 m / ±16 m)
+  // (the world's 8 m grid can't carry a sharp step: its risers came out a regular sawtooth — there the bands are bigger,
+  //  softer, wander more, and stand at half strength; the box's 2 m grid takes the crisper ones)
+  const S0 = inner ? 8 : 34, SV = inner ? 4 : 16, WAV = inner ? 60 : 110, KN = inner ? 1.4 : 5, KS = inner ? 17 : 60, R0 = inner ? 0.42 : 0.15, AMP = inner ? 0.8 : 0.5
+  const moved: number[] = []
+  for (let j = d; j < n - d; j++) for (let i = d; i < n - d; i++) {
+    const x = g.origin + i * st, z = g.origin + j * st, m = Math.max(Math.abs(x), Math.abs(z))
+    if (!inner && m < half - 200) continue   // (the world's grid under the box: never drawn there)
+    const s = Math.hypot(Hs(i + d, j) - Hs(i - d, j), Hs(i, j + d) - Hs(i, j - d)) / (2 * d * st)
+    let w = sm(0.5, 0.85, s)
+    if (w <= 0.01) continue
+    // (the seam between the grids: nothing within ±60 m of the box's edge, eased in over 120 m more on each side)
+    w *= inner ? 1 - sm(half - 180, half - 60, m) : sm(half + 60, half + 180, m) * (1 - sm(play - 200, play - 80, m))
+    if (w <= 0.01) continue
+    const q = j * n + i
+    const r = rd.get(q)
+    if (r !== undefined) { if (r < 18) continue; w *= sm(18, 40, r) }
+    if (inner) {
+      const fi = Math.round((x + half) / 4), fj = Math.round((z + half) / 4), fn = fields.n
+      if (fi >= 0 && fj >= 0 && fi < fn && fj < fn) { const k = fj * fn + fi; w *= sm(24, 44, fields.track[k]) * sm(30, 60, fields.river[k]) }
+    }
+    for (const [kx, kz, kr] of kh.get(Math.floor(x / 256) * 4096 + Math.floor(z / 256)) ?? []) { w *= sm(kr, kr + 40, Math.hypot(x - kx, z - kz)); if (w <= 0.01) break }
+    if (w <= 0.01) continue
+    const h = Hs(i, j)
+    // the strata: a ledge then a riser in every step of S m, the line of the bands wandering
+    const S = S0 + SV * vn2(x / 260 + 4.1, z / 260 - 2.3), o = (vn2(x / WAV - 1.7, z / WAV + 6.2) - 0.5) * S * 0.9
+    const t = (h + o) / S, f = t - Math.floor(t)
+    const terr = (Math.floor(t) + sm(R0, 0.97, f) + 0.47 - (0.97 - R0) * 0.5) * S - o   // (+ the step's mean offset: the ground keeps its height on average)
+    // (and a rough, knobbly break over it: the rock's own lumps)
+    const knob = (vn2(x / KS + 9.3, z / KS - 3.7) - 0.5) * 2 * KN
+    const out = h + (terr - h) * w * AMP + knob * w
+    if (Math.abs(out - h) < 0.02) continue
+    raw[q] = Math.max(0, Math.min(65535, Math.round((out - g.min) / kq)))
+    moved.push(q)
+  }
+  // (no spikes: a sample over L m off its four neighbours' mean brought to L m of it — three passes)
+  const lim = inner ? 3 : 7
+  for (let pass = 0; pass < 3; pass++) for (const q of moved) {
+    const h = raw[q] * kq, m4 = (raw[q - 1] + raw[q + 1] + raw[q - n] + raw[q + n]) * 0.25 * kq, ex = h - m4
+    if (Math.abs(ex) > lim) raw[q] = Math.max(0, Math.round((h - (ex - Math.sign(ex) * lim)) / kq))
+  }
+  return moved.length
+}
+
+export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean } = {}): Promise<PreparedMap> {
   const meta = (await (await fetch(`${base}/meta.json`)).json()) as MapMeta
   let done = 0
   const get = async (f: string) => {
@@ -811,6 +896,8 @@ export async function prepareMap(base: string, leaf: number, onProgress?: (f: nu
   joinRoads(meta, new Uint8Array(t), farRaw)   // (first: the joined ends are ROAD to everything after — the sculpt keeps off them)
   if (o.sculpt !== false) sculptLowlands(meta, farRaw)               // (before anything is derived from the heights)
   if (o.banks !== false) easeBanks(meta, farRaw)
+  // (the look, round 3: the steep ground stepped into strata — both grids, before anything is derived from them)
+  if (o.cliffs !== false) { const fl = distanceFields(meta); sculptCliffs(meta, innerRaw, meta.inner, true, fl); sculptCliffs(meta, farRaw, meta.far, false, fl) }
   const vales = o.vales === false ? [] : carveVales(meta, farRaw)
   const courts = o.courts === false ? [] : sinkCourts(meta, farRaw, vales)
   const innerH = heightsOf(innerRaw, meta.inner), farH = heightsOf(farRaw, meta.far)

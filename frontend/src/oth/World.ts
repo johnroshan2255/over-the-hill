@@ -1,5 +1,5 @@
 import * as GFX from './gfx'
-import type { Atmosphere } from './Atmosphere'
+import { type Atmosphere, LOOK } from './Atmosphere'
 import { Birds } from './Birds'
 import { Bridges } from './Bridges'
 import { Bushes, placeBushes } from './Bushes'
@@ -23,6 +23,8 @@ import { Terrain } from './Terrain'
 import type { TerrainShadow } from './TerrainShadow'
 import { placeTrees, Trees, TREE_STRIDE } from './Trees'
 import { Water } from './Water'
+import { Clutter } from './Clutter'
+import { Mist } from './Mist'
 
 /**
  * A WORLD (2026-11-02, the user: "go through a fog, the old world disappears, we entirely remove it … then load the
@@ -66,6 +68,10 @@ export class World {
   caveGrass: Grass | null = null
   /** The outland's wonders (Wonders.ts: the World Tree, the stone arch). */
   wonders: Wonders | null = null
+  /** The ground's small things round the camera (Clutter.ts — the look, 2026-11-13). */
+  clutter: Clutter | null = null
+  /** The ground mist in the hollows (Mist.ts — the look). */
+  mist: Mist | null = null
   /** The Wardens' country (Wardens.ts: the outland's ruins, giants, writings). */
   wardens: Wardens | null = null
 
@@ -167,6 +173,9 @@ export class World {
     { const cs = plan.sites.find((l) => l.kind === 'cave'); if (cs && caveMeta && gameParams().get('caveflanks') === '1') CaveWorld.spreadFoot(map, cs, caveMeta) } // (off: it made walls and creases — 2026-11-08)
     // (and the small things on it: pebbles, logs, stumps — never a crate, a sign, a camp's)
     placed.props = placed.props.filter((p) => !['stones', 'log', 'stump', 'logs'].includes(p.kind) || open(p.x, p.z))
+    // (the look, 2026-11-13 — the user: "remove those from the game": the meadows' small RUINS, a lone stone chimney among
+    //  low walls, read as a tall box standing in a field)
+    if (LOOK) placed.props = placed.props.filter((p) => p.kind !== 'ruin')
     // (the tunnel's hill: the trees and bushes where it stands lifted onto it, a few more on its crest — Sites.dressHills)
     const dressed = dressHills(map, plan.sites, keepEvery(treeAll, TREE_STRIDE), TREE_STRIDE, keepEvery(bushData, 7), 7, caveMeta)
     const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks, !background, dressed.trees))
@@ -197,7 +206,7 @@ export class World {
     }
     rocks.footprint.needsUpdate = map.trailTex.needsUpdate = true
     terrain.setPaved(landmarks.paved) // (the places' flagstones laid square to each)
-    const props = await step('props', () => new Props(placed.props, places, placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner, map.desert))
+    const props = await step('props', () => new Props(placed.props, [...places, ...wplan.fires], placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner, map.desert))
     landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
     // the outland's wonders (the World Tree, the stone arch): drawn, and run into, as the landmarks are
     const wonders = await step('wonders', () => new Wonders(map, atmos, shadow, tier, env.farGrid))
@@ -213,6 +222,10 @@ export class World {
     if (wplan.floors.length) grass.setFloors(wplan.floors, map.play)   // (no blades up through a platform, a plinth, a court)
     wardens.light(landmarks.found)   // (the beacons reached before burn)
     wardens.restoreVaults()          // (the vaults opened before stand open)
+    // THE GROUND'S CLUTTER (the look): clear of the places (their reach), the ruins, the cleared spots; ?clutter=0: none
+    const placeKeep = places.map((l) => [l.x, l.z, (l.r ?? 18) + 6] as [number, number, number])
+    const clutter = map.desert || !LOOK || gameParams().get('clutter') === '0' ? null : await step('clutter', () => new Clutter(map, atmos, shadow, tier, env.farGrid, { data: trees.data, count: trees.count, stride: TREE_STRIDE },
+      (x, z) => open(x, z) && placeKeep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r)))
     const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
     // (the desert's sandstone slabs: fetched, Draco-decoded in the loader's workers)
     const tf = performance.now()
@@ -237,6 +250,11 @@ export class World {
     w.wonders = wonders
     w.group.add(wonders.group)
     w.wardens = wardens
+    w.clutter = clutter
+    const mist = map.desert || !LOOK || gameParams().get('mist') === '0' ? null : new Mist(map, atmos, tier)
+    w.mist = mist
+    if (mist) w.group.add(mist.mesh)
+    if (clutter) w.group.add(clutter.group)
     if (gameParams().get('wdraw') !== '0') w.group.add(wardens.group)
     if (caveGrass) w.group.add(caveGrass.group)
     w.group.add(props.group, landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group)
@@ -284,6 +302,8 @@ export class World {
     this.bushes.update(camera)
     this.props.update(camera)
     this.wardens?.update(camera, dt)
+    this.clutter?.update(camera)
+    if (this.mist) { this.mist.update(camera); if (this.cave?.cameraInside) this.mist.mesh.visible = false }
     this.formations?.update(camera)
     this.cave?.update(camera.position)
     if (this.caveGrass) { const on = !!this.cave?.insideShown; this.caveGrass.group.visible = on; if (on) this.caveGrass.update(camera) }

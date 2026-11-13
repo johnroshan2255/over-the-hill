@@ -6,7 +6,7 @@ import { SECRET } from './Wardens'
 import { type Camp, continueRequested, loadProgress, requestContinue, saveProgress } from '../save'
 import { gameParams, type Settings } from '../settings'
 import { Menu } from '../ui/Menu'
-import { Atmosphere } from './Atmosphere'
+import { Atmosphere, LOOK } from './Atmosphere'
 import { Bike, MotoBike } from './Bike'
 import motoUrl from '../assets/models/vehicles/moto.glb?url'
 import riderUrl from '../assets/models/human/rider.glb?url'
@@ -497,6 +497,11 @@ async function boot() {
     }
   }
   chase.snap()
+  // (the haze's floor — the frame loop, before atmos.update)
+  const mistHs = new Float64Array(25)
+  /** The grade's strength (`?grade=`, 1 the default). */
+  const GRADE_K = num('grade', 1)
+  let mistInit = false
   let driving = q.get('drive') !== '0'
 
   // THE BIKE ⇄ THE CAR (B): off the car onto the bike (taken off it, stood beside it), back in by the car — or, far from
@@ -1273,7 +1278,22 @@ async function boot() {
     ui.update(driving, atmos.clock)
     audio.update(dt, camera)
     atmos.tick(dt)
+    // THE HAZE'S FLOOR (Atmosphere uHaze, the look): the low ground round the camera — the lowest fifth of the land
+    // within 1.2 km, eased over a few seconds — so the haze lies in the valley you're in, thinner on the ridges
+    {
+      const c = camera.position, hs = mistHs
+      let n = 0
+      hs[n++] = map.height(c.x, c.z)
+      for (const r of [180, 450, 1200]) for (let a = 0; a < 8; a++) hs[n++] = map.height(c.x + Math.cos(a * 0.785 + r) * r, c.z + Math.sin(a * 0.785 + r) * r)
+      hs.sort()
+      const want = hs[4]
+      atmos.mistFloor = mistInit && Math.abs(want - atmos.mistFloor) < 150 ? atmos.mistFloor + (want - atmos.mistFloor) * Math.min(1, dt * 0.4) : want
+      mistInit = true
+    }
     atmos.update(camera.position, clock.elapsedTime)
+    // (the look's grade — gfx/material.ts othGrade: the valley's; the desert keeps its own calibrated colours)
+    GFX.outputState.grade = atmos.desert ? 0 : LOOK * GRADE_K
+    GFX.outputState.warm = 1 - atmos.uniforms.uNight.value
     rain.update()
     // (in the cave world no rain but down its skylight — Rain.setCave)
     {

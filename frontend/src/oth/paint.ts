@@ -12,6 +12,8 @@
  *  (linear; 0.7 ≈ 15 % darker on screen, 1 = the colours calibrated against OTH) — the grass (and the ground it grows
  *  from), the shrub dots, the forest floor (here), the trees' leaves and needles (Trees.ts, their impostors too), the
  *  bushes (Bushes.ts). The rock, tracks, water, flowers, bark and the sky keep theirs. */
+import { LOOK } from './Atmosphere'
+
 export const PLANT_VALUE = 0.7
 export const PLANT_VALUE_GLSL = /* glsl */ `const float PLANT_VALUE = ${PLANT_VALUE.toFixed(3)};`
 /** The GOLDEN grass a step further (2026-11-02, the user: "too bright, like someone shining a torch from the ground —
@@ -24,6 +26,7 @@ const NO_FIELDPAINT = typeof location !== 'undefined' && new URLSearchParams(loc
 
 export const PAINT_GLSL = /* glsl */ `
 ${NO_FIELDPAINT ? '#define NO_FIELDPAINT' : ''}
+${LOOK ? "#define OTH_LOOK" : ""}
 ${PLANT_VALUE_GLSL}
 const float GOLD_VALUE = ${GOLD_VALUE.toFixed(3)};
 const vec3 STRAW      = vec3(0.68, 0.4, 0.115) * PLANT_VALUE * GOLD_VALUE;
@@ -48,6 +51,8 @@ const vec3 SNOW       = vec3(0.80, 0.85, 0.93);
 const vec3 BED        = vec3(0.6, 0.37, 0.21);
 // (the tracks: the user's golden-valley reference — light sandy tan packed earth ≈ sRGB 205 158 121 in the sun)
 const vec3 TRAIL      = vec3(0.40, 0.27, 0.17);
+// (the look's earth — 2026-11-13: the painted frames' tracks, a mid brown ≈ sRGB 120 92 66 in the sun)
+const vec3 TRAIL_LOOK = vec3(0.21, 0.135, 0.075);
 
 // (every paint-noise read goes through PAINT_TEX: a shader that bakes the paint — Grass.ts's field — reads mip 0, as
 //  a vertex shader does, where a fragment shader's texture() would pick the mip its own pixel spacing asks for)
@@ -248,6 +253,9 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   // (a wall, a cliff, a slab: g.rock exactly 1) the field under it — grass, earth, scree, shrub dots — isn't painted at
   // all (2026-11-06, docs/PERF.md: exact, the rock is mixed over it at 1)
   float rv = m.r + (p.mid.b - 0.5) * 0.3 + (p.grain.b - 0.5) * 0.1;
+  // (2026-11-13, the roads' audit: a face over ~60° is rock whatever the 4 m mask says — the mask's grassy cells under a
+  //  cliff stretched down its face as gold stripes)
+  rv = max(rv, smoothstep(0.5, 0.7, steep));
   g.rock = smoothstep(0.42, 0.58, rv);
   g.rockNear = smoothstep(0.27, 0.433, rv); // (0.433: where g.rock reaches the grass's cut; ~2–6 m before it)
   // forest floor (the pines will stand here)
@@ -321,12 +329,31 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   // ledges too: the track is earth there as well.)
   // (the ragged edge reaches ≤ 1.13 m out past hw: farther off, no fetch — exact, 2 reads saved on most pixels)
   g.trail = trail < hw + 1.2 ? trackMask(xz, trail, hw) * (1.0 - g.bed) : 0.0;
+  // (2026-11-13, the roads' audit: a track along a cliff's foot painted its earth up the wall — the earth is by distance in
+  //  plan; a face steeper than ~55° is the cliff's, not the road's)
+  g.trail *= 1.0 - smoothstep(0.42, 0.62, steep);
   float rut = (1.0 - smoothstep(0.15, 0.45, abs(trail - 0.85))) * near; // (a car's wheels ±0.85 m off the middle)
   float speck = mix(1.0, 0.94 + 0.12 * p.micro.g, near);
   float tpeb = near > 0.01 && g.trail > 0.01 ? dotsAt(xz + 0.7, 1.3, 0.22, 0.06, max(0.02, foot * 0.5)) * near : 0.0;
   vec3 track = TRAIL * (0.93 + 0.1 * p.fine.g + 0.06 * p.mid.r) * speck * (1.0 - 0.08 * rut) * (1.0 + 0.12 * tpeb);
   // the earth darkens a touch toward its edge, where the grass overhangs it
   track *= 0.9 + 0.1 * smoothstep(hw, hw * 0.5, trail);
+#ifdef OTH_LOOK
+  // THE LOOK'S EARTH (2026-11-13, the user's painted frames: "change the road colour to match"): a DARKER, browner
+  // earth — the wheel ruts worn deep and darker still (damp), the wheels' bands darker (broad: see below)
+  // along it, broad patches of darker earth a few metres across, the pebbles paler on it
+  {
+    float patchK = smoothstep(0.35, 0.75, p.mid.g + (p.fine.b - 0.5) * 0.4);
+    vec3 e = TRAIL_LOOK * (0.9 + 0.14 * p.fine.g + 0.08 * p.mid.r) * speck * mix(1.0, 0.9, patchK);
+    // (the WHEEL BANDS broad and soft: a box track knows its centre line only through a texture whose interpolation
+    //  wobbles ~1 m — any band narrower than that broke into blocks at the texel pitch, a ladder of dashes down the track)
+    float wheels = (1.0 - smoothstep(0.35, 1.1, abs(trail - 1.0))) * near;
+    e *= 1.0 - 0.14 * wheels * (0.8 + 0.2 * p.fine.r);
+    e *= 1.0 + 0.35 * tpeb;
+    e *= 0.85 + 0.15 * smoothstep(hw, hw * 0.45, trail);
+    track = e;
+  }
+#endif
   col = mix(col, track, g.trail);
   g.col = col;
   // (the dots under what was painted over them since)

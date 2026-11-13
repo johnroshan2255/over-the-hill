@@ -752,6 +752,11 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   s.relief = g.rock * (1.0 - g.trail) * (1.0 - 0.75 * smoothstep(0.25, 0.55, steep));
 #else
   s.relief = max(g.rock, g.scree * 0.6) * (1.0 - g.trail); // (never on a track)
+#ifdef OTH_LOOK
+  // (the look, 2026-11-13 — the user: "the rock 3D shader on the ruins, the ground and all": the TRACKS' earth takes
+  //  the relief too, softer — clods and wheel-churned creases the low sun picks out)
+  s.relief = max(s.relief, g.trail * 0.55);
+#endif
 #endif
   s.rip = vec2(0.0);
 #ifdef OTH_DESERT
@@ -1096,7 +1101,12 @@ void main() {
     float pmk = texture(uTrail, gridUv(uInGrid, xz)).g;
     if (pmk > 0.004) {
       float pk = paveAt(xz, pmk, foot, PF, col, N, s.rough);
-      s.dots *= 1.0 - pk; s.flower *= 1.0 - pk; s.under *= 1.0 - pk; s.grassy *= 1.0 - pk; s.relief *= 1.0 - pk;
+      s.dots *= 1.0 - pk; s.flower *= 1.0 - pk; s.under *= 1.0 - pk; s.grassy *= 1.0 - pk;
+#ifdef OTH_LOOK
+      s.relief = mix(s.relief, 0.7, pk); // (the look: the flagstones chiselled — the relief on them too)
+#else
+      s.relief *= 1.0 - pk;
+#endif
     }
   }
 #endif
@@ -1213,6 +1223,11 @@ void main() {
     //  hole; and it takes more of the sky at a glance than a film of rain does)
     float tb = s.bog * 0.75;
     vec3 mirror = mix(c * 0.14, c * vec3(1.7, 1.5, 1.22), tb) + skyColor(reflect(-V, vec3(0.0, 1.0, 0.0))) * mix(fr * 0.55, 0.1 + 0.62 * pow(1.0 - max(V.y, 0.0), 3.0), tb) + headlight(vec3(0.5), vec3(0.0, 1.0, 0.0), vWorld) * 0.6;
+#ifdef OTH_LOOK
+    // (round 4 — the roads' audit: under the look's pale sky the mires' pools mirrored it near white and read as snow
+    //  lying on the road: a mud pool takes less of the sky, and that sky browned by the silt in it)
+    mirror = mix(mirror, mix(c * 0.14, c * vec3(1.5, 1.3, 1.05), tb) + skyColor(reflect(-V, vec3(0.0, 1.0, 0.0))) * vec3(0.62, 0.52, 0.4) * mix(fr * 0.45, 0.06 + 0.3 * pow(1.0 - max(V.y, 0.0), 3.0), tb), s.bog);
+#endif
     c = mix(c, mirror, pud * 0.9);
   }
   // the fields' sheen: grass back-lit by a low sun glows warm

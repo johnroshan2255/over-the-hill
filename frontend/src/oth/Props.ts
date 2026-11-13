@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
-import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
-import { Builder, woodMaterial } from './Bridges'
+import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK } from './Atmosphere'
+import { Builder, SURF, woodMaterial } from './Bridges'
 import type { Horizon } from './Horizon'
 import { campKit, FIRE_LOCAL } from './Landmarks'
 import type { Landmark } from './MapData'
@@ -165,11 +165,13 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
     reach: 700, size: 4.5, col: [2.2, 0.38, 2.2, 0.32],
     more: RUIN_WALLS.map(([x0, x1, z0, z1, h]) => [(x0 + x1) / 2, h / 2, (z0 + z1) / 2, Math.max(0.25, (x1 - x0) / 2), h / 2, Math.max(0.25, (z1 - z0) / 2)] as [number, number, number, number, number, number]),
     build(b, desert) {
+      b.setSurf(LOOK ? SURF.masonry : SURF.stone) // (the look, 2026-11-13: laid stone, mossed — Bridges.ts masonry)
       const S1: RGB = sandOr(desert, [0.26, 0.25, 0.24]), S2: RGB = sandOr(desert, [0.21, 0.2, 0.19], 0.82)
       box(b, 0, 2.2, 0, 0.38, 2.2, 0.32, S1)
       box(b, 0, 4.45, 0, 0.3, 0.1, 0.26, S2)
       box(b, 0.39, 0.55, 0, 0.01, 0.4, 0.2, [0.03, 0.03, 0.03])
       RUIN_WALLS.forEach(([x0, x1, z0, z1, h], i) => box(b, (x0 + x1) / 2, h / 2, (z0 + z1) / 2, Math.max(0.25, (x1 - x0) / 2), h / 2, Math.max(0.25, (z1 - z0) / 2), i % 2 ? S1 : S2))
+      b.setSurf(SURF.wood)
       b.log(V(1.6, 0.15, 1.1), V(4.8, 0.32, -1.4), 0.13, b.wood(0.55))
     },
   },

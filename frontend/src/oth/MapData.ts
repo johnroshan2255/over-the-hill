@@ -1,6 +1,7 @@
 import * as GFX from './gfx'
 import { type Court, NO_ROADS, type Vale, type PreparedMap, ROAD_REACH, ROAD_STEP } from './mapPrep'
 import { gameParams } from '../settings'
+import { LOOK } from './Atmosphere'
 
 /** The map loader's worker (one for every load) and its request count. */
 let loader: Worker | null = null
@@ -495,7 +496,7 @@ export class MapData {
         else resolve(e.data.map as PreparedMap)
       }
       w.addEventListener('message', on)
-      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') !== '0' })   // (?courts=0: no sunken courts cut — the A/B)
+      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') !== '0', cliffs: LOOK === 1 && gameParams().get('cliffs') !== '0' })   // (?courts=0: no sunken courts cut — the A/B)
     })
     return new MapData(p)
   }

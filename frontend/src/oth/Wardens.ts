@@ -1,6 +1,7 @@
 import * as GFX from './gfx'
-import type { Atmosphere } from './Atmosphere'
+import { type Atmosphere, LOOK } from './Atmosphere'
 import { Builder, SURF, woodMaterial } from './Bridges'
+import { campKit, FIRE_LOCAL } from './Landmarks'
 import type { Horizon } from './Horizon'
 import { type Landmark, lakeOff, type MapData } from './MapData'
 import type { PropCollider } from './Props'
@@ -43,7 +44,18 @@ const STONE: RGB = [0.55, 0.53, 0.48], STONE_D: RGB = [0.42, 0.41, 0.38], STATUE
 const AMBER: RGB = [0.95, 0.58, 0.16], LAMP: RGB = [0.9, 0.78, 0.55]
 
 /** The kit's pieces (an InstancedMesh each). */
-const KINDS = ['block', 'column', 'stump', 'arch', 'statue', 'kneel', 'head', 'lantern', 'obelisk', 'stone', 'tower', 'stair', 'roof', 'crystal', 'capital', 'dome', 'crystalDark', 'door', 'keystone', 'paving', 'hand', 'wallwin', 'walldoor', 'wallbrk'] as const
+const KINDS = ['block', 'column', 'stump', 'arch', 'statue', 'kneel', 'head', 'lantern', 'obelisk', 'stone', 'tower', 'stair', 'roof', 'crystal', 'capital', 'dome', 'crystalDark', 'door', 'keystone', 'paving', 'hand', 'wallwin', 'walldoor', 'wallbrk',
+  // (the look's DRESSING, 2026-11-13 — at real size, placed at scale ~1: Wardens `dress`)
+  'rubble', 'bricks', 'timber', 'crate', 'barrel', 'camp', 'watch',
+  // (round 3: the roads' low walls laid stone by stone and broken; the CREEPERS hanging over the walls)
+  'drywall', 'drywall2', 'creeper'] as const
+/** The walls' surface: laid stone with the look (Bridges.ts masonry), the plain stone without (?look=0). */
+const MASON = LOOK ? SURF.masonry : SURF.stone
+/** The dressing's kinds: thinned on the weaker tiers (detailKeep). */
+const DETAIL = new Set<string>(['rubble', 'bricks', 'timber', 'crate', 'barrel', 'creeper'])
+/** How much of the small DETAIL a tier draws (the dressing here, the ground's clutter — Clutter.ts): 1 on ULTRA / HIGH,
+  0.6 MEDIUM, 0.35 LOW and a weak GPU (the phones). */
+export function detailKeep(tier: Tier): number { return tier.weakGpu || tier.name === 'low' ? 0.35 : tier.name === 'medium' ? 0.6 : 1 }
 type Kind = (typeof KINDS)[number]
 
 // ------------------------------------------------------------------------------------------------------------ the kit
@@ -87,6 +99,49 @@ function ball(b: Builder, c: V3, rx: number, ry: number, rz: number, la: number,
 }
 const box = (b: Builder, cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, c: RGB) => b.box(V(cx, cy, cz), X, Y, Z, hx, hy, hz, c)
 const shade = (c: RGB, k: number): RGB => [c[0] * k, c[1] * k, c[2] * k]
+/** A broken dry-stone wall (unit: ±0.5 along x, y 0 … 1, ±0.5 thick): four courses of rough single stones; its top
+ *  RAGGED — the courses fall away into two breaks (at c1, c2 along it), a stone missing here and there; leaning a hair;
+ *  the fallen stones at its foot, out on both sides. */
+/** A ROUGH STONE: a hexahedron round (cx, cy, cz), half sizes h*, turned yaw — every corner pushed in or out (±25 %),
+ *  its top a little smaller than its foot: a field stone, not a cut block. */
+function roughStone(b: Builder, cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, yaw: number, col: RGB): void {
+  const cs = Math.cos(yaw), sn = Math.sin(yaw), j = () => 0.75 + b.rnd() * 0.5
+  const P = (x: number, y: number, z: number) => V(cx + x * cs + z * sn, cy + y, cz - x * sn + z * cs)
+  hexa(b, [P(-hx * j(), -hy, -hz * j()), P(hx * j(), -hy, -hz * j()), P(hx * j(), -hy, hz * j()), P(-hx * j(), -hy, hz * j()),
+    P(-hx * 0.8 * j(), hy * j(), -hz * 0.8 * j()), P(hx * 0.8 * j(), hy * j(), -hz * 0.8 * j()), P(hx * 0.8 * j(), hy * j(), hz * 0.8 * j()), P(-hx * 0.8 * j(), hy * j(), hz * 0.8 * j())], col)
+}
+/** The dry walls' stone: a weathered grey-brown, darker than the Wardens' dressed stone. */
+const FIELD: RGB = [0.23, 0.22, 0.195], MOSSY: RGB = [0.11, 0.13, 0.04]
+function dryWall(b: Builder, c1: number, c2: number): void {
+  b.setSurf(SURF.stone)
+  const top = (x: number) => 1 - 0.62 * Math.exp(-(((x - c1) / 0.13) ** 2)) - 0.45 * Math.exp(-(((x - c2) / 0.09) ** 2)) - 0.12 * Math.abs(Math.sin(x * 23.0))
+  // (round 4: the piece is scaled ~8 m along and ~0.8 m deep — a stone 0.03–0.065 of it is 0.25–0.55 m: field stones;
+  //  at 0.07–0.15 they stretched into metre-long slabs and the wall read as a row of boxes)
+  const C = 5, ch = 1 / C
+  for (let k = 0; k < C; k++) {
+    let x = -0.5 + (k % 2) * 0.05
+    while (x < 0.5) {
+      const w = 0.03 + b.rnd() * 0.035, cx = Math.min(x + w / 2, 0.5 - 0.01), y = (k + 0.5) * ch
+      x += w + 0.003
+      if (y > top(cx) || (k === C - 1 && b.rnd() < 0.3) || (k > 0 && b.rnd() < 0.06)) continue
+      const lean = 0.03 * (y - 0.5)   // (the wall leaning a little out of true)
+      roughStone(b, cx, y, lean + (b.rnd() - 0.5) * 0.06, w * 0.5, ch * (0.42 + b.rnd() * 0.1), 0.42 + b.rnd() * 0.06, (b.rnd() - 0.5) * 0.12, shade(FIELD, 0.6 + b.rnd() * 0.55))
+      // (moss on the top course's stones and on the broken ends: a flat cushion over the stone)
+      if (y + ch > top(cx) - 0.02 && b.rnd() < 0.55) { b.setSurf(SURF.plain); roughStone(b, cx, y + ch * 0.42, lean, w * 0.42, ch * 0.08, 0.36, b.rnd() * 0.3, shade(MOSSY, 0.8 + b.rnd() * 0.5)); b.setSurf(SURF.stone) }
+    }
+  }
+  // (the fallen ones, at its foot — more under the breaks)
+  for (let i = 0; i < 14; i++) {
+    const x = i < 8 ? (i % 2 ? c1 : c2) + (b.rnd() - 0.5) * 0.25 : (b.rnd() - 0.5) * 0.95, side = b.rnd() < 0.5 ? -1 : 1
+    roughStone(b, x, 0.04, side * (0.6 + b.rnd() * 0.5), 0.04 + b.rnd() * 0.03, 0.06 + b.rnd() * 0.04, 0.2 + b.rnd() * 0.15, b.rnd() * 6.28, shade(FIELD, 0.5 + b.rnd() * 0.45))
+  }
+}
+/** A box turned (yaw about y, then tilted): the dressing's tumbled stones, bricks, splinters. */
+const _rq = new GFX.Quaternion(), _re = new GFX.Euler()
+const rbox = (b: Builder, cx: number, cy: number, cz: number, yaw: number, tilt: number, hx: number, hy: number, hz: number, c: RGB) => {
+  _rq.setFromEuler(_re.set(tilt, yaw, tilt * 0.6, 'YXZ'))
+  b.box(V(cx, cy, cz), X.clone().applyQuaternion(_rq), Y.clone().applyQuaternion(_rq), Z.clone().applyQuaternion(_rq), hx, hy, hz, c)
+}
 /** A LIMB: `n` sides from a (radius ra) to c (radius rc), its section flattened `flat` across the axis `wide` lies
  *  along (1: round); capped; every face turned outward whatever the winding. */
 function limb(b: Builder, a: V3, c: V3, ra: number, rc: number, n: number, col: RGB, flat = 1, wide: V3 = X): void {
@@ -115,7 +170,7 @@ function limb(b: Builder, a: V3, c: V3, ra: number, rc: number, n: number, col: 
  *  null: drive through / over it). */
 const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, number, number] | null; ground?: boolean }> = {
   // a dressed block (walls, platforms, plinths, lintels, the paths' slabs): ±0.5, y 0 … 1
-  block: { build: (b) => { b.setSurf(SURF.stone); box(b, 0, 0.5, 0, 0.5, 0.5, 0.5, STONE) }, col: [0.5, 0.5, 0.5, 0.5], ground: true },
+  block: { build: (b) => { b.setSurf(MASON); box(b, 0, 0.5, 0, 0.5, 0.5, 0.5, STONE) }, col: [0.5, 0.5, 0.5, 0.5], ground: true },
   // a column's shaft: 12 sides, fluted (the sides in two tones), tapering a little — ⌀ 1, y 0 … 1
   column: { build: (b) => { b.setSurf(SURF.stone); prism(b, 12, 0.5, 0.44, 0, 1, (i) => shade(STONE, i % 2 ? 0.9 : 1.04)) }, col: [0.5, 0.4, 0.5, 0.4] },
   // a broken shaft: its top a jagged break
@@ -123,7 +178,7 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
   // an ARCH (a gate, a colonnade's span): ±0.5 across, y 0 … 1, ±0.5 deep — its opening 0.6 wide, to 0.86 high
   arch: {
     build: (b) => {
-      b.setSurf(SURF.stone)
+      b.setSurf(MASON)
       box(b, -0.4, 0.3, 0, 0.1, 0.3, 0.5, STONE); box(b, 0.4, 0.3, 0, 0.1, 0.3, 0.5, STONE)
       box(b, -0.4, 0.03, 0, 0.12, 0.03, 0.52, STONE_D); box(b, 0.4, 0.03, 0, 0.12, 0.03, 0.52, STONE_D)
       const n = 9, ri = 0.3, ro = 0.5, yc = 0.6
@@ -295,7 +350,7 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
   // a ROUND TOWER, its top broken: 14 sides, ⌀ 1, a string-course half way, slits, a floor under the break
   tower: {
     build: (b) => {
-      b.setSurf(SURF.stone)
+      b.setSurf(MASON)
       const tops = Array.from({ length: 14 }, (_, i) => 1 - (i >= 5 && i <= 8 ? 0.06 + 0.05 * Math.sin(i * 2.1) : (i % 2) * 0.035))
       prism(b, 14, 0.5, 0.45, 0, 1, (i) => shade(STONE, i % 2 ? 0.94 : 1.02), tops)
       prism(b, 14, 0.52, 0.52, 0.42, 0.46, () => STONE_D, undefined, false)
@@ -341,7 +396,7 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
   // A HOUSE'S WALL (±0.5 across, y 0 … 1, ±0.5 thick — scaled to a panel ~3.3 m × 3.5 m × 0.55 m): with a WINDOW …
   wallwin: {
     build: (b) => {
-      b.setSurf(SURF.stone)
+      b.setSurf(MASON)
       box(b, -0.36, 0.5, 0, 0.14, 0.5, 0.5, STONE); box(b, 0.36, 0.5, 0, 0.14, 0.5, 0.5, shade(STONE, 0.97))
       box(b, 0, 0.19, 0, 0.22, 0.19, 0.5, shade(STONE, 0.95)); box(b, 0, 0.86, 0, 0.22, 0.14, 0.5, shade(STONE, 1.03))
       box(b, 0, 0.395, 0, 0.27, 0.02, 0.62, STONE_D)                                       // the sill
@@ -351,7 +406,7 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
   // … with a DOORWAY …
   walldoor: {
     build: (b) => {
-      b.setSurf(SURF.stone)
+      b.setSurf(MASON)
       box(b, -0.36, 0.5, 0, 0.14, 0.5, 0.5, STONE); box(b, 0.36, 0.5, 0, 0.14, 0.5, 0.5, shade(STONE, 0.97))
       box(b, 0, 0.87, 0, 0.22, 0.13, 0.5, shade(STONE, 1.03))
       box(b, 0, 0.72, 0, 0.26, 0.025, 0.6, STONE_D)                                        // the lintel
@@ -361,7 +416,7 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
   // … and BROKEN OFF: four courses of different heights, the break ragged
   wallbrk: {
     build: (b) => {
-      b.setSurf(SURF.stone)
+      b.setSurf(MASON)
       const hs = [0.92, 0.58, 0.74, 0.3, 0.46]
       hs.forEach((hh, i) => box(b, -0.4 + i * 0.2, hh / 2, 0, 0.1, hh / 2, 0.5, shade(STONE, i % 2 ? 0.94 : 1.03)))
       box(b, 0.12, 0.07, 0.62, 0.16, 0.07, 0.14, STONE_D); box(b, -0.3, 0.05, -0.66, 0.12, 0.05, 0.12, STONE_D)   // fallen stones at its foot
@@ -426,6 +481,152 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
     },
     col: null,
   },
+  // ---- THE DRESSING (2026-11-13, the user's painted frames: "too empty — something needs to be there"): what a ruin
+  // gathers — at real size, local frame on the ground
+  // a RUBBLE MOUND (~3.4 m across, ~1 m high): chunks of the walls' dressed stone heaped and tumbled, a few out on the
+  // grass round it
+  rubble: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      for (let i = 0; i < 26; i++) {
+        const a = b.rnd() * 6.283, r = Math.sqrt(b.rnd()) * (i < 20 ? 1.5 : 2.6), s = (i < 20 ? 0.18 + b.rnd() * 0.26 : 0.1 + b.rnd() * 0.12)
+        const y = Math.max(0, (1 - r / 1.7)) * 0.75 + s * 0.4
+        rbox(b, Math.cos(a) * r, y, Math.sin(a) * r, b.rnd() * 6.28, (b.rnd() - 0.5) * 0.7, s * (1.1 + b.rnd() * 0.8), s * (0.6 + b.rnd() * 0.4), s * (0.8 + b.rnd() * 0.5), shade(STONE, 0.62 + b.rnd() * 0.3))
+      }
+      // (its core: a low mound the chunks lie on, earth-dark)
+      hexa(b, [V(-1.3, 0, -1.1), V(1.2, 0, -1.3), V(1.4, 0, 1.0), V(-1.1, 0, 1.3), V(-0.5, 0.62, -0.4), V(0.45, 0.66, -0.5), V(0.5, 0.58, 0.4), V(-0.4, 0.6, 0.5)], [0.2, 0.17, 0.13])
+    },
+    col: null,
+  },
+  // a heap of red-brown BRICKS (~2 m across): a fallen chimney's, a few strewn about it
+  bricks: {
+    build: (b) => {
+      b.setSurf(SURF.stone)
+      const BRICK: RGB = [0.34, 0.12, 0.06]
+      for (let i = 0; i < 46; i++) {
+        const a = b.rnd() * 6.283, r = Math.sqrt(b.rnd()) * (i < 36 ? 0.9 : 1.9), y = Math.max(0, 1 - r / 1.0) * 0.45 + 0.04
+        rbox(b, Math.cos(a) * r, y, Math.sin(a) * r, b.rnd() * 6.28, (b.rnd() - 0.5) * 0.9, 0.11, 0.035, 0.055, shade(BRICK, 0.7 + b.rnd() * 0.5))
+      }
+      hexa(b, [V(-0.8, 0, -0.7), V(0.8, 0, -0.75), V(0.85, 0, 0.7), V(-0.75, 0, 0.8), V(-0.3, 0.32, -0.25), V(0.3, 0.34, -0.3), V(0.3, 0.3, 0.3), V(-0.25, 0.32, 0.3)], [0.22, 0.1, 0.06])
+    },
+    col: null,
+  },
+  // CHARRED TIMBERS (a roof that burned and fell in): beams lying crossed and one propped against its stub of a post,
+  // burnt black at their ends
+  timber: {
+    build: (b) => {
+      b.setSurf(SURF.wood)
+      const char: RGB = [0.035, 0.03, 0.027]
+      const beam = (ax: number, ay: number, az: number, bx: number, by: number, bz: number, r: number) => {
+        const A = V(ax, ay, az), B = V(bx, by, bz), m1 = A.clone().lerp(B, 0.3), m2 = A.clone().lerp(B, 0.7)
+        b.log(A, m1, r, char); b.log(m1, m2, r, shade(b.wood(0.6), 0.7)); b.log(m2, B, r, shade(char, 1.3))
+      }
+      beam(-1.8, 0.14, -0.3, 1.9, 0.16, 0.4, 0.13)
+      beam(-1.2, 0.2, 0.9, 1.3, 0.38, -0.8, 0.12)
+      beam(0.6, 0.12, 1.2, 0.9, 0.14, -1.6, 0.1)
+      b.log(V(-1.4, 0, -1.2), V(-1.4, 1.5, -1.2), 0.14, char)                            // a post's burnt stub
+      beam(-1.4, 1.35, -1.2, 0.6, 0.08, 0.2, 0.11)                                         // a rafter fallen from it
+      for (let i = 0; i < 7; i++) { const a = b.rnd() * 6.28, r = b.rnd() * 1.8; rbox(b, Math.cos(a) * r, 0.04, Math.sin(a) * r, b.rnd() * 6.28, 0, 0.18 + b.rnd() * 0.2, 0.03, 0.06, char) }
+    },
+    col: null,
+  },
+  // a wooden CRATE (0.8 m): its planks and the battens across them
+  crate: {
+    build: (b) => {
+      b.setSurf(SURF.wood)
+      const w = b.wood(1.15)
+      box(b, 0, 0.4, 0, 0.4, 0.4, 0.4, w)
+      for (const s of [-1, 1]) {
+        box(b, s * 0.41, 0.4, 0, 0.02, 0.38, 0.06, shade(w, 0.8)); box(b, 0, 0.4, s * 0.41, 0.06, 0.38, 0.02, shade(w, 0.8))
+        box(b, s * 0.41, 0.4, 0, 0.02, 0.06, 0.38, shade(w, 0.85)); box(b, 0, 0.4, s * 0.41, 0.38, 0.06, 0.02, shade(w, 0.85))
+      }
+      box(b, 0, 0.81, 0, 0.38, 0.015, 0.06, shade(w, 0.8))
+    },
+    col: [0.4, 0.4, 0.4, 0.4],
+  },
+  // a BARREL (⌀ 0.62, 0.9 m): staves bulging at the middle, two iron hoops
+  barrel: {
+    build: (b) => {
+      b.setSurf(SURF.wood)
+      const w = b.wood(1.0)
+      prism(b, 12, 0.27, 0.32, 0, 0.45, (i) => shade(w, i % 2 ? 0.9 : 1.05), undefined, false)
+      prism(b, 12, 0.32, 0.27, 0.45, 0.9, (i) => shade(w, i % 2 ? 0.9 : 1.05))
+      b.setSurf(SURF.metal)
+      for (const y of [0.16, 0.74]) prism(b, 12, 0.305, 0.305, y - 0.03, y + 0.03, () => [0.07, 0.065, 0.06], undefined, false)
+    },
+    col: [0.45, 0.3, 0.45, 0.3],
+  },
+  // A CAMP in the ruin: the camps' own kit (Landmarks.campKit — the tent, the fire ring, the seats, the lantern; its
+  // fire burns in Props: Wardens' `fires`)
+  camp: { build: (b) => campKit(b), col: null },
+  // a TIMBER WATCHTOWER (≈ 7.5 m): four log legs leaning in, braced, a plank deck at 5 m with a rail, a sloping
+  // plank roof on posts, a ladder up one side
+  watch: {
+    build: (b) => {
+      b.setSurf(SURF.wood)
+      const legs = [[-1, -1], [1, -1], [1, 1], [-1, 1]]
+      const foot = (i: number) => V(legs[i][0] * 1.45, 0, legs[i][1] * 1.45), top = (i: number) => V(legs[i][0] * 1.1, 5.1, legs[i][1] * 1.1)
+      for (let i = 0; i < 4; i++) b.log(foot(i).setY(-0.3), V(legs[i][0] * 1.06, 7.2, legs[i][1] * 1.06), 0.13, b.wood(0.85))
+      for (let i = 0; i < 4; i++) {
+        const j = (i + 1) % 4
+        b.log(foot(i).clone().setY(0.4), top(j).clone().setY(4.9).lerp(foot(j), 0.08), 0.07, b.wood(0.8))   // the cross braces
+        b.log(foot(i).clone().lerp(top(i), 0.45), foot(j).clone().lerp(top(j), 0.45), 0.07, b.wood(0.8))
+      }
+      // the deck: planks across, a rail round three sides
+      for (let k = 0; k < 11; k++) box(b, -1.3 + k * 0.26, 5.12, 0, 0.12, 0.04, 1.42, b.wood(1.05))
+      for (const [ax, az, bx, bz] of [[-1.35, -1.35, 1.35, -1.35], [1.35, -1.35, 1.35, 1.35], [-1.35, 1.35, -1.35, -1.35]]) {
+        b.log(V(ax, 6.05, az), V(bx, 6.05, bz), 0.05, b.wood(0.9)); b.log(V(ax, 5.6, az), V(bx, 5.6, bz), 0.04, b.wood(0.9))
+      }
+      // the roof: a lean of planks over the posts' tops
+      for (let k = 0; k < 9; k++) b.box(V(-1.5 + k * 0.375, 7.38 - 0.0, 0), X, V(0, 1, 0), Z, 0.19, 0.035, 1.7, shade(b.wood(0.75), 0.9 + 0.2 * (k % 2)))
+      // the ladder up the open side (+z)
+      for (const s of [-0.3, 0.3]) b.log(V(s, 0, 2.3), V(s, 5.15, 1.25), 0.045, b.wood(0.9))
+      for (let k = 1; k < 13; k++) { const t = k / 13; b.log(V(-0.3, t * 5.15, 2.3 - t * 1.05), V(0.3, t * 5.15, 2.3 - t * 1.05), 0.03, b.wood(1.0)) }
+      // a pennant on a pole above the roof
+      b.log(V(1.1, 7.2, -1.1), V(1.1, 9.0, -1.1), 0.035, b.wood(0.8))
+      b.setSurf(SURF.fabric)
+      b.tri(V(1.12, 8.95, -1.1), V(1.12, 8.45, -1.1), V(2.0, 8.75, -1.0), [0.18, 0.2, 0.12]); b.tri(V(1.12, 8.95, -1.1), V(2.0, 8.75, -1.0), V(1.12, 8.45, -1.1), [0.15, 0.17, 0.1])
+    },
+    col: [2.6, 1.3, 2.6, 1.3],
+  },
+  // A DRY-STONE WALL, OLD AND BROKEN (round 3 — the user: "the stones beside the path look like boxes; they must look
+  // broken and old"): unit (±0.5 along x, y 0 … 1, ±0.5 thick) — scaled to a ~6 m stretch, ~1 m high: four courses of
+  // single rough stones, each its own size, tone and a little turned; the top RAGGED — whole stretches of the upper
+  // courses gone, a stone missing here and there — the wall leaning a hair, the fallen stones lying at its foot
+  drywall: { build: (b) => dryWall(b, 0.3, -0.25), col: [0.4, 0.45, 0.4, 0.45] },
+  drywall2: { build: (b) => dryWall(b, -0.2, 0.32), col: [0.4, 0.45, 0.4, 0.45] },
+  // A CREEPER's drape (round 3 — "we still don't have climbers or creepers"): unit (±0.5 across, hanging from y 1 to
+  // 0, set on a wall's face at z 0, its leaves out to ~0.15 m — z is metres: placed at sz 1): six to nine vines down
+  // the face, each its own length, leaves thick along them (more at the top), some over the wall's top; most green, a
+  // few gone red and orange with the autumn
+  creeper: {
+    build: (b) => {
+      b.setSurf(SURF.plain)
+      const leaf = (cx: number, cy: number, cz: number, s: number, col: RGB, flat = false) => {
+        const a = b.rnd() * 6.28, ux = Math.cos(a) * s, uy = Math.sin(a) * s
+        const p0 = flat ? V(cx - ux, cy, cz - uy) : V(cx - ux * 0.6, cy - uy, cz)
+        const p2 = flat ? V(cx + ux, cy + 0.01, cz + uy) : V(cx + ux * 0.6, cy + uy, cz + 0.04)
+        const p1 = flat ? V(cx - uy * 0.6, cy + 0.02, cz + ux * 0.6) : V(cx - uy * 0.7, cy + ux * 0.5, cz + 0.06 + b.rnd() * 0.05)
+        const p3 = flat ? V(cx + uy * 0.6, cy + 0.02, cz - ux * 0.6) : V(cx + uy * 0.7, cy - ux * 0.5, cz + 0.06 + b.rnd() * 0.05)
+        b.quad(p0, p1, p2, p3, col); b.quad(p0, p3, p2, p1, shade(col, 0.75))
+      }
+      const colour = (): RGB => { const r = b.rnd(); return r < 0.1 ? [0.28, 0.07, 0.03] : r < 0.17 ? [0.32, 0.15, 0.03] : shade([0.045 + b.rnd() * 0.04, 0.085 + b.rnd() * 0.05, 0.022], 0.85 + b.rnd() * 0.4) }
+      const n = 8 + Math.floor(b.rnd() * 4)
+      for (let k = 0; k < n; k++) {
+        const x0 = -0.45 + (k + b.rnd() * 0.8) * (0.9 / n), len = 0.35 + b.rnd() * 0.65
+        let x = x0
+        for (let y = 1.0; y > 1 - len; y -= 0.022 + b.rnd() * 0.014) {
+          x = x0 + Math.sin(y * 9 + k) * 0.025
+          const thin = (1 - y) / len   // (sparser toward the vine's end)
+          if (b.rnd() < thin * 0.5) continue
+          leaf(x + (b.rnd() - 0.5) * 0.08, y, 0.02 + b.rnd() * 0.06, 0.05 + b.rnd() * 0.04, colour())
+        }
+        // (over the top: a few leaves lying on the wall's head)
+        for (let q = 0; q < 4; q++) leaf(x0 + (b.rnd() - 0.5) * 0.12, 1.01, -0.05 - b.rnd() * 0.3, 0.05 + b.rnd() * 0.03, colour(), true)
+      }
+    },
+    col: null,
+  },
   // a COLUMN's CAPITAL: a slab over a narrower one (⌀ 1 column → 1.3 wide)
   capital: { build: (b) => { b.setSurf(SURF.stone); box(b, 0, 0.3, 0, 0.42, 0.3, 0.42, STONE_D); box(b, 0, 0.8, 0, 0.65, 0.2, 0.65, STONE) }, col: null },
   // a DOME (a shrine's): a half ball, ⌀ 1, y 0 … 0.5
@@ -448,7 +649,10 @@ export interface WardenPlan { sites: Landmark[]; pieces: Piece[]; cols: PropColl
   floors: [number, number, number, number, number][]
   /** THE REGIONS (x, z, radius — 0 the Frozen Court, 1 the World Tree's, 2 the canyon's, 3 the lakes'; radius 0: none):
    *  the stone's tone there (Bridges.ts regionTint), and what stands there (below). */
-  regions: [number, number, number][] }
+  regions: [number, number, number][]
+  /** THE RUINS' CAMPS' FIRES (2026-11-13, the look): a landmark-shaped spot each for Props (its flames, smoke, lantern
+   *  and light) — not a site (not on the map). */
+  fires: Landmark[] }
 /** The styles of site that are SECRET: not on the map, the compass or a signpost until found. */
 export const SECRET = new Set(['court', 'vault', 'vale'])
 
@@ -574,7 +778,7 @@ const WORDS = ['Ash', 'Ember', 'Hollow', 'Long Dawn', 'Quiet Hours', 'Last Light
 export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   const hit = PLANS.get(map)
   if (hit) return hit
-  const plan: WardenPlan = { sites: [], pieces: [], cols: [], keep: [], texts: [], vaults: [], mapId: map.meta.id, floors: [], regions: [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]] }
+  const plan: WardenPlan = { sites: [], pieces: [], cols: [], keep: [], texts: [], vaults: [], mapId: map.meta.id, floors: [], regions: [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], fires: [] }
   PLANS.set(map, plan)
   if (map.desert || map.play <= map.half + 100 || gameParams().get('wardens') === '0') return plan
   const hb = map.half + 90, ho = map.play - 130
@@ -596,6 +800,8 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   const region = (x: number, z: number): number => { for (let k = 0; k < 4; k++) { const [rx, rz, rr] = plan.regions[k]; if (rr > 0 && (x - rx) ** 2 + (z - rz) ** 2 < (rr * 0.8) ** 2) return k } return -1 }
   const H = (x: number, z: number) => map.height(x, z)
   const slopeAt = (x: number, z: number, d = 5) => Math.hypot(H(x + d, z) - H(x - d, z), H(x, z + d) - H(x, z - d)) / (2 * d)
+  /** THE DRESSING'S own seed per site (2026-11-13): the plan's rnd untouched — every site's shape and name as before. */
+  const dressRnd = (x: number, z: number, k: number) => { let s = cellSeed(Math.round(x), Math.round(z), 300 + k); return () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296) }
   const keepOff: [number, number, number][] = [
     ...(map.meta.bridges ?? []).flatMap((b) => [[b.x0, b.z0, 40], [b.x1, b.z1, 40]] as [number, number, number][]),
     ...(map.meta.outland?.places ?? []).map((q) => [q.x, q.z, q.kind === 'worldtree' ? 1.5 * (q.h ?? 150) : q.kind === 'lake' ? 30 : Math.max(60, q.r * 0.9)] as [number, number, number]),
@@ -675,6 +881,20 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     plan.keep.push([x, z, r + 4])
     take(x, z, r)
     return l
+  }
+  /** A dressing piece on the ground at (x, z) — not on a road, in a lake or on a steep bank; sunk a little. */
+  const D = (k: Kind, x: number, z: number, rot: number, s = 1, sink = 0.12, steep = 0.35): boolean => {
+    if (!LOOK || map.roadEdge(x, z) < 3 || map.lakeShore(x, z, H(x, z), 0.6) || slopeAt(x, z, 2) > steep) return false   // (?look=0: no dressing — the A/B)
+    PC(k, x, H(x, z) - sink * s, z, rot, s, s, s)
+    return true
+  }
+  /** A RUIN DRESSED (the look — the user's painted frames): n rubble mounds and brick heaps, charred timbers, scattered
+   *  over a ring r0 … r1 of the local frame L round a site. */
+  const strew = (L: (lx: number, lz: number) => [number, number], r: () => number, n: number, r0: number, r1: number, timber: number) => {
+    for (let k = 0; k < n; k++) {
+      const an = r() * 6.28, rr = r0 + (r1 - r0) * Math.sqrt(r()), [x, z] = L(Math.sin(an) * rr, Math.cos(an) * rr), q = r()
+      D(k < timber ? 'timber' : q < 0.68 ? 'rubble' : 'bricks', x, z, r() * 6.28, 0.75 + r() * 0.6)
+    }
   }
   let wi = 0
   const writing = (x: number, z: number, place: string, own?: [string, string]) => { const [title, text] = own ?? WRITINGS[wi++ % WRITINGS.length]; plan.texts.push({ id: (Math.round(x / 2) + 4096) * 8192 + Math.round(z / 2) + 4096, x, z, place, title, text }) }
@@ -950,9 +1170,26 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     for (let i = ci - m; i <= ci + m; i++) for (let j = cj - m; j <= cj + m; j++) for (const q of rdHash.get(i * 4096 + j) ?? []) { const d = (q[0] - x) ** 2 + (q[1] - z) ** 2; if (d < bd) { bd = d; best = q } }
     return best
   }
+  /** CREEPERS on a wall (round 3, the look): on each face, by chance, a drape hanging from the top — its own width and
+   *  drop; a seed of the wall's own (nothing else moves). (x, y, z) the wall's foot, `top` its top's share of sy. */
+  const creep = (x: number, y: number, z: number, rot: number, sx: number, sy: number, sz: number, chance: number, top = 1) => {
+    if (!LOOK) return
+    let s = cellSeed(Math.round(x * 4), Math.round(z * 4), 401)
+    const r = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+    const L = at(x, z, rot)
+    for (const side of [1, -1]) {
+      for (let k = 0; k < (sx > 5 ? 2 : 1); k++) {
+        if (r() > chance) continue
+        const w = Math.min(sx * 0.8, 1.2 + r() * 2.4), lx = (r() - 0.5) * Math.max(0, sx - w), drop = sy * top * (0.35 + r() * 0.55)
+        const [cx, cz] = L(lx, side * (sz / 2 + 0.02))
+        plan.pieces.push({ k: 'creeper', x: cx, y: y + sy * top - drop, z: cz, rot: side > 0 ? rot : rot + Math.PI, sx: w, sy: drop, sz: 1, far: 2 })
+      }
+    }
+  }
   /** A wall panel's piece: seen as far as a thing 9 m big (a town reads from ~800 m, not 400). */
   const WP = (k: Kind, x: number, y: number, z: number, rot: number, sx: number, sy: number, sz: number) => {
     plan.pieces.push({ k, x, y, z, rot, sx, sy, sz, far: 9 })
+    if (k === 'block' || k === 'wallbrk' || k === 'wallwin') creep(x, y, z, rot, sx, sy, sz, 0.45, k === 'wallbrk' ? 0.55 : 1)
     if (k === 'walldoor') { for (const sd of [-1, 1]) C(x + Math.cos(rot) * sd * sx * 0.36, y + sy / 2, z - Math.sin(rot) * sd * sx * 0.36, rot, sx * 0.14, sy / 2, sz / 2) }
     else C(x, y + sy * (k === 'wallbrk' ? 0.3 : 0.5), z, rot, sx / 2, sy * (k === 'wallbrk' ? 0.3 : 0.5), sz / 2)
   }
@@ -984,12 +1221,15 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   const lowWall = (ax: number, az: number, bx: number, bz: number, rnd: () => number, hgt = 1.15) => {
     const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 6)), rot = Math.atan2(bx - ax, bz - az) + Math.PI / 2
     for (let i = 0; i < n; i++) {
-      if (rnd() < 0.16) continue
+      if (rnd() < 0.16 || (LOOK && ((i * 7 + Math.round(ax)) % 5 === 2 || (i * 3 + Math.round(az)) % 7 === 4))) continue   // (the look: gaps more often — an old wall, half gone)
       const t = (i + 0.5) / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t, y = H(x, z)
       if (map.roadEdge(x, z) < 1.2 || map.lakeShore(x, z, y, 0.6) || rocks.onCrag(x, z, 1) || slopeAt(x, z, 3) > 0.55) continue
       // (… nor a piece with an END on a road: a verge's wall ran across the mouth of the road that joins there)
       { const hx = ((bx - ax) / len) * (len / n) * 0.5, hz = ((bz - az) / len) * (len / n) * 0.5; let on = false; for (let q = -1; q <= 1 && !on; q += 0.5) on = map.roadEdge(x + hx * q, z + hz * q) < 1; if (on || map.mudAt(x, z) > 0.15) continue }   // (… nor in a mire's mud)
-      PC('block', x, y - 0.35, z, rot, len / n + 0.3, (hgt + 0.35) * (rnd() < 0.2 ? 0.55 : 0.9 + rnd() * 0.25), 0.75, 0, (rnd() - 0.5) * 0.05)
+      // (the look: laid dry stone, broken — two variants, by turns; mossed, a creeper over it now and then)
+      const wl = len / n + 0.3, wh = (hgt + 0.35) * (rnd() < 0.2 ? 0.55 : 0.9 + rnd() * 0.25)
+      PC(LOOK ? ((Math.round(x * 0.37) + Math.round(z * 0.53)) % 2 ? 'drywall' : 'drywall2') : 'block', x, y - 0.35, z, rot, wl, wh, 0.75, 0, (rnd() - 0.5) * 0.05)
+      creep(x, y - 0.35, z, rot, wl, wh, 0.75, 0.3, 0.8)
     }
   }
   const well = (x: number, z: number, rnd: () => number) => {
@@ -1057,6 +1297,8 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     const nm = word(c.rnd, (w) => (c.rnd() < 0.5 ? `${townWords[Math.floor(c.rnd() * townWords.length)]} ${w}` : `Ruins of ${w}`))
     site(nm, 'town', c.x, c.z, Math.min(40, R * 0.45), undefined, a)
     writing(...L(3.5, 3.5), nm)
+    // (the look: the town's fallen stone, its burned roofs — round the square, along the wall)
+    strew(L, dressRnd(c.x, c.z, 2), big ? 16 : 10, 6, RW + 4, big ? 3 : 2)
   }
   // ---- THE FORTS: gentle hilltops, ~2.2 km apart, a dozen at most
   let nFort = 0
@@ -1087,6 +1329,31 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     const nm = word(c.rnd, (w) => `Fort ${w}`)
     site(nm, 'fort', c.x, c.z, S * 1.2, ['Over the gate', 'Held for as long as there was anyone to hold it for.'], a)
     writing(...L(3, S + 4), nm)
+    // THE LOOK'S DRESSING (2026-11-13, the user's painted fort): rubble heaped along the inside of the walls and fallen
+    // out past them, the houses burned (charred timbers in them, a brick heap), a CAMP inside the gate — its fire
+    // burning, crates and barrels by it — and timber WATCHTOWERS in two corners
+    {
+      const r = dressRnd(c.x, c.z, 1)
+      for (let k = 0; k < 10; k++) {
+        const side = Math.floor(r() * 4), t = (r() - 0.5) * 1.7 * S, inn = S - 2.4 - r() * 2.6
+        const [lx, lz] = side === 0 ? [t, inn] : side === 1 ? [t, -inn] : side === 2 ? [inn, t] : [-inn, t]
+        if (side === 0 && Math.abs(lx) < 6) continue   // (the gate's way in kept clear)
+        D(r() < 0.72 ? 'rubble' : 'bricks', ...L(lx, lz), r() * 6.28, 0.8 + r() * 0.6)
+      }
+      strew(L, r, 7, S + 3, S + 9, 0)
+      D('timber', ...L(0, -S * 0.35), a + r(), 1.15); D('timber', ...L(-S * 0.52, S * 0.3), a + r() * 3, 0.9)
+      D('bricks', ...L(S * 0.14, -S * 0.12), r() * 6.28, 1.1)
+      const [fx, fz] = L(-S * 0.08, S * 0.56), fr = a + Math.PI
+      if (D('camp', fx, fz, fr, 1, 0.04, 0.22)) {
+        F(fx - 0.8 * Math.cos(fr), fz + 0.8 * Math.sin(fr), 11, 8, fr)   // (the camp's ground trodden bare: no tall grass over its tent and fire)
+        plan.fires.push({ id: -1, kind: 'camp', name: '', x: fx, z: fz, y: H(fx, fz) - 0.04, rot: fr, r: 0, fire: [FIRE_LOCAL.x, FIRE_LOCAL.z], lights: [[FIRE_LOCAL.x - 3.6, 1.72, FIRE_LOCAL.z + 0.4]], smoke: [FIRE_LOCAL.x, 0.6, FIRE_LOCAL.z] } as Landmark)
+        // (its stores: crates stacked, barrels — beside the tent, in the camp's own frame)
+        const CL = at(fx, fz, fr)
+        D('crate', ...CL(-5.6, -2.4), fr + 0.1); D('crate', ...CL(-5.5, -1.5), fr - 0.2, 0.9); D('crate', ...CL(-6.4, -1.9), fr + 0.4, 1.05)
+        D('barrel', ...CL(-4.6, -3.0), r() * 6.28); D('barrel', ...CL(-4.0, -3.3), r() * 6.28); D('barrel', ...CL(3.6, -2.6), r() * 6.28)
+      }
+      for (const sd of [1, -1]) { const [wx, wz] = L(sd * (S - 5.6), sd * (S - 5.6)); D('watch', wx, wz, a + (r() - 0.5) * 0.3, 1, 0.25, 0.25) }
+    }
   }
   // ---- THE FARMSTEADS: every ~380 m of the gentle land that has nothing — a house or three in a walled yard
   for (let gz = -ho + 190; gz < ho; gz += 380) for (let gx = -ho + 190; gx < ho; gx += 380) {
@@ -1438,6 +1705,29 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     KINDS.forEach((k, i) => { const x = t.x + 60 + i * kitS * 1.6, z = t.z; P(k, x, Math.max(H(x, z), H(x - kitS / 2, z), H(x + kitS / 2, z)) + 0.2, z, rot, kitS, kitS, kitS, Number(gameParams().get('wkittx') ?? 0), Number(gameParams().get('wkittz') ?? 0)) })
     console.log(`wkit: ${KINDS.map((k, i) => `${k} @${(t.x + 60 + i * kitS * 1.6).toFixed(0)}:${t.z.toFixed(0)}`).join('  ')}`)
   }
+  // EVERY PIECE ON THE GROUND (2026-11-13, round 4 — the roads' audit, scripts/harness/audit.mjs: ~1 000 pieces had a
+  // corner over half a metre in the air — a wall, a column, a low wall along a road set at its middle's ground on a
+  // slope): a piece that stands on the ground (not tilted, its foot within 2.5 m of the ground, not in a lake) is let
+  // down to the lowest ground under its footprint less a hand; a wall, a block, a column or a tower GROWS by as much
+  // (its top where it was); the dressing just sinks. Its collider is left: it reaches the ground already. ?wsettle=0: off.
+  if (LOOK && gameParams().get('wsettle') !== '0') {
+    const GROW = new Set(['block', 'wallwin', 'walldoor', 'wallbrk', 'tower', 'column', 'stump', 'drywall', 'drywall2', 'obelisk', 'arch', 'stone'])
+    const SINK = new Set(['rubble', 'bricks', 'timber', 'crate', 'barrel', 'lantern', 'watch'])
+    for (const q of plan.pieces) {
+      if ((!GROW.has(q.k) && !SINK.has(q.k)) || Math.abs(q.tx ?? 0) > 0.3 || Math.abs(q.tz ?? 0) > 0.3) continue
+      const g = H(q.x, q.z)
+      if (q.y - g > 2.5 || q.y - g < -6 || map.lakeShore(q.x, q.z, g, 0.3)) continue
+      const round = q.k === 'tower' || q.k === 'column' || q.k === 'stump'
+      const hx = round ? q.sx * 0.45 : q.k === 'watch' ? 1.45 : q.sx / 2, hz = round ? q.sz * 0.45 : q.k === 'watch' ? 1.45 : q.sz / 2
+      const c = Math.cos(q.rot), s = Math.sin(q.rot)
+      let lo = 1e9
+      for (const a of [-1, 0, 1]) for (const d of [-1, 0, 1]) lo = Math.min(lo, H(q.x + (a * hx * c + d * hz * s), q.z + (-a * hx * s + d * hz * c)))
+      const drop = q.y - (lo - 0.12)
+      if (drop <= 0.05) continue
+      q.y -= drop
+      if (GROW.has(q.k)) q.sy += drop
+    }
+  }
   return plan
 }
 
@@ -1501,6 +1791,9 @@ export class Wardens {
     P.forEach((p, i) => {
       this.place(i)
       this.size[i] = p.far ?? Math.max(p.sx, p.sy, p.sz)
+      // (the DRESSING thinned on the weaker tiers — the user: "in PC good details, in phones reduce it": ULTRA / HIGH all of
+      //  it, MEDIUM ~60 %, LOW and the phones ~35 %; a dropped piece is never drawn (size 0: under the small-feature cut))
+      if (DETAIL.has(p.k) && ((Math.imul(i + 1, 2654435761) >>> 0) / 4294967296) >= detailKeep(tier)) this.size[i] = 0
       if (p.site !== undefined) this.siteOf[i] = p.site
       this.kindOf[i] = KINDS.indexOf(p.k)
       const k = this.key(Math.floor(p.x / CELL), Math.floor(p.z / CELL))

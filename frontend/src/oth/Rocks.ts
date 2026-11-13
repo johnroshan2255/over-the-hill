@@ -1,7 +1,7 @@
 import * as GFX from './gfx'
 const { ConvexGeometry, mergeVertices, toCreasedNormals } = GFX
 import type { Horizon } from './Horizon'
-import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
+import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
 import { gameParams } from '../settings'
@@ -508,6 +508,7 @@ export class Rocks {
       const hh = cellSeed(Math.round(x * 4), Math.round(z * 4), 31)
       out.push({ x, y: yy, z, s: size, sy, rot, tilt, v, ax: 0.78 + 0.44 * ((hh & 1023) / 1023), az: 0.72 + 0.44 * (((hh >>> 10) & 1023) / 1023) })
     }
+    const outcrop0 = out.length
     // OUTCROPS: a jittered 40 m grid; likelier on steep ground and the rock mask, never in water
     for (let gz = -half; gz < half; gz += 40) {
       for (let gx = -half; gx < half; gx += 40) {
@@ -528,6 +529,13 @@ export class Rocks {
           add(px, pz, big * (0.35 + 0.65 * rnd()) * (i === 0 ? 1.3 : 1), 0.25)
         }
       }
+    }
+    // THE LOOK (2026-11-13, the user: "on the hills box-like rocks — remove them; the terrain itself sculpted, with the
+    // rock texture"): the outcrops' blocks on a hillside (over ~17°) taken out after the draws — no other stone moves;
+    // the ground is stepped into strata there instead (mapPrep.sculptCliffs) and painted rock. The meadows' keep theirs.
+    if (LOOK && !map.desert) {
+      const steep = (x: number, z: number) => Math.hypot(map.height(x + 4, z) - map.height(x - 4, z), map.height(x, z + 4) - map.height(x, z - 4)) / 8
+      for (let i = out.length - 1; i >= outcrop0; i--) if (steep(out[i].x, out[i].z) > 0.3 || map.maskAt(out[i].x, out[i].z, mk)[0] > 0.35) out.splice(i, 1)
     }
     // (2026-11-06, the user: "lot of routes are impossible to drive" — a bot on every track, scripts/harness/
     //  trackdrive.mjs: an outcrop's block is kept off the track by its CENTRE only, and a big one (5–14 m) reached into
@@ -741,7 +749,8 @@ export class Rocks {
         out.push({ x: cx, y: yF + 0.25 * h, z: cz, s: w, sy, rot: Math.atan2(dx, dz), tilt: lean, v, ax: 1, az: d / w, crag: true })
         return true
       }
-      for (let gz = -ho; gz < ho; gz += G) for (let gx = -ho; gx < ho; gx += G) {
+      // (the look: no crag bands or ledges — boxes set into the hills; the ground's own strata and rock instead)
+      if (!LOOK) for (let gz = -ho; gz < ho; gz += G) for (let gx = -ho; gx < ho; gx += G) {
         if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }
         s = cellSeed(Math.round(gx), Math.round(gz), 81)
         const x = gx + rnd() * G, z = gz + rnd() * G
