@@ -219,7 +219,7 @@ export class World {
     props.colliders.push(...wplan.cols)
     const wardens = await step('wardens', () => new Wardens(wplan, atmos, shadow, tier, env.farGrid))
     wardens.horizon = horizon
-    if (wplan.floors.length) grass.setFloors(wplan.floors, map.play)   // (no blades up through a platform, a plinth, a court)
+    if (wplan.floors.length) { const f = grass.setFloors(wplan.floors, map.play); terrain.setFloors(f.tex, f.grid) }   // (no blades up through a platform, a plinth, a court; the paths and courts painted earth)
     wardens.light(landmarks.found)   // (the beacons reached before burn)
     wardens.restoreVaults()          // (the vaults opened before stand open)
     // THE GROUND'S CLUTTER (the look): clear of the places (their reach), the ruins, the cleared spots; ?clutter=0: none

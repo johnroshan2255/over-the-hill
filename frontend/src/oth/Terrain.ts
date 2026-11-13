@@ -129,6 +129,9 @@ export class Terrain {
       // (?zones=0: no boulder field's bed, bog or flower meadows painted — the A/B)
       uStony: { value: (() => { const Z = ZONES_ON() ? map.meta.outland?.zones?.find((q) => q.kind === 'rocks') : undefined; return Z ? new GFX.Vector4(Z.x, Z.z, Z.r * 1.12, 0) : new GFX.Vector4(0, 0, 0, 0) })() },
       // (the MIRES on the outland's roads — MapData.findMires: x, z, radius; twelve vec4s, no arrays in the gfx layer)
+      // (the look, round 6 — the Wardens' trodden PATHS and COURTS, Grass.setFloors' grid: the ground cache's bake paints
+      //  them as earth; setFloors)
+      uFloors: { value: new GFX.DataTexture(new Float32Array(18), 1, 18, GFX.RedFormat, GFX.FloatType) }, uFloorGrid: { value: new GFX.Vector4(0, 48, 0, 0) },
       ...Object.fromEntries(Array.from({ length: 12 }, (_, k) => { const M = map.mires[k]; return [`uMire${k}`, { value: M ? new GFX.Vector4(M.x, M.z, M.r, 0) : new GFX.Vector4(0, 0, 0, 0) }] })),
       uBog: { value: (() => { const Z = ZONES_ON() ? map.meta.outland?.zones?.find((q) => q.kind === 'bog') : undefined; return Z ? new GFX.Vector4(Z.x, Z.z, Z.r, 0) : new GFX.Vector4(0, 0, 0, 0) })() },
       // (2026-11-12, docs/NEXT_outland.md §2 "flowers": five more than wilds.py's three — MORE_MEADOWS, by the lakes
@@ -333,6 +336,13 @@ export class Terrain {
   private readonly shoreSlot = new Int32Array(4)
   private readonly shoreD = new Float64Array(4)
 
+  /** The Wardens' floors grid (Grass.setFloors' texture and its layout): the trodden paths and courts — painted as
+   *  earth in the ground cache's bake (surfaceAt, GC_BAKE); the cache is baked again. */
+  setFloors(tex: GFX.DataTexture, grid: GFX.Vector4): void {
+    this.uniforms.uFloors.value = tex
+    ;(this.uniforms.uFloorGrid.value as GFX.Vector4).copy(grid)
+    this.cache?.invalidate()
+  }
   dispose(): void { this.cache?.dispose() }
 
   private select(i: number, j: number, level: number): void {
@@ -664,6 +674,36 @@ struct Surf { vec3 col; float rock; float rough; float aoB; float grassy; float 
 // xz, h: the point; Ns: its smooth normal; nfY: the flat facet's up (the ledges' moss); foot: the pixel's (or texel's)
 // footprint on the ground (m); farG: the far ground's cheap paint; farDots / beyond: the shrub dots' / the flowers'
 // distance fades (1 in the bake: applied when it's read); pud: the puddles' noise wanted (rain, or the bake)
+#if defined(GC_BAKE) && defined(OTH_LOOK)
+// THE TRODDEN GROUND (the look, round 6 — the user's frames: the track runs to the stones, a dirt path leaves the fort's
+// gate, its yard is worn): Wardens.ts' PATHS and COURTS (Grass.setFloors: a turned rectangle each, two a 48 m cell)
+// read here — in the ground cache's BAKE only (a few texel fetches a baked texel, nothing a frame): x a path's worn
+// middle, y a court. The blades are thinned by the same grid (Grass.ts).
+uniform highp sampler2D uFloors;
+uniform vec4 uFloorGrid;
+vec2 trodAt(vec2 root) {
+  int n = int(uFloorGrid.x);
+  vec2 k = vec2(0.0);
+  if (n < 1) return k;
+  ivec2 c = ivec2(floor((root - uFloorGrid.z) / uFloorGrid.y));
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    ivec2 q = c + ivec2(i, j);
+    if (q.x < 0 || q.y < 0 || q.x >= n || q.y >= n) continue;
+    for (int sl = 1; sl < 3; sl++) {
+      int o = sl * 6 * n;
+      float hw = texelFetch(uFloors, ivec2(q.x, q.y + 2 * n + o), 0).r;
+      if (hw <= 0.0) continue;
+      vec2 d = root - vec2(texelFetch(uFloors, ivec2(q.x, q.y + o), 0).r, texelFetch(uFloors, ivec2(q.x, q.y + n + o), 0).r);
+      float cs = texelFetch(uFloors, ivec2(q.x, q.y + 4 * n + o), 0).r, sn = texelFetch(uFloors, ivec2(q.x, q.y + 5 * n + o), 0).r;
+      vec2 l = vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+      float hd = texelFetch(uFloors, ivec2(q.x, q.y + 3 * n + o), 0).r;
+      if (sl == 1) k.y = max(k.y, 1.0 - smoothstep(0.72, 1.0, max(abs(l.x) / hw, abs(l.y) / hd)));
+      else k.x = max(k.x, (1.0 - smoothstep(0.3, 1.0, abs(l.x) / hw)) * (1.0 - smoothstep(0.9, 1.0, abs(l.y) / hd)));
+    }
+  }
+  return k;
+}
+#endif
 Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool box, float farDots, float beyond, bool pud) {
   Surf s;
   // THE FAR GROUND, CHEAP (2026-10-27, phones at full resolution): past 2 km the haze has taken half and the fine marks
@@ -755,7 +795,9 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
 #ifdef OTH_LOOK
   // (the look, 2026-11-13 — the user: "the rock 3D shader on the ruins, the ground and all": the TRACKS' earth takes
   //  the relief too, softer — clods and wheel-churned creases the low sun picks out)
-  s.relief = max(s.relief, g.trail * 0.55);
+  // (PERF, 2026-11-13: within ~30 … 90 m only — a pixel 3 … 9 cm of ground: farther off a clod is under a pixel, and
+  //  the relief's reads ran down every track to the horizon)
+  s.relief = max(s.relief, g.trail * 0.55 * (1.0 - smoothstep(0.03, 0.09, foot)));
 #endif
 #endif
   s.rip = vec2(0.0);
@@ -852,6 +894,8 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
     float dips = smoothstep(0.66, 0.72, pn + wetK * 0.12) * wetK;
     mudPool = max(rutW, dips) * mudA;
   }
+  // (round 5's standing pools and wet gloss in the wheel lines are GONE — 2026-11-13, the user: "remove water on the
+  //  road". The damp stretches stay as darker earth, paint.ts trackDamp; the mires' mud keeps its own pools.)
   s.col = col;
   s.rock = g.rock;
   s.rough = rough;
@@ -861,6 +905,21 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   // the fields' sheen's share: open grass (a low back-lit sun glows on it)
   s.grassy = (1.0 - g.rock) * (1.0 - g.forest) * (1.0 - g.snow) * (1.0 - g.bed);
   s.trail = g.trail;
+#if defined(GC_BAKE) && defined(OTH_LOOK)
+  // (the trodden ground — trodAt: a path worn to the earth down its ragged middle, a court worn in patches; the look's
+  //  own track earth, a little paler and drier — no grass's shade or sheen on it)
+  if (!box) {
+    vec2 tk = trodAt(xz);
+    if (tk.x + tk.y > 0.0) {
+      float pth = smoothstep(0.3, 0.62, tk.x + (p.grain.r - 0.5) * 0.3 + (p.fine.b - 0.5) * 0.25);
+      float yard = tk.y * smoothstep(0.52, 0.7, p.fine.g * 0.6 + p.mid.r * 0.45 + (p.grain.b - 0.5) * 0.25);
+      float e = max(pth, yard * 0.85) * (1.0 - g.rock) * (1.0 - g.bed) * (1.0 - g.snow) * (1.0 - g.trail);
+      vec3 earth = TRAIL_LOOK * vec3(1.12, 1.06, 0.95) * (0.9 + 0.22 * p.fine.g + 0.14 * p.grain.g);
+      s.col = mix(s.col, earth, e);
+      s.under *= 1.0 - e; s.grassy *= 1.0 - e; s.flower *= 1.0 - e;
+    }
+  }
+#endif
   // the puddles' inputs: the bog (thick mud: water at any weather) and the ruts' pools' noise (filled by the rain)
   s.bog = max(smoothstep(0.8, 0.92, mud + (texture(uNoise, xz * 0.05).g - 0.5) * 0.3), mudPool);
   s.pudN = pud && (g.trail > 0.2 || g.rock > 0.3) ? texture(uNoise, xz * 0.085).g + texture(uNoise, xz * 0.31).r * 0.16 : 0.0;

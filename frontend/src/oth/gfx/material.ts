@@ -162,19 +162,27 @@ vec3 othToneMap0(vec3 color);
 // saturation, a soft S of contrast round the middle, the shadows tinted a warm brown and the highlights gold. uOthGrade:
 // how much (0 off — ?look=0).
 vec3 othGrade(vec3 c) {
+  // (PERF, 2026-11-13: measured 0.10–0.17 ms a frame at 1080p — it runs on every fragment, the grass's and the leaves'
+  //  overdraw too. The same curve in fewer instructions: the three smoothsteps are clamped ramps, the mixes multiply-adds)
   vec3 g0 = sqrt(max(c, vec3(0.0))), g = g0;
-  float gd = g.g - max(g.r, g.b);
-  g.g -= max(gd, 0.0) * 0.45;
-  g.r += max(gd, 0.0) * 0.18;
+  float gd = max(g.g - max(g.r, g.b), 0.0);
+  g.g -= gd * 0.45;
+  g.r += gd * 0.18;
   float l = dot(g, vec3(0.2126, 0.7152, 0.0722));
-  g = max(mix(vec3(l), g, 1.2), vec3(0.0)); // (round 3, "the hardened colour": richer)
+  // (round 5 — measured on the user's frames: their saturation 0.37–0.47, ours 0.56–0.62, our shade an olive-yellow
+  //  (R ≈ G, no blue) where theirs is a neutral warm brown (1 : 0.84 : 0.6): the colour a step CALMER — least in the
+  //  darks — and the shade's tint a brown that keeps its blue)
+  float sh = clamp(1.0 - 2.0 * l, 0.0, 1.0), hi = clamp(2.0 * l - 0.9, 0.0, 1.0), w = uOthWarm;
+  g = l + (g - l) * (1.0 - 0.16 * sh);
   // (by night the S and the warmth fade (uOthWarm → 0): the night's blue kept, its darks not crushed)
-  g = mix(g, g * g * (3.0 - 2.0 * g), (0.14 + 0.38 * uOthWarm) * step(g, vec3(1.0)));
-  float sh = 1.0 - smoothstep(0.0, 0.5, l), hi = smoothstep(0.45, 0.95, l);
-  g *= mix(vec3(1.0), vec3(1.05, 0.96, 0.84), sh * 0.7 * uOthWarm);
-  // (the darks LIFTED a little toward a brown-olive — the frames' shade is rich, never black)
-  g += vec3(0.03, 0.02, 0.006) * sh * sh * uOthWarm; // (round 3: less lift — the shade deep, as Over the Hill's)
-  g *= mix(vec3(1.0), vec3(1.04, 1.0, 0.9), hi * 0.6 * uOthWarm);
+  vec3 gs = min(g, vec3(1.0));
+  g += (gs * gs * (3.0 - 2.0 * gs) - gs) * (0.14 + 0.38 * w);
+  g *= 1.0 + vec3(0.049, -0.035, -0.049) * (sh * w);
+  // (the darks LIFTED a little toward a warm brown — the frames' shade is rich, never black)
+  g += vec3(0.034, 0.024, 0.016) * (sh * sh * w);
+  // (the highlights gold by taking green and blue DOWN — never red up: pushed past 1 it clipped, a low sun's sky a flat
+  //  peach over a tenth of the frame)
+  g *= 1.0 + vec3(0.0, -0.022, -0.082) * (hi * w);
   g = mix(g0, g, uOthGrade);
   return g * g;
 }

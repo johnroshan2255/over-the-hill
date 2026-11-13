@@ -1,7 +1,7 @@
 import { grovesOf } from './Groves'
 import * as GFX from './gfx'
 import type { Horizon } from './Horizon'
-import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
+import { ATMOS_GLSL, FRAG_OUT, LOOK, LOOK_REACH, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
 import { gameParams } from '../settings'
@@ -80,7 +80,7 @@ export class Trees {
   /** placed: the trees already placed (placeTrees, a row a step — World.build); else placed here. */
   constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, rocks: Rocks, shade = true, placed?: Float32Array) {
     this.noiseU = atmos.uniforms.uNoise
-    this.ranges = [tier.treeNear, tier.treeMid, tier.treeFar, tier.treeReach]
+    this.ranges = [tier.treeNear, tier.treeMid, tier.treeFar, tier.treeReach * (map.desert ? 1 : LOOK_REACH)]   // (the far images' reach under the look's haze — Atmosphere LOOK_REACH)
     if (!placed) { const out: number[] = []; for (const _ of placeTrees(map, rocks, out)); placed = new Float32Array(out) }
     this.data = placed
     this.count = this.data.length / TREE_STRIDE
@@ -515,6 +515,18 @@ function impostorQuad(): GFX.BufferGeometry {
   return g
 }
 
+/** THE LOOK'S RIM LIGHT (2026-11-13, round 5 — the user's frames: a low sun catches every crown's sunward EDGE in gold,
+ *  ours were black silhouettes): the faces turned from the eye and toward the sun take a share of its light — strongest
+ *  in the golden hour, a trace by day, none at night. A few instructions, no fetch. */
+// (PERF, 2026-11-13: only while the sun is under ~38° — by day the rim is a trace and every leaf's fragment paid for
+//  it; a branch on a uniform. `?trim=0`: never — the A/B.)
+const TRIM = gameParams().get('trim') !== '0'
+/** `?tbirch=0`: the tracks' and roads' spruce stay spruce (the look's birches among them — the A/B). */
+const TBIRCH = gameParams().get('tbirch') !== '0'
+const RIM = (c: string, ao: string) => !TRIM ? '' : /* glsl */ `if (uSunDir.y < 0.62 && uNight < 0.99) {
+    float rimK = 1.0 - max(dot(N, V), 0.0);
+    ${c} += albedo * uSunColor * (rimK * rimK * smoothstep(-0.25, 0.55, dot(N, uSunDir)) * mix(0.7, 0.0, smoothstep(0.15, 0.62, uSunDir.y)) * (1.0 - uNight)) * ${ao} * vSun;
+  }`
 /** The species' colours (spruce, larch, snag trunk), a little different per tree (j = −0.5…0.5). */
 const SPECIES_GLSL = /* glsl */ `
 ${PLANT_VALUE_GLSL}
@@ -590,10 +602,12 @@ vec3 treeAlbedo(float species, float fol, float j) {
   //  (× PLANT_VALUE, paint.ts: the leaves and needles a touch darker; the bark above keeps its own)
   // (2026-11-07, the user: "a darker green to the trees, not the grass" — the spruce ~28 % deeper, the same hue)
   if (species < 0.5) return mix(vec3(0.022, 0.062, 0.03), vec3(0.078, 0.215, 0.088), 0.5 + j * 0.35) * PLANT_VALUE;
-  if (species < 1.5) return mix(vec3(0.6, 0.33, 0.04), vec3(0.95, 0.66, 0.12), 0.55 + j * 0.4) * PLANT_VALUE;
+  // (the look, round 5: the larch a deeper orange-gold with its tones further apart, the birch a touch deeper — in the
+  //  golden hour the pure yellows sat in the tone map's shoulder, flat bright cones)
+  if (species < 1.5) return ${LOOK ? 'mix(vec3(0.4, 0.19, 0.03), vec3(0.8, 0.5, 0.085), 0.5 + j * 0.9)' : 'mix(vec3(0.6, 0.33, 0.04), vec3(0.95, 0.66, 0.12), 0.55 + j * 0.4)'} * PLANT_VALUE;
   // (2026-11-06, in the valley's colours: the aspen ORANGE to gold, a deep red-orange only at one end of its range —
   //  the near-pure red was the strongest colour in the valley; the birch a clean gold, not a mustard)
-  if (species < 3.5) return mix(vec3(0.7, 0.42, 0.05), vec3(0.92, 0.67, 0.11), 0.5 + j * 0.8) * PLANT_VALUE;
+  if (species < 3.5) return ${LOOK ? 'mix(vec3(0.58, 0.33, 0.045), vec3(0.86, 0.6, 0.1), 0.5 + j * 0.8)' : 'mix(vec3(0.7, 0.42, 0.05), vec3(0.92, 0.67, 0.11), 0.5 + j * 0.8)'} * PLANT_VALUE;
   if (species < 4.5) return mix(vec3(0.62, 0.15, 0.03), vec3(0.9, 0.5, 0.08), 0.5 + j * 0.9) * PLANT_VALUE;
   if (species > 5.5) return mix(vec3(0.07, 0.19, 0.035), vec3(0.2, 0.36, 0.06), 0.5 + j * 0.8) * PLANT_VALUE; // (the oak: a lush, bright green — the user's Genshin frames)
   return mix(vec3(0.06, 0.15, 0.03), vec3(0.15, 0.26, 0.045), 0.5 + j * 0.8) * PLANT_VALUE; // (the green broadleaf deeper too)
@@ -779,6 +793,7 @@ void main() {
   // back-lit by a low sun the needles glow (the larch most)
   float back = pow(max(dot(-V, uSunDir), 0.0), 3.0);
   c += albedo * uSunColor * back * (vSpecies > 0.5 ? 0.55 : 0.25) * vAo * vSun;
+  ${LOOK ? RIM('c', 'vAo') : ''}
   gl_FragColor = vec4(applyAtmos(c, vWorld), alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -937,6 +952,7 @@ void main() {
   col += headlight(albedo, N, vWorld);
   float back = pow(max(dot(-V, uSunDir), 0.0), 3.0);
   col += albedo * uSunColor * back * (vSpecies > 0.5 ? 0.55 : 0.25) * nn.a * vSun;
+  ${LOOK ? RIM('col', 'nn.a') : ''}
   gl_FragColor = vec4(applyAtmos(col, vWorld), alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -1068,6 +1084,9 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       const other = vn(x / 60 - 23, z / 60 + 41) + (hash01(x + 0.37, z + 0.11) - 0.5) * 0.3 > 0.7
       if (!other) species = 0
       else if (species === 0) species = 1
+      // (the look, round 5 — the user's forest-track frame: gold BIRCHES and aspens stand among the spruce along a track.
+      //  One spruce in five within 30 m of one turns — a hash picks it, no rnd() draw: no tree moves, none is added)
+      if (LOOK && TBIRCH && species === 0 && td < 30 && hash01(x - 0.19, z + 0.57) < 0.2) species = hash01(x + 0.43, z - 0.31) < 0.7 ? 3 : 4
       // (a broadleaf 8–16.5 m — 2026-11-06: at 7–15 m beside the spruce, up to 36 m, the groves read as toys)
       let H = family(species) === 1 ? (8 + 8.5 * Math.pow(rnd(), 0.8)) * (0.85 + 0.15 * forest) : (6 + 15 * Math.pow(rnd(), 0.8)) * (0.75 + 0.25 * forest)
       // BIG PINES (a size, not a tree more — the vertices are the same): a stand's spruce a little taller toward its
@@ -1139,7 +1158,9 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       const sl = Math.hypot(map.height(x + 5, z) - map.height(x - 5, z), map.height(x, z + 5) - map.height(x, z - 5)) / 10
       if (sl > 0.6) continue
       const low = y < 270 && vn(x / 150 + 3, z / 150 + 9) > 0.62
-      const species = low ? (r1() < 0.5 ? 3 : 4) : vn(x / 230, z / 230) > 0.66 ? 1 : r1() < 0.03 ? 2 : 0
+      let species = low ? (r1() < 0.5 ? 3 : 4) : vn(x / 230, z / 230) > 0.66 ? 1 : r1() < 0.03 ? 2 : 0
+      // (the look, round 5: birches and aspens among the spruce along a road, as along the box's tracks — its own cell's seed)
+      if (LOOK && TBIRCH && species === 0 && map.roadEdge(x, z) < 30 && hash01(x - 0.19, z + 0.57) < 0.22) species = hash01(x + 0.43, z - 0.31) < 0.7 ? 3 : 4
       let H = family(species) === 1 ? 8 + 8.5 * Math.pow(r1(), 0.8) : (7 + 15 * Math.pow(r1(), 0.8)) * (0.8 + 0.2 * stand)
       if (species === 0 && r1() < 0.1) H = Math.max(H, 26 + 10 * r1())
       out.push(x, y - 0.3, z, H, r1() * Math.PI * 2, species, r1(), r1())

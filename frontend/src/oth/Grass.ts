@@ -1,5 +1,5 @@
 import * as GFX from './gfx'
-import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
+import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK } from './Atmosphere'
 import type { MapData } from './MapData'
 import { PAINT_GLSL } from './paint'
 import type { Tier } from './quality'
@@ -61,19 +61,23 @@ export class Grass {
    *  blade, nothing per frame — the bake only. */
   private readonly floors: GFX.IUniform = { value: new GFX.DataTexture(new Float32Array(6), 1, 6, GFX.RedFormat, GFX.FloatType) }
   private readonly floorGrid: GFX.IUniform = { value: new GFX.Vector4(0, 48, 0, 0) }
-  setFloors(list: readonly [number, number, number, number, number][], half: number): void {
-    const cell = 48, n = Math.ceil((2 * half) / cell), d = new Float32Array(n * n * 6)
+  setFloors(list: readonly [number, number, number, number, number][], half: number): { tex: GFX.DataTexture; grid: GFX.Vector4 } {
+    // (the look, round 5: a COURT — a negative half depth: trodden ground, its grass short and thin, the edge soft —
+    //  a ring of standing stones, a fort's yard. A second rectangle a cell, after the floors': six more values)
+    // (round 6: … and a PATH — a negative half width: trodden bare down its middle, soft at its edges: a third)
+    const cell = 48, n = Math.ceil((2 * half) / cell), d = new Float32Array(n * n * 18)
     for (const [x, z, hw, hd, rot] of list) {
       const i = Math.floor((x + half) / cell), j = Math.floor((z + half) / cell)
       if (i < 0 || j < 0 || i >= n || j >= n) continue
-      const k = j * n + i, v = [x, z, hw, hd, Math.cos(rot), Math.sin(rot)]
-      for (let q = 0; q < 6; q++) d[q * n * n + k] = v[q]
+      const k = j * n + i, v = [x, z, Math.abs(hw), Math.abs(hd), Math.cos(rot), Math.sin(rot)], base = hd < 0 ? 6 : hw < 0 ? 12 : 0
+      for (let q = 0; q < 6; q++) d[(base + q) * n * n + k] = v[q]
     }
-    const tex = new GFX.DataTexture(d, n, n * 6, GFX.RedFormat, GFX.FloatType)
+    const tex = new GFX.DataTexture(d, n, n * 18, GFX.RedFormat, GFX.FloatType)
     tex.minFilter = tex.magFilter = GFX.NearestFilter; tex.generateMipmaps = false; tex.needsUpdate = true
     this.floors.value = tex
     ;(this.floorGrid.value as GFX.Vector4).set(n, cell, -half, 0)
     this.field.refresh()
+    return { tex, grid: this.floorGrid.value as GFX.Vector4 }
   }
 
   /** THE CAVE'S HILL (CaveWorld.ts — 2026-11-07, the user: "why no grass over the cave? there must be grass"): its top's
@@ -417,7 +421,9 @@ void main() {
   float face = dot(dir, normalize(uSunDir.xz + vec2(1e-4)));
   // (one blade in eight stands in its neighbours' shade: the field's darker strokes)
   float br = fract(aTuft.w * 31.7 + aBlade.x * 3.1);
-  vColor = col0 * (1.0 + face * 0.04 + (br - 0.5) * 0.1) * (br < 0.12 ? 0.8 : 1.0) * (1.0 + gust * 0.08);
+  // (the look, round 6 — the frames' grass is blade by blade: light straws over dark, the roots in shade. Ours measured
+  //  half their local contrast: the blades' tones twice as far apart, one in five in shade, the root-to-tip ramp deeper)
+  vColor = col0 * ${LOOK ? '(1.0 + face * 0.07 + (br - 0.5) * 0.24) * (br < 0.2 ? 0.66 : 1.0)' : '(1.0 + face * 0.04 + (br - 0.5) * 0.1) * (br < 0.12 ? 0.8 : 1.0)'} * (1.0 + gust * 0.08);
   // the ground's light: its soft normal, leaning a little with the blade
   vN = normalize(N + vec3(dir.x, 0.0, dir.y) * 0.18);
   vSun = sunVisibility(root);
@@ -430,8 +436,8 @@ void main() {
   // ~5 vertices (the sun, the sky, the headlights' paint, the back-lit tips, the haze) and interpolated; the pixel
   // only tone-maps it
   vec3 Vv = normalize(uCamPos - p);
-  float ao = mix(0.8, 1.0, smoothstep(0.0, 0.85, t));
-  vec3 albedo = vColor * mix(0.9, 1.08, t);
+  float ao = mix(${LOOK ? '0.58' : '0.8'}, 1.0, smoothstep(0.0, 0.85, t));
+  vec3 albedo = vColor * mix(${LOOK ? '0.74, 1.17' : '0.9, 1.08'}, t);
 #ifdef OTH_SHAPE
   albedo *= shapeLight(rel, N, Nb, vSun);
 #endif
@@ -593,16 +599,23 @@ float onFloor(vec2 root) {
   if (n < 1) return 0.0;
   ivec2 c = ivec2(floor((root - uFloorGrid.z) / uFloorGrid.y));
   float k = 0.0;
+  // (a cell's two rectangles: its floor, then its COURT — neither wider than a cell, so the 3 × 3 round the root hold them)
   for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
     ivec2 q = c + ivec2(i, j);
     if (q.x < 0 || q.y < 0 || q.x >= n || q.y >= n) continue;
-    float hw = texelFetch(uFloors, ivec2(q.x, q.y + 2 * n), 0).r;
-    if (hw <= 0.0) continue;
-    vec2 d = root - vec2(texelFetch(uFloors, q, 0).r, texelFetch(uFloors, ivec2(q.x, q.y + n), 0).r);
-    float cs = texelFetch(uFloors, ivec2(q.x, q.y + 4 * n), 0).r, sn = texelFetch(uFloors, ivec2(q.x, q.y + 5 * n), 0).r;
-    // (world → the floor's own frame: Wardens' at() turned back — x' = x cos − z sin, z' = x sin + z cos)
-    vec2 l = vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
-    if (abs(l.x) < hw && abs(l.y) < texelFetch(uFloors, ivec2(q.x, q.y + 3 * n), 0).r) k = 1.0;
+    for (int sl = 0; sl < 3; sl++) {
+      int o = sl * 6 * n;
+      float hw = texelFetch(uFloors, ivec2(q.x, q.y + 2 * n + o), 0).r;
+      if (hw <= 0.0) continue;
+      vec2 d = root - vec2(texelFetch(uFloors, ivec2(q.x, q.y + o), 0).r, texelFetch(uFloors, ivec2(q.x, q.y + n + o), 0).r);
+      float cs = texelFetch(uFloors, ivec2(q.x, q.y + 4 * n + o), 0).r, sn = texelFetch(uFloors, ivec2(q.x, q.y + 5 * n + o), 0).r;
+      // (world → the floor's own frame: Wardens' at() turned back — x' = x cos − z sin, z' = x sin + z cos)
+      vec2 l = vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+      float hd = texelFetch(uFloors, ivec2(q.x, q.y + 3 * n + o), 0).r;
+      if (sl == 0) { if (abs(l.x) < hw && abs(l.y) < hd) k = 1.0; }
+      else if (sl == 1) k = max(k, 0.68 * (1.0 - smoothstep(0.72, 1.0, max(abs(l.x) / hw, abs(l.y) / hd))));
+      else k = max(k, 0.94 * (1.0 - smoothstep(0.45, 1.0, abs(l.x) / hw)) * (1.0 - smoothstep(0.9, 1.0, abs(l.y) / hd)));   // (a path: bare down its middle)
+    }
   }
   return k;
 }
@@ -719,6 +732,7 @@ void main() {
   approach = min(approach, 1.0 - smoothstep(0.02, 0.45, textureLod(uRocks, inUv, 1.5).r));
   approach = max(approach * (1.0 - smoothstep(0.1, 0.3, mud)), smoothstep(0.08, 0.25, mud) * 1.15); // (REEDS: the marsh's edge tall)
   approach = max(approach, tuft * 0.5); // (a tuft between the stones: short, but there)
+  approach *= 1.0 - 0.72 * floorK; // (a court's grass short — onFloor)
   // (the desert's too, 2026-11-04: its blades take the ground's colour — the oasis floor's green, olive and khaki at its
   //  edge (paint.ts) — as the valley's do; they had a colour of their own over a red ground)
   vec3 col0 = g.col;

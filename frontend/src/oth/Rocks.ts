@@ -1,7 +1,7 @@
 import * as GFX from './gfx'
 const { ConvexGeometry, mergeVertices, toCreasedNormals } = GFX
 import type { Horizon } from './Horizon'
-import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK } from './Atmosphere'
+import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK, LOOK_REACH } from './Atmosphere'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
 import { gameParams } from '../settings'
@@ -129,7 +129,7 @@ export class Rocks {
   constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, stones: GFX.BufferGeometry[][] | null = null,
     stacks: StackSet | null = null) {
     this.stackDiam = stacks?.diam ?? []
-    this.reach = tier.rockReach
+    this.reach = tier.rockReach * (map.desert ? 1 : LOOK_REACH)   // (under the look's haze: Atmosphere LOOK_REACH)
     this.near = tier.rockNear
     const mk = (stack: boolean, crag = false) => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
@@ -202,7 +202,7 @@ export class Rocks {
     this.footprint.unpackAlignment = 1
     this.footprint.needsUpdate = true
     // THE CRAGS' meshes: the blocks' shapes again, their own instances (drawn out to cragReach — update)
-    this.cragReach = tier.rockReach * 2.8 * (tier.weakGpu ? 0.65 : 1)   // (a weak GPU — the phones: a third nearer)
+    this.cragReach = tier.rockReach * 2.8 * (tier.weakGpu ? 0.65 : 1) * (map.desert ? 1 : LOOK_REACH)   // (a weak GPU — the phones: a third nearer)
     // (their own material: GRASS CAPS — OTH_CRAG in FRAG; ?cragcaps=0: bare grey tops, the A/B)
     const cragMat = gameParams().get('cragcaps') === '0' ? mat : mk(false, true)
     for (let v = 0; v < VARIANTS; v++) {

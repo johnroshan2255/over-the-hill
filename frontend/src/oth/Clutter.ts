@@ -1,5 +1,5 @@
 import * as GFX from './gfx'
-import type { Atmosphere } from './Atmosphere'
+import { LOOK, type Atmosphere } from './Atmosphere'
 import { Builder, SURF, woodMaterial } from './Bridges'
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
@@ -22,10 +22,12 @@ import { gameParams } from '../settings'
  */
 type RGB = [number, number, number]
 const V = (x: number, y: number, z: number) => new GFX.Vector3(x, y, z)
-const KINDS = ['stump', 'log', 'stones', 'fern', 'branch', 'fence', 'fence2'] as const
+const KINDS = ['stump', 'log', 'stones', 'fern', 'branch', 'fence', 'fence2', 'boulder'] as const
 type Kind = (typeof KINDS)[number]
 const CELL = 16
 const FGRID = 32
+/** `?cl2=0`: the open country's clutter as it was before round 5 (half the tries — the A/B). */
+const CL2 = gameParams().get('cl2') !== '0'
 
 const shade = (c: RGB, k: number): RGB => [c[0] * k, c[1] * k, c[2] * k]
 const STONE: RGB = [0.3, 0.29, 0.27]
@@ -72,6 +74,17 @@ const BUILD: Record<Kind, (b: Builder) => void> = {
     b.log(V(0.9, 0.24, -0.1), V(1.3, 0.2, -0.6), 0.045, bark)
     b.setSurf(SURF.plain)
     for (let k = 0; k < 6; k++) { const x = -1.6 + k * 0.6; b.quad(V(x, 0.41, -0.1), V(x, 0.41, 0.1), V(x + 0.45, 0.4, 0.09), V(x + 0.45, 0.4, -0.08), shade(MOSS, 0.8 + 0.4 * b.rnd())) }
+  },
+  // a MOSSY BOULDER (round 5 — the user's Moth Stones frame: its foreground's low rounded rocks, green on top): ~1.3 m
+  // across, knee-high — a wheel rolls over it — two stones leaning together, a cushion of moss over each, a few small
+  boulder(b) {
+    b.setSurf(SURF.stone)
+    chunk(b, 0, 0.16, 0, 0.66, 0.34, 0.5, 0.4, shade(STONE, 0.9))
+    chunk(b, 0.62, 0.1, 0.3, 0.36, 0.22, 0.3, 1.3, shade(STONE, 0.8))
+    for (let k = 0; k < 3; k++) { const a = b.rnd() * 6.28, r = 0.85 + b.rnd() * 0.5, s = 0.08 + b.rnd() * 0.1; chunk(b, Math.cos(a) * r, s * 0.4, Math.sin(a) * r, s * 1.3, s, s, b.rnd() * 6, shade(STONE, 0.8 + b.rnd() * 0.3)) }
+    b.setSurf(SURF.plain)
+    chunk(b, -0.02, 0.5, 0.0, 0.5, 0.045, 0.38, 0.4, shade(MOSS, 1.25))
+    chunk(b, 0.6, 0.32, 0.3, 0.25, 0.035, 0.2, 1.3, shade(MOSS, 1.0))
   },
   // STONES half sunk in the grass: a big one and a few small round it
   stones(b) {
@@ -233,7 +246,9 @@ export class Clutter {
     const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
     const out: number[] = [], map = this.map
     const x0 = ci * CELL, z0 = cj * CELL, wd = this.woods(x0 + CELL / 2, z0 + CELL / 2)
-    const tries = Math.round((1.2 + 3.2 * wd) * 1.15)
+    // (round 5 — the user's frames: the ground by the camera is BUSY — ferns, mossy boulders, logs — in the open too:
+    //  twice the tries in the open country, and fewer of them thrown away)
+    const tries = Math.round(((LOOK && CL2 ? 2.6 : 1.2) + 3.2 * wd) * 1.15)
     for (let t = 0; t < tries; t++) {
       const x = x0 + rnd() * CELL, z = z0 + rnd() * CELL, pick = rnd(), thin = rnd(), rot = rnd() * 6.283, sc = 0.75 + rnd() * 0.6
       if (thin >= this.keep) continue
@@ -247,9 +262,15 @@ export class Clutter {
       if (this.mk[2] > 0.5) continue // (water, its gravel)
       let k: Kind
       if (this.mk[0] > 0.45 || sl > 0.45) { if (rnd() > 0.3) continue; k = 'stones' } // (thin on bare rock: evenly sprinkled, they read as dice)
-      else if (way < 6 && pick < 0.4) k = 'stones'
-      else if (wd > 0.3) k = pick < 0.24 ? 'stump' : pick < 0.42 ? 'log' : pick < 0.74 ? 'fern' : 'branch'
+      else if (way < 6 && pick < 0.4) k = LOOK && pick < 0.16 ? 'boulder' : 'stones'
+      else if (wd > 0.3) k = pick < 0.24 ? 'stump' : pick < 0.42 ? 'log' : pick < 0.74 ? 'fern' : LOOK && pick > 0.92 ? 'boulder' : 'branch'
+      else if (LOOK) { if (rnd() > 0.8) continue; k = pick < 0.24 ? 'stones' : pick < 0.44 ? 'boulder' : pick < 0.72 ? 'fern' : pick < 0.82 ? 'branch' : pick < 0.92 ? 'stump' : 'log' }
       else { if (rnd() > 0.55) continue; k = pick < 0.5 ? 'stones' : pick < 0.66 ? 'fern' : pick < 0.8 ? 'branch' : pick < 0.93 ? 'stump' : 'log' }
+      // (2026-11-13, the user, on a frame of the meadow: "see those small small rocks — remove those, all the game has
+      //  that with the same shape": no loose stones or boulders in the clutter any more — one instanced shape, pale in
+      //  the grass, it read as a stamp. The woods' stumps, logs, ferns and branches stay; the tries are as they were, so
+      //  nothing else moves.)
+      if (k === 'stones' || k === 'boulder') continue
       // (tilted with the slope a little; sunk a touch)
       const tx = (map.height(x, z + 1) - map.height(x, z - 1)) * 0.4, tz = -(map.height(x + 1, z) - map.height(x - 1, z)) * 0.4
       this.q4.setFromEuler(this.e4.set(Math.atan(tx), rot, Math.atan(tz), 'XYZ'))

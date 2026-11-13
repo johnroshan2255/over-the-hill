@@ -42,8 +42,11 @@ vec3 rockRelief(vec3 p, vec3 N, float k, vec3 dpx, vec3 dpy, out float cav) {
   cav = 1.0;
   float px = max(length(dpx), length(dpy));
   float lod1 = log2(max(px * (256.0 / 7.0), 1e-4)), lod2 = log2(max(px * (256.0 / 2.3), 1e-4));
-  float fade = k * reliefShow(px);
-  if (fade < 0.01) return N;
+  // (PERF, 2026-11-13: the relief is up to 18 texture reads a pixel, and it ran on every pixel whose rock share was over
+  //  1 % — a meadow's stony tint, a forest floor's — where a slope of 0.07 × that bends the light by nothing one can
+  //  see: measured 0.14–0.32 ms a frame. Now from 6 % up, eased in from there — no line where it starts.)
+  float fade = (k * reliefShow(px) - 0.06) * (1.0 / 0.94);
+  if (fade <= 0.0) return N;
   float fine = 1.0 - smoothstep(0.5, 2.5, lod2);
   lod1 = max(lod1, 0.0); lod2 = max(lod2, 0.0);
   vec3 w = pow(abs(N), vec3(4.0));

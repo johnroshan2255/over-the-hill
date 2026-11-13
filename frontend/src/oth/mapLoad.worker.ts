@@ -5,10 +5,10 @@
  */
 import { prepareMap, transferables } from './mapPrep'
 
-self.onmessage = async (e: MessageEvent<{ id: number; base: string; leaf: number; courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean }>) => {
-  const { id, base, leaf, courts, vales, banks, sculpt, cliffs } = e.data
+self.onmessage = async (e: MessageEvent<{ id: number; base: string; leaf: number; courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean; peaks?: boolean }>) => {
+  const { id, base, leaf, courts, vales, banks, sculpt, cliffs, peaks } = e.data
   try {
-    const p = await prepareMap(base, leaf, (f) => self.postMessage({ id, progress: f }), { courts, vales, banks, sculpt, cliffs })
+    const p = await prepareMap(base, leaf, (f) => self.postMessage({ id, progress: f }), { courts, vales, banks, sculpt, cliffs, peaks })
     self.postMessage({ id, map: p }, transferables(p))
   } catch (err) {
     self.postMessage({ id, error: String(err) })

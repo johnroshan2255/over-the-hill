@@ -54,7 +54,7 @@ export function woodMaterial(atmos: Atmosphere, shadow: TerrainShadow, tier: Tie
 
 /** Collects boxes, logs, quads and triangles (flat normals, a colour each, a night glow) into one geometry. */
 /** The surfaces a Builder's pieces can take (setSurf): the props' / landmarks' one material shades each its own way. */
-export const SURF = { wood: 0, stone: 1, metal: 2, fabric: 3, plain: 4, lamp: 5, eerie: 6, turf: 7, cliff: 8, masonry: 9 } as const
+export const SURF = { wood: 0, stone: 1, metal: 2, fabric: 3, plain: 4, lamp: 5, eerie: 6, turf: 7, cliff: 8, masonry: 9, megalith: 10 } as const
 
 /** A MODELLED thing offered in place of what a Kit function would build (Landmarks — Buildings.ts / places.py): its
  *  model's name, where (the builder's frame), turned rot; tint its BODY paint, tilt (about its own x, z), scale. True:
@@ -398,35 +398,47 @@ float masonry(vec3 p, vec3 Ng, float px, inout vec3 albedo, inout vec3 N, out fl
   vec3 T = wall ? normalize(vec3(-Ng.z, 0.0, Ng.x) + vec3(1e-4, 0.0, 0.0)) : vec3(1.0, 0.0, 0.0);
   vec3 B = wall ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0);
   vec2 q = vec2(dot(p, T), dot(p, B));
-  const float CH = 0.46;
-  float row = floor(q.y / CH);
-  float L = 0.75 + 0.55 * mhash(vec2(row, 7.1));
-  float u = q.x / L + mhash(vec2(row, 3.7));
-  float cl = floor(u);
-  vec2 sz = vec2(L, CH), f = vec2(fract(u) * L, fract(q.y / CH) * CH), e2 = min(f, sz - f);
-  float id = mhash(vec2(cl, row) + 0.37);
-  float show = 1.0 - smoothstep(0.025, 0.07, px);
-  vec4 n1 = texture(uNoise, q * 0.83 + id * 3.1);
-  // the joint: ~4 cm, its edge chipped
-  float e = min(e2.x, e2.y) + (n1.r - 0.5) * 0.05;
-  float aa = max(px, 0.003);
-  float joint = (1.0 - smoothstep(0.02 - aa, 0.02 + aa, e)) * show;
-  // the bevel: the last ~8 cm of a block turning down to the joint
-  float bx = (f.x < sz.x * 0.5 ? -1.0 : 1.0) * (1.0 - smoothstep(0.0, 0.08, e2.x + (n1.g - 0.5) * 0.03));
-  float by = (f.y < sz.y * 0.5 ? -1.0 : 1.0) * (1.0 - smoothstep(0.0, 0.08, e2.y + (n1.g - 0.5) * 0.03));
-  N = normalize(N + (T * bx + B * by) * 0.6 * show * (1.0 - joint));
-  // each block its own tone (some warmer, some cooler), a little mottled; darker toward its edges
-  vec3 c = albedo * 0.56 * (0.8 + 0.32 * id) * mix(vec3(1.0), mhash(vec2(row, cl) + 1.3) > 0.5 ? vec3(1.05, 1.0, 0.92) : vec3(0.95, 0.98, 1.03), 0.8);
-  c *= 0.9 + 0.18 * n1.b;
-  c = mix(albedo * 0.56 * (0.86 + 0.14 * n1.b), c, show);
-  c = mix(c, albedo * 0.3, joint);
-  // GRIME: darker streaks run down the walls from the rain
-#ifdef OTH_ROCK_RELIEF
-  // (HIGH / ULTRA only, as the relief: the grime's and the ivy's three reads — the phones keep the blocks and the moss)
-  if (wall) c *= 1.0 - 0.22 * smoothstep(0.45, 0.85, texture(uNoise, vec2(q.x * 0.31, q.y * 0.021) + 0.5).b);
-#endif
-  // MOSS: the tops thick with it in soft patches; down the walls in the joints and on the blocks' upper edges
+  // FAR WALLS ARE SIMPLER (PERF, 2026-11-13 — the user: "simpler stonework on far ruins"; a town filling the view cost
+  // 0.42 ms): past a pixel of ~7 … 11 cm of wall (~70 … 110 m off) a block is under a pixel and its joints, bevels,
+  // chips and grime were already faded out — but all computed. There: the stone's tone, the moss and the ivy's
+  // curtains only — two reads (one on the phones) for five, none of the blocks' hashing. The same tone at the hand-over.
+  float farK = smoothstep(0.07, 0.11, px);
   vec4 n2 = texture(uNoise, q * 0.19 + vec2(0.13, 0.71));
+  vec4 n1 = vec4(0.5, 0.5, 0.5, n2.a);
+  float joint = 0.0, by = 0.0;
+  // (round 5 — 0.5, was 0.56 (0.45 tried: the lakes' dark slate region went near black): sunlit, the laid stone sat near white beside the frames' warm mid grey)
+  vec3 c = albedo * 0.5 * (0.86 + 0.07 + 0.14 * (n2.r - 0.5));
+  if (farK < 1.0) {
+    const float CH = 0.46;
+    float row = floor(q.y / CH);
+    float L = 0.75 + 0.55 * mhash(vec2(row, 7.1));
+    float u = q.x / L + mhash(vec2(row, 3.7));
+    float cl = floor(u);
+    vec2 sz = vec2(L, CH), f = vec2(fract(u) * L, fract(q.y / CH) * CH), e2 = min(f, sz - f);
+    float id = mhash(vec2(cl, row) + 0.37);
+    float show = 1.0 - smoothstep(0.025, 0.07, px);
+    n1 = texture(uNoise, q * 0.83 + id * 3.1);
+    // the joint: ~4 cm, its edge chipped
+    float e = min(e2.x, e2.y) + (n1.r - 0.5) * 0.05;
+    float aa = max(px, 0.003);
+    joint = (1.0 - smoothstep(0.02 - aa, 0.02 + aa, e)) * show;
+    // the bevel: the last ~8 cm of a block turning down to the joint
+    float bx = (f.x < sz.x * 0.5 ? -1.0 : 1.0) * (1.0 - smoothstep(0.0, 0.08, e2.x + (n1.g - 0.5) * 0.03));
+    by = (f.y < sz.y * 0.5 ? -1.0 : 1.0) * (1.0 - smoothstep(0.0, 0.08, e2.y + (n1.g - 0.5) * 0.03));
+    N = normalize(N + (T * bx + B * by) * 0.6 * show * (1.0 - joint));
+    // each block its own tone (some warmer, some cooler), a little mottled; darker toward its edges
+    vec3 cn = albedo * 0.5 * (0.8 + 0.32 * id) * mix(vec3(1.0), mhash(vec2(row, cl) + 1.3) > 0.5 ? vec3(1.05, 1.0, 0.92) : vec3(0.95, 0.98, 1.03), 0.8);
+    cn *= 0.9 + 0.18 * n1.b;
+    cn = mix(albedo * 0.5 * (0.86 + 0.14 * n1.b), cn, show);
+    cn = mix(cn, albedo * 0.31, joint);   // (round 5: the mortar a dark grey, not black — close to, the joints read as inked lines)
+    // GRIME: darker streaks run down the walls from the rain
+#ifdef OTH_ROCK_RELIEF
+    // (HIGH / ULTRA only, as the relief: the grime's and the ivy's three reads — the phones keep the blocks and the moss)
+    if (wall) cn *= 1.0 - 0.22 * smoothstep(0.45, 0.85, texture(uNoise, vec2(q.x * 0.31, q.y * 0.021) + 0.5).b);
+#endif
+    c = mix(cn, c, farK);
+  }
+  // MOSS: the tops thick with it in soft patches; down the walls in the joints and on the blocks' upper edges
   float mossK = wall ? smoothstep(0.7, 0.86, n2.g + 0.2 * joint + 0.1 * max(by, 0.0)) * 0.6 : smoothstep(0.45, 0.7, n2.g + (n1.b - 0.5) * 0.3) * 0.85;
   vec3 moss = mix(vec3(0.09, 0.11, 0.03), vec3(0.17, 0.18, 0.055), n1.a) * (0.85 + 0.3 * n2.r);
   c = mix(c, moss, mossK);
@@ -435,7 +447,8 @@ float masonry(vec3 p, vec3 Ng, float px, inout vec3 albedo, inout vec3 N, out fl
 #ifdef OTH_ROCK_RELIEF
   if (wall) {
     float cur = texture(uNoise, vec2(q.x * 0.07, q.y * 0.018) + vec2(0.31, 0.17)).g + (n2.b - 0.5) * 0.25;
-    vec4 lf = texture(uNoise, q * 2.6 + 0.4);
+    vec4 lf = vec4(0.5);
+    if (farK < 1.0) lf = mix(texture(uNoise, q * 2.6 + 0.4), lf, farK);   // (the leaves' breakup: near only)
     leafy = smoothstep(0.74, 0.8, cur + (lf.r - 0.5) * 0.16);
     c = mix(c, mix(vec3(0.05, 0.08, 0.02), vec3(0.13, 0.16, 0.04), lf.g), leafy);
     N = normalize(N + (T * (lf.b - 0.5) + B * (lf.a - 0.5)) * 1.2 * leafy);
@@ -512,6 +525,25 @@ void main() {
     albedo *= 0.88 + 0.2 * wv;
     albedo = mix(albedo, albedo * 1.25 + 0.03, smoothstep(0.5, 0.95, N.y) * 0.25);
     rough = 0.95; wrap = 0.5;
+  } else if (surf > 9.5) {
+    // MEGALITH (the look, round 5 — the user's Moth Stones frame: the standing stones "chalk-white dominoes" → old
+    // weathered rock): one great stone, a deep grey, rain-streaked down its faces, pale lichen in blotches, moss thick
+    // on its top and in patches down it; on HIGH / ULTRA the rock's crumpled relief
+    vec2 q = vWorld.xz + vWorld.y * vec2(0.61, -0.43);
+    float b1 = texture(uNoise, q * 0.31).g, b2 = texture(uNoise, q * 1.7 + 0.3).r;
+    vec4 n2 = texture(uNoise, q * 0.19 + vec2(0.13, 0.71));
+    albedo *= vec3(0.41, 0.39, 0.36) * (0.72 + 0.4 * b1 + 0.2 * (b2 - 0.5));
+    albedo *= 1.0 - 0.34 * smoothstep(0.42, 0.72, texture(uNoise, vec2(dot(vWorld.xz, vec2(0.7, 0.7)) * 0.33, vWorld.y * 0.028) + 0.5).g) * (1.0 - smoothstep(0.5, 0.8, N.y));
+    albedo = mix(albedo, vec3(0.3, 0.29, 0.2) * (0.8 + 0.4 * b1), smoothstep(0.66, 0.8, b2 + 0.25 * n2.r) * 0.45);
+    float mossK = max(smoothstep(0.45, 0.85, N.y) * 0.9, smoothstep(0.62, 0.78, n2.g + (b2 - 0.5) * 0.25) * 0.7);
+    albedo = mix(albedo, mix(vec3(0.07, 0.095, 0.025), vec3(0.15, 0.17, 0.05), b2) * (0.85 + 0.3 * n2.r), mossK);
+    albedo *= regionTint(vWorld.xz);
+#ifdef OTH_ROCK_RELIEF
+    float cav;
+    N = rockRelief(vWorld, N, 0.9 * (1.0 - 0.6 * mossK), dpx, dpy, cav);
+    ao *= cav;
+#endif
+    rough = 0.92; wrap = 0.3; fillK = 0.8;
   } else if (surf > 8.5) {
     // MASONRY — the ruins' laid stone (ROCK_PAINT masonry), the region's tone, and on HIGH / ULTRA the rock's crumpled
     // relief over the blocks' faces (the user: "the rock 3D shader on the ruins") — not on the ivy
@@ -520,10 +552,14 @@ void main() {
     albedo *= regionTint(vWorld.xz);
 #ifdef OTH_ROCK_RELIEF
     float cav;
-    N = rockRelief(vWorld, N, 0.75 * (1.0 - leafy), dpx, dpy, cav);
+    // (PERF, 2026-11-13: near only — a pixel under 3 … 10 cm of wall (~30 … 100 m): the blocks' own bevels carry the
+    //  walls farther off; a town filling the view paid 0.4 ms for creases smaller than its pixels)
+    N = rockRelief(vWorld, N, 0.75 * (1.0 - leafy) * (1.0 - smoothstep(0.03, 0.1, max(length(dpx), length(dpy)))), dpx, dpy, cav);
     ao *= cav;
 #endif
-    rough = 0.9; wrap = 0.3; fillK = 0.35 * (1.0 - leafy);
+    // (2026-11-13, the day's lighting checked hour by hour: a fort's walls in their own shade at noon were near black
+    //  beside the sunlit grass — the sky's fill on the laid stone as on the terrain's rock: 0.8, was 0.35)
+    rough = 0.9; wrap = 0.3; fillK = 0.8 * (1.0 - leafy);
   } else if (surf > 7.5) {
     // CLIFF — the cave world's rock (CaveWorld.ts; vCol its tint): the terrain's slab, a little darker in there
     albedo = caveRockPaint(vWorld, N) * vCol;

@@ -12,7 +12,7 @@ const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new',
   args: ['--disable-gpu-vsync', '--disable-frame-rate-limit', `--use-angle=${process.platform === 'win32' ? 'd3d11' : 'metal'}`, '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--window-size=1920,1080', '--mute-audio'],
   defaultViewport: { width: 1920, height: 1080, deviceScaleFactor: 1 } })
 const p = await b.newPage()
-await p.goto(`http://localhost:5200/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&world=${V[0]}&sound=0&save=0${extra}`, { waitUntil: 'load' })
+await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=${tier}&hour=12&dpr=fixed&time=0&weather=clear&world=${V[0]}&sound=0&save=0${extra}`, { waitUntil: 'load' })
 await p.waitForFunction(() => window.__oth && window.__oth.ready && window.__oth.car?.sim, { timeout: 180000, polling: 250 })
 await p.evaluate((v) => { const o = window.__oth; if (v[1]) o.drive(true); else o.view(v[2], v[3], v[4], v[5], v[6]) }, V)
 if (process.env.NONE) await p.evaluate(() => { for (const v of Object.values(window.__oth.parts())) v.visible = false })

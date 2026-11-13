@@ -42,6 +42,8 @@ function keepTint(c: GFX.Color, k: number): GFX.Color {
  * come out (Sky.ts), the cars' headlights come on (`uHead*` / `uTail`, painted on every material by `headlight()`).
  */
 export class Atmosphere {
+  /** The sun's height now (the sine of its elevation; under 0: set) — the look's dusk: the cars' lamps come on low. */
+  sunY = 1
   readonly uniforms = {
     uCamPos: { value: new GFX.Vector3() },
     /** The light's direction: the sun by day, the moon by night. */
@@ -62,6 +64,10 @@ export class Atmosphere {
      *  share everywhere, its height scale (m), the floor (m: the low ground round the camera, main.ts `mistFloor`);
      *  x = 0: the old aerial perspective (uFogRange.y). */
     uHaze: { value: new GFX.Vector4(0, 0.3, 120, 0) },
+    /** THE LOOK'S GROUND MIST (round 6 — the user's frames: a glowing bank lying in the low ground 40–150 m off, the
+     *  trees' feet in it, their tops clear): a second, shallow layer of the height fog — its density at the floor
+     *  (1/m; 0 off) and its height scale (m). Thick at dawn and dusk and in the rain, a trace at noon. */
+    uHazeLow: { value: new GFX.Vector3(0, 12, 0) },
     /** …the colour of that air lit by a low sun (golden; the cool far haze uFogColor at night). */
     uHazeSun: { value: new GFX.Color() },
     uTime: { value: 0 },
@@ -117,6 +123,9 @@ export class Atmosphere {
   hazeLen = 2600
   /** The low ground round the camera (m) — the height fog's floor (main.ts, from the map, eased). */
   mistFloor = 0
+  /** The ground mist's own floor (m): the low ground CLOSE by (within ~180 m) — the bank lies where you are, on a
+   *  hillside too, thick down the slope and clear up it (main.ts, eased). */
+  mistFloorLow = 0
   /** Hours (6 sunrise … 12 noon … 18 sunset … 24 / 0 midnight). */
   hour = 15.5
   /** Real minutes for one daytime (06–18); the night runs 3× faster. 0 = the clock stands still. */
@@ -264,6 +273,7 @@ export class Atmosphere {
     }
     const amb = a.amb + (b.amb - a.amb) * f
     const night = GFX.MathUtils.smoothstep(-s, 0.06, 0.2)
+    this.sunY = s
     u.uNight.value = night
     u.uLamps.value = Math.max(night, 1 - GFX.MathUtils.smoothstep(s, 0.03, 0.14))
     if (s > -0.05) {
@@ -340,7 +350,13 @@ export class Atmosphere {
     // distance (half gone at ~300 m on the low ground, ~90 % by 1 km), thicker in the hollows, thinner up on the
     // ridges; lit GOLD toward a low sun, a peach-lilac away from it and far off. The desert keeps its own air.
     const lk = LOOK * (1 - dk)
+    // (2026-11-13, the day checked hour by hour: looking toward a low sun the sky's and the haze's glow ran a tenth of the
+    //  frame up to white — 11 % of the pixels at 252+, measured, this commit and the one before. The glow 45 % less
+    //  while the sun is low: the disc and its halo still burn, the sky round them keeps its colour.)
+    u.uSunGlow.value.multiplyScalar(1 - 0.45 * lk * (1 - GFX.MathUtils.smoothstep(s, 0.1, 0.4)))
     u.uHaze.value.set(HAZE_SIGMA * HAZE_K * (1 + 0.8 * u.uRain.value) * lk, HAZE_BASE, HAZE_H, this.mistFloor)
+    // (the ground mist: whole from the sun ~7° up down through the dusk, a third by night, none from ~25° up; more in rain)
+    { const lowSun = 1 - GFX.MathUtils.smoothstep(s, 0.12, 0.42); u.uHazeLow.value.set(MIST_SIGMA * HAZE_K * lk * Math.min(1, Math.max(lowSun * (1 - 0.65 * night), 0.33 * night) + 0.4 * u.uRain.value), MIST_H, this.mistFloorLow) }   // (none by day: the shaders skip the layer — its two exps — on a uniform)
     if (lk > 0) {
       // (the far / cool haze: the old lavender pulled to the horizon's warmth — a peach-lilac, as the frames' far hills)
       const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b
@@ -362,11 +378,18 @@ const QS = typeof location !== 'undefined' ? new URLSearchParams(location.search
 /** THE LOOK (2026-11-13: the warm height haze here, the grade in gfx/material.ts, the vignette in Glow.ts): 1 on;
  *  `?look=0` the look before — the A/B. `?hz=` scales the haze's density (1 the default). */
 export const LOOK = QS.get('look') === '0' ? 0 : 1
+/** DRAW DISTANCES UNDER THE HAZE (PERF, 2026-11-13 — the user: "shorter draw distance hidden behind the fog"): in the
+ *  valley with the look the far land is ~65 % haze by 650 m and ~80 % by 1 km, so the trees', the rocks', the props' and
+ *  the Wardens' reaches come in to this share of the tier's (the terrain and the peaks are drawn as far as ever).
+ *  1 without the look, in the desert (its own clear air), and with `?lreach=1` (the A/B). */
+export const LOOK_REACH = LOOK && QS.get('lreach') !== '1' ? 0.75 : 1
 /** The haze's drifting banks (hazeAmount): `?fogbanks=0` an even veil (?banks=0 is the roads' banks — mapPrep) — the A/B. */
 const NO_BANKS = QS.get('fogbanks') === '0'
 const HAZE_K = Number(QS.get('hz') ?? 1)
 /** The height fog: density at the floor (1/m), the thin air's share above it, its height scale (m). */
 const HAZE_SIGMA = Number(QS.get('hzs') ?? 0.0015), HAZE_BASE = Number(QS.get('hzb') ?? 0.28), HAZE_H = Number(QS.get('hzh') ?? 130)
+/** The ground mist (uHazeLow): its density at the floor at its thickest (1/m: half gone ~85 m into it), its height scale (m). `?gm=` scales it (0: none — the A/B). */
+const MIST_SIGMA = 0.008 * Number(QS.get('gm') ?? 1), MIST_H = Number(QS.get('gmh') ?? 11)
 /** The far haze's tint (unit-ish luminance): a peach-lilac. */
 const HAZE_FAR = new GFX.Color(0.95, 0.93, 1.12)
 
@@ -464,6 +487,7 @@ uniform vec3 uMistColor;
 uniform float uDust;
 uniform vec3 uDustColor;
 uniform vec4 uHaze;
+uniform vec3 uHazeLow; // the ground mist: density at its floor, height scale, its floor's height
 uniform vec3 uHazeSun;
 // (the player's own car takes less of the mist — MIST_K 0.45, Vehicle.ts: it stays readable a few metres off)
 #ifndef MIST_K
@@ -497,13 +521,16 @@ vec3 headlight(vec3 albedo, vec3 N, vec3 wpos) {
     float b1 = beamOf(uHeadL.xyz, wpos), b2 = beamOf(uHeadR, wpos);
     float B = max(b1, b2) * 0.75 + (b1 + b2) * 0.25;
     float face = 0.6 + 0.4 * clamp(dot(N, normalize((uHeadL.xyz + uHeadR) * 0.5 - wpos)), 0.0, 1.0);
-    c += albedo * vec3(1.0, 0.88, 0.66) * (3.2 * B * face);
+    // (by daylight — the look's dusk, the lamps on early — the pool is half as strong: a warm wash, not a white disc)
+    c += albedo * vec3(1.0, 0.88, 0.66) * (3.2 * B * face * mix(0.45, 1.0, uNight));
   }
   if (uTail.w > 0.01) {
     vec3 v = wpos - uTail.xyz;
     float a = -dot(v, uHeadDir), side = length(v - dot(v, uHeadDir) * uHeadDir - dot(v, uHeadUp) * uHeadUp);
     float pool = 1.0 - smoothstep(0.0, 1.0, (side * 0.8 + max(a, 0.0) * 0.35 + max(-a, 0.0) * 4.0) / 3.2);
-    c += albedo * vec3(1.0, 0.08, 0.04) * (1.1 * uTail.w * pool * (0.15 + 0.85 * uNight));
+    // (the look, round 5: in the golden hour the tail lamps' red already lies on the track — the user's frames)
+    float duskK = uHaze.x > 0.0 ? 0.7 * (1.0 - smoothstep(0.1, 0.3, uSunDir.y)) : 0.0;
+    c += albedo * vec3(1.0, 0.08, 0.04) * (1.1 * uTail.w * pool * (0.15 + 0.85 * max(uNight, duskK)));
   }
   // a CAMPFIRE's glow (one, the nearest lit — Props.ts): warm, fading over ~18 m, stronger on what faces it
   if (uFire.w > 0.001) {
@@ -542,7 +569,17 @@ vec3 fogColorK(vec3 d, float far) {
 vec3 skyColor(vec3 d) {
   float y = d.y;
   float up = clamp(y, 0.0, 1.0);
-  vec3 c = mix(uSkyHorizon, uSkyZenith, pow(up, 0.55));
+  // (the look, round 5 — the user's frames at golden hour: the sky a deep BLUE-VIOLET overhead going down through lilac
+  //  to the peach horizon; ours was one pale pink. The zenith deepened while the sun is low — here, in the sky's own
+  //  colour, so the land's sky fill and the haze keep theirs)
+  vec3 zen = uSkyZenith;
+  float upK = 0.55;
+  if (uHaze.x > 0.0) {
+    float lowSun = (1.0 - smoothstep(0.1, 0.45, uSunDir.y)) * (1.0 - uNight);
+    zen = mix(zen, zen * vec3(0.46, 0.43, 0.7), 0.9 * lowSun);
+    upK = mix(0.55, 0.45, lowSun);
+  }
+  vec3 c = mix(uSkyHorizon, zen, pow(up, upK));
   // a thin brighter band right at the horizon, and below it the haze a touch darker
   c = mix(c, uSkyHorizon * 1.06, exp(-abs(y) * 26.0) * 0.6);
   c *= 1.0 - clamp(-y * 1.4, 0.0, 0.18);
@@ -570,7 +607,7 @@ vec3 fogColor(vec3 d) { return fogColorK(d, 0.0); }
 // optical depth along the hazed part of the ray (past the clear air) through air whose density falls off exponentially
 // with height — exact for a straight ray: the mean of e^(−h/H) between its two ends' heights (each clamped: a hollow
 // 1.5 H under the floor no thicker than that).
-float hazeAmount(vec3 wpos) {
+float hazeAmountL(vec3 wpos, out float low) {
   vec3 v = wpos - uCamPos;
   float L = length(v), d = max(L - uFogRange.x, 0.0);
   float a = clamp((uCamPos.y + v.y * min(uFogRange.x / max(L, 1e-3), 1.0) - uHaze.w) / uHaze.z, -1.5, 40.0);
@@ -589,11 +626,26 @@ float hazeAmount(vec3 wpos) {
 #else
   float k = 1.0;
 #endif
-  return min(1.0 - exp(-uHaze.x * d * (uHaze.y + mean) * k), 0.975);
+  float tau = uHaze.x * d * (uHaze.y + mean) * k;
+  // THE GROUND MIST (uHazeLow — round 6): the same integral through a second, SHALLOW layer (~11 m) lying on the
+  // floor — a bank in the low ground, thick in the hollows (to e× under the floor), the banks' drift doubled in it.
+  // low: its share of the haze there — the colour glows by it (applyAtmos). Two exps; no fetch.
+  low = 0.0;
+  if (uHazeLow.x > 0.0) {
+    float camY = uCamPos.y + v.y * min(uFogRange.x / max(L, 1e-3), 1.0);
+    float a2 = clamp((camY - uHazeLow.z) / uHazeLow.y, -1.0, 30.0), b2 = clamp((wpos.y - uHazeLow.z) / uHazeLow.y, -1.0, 30.0);
+    float m2 = abs(b2 - a2) > 1e-3 ? (exp(-a2) - exp(-b2)) / (b2 - a2) : exp(-a2);
+    float tl = uHazeLow.x * d * m2 * (2.0 * k - 1.0);
+    low = tl / max(tau + tl, 1e-4);
+    tau += tl;
+  }
+  return min(1.0 - exp(-tau), 0.975);
 }
-float fogAmount(vec3 wpos) {
+float hazeAmount(vec3 wpos) { float low; return hazeAmountL(wpos, low); }
+float fogAmountL(vec3 wpos, out float low) {
   float f;
-  if (uHaze.x > 0.0) f = hazeAmount(wpos);
+  low = 0.0;
+  if (uHaze.x > 0.0) f = hazeAmountL(wpos, low);
   else {
     float d = max(length(wpos - uCamPos) - uFogRange.x, 0.0);
     float a = 1.0 - exp(-d / uFogRange.y);
@@ -609,10 +661,18 @@ float fogAmount(vec3 wpos) {
   if (uDust > 0.001) f = max(f, (1.0 - exp(-length(wpos - uCamPos) * 0.028 * MIST_K * uDust * uDust)) * 0.97);
   return f;
 }
+float fogAmount(vec3 wpos) { float low; return fogAmountL(wpos, low); }
 vec3 applyAtmos(vec3 col, vec3 wpos) {
   vec3 v = wpos - uCamPos;
-  float L = length(v);
-  return mix(col, fogColorK(v / max(L, 1e-3), smoothstep(400.0, 3000.0, L)), fogAmount(wpos));
+  float L = length(v), low;
+  float f = fogAmountL(wpos, low);
+  vec3 dir = v / max(L, 1e-3);
+  vec3 fc = fogColorK(dir, smoothstep(400.0, 3000.0, L));
+  // (the ground mist GLOWS: lit through by the low sun — brighter than the haze over it, most toward the sun; the
+  //  frames' bank behind the stones is the brightest thing in them after the sky)
+  //  — and GOLD: the sun's own tint in it, not the far haze's pink)
+  if (low > 0.0) { float cs = max(dot(dir, uSunDir), 0.0); fc = mix(fc, uHazeSun * (0.6 + 0.35 * cs * cs), low * 0.65 * (1.0 - uNight)); }   // (no brighter than that: toward a low sun the bank clipped to white — 13 % of a frame, measured)
+  return mix(col, fc, f);
 }
 
 // Ambient: sky from above, warm bounce from below.

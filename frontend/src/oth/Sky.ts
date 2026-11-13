@@ -66,14 +66,16 @@ export class Sky {
             c += vec3(0.75, 0.82, 1.0) * (1.4 * smoothstep(0.99975, 0.99988, s) + 0.08 * pow(max(s, 0.0), 300.0)) * uNight * (1.0 - cl * 0.9);
           }
           // STARS at night: a hashed grid on the sky, twinkling a little, fading toward the horizon haze
-          if (uNight > 0.01 && d.y > 0.0) {
+          // (the look, round 5: the first stars already out high in a golden-hour sky — faint, in its violet top)
+          float starK = max(uNight, uHaze.x > 0.0 ? 0.3 * (1.0 - smoothstep(0.1, 0.34, uSunDir.y)) * smoothstep(0.3, 0.62, d.y) : 0.0);
+          if (starK > 0.01 && d.y > 0.0) {
             vec3 g = d * 260.0;
             vec3 cell = floor(g);
             float h = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
             vec3 f = fract(g) - 0.5;
             float star = step(0.985, h) * smoothstep(0.18, 0.02, length(f));
             float tw = 0.7 + 0.3 * sin(uTime * (2.0 + h * 5.0) + h * 40.0);
-            c += vec3(0.9, 0.93, 1.0) * star * tw * uNight * smoothstep(0.02, 0.25, d.y) * (0.6 + 2.0 * fract(h * 97.0)) * (1.0 - cl);
+            c += vec3(0.9, 0.93, 1.0) * star * tw * starK * smoothstep(0.02, 0.25, d.y) * (0.6 + 2.0 * fract(h * 97.0)) * (1.0 - cl);
           }
           // (in the crossing's mist the sun, the clouds and the stars are gone: the sky is the cloud you're in — skyColor)
           if (uMist > 0.001) { float mk = mistK(); c = mix(c, skyColor(d), mk); cl = mix(cl, 1.0, mk); }

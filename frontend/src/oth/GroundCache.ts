@@ -73,7 +73,7 @@ export class GroundCache {
     const mat = new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms: { ...terrain, uWin: { value: this.win }, uBake: { value: this.bake } },
-      defines: { ...defines, ...this.defines },
+      defines: { ...defines, ...this.defines, GC_BAKE: '' },   // (GC_BAKE: what only the bake reads — surfaceAt's trodden ground)
       vertexShader: BAKE_VERT,
       fragmentShader: bakeFrag(heightGlsl, surfGlsl),
       depthTest: false,

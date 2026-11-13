@@ -1,5 +1,5 @@
 import * as GFX from './gfx'
-import { type Atmosphere, LOOK } from './Atmosphere'
+import { type Atmosphere, LOOK, LOOK_REACH } from './Atmosphere'
 import { Builder, SURF, woodMaterial } from './Bridges'
 import { campKit, FIRE_LOCAL } from './Landmarks'
 import type { Horizon } from './Horizon'
@@ -48,7 +48,13 @@ const KINDS = ['block', 'column', 'stump', 'arch', 'statue', 'kneel', 'head', 'l
   // (the look's DRESSING, 2026-11-13 — at real size, placed at scale ~1: Wardens `dress`)
   'rubble', 'bricks', 'timber', 'crate', 'barrel', 'camp', 'watch',
   // (round 3: the roads' low walls laid stone by stone and broken; the CREEPERS hanging over the walls)
-  'drywall', 'drywall2', 'creeper'] as const
+  'drywall', 'drywall2', 'creeper',
+  // (round 5: the roads' DRESSED walls — big laid blocks, their tops broken down in steps — the user's Lanterns frame)
+  'kerb', 'kerb2',
+  // (… the forts': a hanging BANNER on a pole, a LADDER against a wall; the houses' SLATE roof, half fallen in)
+  'banner', 'ladder', 'slate',
+  // (round 6: a gateway's wooden LEAVES, a tower's timber HOARDING, a FINGERPOST where a path leaves the road)
+  'gate', 'hoard', 'fingerpost'] as const
 /** The walls' surface: laid stone with the look (Bridges.ts masonry), the plain stone without (?look=0). */
 const MASON = LOOK ? SURF.masonry : SURF.stone
 /** The dressing's kinds: thinned on the weaker tiers (detailKeep). */
@@ -109,6 +115,22 @@ function roughStone(b: Builder, cx: number, cy: number, cz: number, hx: number, 
   const P = (x: number, y: number, z: number) => V(cx + x * cs + z * sn, cy + y, cz - x * sn + z * cs)
   hexa(b, [P(-hx * j(), -hy, -hz * j()), P(hx * j(), -hy, -hz * j()), P(hx * j(), -hy, hz * j()), P(-hx * j(), -hy, hz * j()),
     P(-hx * 0.8 * j(), hy * j(), -hz * 0.8 * j()), P(hx * 0.8 * j(), hy * j(), -hz * 0.8 * j()), P(hx * 0.8 * j(), hy * j(), hz * 0.8 * j()), P(-hx * 0.8 * j(), hy * j(), hz * 0.8 * j())], col)
+}
+/** A DRESSED ROADSIDE WALL (the look, round 5 — the user's Lanterns frame: a low wall of big laid blocks beside the
+ *  track, broken down in places, its stones lying at its foot): a unit run (x ±0.5, y 0 … 1, z ±0.5) in `hs.length`
+ *  blocks' widths, each standing to its own height (1 whole, 0.7 / 0.38 a course or two gone, 0 a gap) — the masonry's
+ *  surface lays the courses and mosses the tops; under each break two fallen blocks, out on either side. */
+function kerbWall(b: Builder, hs: number[]): void {
+  b.setSurf(LOOK ? SURF.masonry : SURF.stone)
+  const n = hs.length
+  for (let i = 0; i < n; i++) {
+    if (hs[i] <= 0) continue
+    box(b, -0.5 + (i + 0.5) / n, hs[i] / 2, (b.rnd() - 0.5) * 0.05, 0.5 / n + 0.002, hs[i] / 2, 0.5, shade(STONE, 0.9 + b.rnd() * 0.16))
+  }
+  for (let i = 0; i < n; i++) {
+    if (hs[i] > 0.9) continue
+    for (let q = 0; q < 2; q++) rbox(b, -0.5 + (i + b.rnd()) / n, 0.3 + b.rnd() * 0.06, (q ? -1 : 1) * (0.8 + b.rnd() * 0.9), b.rnd() * 6.28, (b.rnd() - 0.5) * 0.5, 0.04 + b.rnd() * 0.025, 0.13, 0.3 + b.rnd() * 0.12, shade(STONE, 0.82 + b.rnd() * 0.2))
+  }
 }
 /** The dry walls' stone: a weathered grey-brown, darker than the Wardens' dressed stone. */
 const FIELD: RGB = [0.23, 0.22, 0.195], MOSSY: RGB = [0.11, 0.13, 0.04]
@@ -341,9 +363,11 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
   // a STANDING STONE (a ring's, a writing's): a rough slab, its writing cut in its face
   stone: {
     build: (b) => {
-      b.setSurf(SURF.stone)
+      // (the look, round 5: a weathered megalith — Bridges.ts SURF.megalith — its carved marks the stone's own shade,
+      //  worn shallow; they were black dots on chalk)
+      b.setSurf(LOOK ? SURF.megalith : SURF.stone)
       hexa(b, [V(-0.5, 0, -0.2), V(0.5, 0, -0.18), V(0.48, 0, 0.2), V(-0.46, 0, 0.18), V(-0.4, 1, -0.13), V(0.32, 0.88, -0.14), V(0.36, 0.86, 0.14), V(-0.36, 0.98, 0.13)], STONE)
-      for (let k = 0; k < 5; k++) for (let j = 0; j < 3; j++) if ((k * 7 + j * 3) % 5 !== 1) box(b, -0.2 + j * 0.2, 0.3 + k * 0.1, 0.19, 0.05, 0.022, 0.012, CARVE)
+      for (let k = 0; k < 5; k++) for (let j = 0; j < 3; j++) if ((k * 7 + j * 3) % 5 !== 1) box(b, -0.2 + j * 0.2, 0.3 + k * 0.1, 0.19, 0.05, 0.022, 0.012, LOOK ? shade(STONE, 0.6) : CARVE)
     },
     col: [0.5, 0.45, 0.5, 0.18],
   },
@@ -491,7 +515,7 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
       for (let i = 0; i < 26; i++) {
         const a = b.rnd() * 6.283, r = Math.sqrt(b.rnd()) * (i < 20 ? 1.5 : 2.6), s = (i < 20 ? 0.18 + b.rnd() * 0.26 : 0.1 + b.rnd() * 0.12)
         const y = Math.max(0, (1 - r / 1.7)) * 0.75 + s * 0.4
-        rbox(b, Math.cos(a) * r, y, Math.sin(a) * r, b.rnd() * 6.28, (b.rnd() - 0.5) * 0.7, s * (1.1 + b.rnd() * 0.8), s * (0.6 + b.rnd() * 0.4), s * (0.8 + b.rnd() * 0.5), shade(STONE, 0.62 + b.rnd() * 0.3))
+        rbox(b, Math.cos(a) * r, y, Math.sin(a) * r, b.rnd() * 6.28, (b.rnd() - 0.5) * 0.7, s * (1.1 + b.rnd() * 0.8), s * (0.6 + b.rnd() * 0.4), s * (0.8 + b.rnd() * 0.5), shade(STONE, 0.34 + b.rnd() * 0.24))   // (round 5: the walls' own tone — at 0.62–0.92 a mound lay on the grass like snow)
       }
       // (its core: a low mound the chunks lie on, earth-dark)
       hexa(b, [V(-1.3, 0, -1.1), V(1.2, 0, -1.3), V(1.4, 0, 1.0), V(-1.1, 0, 1.3), V(-0.5, 0.62, -0.4), V(0.45, 0.66, -0.5), V(0.5, 0.58, 0.4), V(-0.4, 0.6, 0.5)], [0.2, 0.17, 0.13])
@@ -593,6 +617,106 @@ const KIT: Record<Kind, { build: (b: Builder) => void; col: [number, number, num
   // broken and old"): unit (±0.5 along x, y 0 … 1, ±0.5 thick) — scaled to a ~6 m stretch, ~1 m high: four courses of
   // single rough stones, each its own size, tone and a little turned; the top RAGGED — whole stretches of the upper
   // courses gone, a stone missing here and there — the wall leaning a hair, the fallen stones lying at its foot
+  // a gateway's LEAVES (the arch's own frame: ±0.5 across, y 0 … 1, ±0.5 deep — its opening 0.6 wide): two doors of
+  // heavy planks, iron-banded, swung open INWARD (−z) against the passage — the way through stays clear — the right one
+  // off its top hinge, sagging, its upper planks gone
+  gate: {
+    build: (b) => {
+      const IRON: RGB = [0.07, 0.065, 0.06]
+      for (const sd of [-1, 1]) {
+        // (a leaf: hinged at the jamb's inner corner, standing out along −z, toed in a little; in the piece's frame a
+        //  metre is ~1/8.6 across and ~1/2.4 deep — the gate's pieces are scaled so)
+        const ang = sd < 0 ? 0.16 : 0.34, U = V(-sd * Math.sin(ang) / 8.6, sd > 0 ? -0.012 : 0, -Math.cos(ang) / 2.4), Nn = V(Math.cos(ang) / 8.6, 0, -sd * Math.sin(ang) / 2.4)
+        const hinge = V(sd * 0.295, 0, -0.5), L = 2.55, hTop = sd > 0 ? 0.36 : 0.6
+        b.setSurf(SURF.wood)
+        for (let k = 0; k < 6; k++) {
+          const top = hTop - (sd > 0 ? [0, 0.05, 0.02, 0.11, 0.06, 0.16][k] : [0, 0.01, 0, 0.02, 0, 0.01][k]), t = (k + 0.5) / 6 * L
+          b.box(hinge.clone().addScaledVector(U, t).add(V(0, top / 2 + 0.01, 0)), U, Y, Nn, L / 12 - 0.012, top / 2, 0.06, b.wood(0.55 + 0.2 * ((k * 7) % 3) / 2))
+        }
+        b.setSurf(SURF.metal)
+        for (const y of sd > 0 ? [0.08, 0.27] : [0.1, 0.33, 0.52]) b.box(hinge.clone().addScaledVector(U, L / 2).add(V(0, y, 0)), U, Y, Nn, L / 2 + 0.02, 0.012, 0.075, IRON)
+      }
+    },
+    col: null,
+  },
+  // a tower's HOARDING (real size, for a tower ⌀ 7.4 m — placed at its scale): a timber gallery round its head — a
+  // plank deck on struts, posts and a rail, a lean-to of boards over half of it; a quarter of it fallen away
+  hoard: {
+    build: (b) => {
+      b.setSurf(SURF.wood)
+      const n = 12
+      for (let k = 0; k < n; k++) {
+        if (k === 4 || k === 5 || k === 9) continue
+        const a = (k / n) * 6.283, c = Math.cos(a), sn = Math.sin(a), R = V(c, 0, sn), T = V(-sn, 0, c)
+        b.box(V(c * 4.2, 0, sn * 4.2), T, Y, R, 1.14, 0.05, 0.8, b.wood(0.85 + 0.2 * (k % 2)))
+        b.log(V(c * 4.85, -0.05, sn * 4.85), V(c * 3.62, -1.7, sn * 3.62), 0.07, b.wood(0.7))
+        b.log(V(c * 4.9, 0, sn * 4.9), V(c * 4.9, 2.1, sn * 4.9), 0.06, b.wood(0.8))
+        const a1 = ((k + 1) / n) * 6.283
+        if (k !== 3 && k !== 8) b.log(V(c * 4.9, 1.0, sn * 4.9), V(Math.cos(a1) * 4.9, 1.0, Math.sin(a1) * 4.9), 0.04, b.wood(0.9))
+        if (k < 4 || k > 9) b.box(V(c * 4.35, 2.25, sn * 4.35), T, V(c * 0.24, 0.97, sn * 0.24), V(c * 0.97, -0.24, sn * 0.97), 1.2, 0.03, 0.95, shade(b.wood(0.6), 0.9 + 0.2 * (k % 2)))
+      }
+    },
+    col: null,
+  },
+  // a FINGERPOST (real size, 2.6 m): a weathered post, two boards pointing off along +z and a little aside
+  fingerpost: {
+    build: (b) => {
+      b.setSurf(SURF.wood)
+      b.log(V(0, -0.3, 0), V(0.04, 2.6, 0), 0.07, b.wood(0.6))
+      const board = (y: number, yaw: number, len: number) => {
+        const U = V(Math.sin(yaw), 0.03, Math.cos(yaw)).normalize(), Nn = V(Math.cos(yaw), 0, -Math.sin(yaw))
+        b.box(V(0.02, y, 0).addScaledVector(U, len * 0.42), U, Y, Nn, len / 2, 0.1, 0.02, b.wood(1.05))
+        b.box(V(0.02, y, 0).addScaledVector(U, len * 0.42 + len / 2 + 0.06), U, Y, Nn, 0.06, 0.055, 0.02, b.wood(1.05))
+      }
+      board(2.25, 0.08, 1.0); board(1.9, -1.35, 0.8)
+    },
+    col: [0.5, 0.08, 1.3, 0.08],
+  },
+  // a BANNER (real size, ~5.6 m): a pole, a crossbar, a long cloth hanging from it — dark red, an amber band, its foot
+  // torn in two tails. Both faces drawn.
+  banner: {
+    build: (b) => {
+      b.setSurf(SURF.wood)
+      b.log(V(0, 0, 0), V(0, 5.6, 0), 0.055, b.wood(0.7)); b.log(V(-0.85, 5.25, 0), V(0.85, 5.25, 0), 0.04, b.wood(0.8))
+      b.setSurf(SURF.fabric)
+      const RED: RGB = [0.3, 0.06, 0.04], face = (z: number, flip: boolean) => {
+        const Q = (x0: number, y0: number, x1: number, y1: number, c: RGB) => { const p = [V(x0, y0, z), V(x1, y0, z), V(x1, y1, z), V(x0, y1, z)]; if (flip) p.reverse(); b.quad(p[0], p[1], p[2], p[3], c) }
+        Q(-0.72, 3.5, 0.72, 5.2, RED); Q(-0.72, 3.25, 0.72, 3.5, AMBER); Q(-0.72, 2.6, 0.72, 3.25, shade(RED, 0.85))
+        const T = (ax: number, bx: number, tip: number) => { const p = [V(ax, 2.6, z), V(bx, 2.6, z), V(tip, 1.75, z)]; if (!flip) p.reverse(); b.tri(p[0], p[1], p[2], shade(RED, 0.8)) }
+        T(-0.72, 0, -0.5); T(0, 0.72, 0.45)
+      }
+      face(0.05, false); face(0.045, true)
+    },
+    col: null,
+  },
+  // a LADDER (real size, 6.2 m, leaning toward −z: its foot at z 0, its head 1.7 m in at y 6): two poles, rungs
+  ladder: {
+    build: (b) => {
+      b.setSurf(SURF.wood)
+      for (const sd of [-0.32, 0.32]) b.log(V(sd, -0.2, 0), V(sd, 6.0, -1.7), 0.05, b.wood(0.85))
+      for (let k = 1; k < 15; k++) { const t = k / 15; b.log(V(-0.32, t * 6, -t * 1.7), V(0.32, t * 6, -t * 1.7), 0.032, b.wood(1.0)) }
+    },
+    col: null,
+  },
+  // a house's SLATE ROOF, half of it gone (unit: across x ±0.5, the ridge at 1, along z ±0.5): slates in strips down
+  // both slopes — dark, each strip its own tone — the far end's fallen in, its charred rafters bare
+  slate: {
+    build: (b) => {
+      const SL: RGB = [0.12, 0.105, 0.1], char: RGB = [0.04, 0.034, 0.03]
+      for (const sd of [-1, 1]) {
+        const U = V(-sd * 0.5, 1, 0).normalize(), N = V(sd * 1, 0.5, 0).normalize()
+        for (let k = 0; k < 8; k++) {
+          const z = -0.5 + (k + 0.5) / 8, gone = sd > 0 ? k >= 5 : k >= 7
+          if (gone) { b.setSurf(SURF.wood); if (k % 2) b.log(V(sd * 0.5, 0, z), V(0, 1, z), 0.012, char) }
+          else { b.setSurf(SURF.stone); b.box(V(sd * 0.25, 0.5, z), U, N, Z, 0.56 - (k === (sd > 0 ? 4 : 6) ? 0.14 : 0), 0.018, 1 / 16 + 0.002, shade(SL, 0.8 + b.rnd() * 0.5)) }
+        }
+      }
+      b.setSurf(SURF.wood); b.log(V(0, 1, -0.5), V(0, 1, 0.5), 0.014, char)
+    },
+    col: null,
+  },
+  kerb: { build: (b) => kerbWall(b, [1, 1, 0.7, 1, 1, 1, 0.38, 0.38, 0.7, 1]), col: [0.4, 0.5, 0.4, 0.5] },
+  kerb2: { build: (b) => kerbWall(b, [0.7, 1, 1, 1, 0.38, 0, 0.38, 1, 1, 0.7]), col: [0.4, 0.5, 0.4, 0.5] },
   drywall: { build: (b) => dryWall(b, 0.3, -0.25), col: [0.4, 0.45, 0.4, 0.45] },
   drywall2: { build: (b) => dryWall(b, -0.2, 0.32), col: [0.4, 0.45, 0.4, 0.45] },
   // A CREEPER's drape (round 3 — "we still don't have climbers or creepers"): unit (±0.5 across, hanging from y 1 to
@@ -1186,6 +1310,17 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
       }
     }
   }
+  /** A TRODDEN PATH (round 6) from (ax, az) to (bx, bz), hw wide each side: the grass worn off it (Grass.setFloors: a
+   *  PATH — a negative half width; no longer than a 48 m cell at a time: a long one in two) — and, `post`, a
+   *  FINGERPOST at its (ax, az) end, where it leaves a road, pointing along it. */
+  const trod = (ax: number, az: number, bx: number, bz: number, hw: number, post = false) => {
+    if (!LOOK) return
+    const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz)
+    if (len < 4) return
+    const n = Math.ceil(len / 44), rot = Math.atan2(dx, dz)
+    for (let k = 0; k < n; k++) { const t = (k + 0.5) / n; plan.floors.push([ax + dx * t, az + dz * t, -hw, len / n / 2 + 1, rot]) }
+    if (post) { const o = rhw + 3.6, px = ax + (dx / len) * o - (dz / len) * 2.6, pz = az + (dz / len) * o + (dx / len) * 2.6; D('fingerpost', px, pz, rot, 1, 0.02, 0.5) }
+  }
   /** A wall panel's piece: seen as far as a thing 9 m big (a town reads from ~800 m, not 400). */
   const WP = (k: Kind, x: number, y: number, z: number, rot: number, sx: number, sy: number, sz: number) => {
     plan.pieces.push({ k, x, y, z, rot, sx, sy, sz, far: 9 })
@@ -1212,24 +1347,34 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
       }
     }
     // half a roof on some; a fallen beam's worth of rubble in the others
-    if (ruin < 0.26) { const [rx, rz] = L(0, -d * 0.22); P('roof', rx, y0 + (two ? h * 1.86 : h) + (g.hi - g.lo) * 0.5, rz, a, w + 0.7, w * 0.36, d * 0.56) }
+    if (ruin < 0.26) { const [rx, rz] = L(0, -d * 0.22); P(LOOK ? 'slate' : 'roof', rx, y0 + (two ? h * 1.86 : h) + (g.hi - g.lo) * 0.5, rz, a, w + 0.7, w * 0.36, d * 0.56) }
     for (let q = 0; q < 2; q++) { const [bx, bz] = L((rnd() - 0.5) * (w - 2), (rnd() - 0.5) * (d - 2)); P('block', bx, H(bx, bz) - 0.3, bz, rnd() * 6.28, 1 + rnd() * 1.2, 0.6 + rnd() * 0.5, 0.8 + rnd(), (rnd() - 0.5) * 0.5, (rnd() - 0.5) * 0.4) }
     plan.keep.push([x, z, Math.hypot(w, d) / 2 + 1.5])
     return true
   }
   /** A stretch of low dry-stone wall from (ax, az) to (bx, bz): 6 m pieces, a gap now and then, lower where it's fallen. */
-  const lowWall = (ax: number, az: number, bx: number, bz: number, rnd: () => number, hgt = 1.15) => {
+  const lowWall = (ax: number, az: number, bx: number, bz: number, rnd: () => number, hgt = 1.15, kerb = false) => {
     const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / 6)), rot = Math.atan2(bx - ax, bz - az) + Math.PI / 2
+    // (the look, round 5: in two thirds of the country — 160 m cells — the roads' walls are DRESSED stone, the Wardens'
+    //  own work: `kerb`; the rest the farmers' dry field stone. Where a dressed wall has fallen, its bricks and rubble
+    //  lie. Two thirds, not half: a dry wall is ~1 000 triangles a piece, a dressed one ~170 — with the longer runs, at
+    //  half the walls' triangles rose by a quarter on LOW; at two thirds they are what they were)
+    const dressed = LOOK && !!kerb && cellSeed(Math.floor(ax / 160), Math.floor(az / 160), 177) % 3 !== 0
     for (let i = 0; i < n; i++) {
-      if (rnd() < 0.16 || (LOOK && ((i * 7 + Math.round(ax)) % 5 === 2 || (i * 3 + Math.round(az)) % 7 === 4))) continue   // (the look: gaps more often — an old wall, half gone)
       const t = (i + 0.5) / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t, y = H(x, z)
+      if (rnd() < 0.16 || (LOOK && ((i * 7 + Math.round(ax)) % 5 === 2 || (i * 3 + Math.round(az)) % 7 === 4))) {   // (the look: gaps more often — an old wall, half gone)
+        if (dressed && (Math.round(x * 1.3) + Math.round(z * 0.7)) % 3 !== 0) D((Math.round(x) + Math.round(z)) % 2 ? 'bricks' : 'rubble', x, z, rot + 0.4, 0.7, 0.12, 0.5)
+        continue
+      }
       if (map.roadEdge(x, z) < 1.2 || map.lakeShore(x, z, y, 0.6) || rocks.onCrag(x, z, 1) || slopeAt(x, z, 3) > 0.55) continue
       // (… nor a piece with an END on a road: a verge's wall ran across the mouth of the road that joins there)
       { const hx = ((bx - ax) / len) * (len / n) * 0.5, hz = ((bz - az) / len) * (len / n) * 0.5; let on = false; for (let q = -1; q <= 1 && !on; q += 0.5) on = map.roadEdge(x + hx * q, z + hz * q) < 1; if (on || map.mudAt(x, z) > 0.15) continue }   // (… nor in a mire's mud)
       // (the look: laid dry stone, broken — two variants, by turns; mossed, a creeper over it now and then)
-      const wl = len / n + 0.3, wh = (hgt + 0.35) * (rnd() < 0.2 ? 0.55 : 0.9 + rnd() * 0.25)
-      PC(LOOK ? ((Math.round(x * 0.37) + Math.round(z * 0.53)) % 2 ? 'drywall' : 'drywall2') : 'block', x, y - 0.35, z, rot, wl, wh, 0.75, 0, (rnd() - 0.5) * 0.05)
-      creep(x, y - 0.35, z, rot, wl, wh, 0.75, 0.3, 0.8)
+      // (a dressed wall stands taller — its breaks are in its own shape, kerbWall — clear of the verge's tall grass)
+      const low = rnd() < 0.2, wl = len / n + 0.3, wh = (hgt + 0.35) * (dressed ? 1.12 + rnd() * 0.22 : low ? 0.55 : 0.9 + rnd() * 0.25)
+      const odd = (Math.round(x * 0.37) + Math.round(z * 0.53)) % 2
+      PC(dressed ? (odd ? 'kerb' : 'kerb2') : LOOK ? (odd ? 'drywall' : 'drywall2') : 'block', x, y - 0.35, z, rot, wl, wh, dressed ? 0.85 : 0.75, 0, (rnd() - 0.5) * 0.05)
+      creep(x, y - 0.35, z, rot, wl, wh, dressed ? 0.85 : 0.75, dressed ? 0.42 : 0.3, 0.8)
     }
   }
   const well = (x: number, z: number, rnd: () => number) => {
@@ -1309,18 +1454,37 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     const S = 21 + c.rnd() * 6, g = ground(c.x, c.z, S * 1.35, 8.5)
     if (!g) continue
     nFort++
-    const a = c.rnd() * 6.28, L = at(c.x, c.z, a), wh = 6.5 + c.rnd() * 2
+    const a = c.rnd() * 6.28, L = at(c.x, c.z, a), wh = 6.5 + c.rnd() * 2, yC = H(c.x, c.z)
     for (const [mx, mz, ra] of [[0, S, 0], [0, -S, Math.PI], [S, 0, Math.PI / 2], [-S, 0, -Math.PI / 2]] as [number, number, number][]) {
       const n = Math.round((2 * S) / 7.4), pw = (2 * S) / n
       for (let i = 0; i < n; i++) {
         const t = (i + 0.5) / n - 0.5, lx = mx + (mz !== 0 ? t * 2 * S : 0), lz = mz + (mx !== 0 ? t * 2 * S : 0), [px, pz] = L(lx, lz)
-        if (mz > 0 && Math.abs(lx) < 4.5) { P('arch', px, H(px, pz) - 0.6, pz, a, pw + 1.2, wh + 1.2, 2.4); for (const sd of [-1, 1]) { const q = L(lx + sd * pw * 0.42, lz); C(q[0], H(px, pz) + wh / 2, q[1], a, pw * 0.1, wh / 2, 1.2) } continue }
+        if (mz > 0 && Math.abs(lx) < 4.5) { P('arch', px, H(px, pz) - 0.6, pz, a, pw + 1.2, wh + 1.2, 2.4); if (LOOK) P('gate', px, H(px, pz) - 0.6, pz, a, pw + 1.2, wh + 1.2, 2.4); for (const sd of [-1, 1]) { const q = L(lx + sd * pw * 0.42, lz); C(q[0], H(px, pz) + wh / 2, q[1], a, pw * 0.1, wh / 2, 1.2) } continue }
         const r = c.rnd()
         if (r < 0.1) continue
-        WP(r < 0.36 ? 'wallbrk' : 'block', px, H(px, pz) - 0.8, pz, a + ra, pw + 0.1, (r < 0.36 ? wh * 0.75 : wh) + 0.8, 1.6)
+        // (the look, round 5 — the user's painted fort: the curtain wall THICK (2.6 m, was 1.6: it read as a sheet), its
+        //  top crumbled — broken merlons of laid stone along it, each its own height; and where the ground has fallen
+        //  away under a stretch — the cliffs were sculpted after the forts were sited — that stretch has fallen with it:
+        //  a gap, its rubble, not a wall grown down the cliff's face)
+        if (LOOK) {
+          let lo = 1e9
+          for (const q of [-0.45, 0, 0.45]) for (const o of [-1.3, 1.3]) { const [qx, qz] = L(lx + (mz !== 0 ? q * pw : 0) + (mx !== 0 ? o * Math.sign(mx) : 0), lz + (mx !== 0 ? q * pw : 0) + (mz !== 0 ? o * Math.sign(mz) : 0)); lo = Math.min(lo, H(qx, qz)) }
+          if (lo < yC - 4.5) { const [qx, qz] = L(lx * 0.9, lz * 0.9); D('rubble', qx, qz, a + ra, 1.2); continue }
+        }
+        const TH = LOOK ? 2.6 : 1.6
+        WP(r < 0.36 ? 'wallbrk' : 'block', px, H(px, pz) - 0.8, pz, a + ra, pw + 0.1, (r < 0.36 ? wh * 0.75 : wh) + 0.8, TH)
+        if (LOOK && r >= 0.36) {
+          const dr = dressRnd(px, pz, 7), top = H(px, pz) + wh - 0.05
+          for (let j = 0; j < 4; j++) {
+            const q = dr(), mh = 0.45 + dr() * 1.15, t = ((j + 0.5) / 4 - 0.5) * (pw + 0.1), [qx, qz] = L(lx + (mz !== 0 ? t : 0), lz + (mx !== 0 ? t : 0))
+            if (q < 0.3) continue
+            P('block', qx, top, qz, a + ra, (pw + 0.1) / 4 - (q < 0.55 ? 0.5 : 0.02), mh, TH * (q < 0.55 ? 0.7 : 1))
+          }
+        }
       }
     }
-    for (const [lx, lz] of [[S, S], [-S, S], [S, -S], [-S, -S]]) { const [px, pz] = L(lx, lz); PC('tower', px, H(px, pz) - 1.2, pz, c.rnd() * 6.28, 7.4, wh + 3.5 + c.rnd() * 5, 7.4) }
+    const banners: [number, number, number][] = []
+    for (const [lx, lz] of [[S, S], [-S, S], [S, -S], [-S, -S]]) { const [px, pz] = L(lx, lz), tr = c.rnd() * 6.28, th = wh + 3.5 + c.rnd() * 5; PC('tower', px, H(px, pz) - 1.2, pz, tr, 7.4, th, 7.4); banners.push([px, pz, H(px, pz) - 1.2 + th]) }
     kindNow = 'house'
     house(...L(0, -S * 0.35), a, 13, 10, c.rnd, true)
     house(...L(-S * 0.52, S * 0.3), a + Math.PI / 2, 8, 6, c.rnd)
@@ -1353,6 +1517,22 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
         D('barrel', ...CL(-4.6, -3.0), r() * 6.28); D('barrel', ...CL(-4.0, -3.3), r() * 6.28); D('barrel', ...CL(3.6, -2.6), r() * 6.28)
       }
       for (const sd of [1, -1]) { const [wx, wz] = L(sd * (S - 5.6), sd * (S - 5.6)); D('watch', wx, wz, a + (r() - 0.5) * 0.3, 1, 0.25, 0.25) }
+      // (round 5: BANNERS over three of the corner towers and either side of the gate,
+      //  the yard trodden — a COURT: its grass short and thin, Grass.setFloors)
+      banners.forEach(([bx, bz, by], i) => { if (i !== Math.floor(r() * 4)) P('banner', bx, by - 1.6, bz, a + r() * 6.28, 1.25, 1.25, 1.25) })
+      for (const sd of [-1, 1]) { const [gx, gz] = L(sd * 5.4, S + 1.5); P('banner', gx, H(gx, gz) + wh - 1.2, gz, a, 1, 1, 1) }
+      plan.floors.push([c.x, c.z, S - 0.6, -(S - 0.6), a])
+      // (round 6: a timber HOARDING round the head of three towers, a ladder up to each from the yard; the way in
+      //  TRODDEN — a path from the camp out through the gate to the road, if one is near, a fingerpost where it leaves)
+      banners.forEach(([bx, bz, by], i) => {
+        if (i === Math.floor(r() * 4)) return
+        const hy = by - (by - H(bx, bz) + 1.2) * 0.3, dx = c.x - bx, dz = c.z - bz, dl = Math.hypot(dx, dz) || 1, hgt = hy - H(bx, bz)
+        P('hoard', bx, hy, bz, r() * 6.28, 1, 1, 1)
+        const fx = bx + (dx / dl) * (4.9 + 1.7 * hgt / 6), fz = bz + (dz / dl) * (4.9 + 1.7 * hgt / 6)
+        P('ladder', fx, H(fx, fz), fz, Math.atan2(dx, dz), 1, (hy - H(fx, fz)) / 6, hgt / 6)
+      })
+      trod(...L(0, S - 8), ...L(0, S + 3), 2.3)
+      { const [gx, gz] = L(0, S + 3), q = roadPt(gx, gz, 85), [ox, oz] = q ?? L(0, S + 26); trod(gx, gz, ox, oz, 2.1, !!q) }
     }
   }
   // ---- THE FARMSTEADS: every ~380 m of the gentle land that has nothing — a house or three in a walled yard
@@ -1388,6 +1568,9 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
         let s = cellSeed(Math.round(x), Math.round(z), 153)
         const r1 = ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296), r2 = ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
         run = 50 + r1 * 130; gap = 40 + r2 * 150; both = r1 > 0.45; sideNow = r2 < 0.5 ? -1 : 1
+        // (the look, round 5 — the user's frames: the track a LANE between its walls for long stretches: longer runs,
+        //  shorter gaps, both verges more often)
+        if (LOOK) { run = 80 + r1 * 180; gap = 25 + r2 * 95; both = r1 > 0.28 }
       }
       if (run > 0) {
         run -= seg
@@ -1399,9 +1582,26 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
         for (const sd of both ? [-1, 1] : [sideNow]) {
           const o = rhw + 3.4, ax = x + nx * o * sd, az = z + nz * o * sd, bx = x1 + nx * o * sd, bz = z1 + nz * o * sd
           if (near(ax, az, 3) || keepOff.some(([kx, kz, kr]) => (ax - kx) ** 2 + (az - kz) ** 2 < kr * kr)) continue
-          lowWall(ax, az, bx, bz, rnd, 1.05)
+          lowWall(ax, az, bx, bz, rnd, 1.05, true)
         }
       } else gap -= seg
+    }
+  }
+  // ---- THE HIDES along the roads (the look, round 6 — the user's forest-track frame: a timber hide standing back
+  // from the track): a small watchtower every ~900 m of road, 9–14 m off its edge on one side or the other — its own
+  // seed, clear of the sites, the lakes and the steep banks (D)
+  if (LOOK) for (const Ln of rdLines) {
+    let acc = 500
+    for (let k = 1; k + 1 < Ln.length; k++) {
+      const [x, z] = Ln[k], [x0, z0] = Ln[k - 1], [x1, z1] = Ln[k + 1]
+      acc += Math.hypot(x1 - x, z1 - z)
+      if (acc < 900 || k < 8 || k > Ln.length - 9) continue
+      let sd = cellSeed(Math.round(x), Math.round(z), 161)
+      const r = () => ((sd = (Math.imul(sd ^ (sd >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+      const dx = x1 - x0, dz = z1 - z0, l = Math.hypot(dx, dz) || 1, side = r() < 0.5 ? -1 : 1, o = rhw + 9 + r() * 5
+      const px = x - (dz / l) * o * side, pz = z + (dx / l) * o * side
+      if (!inLand(px, pz, 10) || H(px, pz) > 600 || near(px, pz, 40) || keepOff.some(([kx, kz, kr]) => (px - kx) ** 2 + (pz - kz) ** 2 < kr * kr)) continue
+      if (D('watch', px, pz, Math.atan2(dx, dz) + (side > 0 ? Math.PI / 2 : -Math.PI / 2) + (r() - 0.5) * 0.5, 0.8, 0.25, 0.3)) acc = 0
     }
   }
   // ---- THE BEACON TOWERS: on the crests (the most prominent, gentle enough to stand on), ~1.4 km apart
@@ -1506,15 +1706,30 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     for (let k = 0; k < n; k++) {
       if (c.rnd() < 0.12) continue
       const a = a0 + (k / n) * 6.28, px = c.x + Math.cos(a) * R, pz = c.z + Math.sin(a) * R, h = 3.2 + c.rnd() * 2.4
-      PC('stone', px, H(px, pz) - 0.6, pz, -a + 1.571, 2 + c.rnd() * 0.8, h + 0.6, 2.2, (c.rnd() - 0.5) * 0.1, (c.rnd() - 0.5) * 0.12)
+      const sx = 2 + c.rnd() * 0.8
+      PC('stone', px, H(px, pz) - 0.6, pz, -a + 1.571, sx, h + 0.6, 2.2, (c.rnd() - 0.5) * 0.1, (c.rnd() - 0.5) * 0.12)
+      creep(px, H(px, pz) - 0.6, pz, -a + 1.571, sx * 0.8, h + 0.45, 0.66, 0.5)   // (ivy over a stone's shoulder — its own seed)
       tall.push([px, pz, h])
     }
     if (lintels) for (let k = 0; k + 1 < tall.length; k += 2) {
       const [ax, az, ah] = tall[k], [bx, bz, bh] = tall[k + 1]
       if (Math.hypot(bx - ax, bz - az) > 8) continue
-      P('block', (ax + bx) / 2, H((ax + bx) / 2, (az + bz) / 2) - 0.6 + Math.min(ah, bh) + 0.5, (az + bz) / 2, -Math.atan2(bz - az, bx - ax), Math.hypot(bx - ax, bz - az) + 1.6, 0.9, 1.4)
+      const ly = H((ax + bx) / 2, (az + bz) / 2) - 0.6 + Math.min(ah, bh) + 0.5, lr = -Math.atan2(bz - az, bx - ax), ll = Math.hypot(bx - ax, bz - az) + 1.6
+      P('block', (ax + bx) / 2, ly, (az + bz) / 2, lr, ll, 0.9, 1.4)
+      creep((ax + bx) / 2, ly - 2.2, (az + bz) / 2, lr, ll, 3.1, 1.4, 0.75)   // (… and hanging from a lintel, down into the gap)
     }
     PC('block', c.x, H(c.x, c.z) - 0.4, c.z, a0, 2.6, 1.3, 1.6)                       // the altar
+    // THE LOOK'S DRESSING (round 5 — the user's Moth Stones frame): fallen stone and rubble at the stones' feet and
+    // out round the ring, the ground inside it trodden — its grass short and thin (Grass.setFloors: a COURT)
+    if (LOOK) {
+      const r = dressRnd(c.x, c.z, 5)
+      strew(at(c.x, c.z, a0), r, 9, R - 2.2, R + 3.5, 0)
+      strew(at(c.x, c.z, a0), r, 3, 1.5, R - 3, 0)
+      plan.floors.push([c.x, c.z, R + 3.5, -(R + 3.5), a0])
+      // (round 6 — in the frame the track runs to the stones; ours passes by: a trodden PATH from the road, if one is
+      //  within 85 m, to the ring's middle, a fingerpost where it leaves)
+      { const q = roadPt(c.x, c.z, 85); if (q) trod(q[0], q[1], c.x, c.z, 1.9, true) }
+    }
     const nm = word(c.rnd, (w) => `The ${w} Stones`)
     site(nm, 'ring', c.x, c.z, R + 2)
     writing(c.x + 1.8, c.z + 1.8, nm)
@@ -1711,7 +1926,7 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   // down to the lowest ground under its footprint less a hand; a wall, a block, a column or a tower GROWS by as much
   // (its top where it was); the dressing just sinks. Its collider is left: it reaches the ground already. ?wsettle=0: off.
   if (LOOK && gameParams().get('wsettle') !== '0') {
-    const GROW = new Set(['block', 'wallwin', 'walldoor', 'wallbrk', 'tower', 'column', 'stump', 'drywall', 'drywall2', 'obelisk', 'arch', 'stone'])
+    const GROW = new Set(['block', 'wallwin', 'walldoor', 'wallbrk', 'tower', 'column', 'stump', 'drywall', 'drywall2', 'kerb', 'kerb2', 'obelisk', 'arch', 'stone'])
     const SINK = new Set(['rubble', 'bricks', 'timber', 'crate', 'barrel', 'lantern', 'watch'])
     for (const q of plan.pieces) {
       if ((!GROW.has(q.k) && !SINK.has(q.k)) || Math.abs(q.tx ?? 0) > 0.3 || Math.abs(q.tz ?? 0) > 0.3) continue
@@ -1771,7 +1986,7 @@ export class Wardens {
     this.vaults = plan.vaults.map((v) => ({ ...v, open: false, t: -1 }))
     this.texts = plan.texts
     for (const t of plan.texts) { const k = this.key(Math.floor(t.x / 64), Math.floor(t.z / 64)); const l = this.textHash.get(k); if (l) l.push(t); else this.textHash.set(k, [t]) }
-    this.reachK = (tier.rockReach / 900) * (tier.weakGpu ? 0.7 : 1)   // (a weak GPU — the phones: nearer)
+    this.reachK = (tier.rockReach / 900) * (tier.weakGpu ? 0.7 : 1) * LOOK_REACH   // (a weak GPU — the phones: nearer)
     const mat = woodMaterial(atmos, shadow, tier, farGrid)
     if (gameParams().get('wregions') !== '0') plan.regions.forEach(([x, z, r], k) => { if (r > 0) (mat.uniforms[`uRegion${k}`].value as GFX.Vector4).set(x, z, r, 1) })   // (?wregions=0: one stone everywhere — the A/B)
     KINDS.forEach((k, ki) => {

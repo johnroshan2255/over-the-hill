@@ -89,7 +89,19 @@ vec3 grassPaint(float dry, Paint p) {
   vec3 green = mix(GREEN_DEEP, GREEN, 0.7 + (p.big.b - 0.5) * 0.5);
   vec3 straw = mix(STRAW_DEEP, STRAW, 0.78 + (p.big.b - 0.5) * 0.4);
   straw = mix(straw, STRAW_PALE, clamp((p.big.g - 0.55) * 2.0, 0.0, 1.0) * 0.45);
+#ifdef OTH_LOOK
+  // THE LOOK'S FIELD (2026-11-13, round 5 — the user's Moth Stones / Lanterns frames: the meadow a MIX — olive and
+  // green low growth, dry straw over it in drifts — never one mustard carpet): the dryness broken by patches tens of
+  // metres and a few metres across, a wide blend through a dry OLIVE, the straw a duller tan-gold (less orange) and a
+  // step darker. The blades take it (Grass.ts), so the carpet and the paint beyond it agree.
+  float dl = clamp(d * 0.72 + 0.1 + (p.mid.r - 0.5) * 0.7 + (p.fine.b - 0.5) * 0.4, 0.0, 1.0);
+  vec3 olive = mix(vec3(0.1, 0.155, 0.04), vec3(0.19, 0.2, 0.055), p.fine.g) * PLANT_VALUE;
+  vec3 strawL = mix(vec3(0.5, 0.33, 0.12), vec3(0.6, 0.43, 0.19), 0.5 + (p.big.b - 0.5) * 0.6 + (p.fine.r - 0.5) * 0.5) * PLANT_VALUE * GOLD_VALUE * 0.86;
+  vec3 c = mix(green, olive, smoothstep(0.2, 0.46, dl));
+  return mix(c, strawL, smoothstep(0.44, 0.74, dl));
+#else
   return mix(green, straw, smoothstep(0.4, 0.56, d));
+#endif
 }
 
 // THE TRACK'S EDGE, shared by the ground (paints the earth) and the grass (keeps off it, shortening toward it): the
@@ -102,6 +114,14 @@ float trackEdge(vec2 xz, float trail) {
   return trail + clumps * 1.5 + fringe * 0.45;
 }
 float trackMask(vec2 xz, float trail, float hw) { return 1.0 - smoothstep(hw - 0.35, hw + 0.15, trackEdge(xz, trail)); }
+
+// THE LOOK'S DAMP (round 5): where a track's wheel lines hold the wet — stretches a few metres long inside the broad
+// wheel bands (±1 m of the middle, soft), by the paint's noise. The paint darkens the earth by it; the terrain makes it
+// glossy and lets its deepest hold a pool (Terrain.ts surfaceAt).
+float trackDamp(float trail, Paint p) {
+  float wheels = 1.0 - smoothstep(0.35, 1.1, abs(abs(trail) - 1.0));
+  return wheels * smoothstep(0.5, 0.64, p.fine.r * 0.55 + p.mid.g * 0.5);
+}
 
 // THE GROUND'S COLOUR at xz — the terrain draws it, and every grass blade takes the colour of the ground it grows from.
 // m = mask (rock, dryness, wet — 1 water/gravel, forest), h = height (m), steep = 1 − N.y of the smooth normal,
@@ -314,6 +334,11 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   // darker hollows a few metres across, faint cracks between the slabs
   slab *= mix(1.0, (1.0 - 0.1 * smoothstep(0.66, 0.8, p.grain.a) * near) * (0.88 + 0.2 * p.fine.a), paintK);
   rock = mix(slab, rock, smoothstep(700.0, 950.0, h)); // (the box's rock: slab grey; the far ranges warm)
+#ifdef OTH_LOOK
+  // (round 5 — the user's frames: the far peaks are ROCK: the high ranges' steep faces a deeper stone. No beds painted
+  //  across them — 2026-11-13, the user: no "m" or zigzag patterns on the rock. The valley's grey slabs are as they are.)
+  rock *= mix(1.0, 0.74, smoothstep(700.0, 950.0, h) * smoothstep(0.18, 0.5, steep));
+#endif
   col = mix(col, rock, g.rock);
   // snow on the high peaks, on the gentler faces
   float sl = 900.0 + (p.big.r - 0.5) * 260.0 + (p.mid.g - 0.5) * 90.0;
@@ -351,6 +376,16 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
     e *= 1.0 - 0.14 * wheels * (0.8 + 0.2 * p.fine.r);
     e *= 1.0 + 0.35 * tpeb;
     e *= 0.85 + 0.15 * smoothstep(hw, hw * 0.45, trail);
+    // (round 5 — the user's Lanterns frame: a back-country track is STONY and WET — stones bedded in the earth, drifts
+    //  of gravel, the wheels' lines damp and dark in stretches. None of it keyed to a narrow distance from the centre
+    //  line (the ladder above): stones and gravel by the paint's noise alone, the damp inside the broad wheel bands)
+    if (near > 0.01 && g.trail > 0.01) {
+      float stone = dotsAt(xz + 2.3, 0.7, 0.3, 0.075, max(0.015, foot * 0.4)) + 0.6 * dotsAt(xz - 1.7, 1.9, 0.1, 0.15, max(0.02, foot * 0.4));
+      float gravel = smoothstep(0.52, 0.74, p.fine.a * 0.35 + p.mid.b * 0.75) * smoothstep(0.5, 0.62, p.micro.r);
+      // (a stone: the earth's own tone gone grey and a step lighter, its sun side — never a pale disc)
+      e = mix(e, (e * 1.25 + vec3(0.05, 0.047, 0.043)) * (0.75 + 0.5 * p.micro.b), min(1.0, stone * 0.8 + gravel * 0.4) * near);
+    }
+    e *= 1.0 - 0.4 * trackDamp(trail, p) * near;
     track = e;
   }
 #endif

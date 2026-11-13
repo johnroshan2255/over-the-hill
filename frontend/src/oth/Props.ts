@@ -1,5 +1,5 @@
 import * as GFX from './gfx'
-import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK } from './Atmosphere'
+import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK, LOOK_REACH } from './Atmosphere'
 import { Builder, SURF, woodMaterial } from './Bridges'
 import type { Horizon } from './Horizon'
 import { campKit, FIRE_LOCAL } from './Landmarks'
@@ -315,7 +315,7 @@ export class Props {
     //  river shelters — and any with LIGHTS glows at its windows / lanterns from dusk: Landmarks.ts sets both)
     const camps = landmarks.filter((l) => l.fire), lit = landmarks.filter((l) => l.lights?.length)
     for (const id of collected) this.collected.add(id)
-    this.reachK = tier.rockReach / 900
+    this.reachK = (tier.rockReach / 900) * (desert ? 1 : LOOK_REACH)
     const mat = woodMaterial(atmos, shadow, tier, farGrid)
     // the models, one InstancedMesh per kind
     for (const kind of PROP_KINDS) {

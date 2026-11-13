@@ -883,7 +883,44 @@ export function sculptCliffs(meta: MapMeta, raw: Uint16Array, g: Grid, inner: bo
   return moved.length
 }
 
-export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean } = {}): Promise<PreparedMap> {
+/**
+ * THE HIGH PEAKS MADE JAGGED (2026-11-13, the look, round 6 — the user's frames: the far mountains are ROCK — arêtes,
+ * teeth, gullies — where ours were smooth pale cones): the world's grid above ~560 m (whole by ~840 m) takes a
+ * RIDGED noise at three scales (~420, ~150 and ~60 m: the ridge lines, their teeth, the break) — up to +85 m on a
+ * ridge, −45 m in a gully between; the cliffs' strata are cut into it after. Kept off the roads (18 … 60 m), the
+ * outland's places, the landmarks and the box. The land, its normals, its shadows and its physics are one shape.
+ * ?peaks=0: off.
+ */
+export function sculptPeaks(meta: MapMeta, raw: Uint16Array, g: Grid): number {
+  if (meta.biome === 'desert') return 0
+  const n = g.n, st = g.step, kq = g.range / 65535, half = -meta.inner.origin
+  const rd = roadDistances(meta, g, 60)
+  // (a bare summit — a `peak` with no deck — is sculpted to within 25 m of its top: the keep-off's 140 m left every
+  //  named mountain its smooth cone, the very thing this is for)
+  const bare = (meta.outland?.places ?? []).filter((q) => q.kind === 'peak' && !q.deck)
+  const keep = [...(meta.outland ? outlandKeep(meta, 0) : []).filter(([kx, kz]) => !bare.some((q) => q.x === kx && q.z === kz)), ...bare.map((q) => [q.x, q.z, 25] as [number, number, number]),
+    ...(meta.landmarks ?? []).map((l) => [l.x, l.z, l.r + 60] as [number, number, number])]
+  const ridge = (x: number, z: number) => { const v = 1 - Math.abs(2 * vn2(x, z) - 1); return v * v }
+  let moved = 0
+  for (let j = 1; j < n - 1; j++) for (let i = 1; i < n - 1; i++) {
+    const q = j * n + i, h = raw[q] * kq + g.min
+    if (h < 560) continue
+    const x = g.origin + i * st, z = g.origin + j * st
+    if (Math.max(Math.abs(x), Math.abs(z)) < half + 200) continue
+    let w = sm(560, 840, h)   // (a trace from the tree line's top, whole on the high rock)
+    const r = rd.get(q)
+    if (r !== undefined) { if (r < 18) continue; w *= sm(18, 60, r) }
+    for (const [kx, kz, kr] of keep) { const d = Math.hypot(x - kx, z - kz); if (d < kr + 80) { w *= sm(kr, kr + 80, d); if (w <= 0.01) break } }
+    if (w <= 0.01) continue
+    const jag = 0.6 * ridge(x / 420 + 3.7, z / 420 - 8.1) + 0.3 * ridge(x / 150 - 5.2, z / 150 + 1.9) + 0.1 * ridge(x / 60 + 0.4, z / 60 + 7.3)
+    const out = h + (jag - 0.35) * (130 + 60 * sm(840, 1100, h)) * w
+    raw[q] = Math.max(0, Math.min(65535, Math.round((out - g.min) / kq)))
+    moved++
+  }
+  return moved
+}
+
+export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean; peaks?: boolean } = {}): Promise<PreparedMap> {
   const meta = (await (await fetch(`${base}/meta.json`)).json()) as MapMeta
   let done = 0
   const get = async (f: string) => {
@@ -897,6 +934,7 @@ export async function prepareMap(base: string, leaf: number, onProgress?: (f: nu
   if (o.sculpt !== false) sculptLowlands(meta, farRaw)               // (before anything is derived from the heights)
   if (o.banks !== false) easeBanks(meta, farRaw)
   // (the look, round 3: the steep ground stepped into strata — both grids, before anything is derived from them)
+  if (o.peaks === true) sculptPeaks(meta, farRaw, meta.far)          // (the look, round 6: the high peaks jagged — before their strata)
   if (o.cliffs !== false) { const fl = distanceFields(meta); sculptCliffs(meta, innerRaw, meta.inner, true, fl); sculptCliffs(meta, farRaw, meta.far, false, fl) }
   const vales = o.vales === false ? [] : carveVales(meta, farRaw)
   const courts = o.courts === false ? [] : sinkCourts(meta, farRaw, vales)

@@ -5,6 +5,73 @@ will give const 60+ in ultra"*; *"we can hide things from far"*; *"do all the st
 preserve the visual appearance while reducing the actual rendering cost"*; *"check the cheapest way to create water"*.
 This is step 8 of `MIGRATION.md`, with the phone made a goal of its own.
 
+## 2026-11-13 — the look measured for what it costs; NOT at 500 fps with it on (`docs/LOOK.md` rounds 5–7)
+
+The user: *"make sure all mobile devices with Snapdragon 600+ get a constant 60+ fps in ULTRA and other devices 500+"*.
+Measured on the M4, release builds (`vite build` + `preview`; the commit before from a worktree on :5201), 1080p
+uncapped, `abq.mjs "look=0|port=5201|"`, interleaved, 4 reps — fps (ms):
+
+| view | `look=0` | the look as committed (83914dc) | now (rounds 5–7, after the trims) |
+|---|---|---|---|
+| spawn | 597 (1.675) | 460 (2.173) | 476 (2.101) |
+| forest | 546 (1.832) | 418 (2.393) | 431 (2.320) |
+| lake | 478 (2.090) | 419 (2.387) | 412 (2.427) |
+| omeadow | 623 (1.606) | 460 (2.172) | 465 (2.150) |
+| town | 606 (1.649) | 410 (2.437) | 404 (2.476) |
+
+- **THE LOOK COSTS 0.3–0.8 ms** — `LOOK.md`'s first table ("spawn −0.01 ms") was wrong (the laptop it was taken on was
+  busy; today's first runs read 2–18 ms for one view for the same reason — nothing here is from those). With it on,
+  no valley view is at the bar (≤ 2.00 ms); without it all but the lake are.
+- Where it goes (`abq` ablations, ms): the Wardens' laid stone 0.42 at the town / 0.17 at omeadow (`wardens=0`); the
+  grade 0.03–0.2 (`grade=0`: every fragment, the overdraw's too); the height haze ~0.1 (`hz=0`); the clutter 0.04–0.13;
+  the rest spread. The trees and the grass are 0.3 ms each in the forest with or without the look.
+- **The rock relief ran almost everywhere**: on any pixel whose rock share was over 1 % (up to 18 reads) — 0.14–0.32 ms
+  with `look=0` too. Now from 6 %, eased in (`rockRelief.ts`): the lake's `look=0` frame 2.26 → 2.02–2.09 ms.
+- Trimmed today: the grade's maths (ramps for its smoothsteps, multiply-adds for its mixes); the trees' rim and the
+  ground mist skipped by day (a branch on a uniform); the tracks' and the masonry's relief near only (a pixel under
+  3 … 10 cm); the clutter's loose stones gone (the user's ask); two thirds of the roads' walls the cheap dressed kind.
+- `getCurrentTexture` is ~1.05 ms of `cpuprof`'s "JS" (WebGPU waiting for the GPU): the page's own JavaScript is
+  ~0.45 ms a frame — the frame is the GPU's.
+- **The phone profile** (`mobile=1`, ULTRA, 1080p): spawn 1.72 / forest 1.95 / town 1.83 ms with the look, 1.43 / 1.49 /
+  1.31 without. By "The phone, by the numbers" (× 0.7 / 2.07 Mpx, × 10–15): ~6–10 ms on an Adreno 619 with the look —
+  inside the 12 ms budget on paper, a third heavier than without. **Not measured on a phone**: `phone.mjs` still needs
+  one on USB; nothing here guarantees a constant 60 there.
+- What would close the PC gap, each a decision about the look (none taken): ULTRA without MSAA 4× (`aa=0`: spawn 519,
+  forest 459, town 519 fps); the draw distances brought in under the haze (the far land is 90 % gone by 1 km); the
+  masonry's ivy and grime by distance; a lighter grade.
+
+Later the same day — the two cuts the user chose ("shorter draw distance hidden behind the fog and simpler stonework
+on far ruins"), `abq.mjs "look=0|lreach=1|"`, 4 reps (the machine warmer than the table above: read the differences):
+
+| view | `look=0` | reach as the tier's (`lreach=1`) | now |
+|---|---|---|---|
+| spawn | 567 (1.763) | 473 (2.116) | 475 (2.106) |
+| forest | 506 (1.977) | 406 (2.461) | 414 (2.416) |
+| lake | 442 (2.264) | 378 (2.646) | 375 (2.665) |
+| omeadow | 566 (1.766) | 415 (2.410) | 438 (2.281) |
+| town | 614 (1.630) | 412 (2.427) | 424 (2.356) |
+
+- `Atmosphere.LOOK_REACH` 0.75 (the valley with the look: the trees' far images, the rocks, the crags, the props, the
+  Wardens' pieces): −0.01 … −0.13 ms — the far distance is cheap, as measured on 2026-11-06.
+- The masonry's FAR path (`Bridges.ts masonry`, a pixel over ~7 … 11 cm of wall: tone, moss and ivy only — two reads
+  for five): the town's look cost 0.83 → 0.73 ms; its street view is mostly NEAR wall, which this does not touch.
+- Still under the bar with the look on. What is left of the gap is per-pixel work near the camera: MSAA 4× (`aa=0`
+  measured −0.12 … −0.40 ms), the near stonework, the grade, the haze.
+
+### The water, Over the Hill's way (`?water=oth` — a switch, not the default yet)
+
+The user: *"check water, check how can we make it like Over the Hill with a cheaper way"*. Their frames (`frontend/refer/`,
+the oasis lagoon): a FLAT pastel sheet — its colour by depth alone, pale and clear at the edge to a soft blue; a broad
+soft sheen of the sky; one thin white line along the shore; no ripples, no sun glints, no foam streaks. Ours: ripples
+(two noise reads), the sky's function along a reflection vector, a glint, a lapping foam line (a read), the terrain's
+shadow (a read), the depth from the height grid (four fetches, the other grid's four too if the translator evaluates
+both arms). `OTH_WATER` (`Water.ts`): the sheet above — and the still water's DEPTH from the owner mask's G (baked, to
+2 m, on the 4 m grid — the mask is read anyway). Still water: one read. A fast stream: the height grid and one streak read.
+
+`abq.mjs "|water=oth|hide=water" lake 5` (M4, ULTRA, 1080p, release): **2.314 → 2.083 ms (432 → 480 fps)**; without any
+water 1.862 — the water's own cost 0.45 → 0.22 ms. Phone profile (`mobile=1`, before the mask's depth): 1.651 → 1.468.
+The tarn and the canyon (the outland's lakes are `Wonders.ts`, not this shader): no change.
+
 ## 2026-11-12, late — the built country, more woods, the lowlands re-sculpted, the stone forests (`docs/NEXT.md` §14)
 
 `abq.mjs "|sculpt=0&pillars=0|woods=0" oroad,town,spawn` (the Mac, 1080p uncapped, interleaved, 4–5 reps), ms:

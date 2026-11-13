@@ -5,7 +5,7 @@ import { VEHICLES, vehicleDef } from '../gameplay/vehicle/catalogue'
 import { resolveSpec } from '../gameplay/vehicle/drivetrain/spec'
 import { blendRoughness, Surf, type SurfaceMix } from '../gameplay/vehicle/drivetrain/tyre'
 import { TruckSim } from '../gameplay/vehicle/VehicleSim'
-import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
+import { ATMOS_GLSL, FRAG_OUT, LOOK, type Atmosphere } from './Atmosphere'
 import type { Horizon } from './Horizon'
 import type { MapData } from './MapData'
 import type { OthPhysics } from './Physics'
@@ -524,7 +524,10 @@ export class Vehicle {
   lights(atmos: Atmosphere, dt = 1 / 60): void {
     if (!this.sim || !this.model) return
     // (on by themselves at night and in a sandstorm)
-    const on = this.lightMode === 'on' || (this.lightMode === 'auto' && (atmos.uniforms.uNight.value > 0.25 || atmos.uniforms.uDust.value > 0.45))
+    // (the look, round 5 — the user's frames: in the golden hour the lamps are already on, their pool on the track
+    //  and the tail lamps' red behind: on from the sun ~12° up, down through the dusk)
+    const dusk = LOOK > 0 && !atmos.desert && atmos.sunY < 0.21
+    const on = this.lightMode === 'on' || (this.lightMode === 'auto' && (atmos.uniforms.uNight.value > 0.25 || atmos.uniforms.uDust.value > 0.45 || dusk))
     const u = atmos.uniforms, head = this.model.lamps.head, tail = this.model.lamps.tail, hz = this.model.half, q = this.root.quaternion
     const h = head ? head.c : [hz.x * 0.7, 0.9, -hz.z], t = tail ? tail.c : [hz.x * 0.75, 0.9, hz.z]
     this.lampL.set(-Math.abs(h[0]), h[1], h[2] - 0.05).applyQuaternion(q).add(this.root.position)
@@ -536,7 +539,7 @@ export class Vehicle {
     const c = this.sim.controls, braking = (c.brake && this.sim.speed > 0.4) || c.handbrake
     this.brakeK = braking ? Math.min(1, this.brakeK + dt / 0.06) : Math.max(0, this.brakeK - dt / 0.12)
     const tc = new GFX.Vector3(0, t[1], t[2] + 0.1).applyQuaternion(q).add(this.root.position)
-    u.uTail.value.set(tc.x, tc.y, tc.z, this.brakeK)
+    u.uTail.value.set(tc.x, tc.y, tc.z, Math.max(this.brakeK, on && LOOK ? 0.4 : 0))   // (the look: the lit tail lamps' own dim pool)
     if (!this.lampMesh) {
       const g = new GFX.PlaneGeometry(2, 2)
       this.lampMesh = new GFX.InstancedMesh(g, this.lampMat, 2)
@@ -564,8 +567,8 @@ export class Vehicle {
     const tailK = Math.max(on ? 0.3 : 0, this.brakeK)
     this.tailMesh!.visible = tailK > 0.01
     this.tailMat.uniforms.uK.value = 5.0 * tailK
-    this.beams!.visible = on && u.uNight.value > 0.05
-    this.beamMat.uniforms.uK.value = u.uNight.value
+    this.beams!.visible = on && (u.uNight.value > 0.05 || dusk)
+    this.beamMat.uniforms.uK.value = Math.max(u.uNight.value, dusk ? 0.35 : 0)
   }
 
   get speedKmh(): number { return this.sim ? Math.abs(this.sim.speed) * 3.6 : 0 }

@@ -1,5 +1,5 @@
 import * as GFX from './gfx'
-import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
+import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK } from './Atmosphere'
 import type { MapData } from './MapData'
 import { LAKE_DISC, RIVER_WIDEN, STREAM_WIDEN } from './mapPrep'
 import { fallLip } from './Falls'
@@ -47,7 +47,7 @@ export class Water {
     const material = (rapids: boolean) => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}), ...map.biomeDefines, ...wcut() },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}), ...map.biomeDefines, ...wcut(), ...(gameParams().get('water') === 'oth' ? { OTH_WATER: '' } : {}) },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
@@ -372,7 +372,9 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
   vec3 c = mix(body, refl, F);
   // sun glints
   vec3 H = normalize(uSunDir + V);
-  c += uSunDisc * sun * pow(max(dot(N, H), 0.0), 220.0) * 2.5; // (the sun's own colour: its reflection)
+  // (2026-11-13, round 5: under a LOW sun, looked at down its path, the lobe lay over half the river — and the ripples'
+  //  noise, magnified, cut it into white blocks. The glint capped, and weaker the lower the sun: a glitter, not a sheet)
+  c += uSunDisc * sun * min(pow(max(dot(N, H), 0.0), 220.0) * 2.5, 0.55) * mix(0.3, 1.0, smoothstep(0.08, 0.45, uSunDir.y)); // (the sun's own colour: its reflection)
 #ifdef OTH_DESERT
   // the shore line: a soft bright edge where it's a few cm deep
   // (a band in METRES from the waterline — shoreM — and a few cm deep at most: by depth alone a wide flat shallow was a
@@ -403,16 +405,20 @@ void main() {
   gl_FragColor = vec4(0.1, 0.4, 0.44, 0.9);
   return;
 #endif
+  // the ground the still water owns (mapPrep.ts waterOwner): the lake and the ponds draw only there, the ribbons only
+  // off it — and a ribbon's outer edge fades out (where its bank is under the water: never a straight cut)
+  vec4 ow = texture(uOwn, ((xz - uOwnGrid.z) / uOwnGrid.y + 0.5) / uOwnGrid.x);
 #ifdef WC_DEPTH
   float depth = 2.0;
 #elif defined(CAVE_POOL)
   float depth = vUV.x;
+#elif defined(OTH_WATER) && !defined(RAPIDS)
+  // (Over the Hill's still water: its depth from the owner mask's G — the lake's and the ponds' own depth, baked on the
+  //  4 m grid, to 2 m — which is read anyway: the height grid's four fetches a pixel not made at all)
+  float depth = (ow.g * 255.0 - 128.0) * (1.0 / 64.0);
 #else
   float depth = vWorld.y - terrainHeight(xz);
 #endif
-  // the ground the still water owns (mapPrep.ts waterOwner): the lake and the ponds draw only there, the ribbons only
-  // off it — and a ribbon's outer edge fades out (where its bank is under the water: never a straight cut)
-  vec4 ow = texture(uOwn, ((xz - uOwnGrid.z) / uOwnGrid.y + 0.5) / uOwnGrid.x);
 // (the wet bank above the waterline: the TERRAIN draws it — Terrain.ts uShore; this sheet lies under the bank there)
   if (depth < 0.0) discard;
   // (one or the other — the two looks are one at their seam; a cross-fade of two half-clear layers let the floor
@@ -429,7 +435,7 @@ void main() {
 #endif
   if (keep < 0.004) discard;
   vec3 V = normalize(uCamPos - vWorld);
-#ifdef WC_SUN
+#if defined(WC_SUN) || defined(OTH_WATER)
   float sun = 1.0;
 #else
   float sun = sunVisibility(xz);
@@ -441,6 +447,31 @@ void main() {
   float px = max(length(vec2(dFdx(xz.x), dFdy(xz.x))), length(vec2(dFdx(xz.y), dFdy(xz.y))));
   float shoreM = depth / max(length(vec2(dFdx(depth), dFdy(depth))) / max(px, 1e-4), 0.02);
 
+#ifdef OTH_WATER
+  // OVER THE HILL'S WATER (2026-11-13, the user: "check how can we make it like Over the Hill, a cheaper way" — its
+  // frames, refer/: a FLAT pastel sheet — its colour by depth alone, pale and clear at the edge to a soft blue in the
+  // deep; a broad soft sheen of the sky at a glance; one THIN WHITE LINE along the shore; no ripples, no glints, no
+  // streaks). No noise read on still water, no sky function, no reflection vector, no shadow read: the depth (the
+  // height grid) and the owner mask are all it fetches. A fast stream keeps ONE streak read. (?water=oth)
+  float kd = 1.0 - exp(-depth * 1.1);
+#ifdef OTH_DESERT
+  vec3 body = mix(G_SHALLOW, G_DEEP, kd) * light;
+#else
+  vec3 body = mix(vec3(0.34, 0.58, 0.64), vec3(0.11, 0.38, 0.5), kd) * light;
+#endif
+  float fr = 1.0 - max(V.y, 0.0);
+  fr *= fr * fr;
+  vec3 c = mix(body, uSkyHorizon * 0.92, 0.06 + 0.5 * fr);
+#ifdef RAPIDS
+  // (a fast stream: soft white streaks down the current — one read, only where it runs)
+  float spd = length(vFlow);
+  if (spd > 1.7) c = mix(c, FOAM * light, smoothstep(0.6, 0.8, texture(uNoise, vec2(vUV.y / 1.1, (vUV.x - uTime * spd) / 11.0) + vec2(0.13, 0.0)).r) * smoothstep(1.7, 2.6, spd) * 0.6);
+#endif
+  // the shore's line: ~12 cm of white at the waterline, a constant width along it (shoreM: metres from the line)
+  float line = (1.0 - smoothstep(0.1, 0.24, shoreM)) * (1.0 - smoothstep(0.25, 1.2, px));
+  c = mix(c, FOAM * (light * 1.1), line * 0.9);
+  float alpha = clamp(smoothstep(0.0, 0.05, depth) * mix(0.45, 0.98, min(kd * 1.15, 1.0)) + 0.3 * fr + line * 0.9, 0.0, 1.0);   // (opaque by ~2 m: the mask's depth ends there — no bed's mottling through the deep)
+#else
 #ifdef RAPIDS
   // RAPIDS: streaks stretched along the current (u = metres downstream, v = metres across), racing downstream
   float spd = length(vFlow);
@@ -455,7 +486,9 @@ void main() {
   float calm = 1.0 - smoothstep(1.7, 2.6, spd); // (the river ≈ 1.5 m/s: calm; the streams' runs and steps: rapids)
   // (whiter in the shallows only where it runs fast: a calm river spreading shallow into a lagoon was a grey-white sheet)
   float rough = 0.6 * s1 + 0.4 * s2 + (churn - 0.5) * 0.25 + (1.0 - k) * 0.1 * (1.0 - calm) + smoothstep(1.5, 4.0, spd) * 0.1 + rocks * 0.6;
-  float foam = smoothstep(0.57 + 0.1 * calm, 0.68 + 0.1 * calm, rough);
+  // (the look, round 6: the streaks' edge softer and the foam never quite solid — under a low sun the rapids were hard
+  //  white blocks, the noise's own texels showing)
+  float foam = ${LOOK ? 'smoothstep(0.54 + 0.1 * calm, 0.78 + 0.1 * calm, rough) * 0.86' : 'smoothstep(0.57 + 0.1 * calm, 0.68 + 0.1 * calm, rough)'};
   // (the waterline: a thin broken line — white to 22 cm deep, a ford over a track was one grey-white pane)
   foam = max(foam, (1.0 - smoothstep(0.02, 0.09, depth)) * (0.45 + 0.55 * s2));
   // (the streaks blur into an even light blue far away: no shimmer)
@@ -489,6 +522,7 @@ void main() {
   vec4 st = stillLook(xz, depth, V, sun, dcam, 1.0, shoreM);
   vec3 c = st.rgb;
   float alpha = st.a;
+#endif
 #endif
 #ifdef CAVE_POOL
   // (in the cave: its dark, as on the rock round it — the sky it mirrors is the roof's, but for the skylight's light)

@@ -1285,6 +1285,13 @@ async function boot() {
       let n = 0
       hs[n++] = map.height(c.x, c.z)
       for (const r of [180, 450, 1200]) for (let a = 0; a < 8; a++) hs[n++] = map.height(c.x + Math.cos(a * 0.785 + r) * r, c.z + Math.sin(a * 0.785 + r) * r)
+      // (the ground mist's floor — uHazeLow: the third lowest of the ground under the camera and 180 m round it)
+      //  — three passes for the three smallest: no array made a frame)
+      {
+        let a = Infinity, b2 = Infinity, wl = Infinity
+        for (let k = 0; k < 9; k++) { const v = hs[k]; if (v < a) { wl = b2; b2 = a; a = v } else if (v < b2) { wl = b2; b2 = v } else if (v < wl) wl = v }
+        atmos.mistFloorLow = mistInit && Math.abs(wl - atmos.mistFloorLow) < 80 ? atmos.mistFloorLow + (wl - atmos.mistFloorLow) * Math.min(1, dt * 0.6) : wl
+      }
       hs.sort()
       const want = hs[4]
       atmos.mistFloor = mistInit && Math.abs(want - atmos.mistFloor) < 150 ? atmos.mistFloor + (want - atmos.mistFloor) * Math.min(1, dt * 0.4) : want
