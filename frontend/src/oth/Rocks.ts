@@ -5,6 +5,7 @@ import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK, LOOK_REACH } from './Atmos
 import type { MapData } from './MapData'
 import type { Tier } from './quality'
 import { gameParams } from '../settings'
+import { wallStoneKept } from './mapPrep'
 import { ROCK_RELIEF_GLSL } from './rockRelief'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 
@@ -655,10 +656,15 @@ export class Rocks {
       }
     }
     // the SCENERY's WALLS (scripts/oth/scenery.mjs): big rounded stones lining the stream roads on their uphill side
+    // (2026-11-13, the user: "reduce this kind of rocks … instead use the rock texture": about one in five stands, the
+    //  bank rock where the rest stood — mapPrep.wallsToRock. Each still draws its four numbers: no stone after moves)
+    const allWalls = gameParams().get('walls') === '1'
     for (const [x, z, size] of map.meta.scenery?.boulders ?? []) {
       const r = size * 0.5
+      const sy = size * (0.85 + 0.3 * rnd()), rot = rnd() * Math.PI * 2, tilt = (rnd() - 0.5) * 0.25, v = VARIANTS + (rnd() < 0.5 ? 0 : 1)
+      if (!allWalls && !wallStoneKept(x, z, size)) continue
       const y = Math.min(map.height(x - r, z), map.height(x + r, z), map.height(x, z - r), map.height(x, z + r), map.height(x, z))
-      out.push({ x, y: y - size * 0.1, z, s: size, sy: size * (0.85 + 0.3 * rnd()), rot: rnd() * Math.PI * 2, tilt: (rnd() - 0.5) * 0.25, v: VARIANTS + (rnd() < 0.5 ? 0 : 1) })
+      out.push({ x, y: y - size * 0.1, z, s: size, sy, rot, tilt, v })
     }
     // the RIVER: stones in the shallows and on the banks
     const r = map.meta.water.river

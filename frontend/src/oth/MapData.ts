@@ -496,7 +496,7 @@ export class MapData {
         else resolve(e.data.map as PreparedMap)
       }
       w.addEventListener('message', on)
-      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') !== '0', cliffs: LOOK === 1 && gameParams().get('cliffs') === '1', peaks: LOOK === 1 && gameParams().get('peaks') !== '0' })   // (?courts=0: no sunken courts cut — the A/B; ?cliffs=1: the hills stepped into strata again — OFF since 2026-11-13, the user: "the terrain rises and we show rock texture, but we use a pattern of 'm' or zigzag — remove any patterns like that": the strata's wandering bands were that pattern, on both grids)
+      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') !== '0', cliffs: LOOK === 1 && gameParams().get('cliffs') === '1', peaks: LOOK === 1 && gameParams().get('peaks') !== '0', soften: gameParams().get('soften') !== '0', walls: gameParams().get('walls') !== '1' })   // (?courts=0: no sunken courts cut — the A/B; ?cliffs=1: the hills stepped into strata again — OFF since 2026-11-13, the user: "the terrain rises and we show rock texture, but we use a pattern of 'm' or zigzag — remove any patterns like that": the strata's wandering bands were that pattern, on both grids)
     })
     return new MapData(p)
   }

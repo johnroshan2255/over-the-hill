@@ -1143,7 +1143,14 @@ void main() {
   bool cached = false;
 #ifdef GC_ON
   float Lf = farG ? GC_LEVELS : gcLevel(xz, foot);
-  if (steep < GC_STEEP || Lf >= GC_LEVELS) { s = gcSurface(xz, Lf); cached = true; s.dots *= farDots; s.flower *= beyond; }
+  if (steep < GC_STEEP || Lf >= GC_LEVELS) {
+    s = gcSurface(xz, Lf); cached = true; s.dots *= farDots; s.flower *= beyond;
+    // (the small shapes' light — the hollows darkened, up to a fifth — is the CACHE's: a wall painted live has none.
+    //  At a bank's foot, a hollow, the cached ground stood a shade darker than the live face over it, the seam along
+    //  the steepness cut-off wandering over the slope in scallops — 2026-11-13, the user: "almost all the places we can
+    //  see this 2 color … and the mmm pattern". Faded out toward the cut-off: the two paints meet as one)
+    s.shape *= 1.0 - smoothstep(GC_STEEP - 0.17, GC_STEEP - 0.02, steep);
+  }
   else
 #endif
   {

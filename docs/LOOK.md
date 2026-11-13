@@ -180,6 +180,38 @@ the frames' photographic light. Local contrast measured 2.9–6.6 (theirs 6–9)
 - **The cost**: `docs/PERF.md`, 2026-11-13 — the look is 0.3–0.8 ms a frame and the PC is at 404–476 fps with it
   (478–623 without); this table below is NOT to be trusted.
 
+### Round 8 (same day) — the bare band, the banks' "m m m"
+
+- **A bare band across the outland** (`Grass.ts` field bake): the boulders' footprint and the water's owner map cover
+  the box only; read past it (clamp to edge) their rim texel ran on outward — a boulder on the box's south rim left a
+  ~36 m strip with no grass straight across the outland (x −318 … −284, 400 m west of the Temple of the Far Bells).
+  Read inside the box only now. Cost: one multiply in the bake.
+- **The banks' "m m m"** (`mapPrep.softenCreases`, `?soften=0` the A/B): the box's height grid carries the tracks'
+  cut / fill banks and the knolls' steps as one-sample creases (3–6 m between two 2 m samples); drawn on the grid and
+  lit from its normals, a crease at an angle to the grid was a staircase of facets down every bank (`?tcut=relief`
+  left it — not the paint). Where a sample stands off its 8 neighbours' mean by 0.35 m (whole by 0.9 m) its height is
+  eased toward the 5 × 5 binomial mean, twice, ≤ 2.5 m — off the track beds (hw + 1 … hw + 6 m), the water (12 … 30 m)
+  and the places; not the desert. 16.5 % of the box's samples move, 0.6 m on average; the great cliff's legs and
+  risers keep their shape. Cost: +~170 ms on the map's 4.9 s preparation (the loader's worker, once — measured
+  interleaved, 3 + 3); nothing a frame. The distance fields are computed once now (they were twice with `?cliffs=1`).
+  The same creases covered the box's rough rock hills: under a low sun a whole hill read as wavy contour lines and
+  jagged facets (the user's "lines or patterns or pixelated things", `?soften=0` at 17:20 from 160 m) — smooth with
+  it. The outland's 8 m grid has far fewer (1.45 % of samples over 2 m — a gentle bend at 8 m): left as it is.
+- **Two greys on the rock, a scalloped seam between** (`Terrain.ts`, the ground cache's switch): ground gentler than
+  `GC_STEEP` is read from the cache, steeper is painted live — and only the cache carried the small shapes' light
+  (`s.shape`: a hollow darkened by up to a fifth). A bank's foot is a hollow: the cached lower slope a shade darker
+  than the live face over it, the seam on the steepness contour, wandering in scallops (`?gcache=0` showed one grey).
+  The shapes' light now fades out over the last 0.15 of steepness before the switch: the two meet as one. Cost: one
+  smoothstep a cached pixel.
+- **The stream roads' stone walls thinned** (`mapPrep.wallStoneKept` / `wallsToRock`, `Rocks.ts`; `?walls=1` the
+  A/B): scenery.mjs's big pale boulders shoulder to shoulder up the stream roads' banks — 145 of the 729 stand now
+  (by a hash of where each is; the big ones a little likelier); where one is gone the bank is rock in the mask, a
+  ragged patch a little wider than the stone (the rock's paint and relief, no grass or tree). Each stone still draws
+  its numbers: no other stone moves. Cost: 584 fewer rocks to draw; the patches a few hundred texels at load.
+- **The tracks' pale dots, an eighth of them** (`paint.ts`; the user: "now lets say its 100, reduce it to 10-15"): each
+  `dotsAt`'s fill measured on the noise — the pebbles 72 % → 9 % of their cells, the stones 87 % → 10 % and 40 % → 5 %,
+  the gravel's speckle 8.4 % → 1.2 % of the ground. Seen on a track: ~60 dots in the frame → ~5. Cost: none.
+
 ## Cost (ULTRA 1920×1080, uncapped, `abq.mjs "look=0||look=0|"`, ABBA, this laptop)
 
 | view | look=0 | look | Δ |

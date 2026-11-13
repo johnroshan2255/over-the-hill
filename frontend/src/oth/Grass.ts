@@ -702,11 +702,15 @@ void main() {
   grow *= 1.0 - smoothstep(0.25, 0.55, mud); // (none in the mud: a reedy fringe round it, below)
   // (none on a lake's or a pond's floor — mapPrep.ts waterOwner G: the depth under it, 128 + 64 / m; the desert's oasis
   //  grew a carpet under the lagoon's shallows)
+  // (the box's own maps — the boulders' footprint, the water's owner — cover the BOX only — 2026-11-13, the user: "some
+  //  place dont grow grass": read past it, a clamped rim texel ran on as a bare band straight across the outland, ~36 m
+  //  wide wherever a boulder touched the rim. Outside the box: neither — its lakes are lakeDepth's, above)
+  float inFp = step(abs(root.x), uBoxHalf) * step(abs(root.y), uBoxHalf);
   float under = (textureLod(uOwn, ((root - uMaskGrid.z) / uMaskGrid.y + 0.5) / uMaskGrid.x, 0.0).g * 255.0 - 128.0) / 64.0;
-  grow *= 1.0 - smoothstep(-0.02, 0.06, under);
+  grow *= 1.0 - inFp * smoothstep(-0.02, 0.06, under);
   vec2 inUv = ((root - uInGrid.z) / uInGrid.y + 0.5) / uInGrid.x;
   float growBase = grow;
-  grow *= 1.0 - smoothstep(0.0, 0.3, textureLod(uRocks, inUv, 0.0).r); // (none at a boulder's foot)
+  grow *= 1.0 - inFp * smoothstep(0.0, 0.3, textureLod(uRocks, inUv, 0.0).r); // (none at a boulder's foot)
   // GRASS BETWEEN THE STONES (2026-11-08, the user: "in between the rocks some random 1 or 2 grass — a more natural
   // feel"): on a place's paving (Landmarks keeps the field off it) a tuft comes up here and there — in about one in 5
   // patches of 0.6 m (more toward the paving's edge), only where the root is in a JOINT (the paving's texture, square
@@ -729,7 +733,7 @@ void main() {
   // half up (~3 m round it). (The water's banks keep their edge: the mask can't tell a bank from a wet meadow.)
   float approach = smoothstep(uTrailHW, uTrailHW + 2.5, tx);
   approach = min(approach, (1.0 - g.rockNear) * (1.0 - g.screeNear));
-  approach = min(approach, 1.0 - smoothstep(0.02, 0.45, textureLod(uRocks, inUv, 1.5).r));
+  approach = min(approach, 1.0 - inFp * smoothstep(0.02, 0.45, textureLod(uRocks, inUv, 1.5).r));
   approach = max(approach * (1.0 - smoothstep(0.1, 0.3, mud)), smoothstep(0.08, 0.25, mud) * 1.15); // (REEDS: the marsh's edge tall)
   approach = max(approach, tuft * 0.5); // (a tuft between the stones: short, but there)
   approach *= 1.0 - 0.72 * floorK; // (a court's grass short — onFloor)

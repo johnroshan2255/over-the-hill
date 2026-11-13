@@ -884,6 +884,106 @@ export function sculptCliffs(meta: MapMeta, raw: Uint16Array, g: Grid, inner: bo
 }
 
 /**
+ * THE BANKS' CREASES SOFTENED (2026-11-13 — the user: "a lot of places has this issue, repeated pattern … repeated
+ * mmmm shapes"): the box's 2 m grid carries the tracks' cut and fill banks (and many a knoll's step) as ONE-SAMPLE
+ * creases — 3–6 m of rise between two samples. Drawn on the grid (its quads split along alternating diagonals) and lit
+ * from normals off the same grid, a crease that runs across the grid at an angle came out a staircase of facets: a
+ * regular "m m m" down the length of every bank (not the paint — `?tcut=relief` left it as it was). Where a sample (or
+ * one of the 3 × 3 round it) stands off its 8 neighbours' mean by 0.35 m (whole by 0.9 m — a crease: a plane, however
+ * steep, is 0) its height is eased toward the 5 × 5 binomial mean (σ ≈ 2 m), twice, ≤ 2.5 m: each crease spread over
+ * ~3 samples, the bank a slope with a rounded lip and foot, its line no longer on the grid. Kept off the tracks' beds (eased in from hw + 1 to hw + 6 m —
+ * their crown and edges as graded), the water (12 … 30 m: the shores waterOwner reads) and the places (r … r + 12 m).
+ * The land, its normals, shadows, physics and grass all read the eased shape. Not the desert (its dunes' crests are its
+ * look). `?soften=0`: off.
+ */
+export function softenCreases(meta: MapMeta, raw: Uint16Array, g: Grid, fields: PreparedMap['fields']): number {
+  if (meta.biome === 'desert') return 0
+  const n = g.n, kq = g.range / 65535, st = g.step, half = -meta.inner.origin, hw = meta.trails.hw
+  // THE CREASE: how far a sample stands off the mean of its 8 neighbours (m) — a plane, however steep, is 0; a 45° bank's
+  // lip and foot ~0.75 m, a 60° one's ~1.3; the fields' bumps and the gentle hills' roughness under ~0.3
+  // (… spread to the 3 × 3 round each: the samples either side of the line move with it — only where there is one)
+  const cmax = new Float32Array(n * n), k8 = kq / 8, C0 = 0.35 / kq * 8
+  for (let j = 3; j < n - 3; j++) {
+    const r = j * n
+    for (let i = 3; i < n - 3; i++) {
+      const q = r + i
+      const e = Math.abs(raw[q] * 8 - (raw[q - 1] + raw[q + 1] + raw[q - n] + raw[q + n] + raw[q - n - 1] + raw[q - n + 1] + raw[q + n - 1] + raw[q + n + 1]))
+      if (e < C0) continue
+      const c = e * k8
+      for (let b = -n; b <= n; b += n) { if (cmax[q + b - 1] < c) cmax[q + b - 1] = c; if (cmax[q + b] < c) cmax[q + b] = c; if (cmax[q + b + 1] < c) cmax[q + b + 1] = c }
+    }
+  }
+  const places = (meta.landmarks ?? []).map((l) => [l.x, l.z, l.r] as [number, number, number])
+  const ph = new Map<number, [number, number, number][]>()
+  for (const p of places) { const m = Math.ceil((p[2] + 12) / 128); for (let b = -m; b <= m; b++) for (let a = -m; a <= m; a++) { const k = (Math.floor(p[0] / 128) + a) * 4096 + Math.floor(p[1] / 128) + b; const l = ph.get(k); if (l) l.push(p); else ph.set(k, [p]) } }
+  const w = cmax   // (in place: each sample's weight replaces its crease once read)
+  const idx: number[] = []
+  for (let j = 3; j < n - 3; j++) for (let i = 3; i < n - 3; i++) {
+    const q = j * n + i, c = cmax[q]
+    if (c < 0.35) { cmax[q] = 0; continue }
+    let k = sm(0.35, 0.9, c)
+    const x = g.origin + i * st, z = g.origin + j * st
+    const fi = Math.round((x + half) / 4), fj = Math.round((z + half) / 4), fn = fields.n
+    if (fi >= 0 && fj >= 0 && fi < fn && fj < fn) { const f = fj * fn + fi; k *= sm(hw + 1, hw + 6, fields.track[f]) * sm(12, 30, fields.river[f]) }
+    if (k <= 0.01) continue
+    for (const [px, pz, pr] of ph.get(Math.floor(x / 128) * 4096 + Math.floor(z / 128)) ?? []) { k *= sm(pr, pr + 12, Math.hypot(x - px, z - pz)); if (k <= 0.01) break }
+    if (k <= 0.01) continue
+    w[q] = k
+    idx.push(q)
+  }
+  // (two passes of the 5 × 5 binomial — 1 4 6 4 1 each way — over the samples that move, each pass reading the one
+  //  before: computed aside, then written back; in place, no copy of the grid)
+  const m = idx.length, orig = new Uint16Array(m), tmp = new Float32Array(m)
+  for (let k = 0; k < m; k++) orig[k] = raw[idx[k]]
+  for (let pass = 0; pass < 2; pass++) {
+    for (let k = 0; k < m; k++) {
+      const q = idx[k]
+      let sum = 0
+      for (let b = -2, wb = 1; b <= 2; b++, wb = b === 0 ? 6 : b === 2 ? 1 : 4) { const r = q + b * n; sum += wb * (raw[r - 2] + 4 * raw[r - 1] + 6 * raw[r] + 4 * raw[r + 1] + raw[r + 2]) }
+      tmp[k] = raw[q] + (sum / 256 - raw[q]) * w[q]
+    }
+    for (let k = 0; k < m; k++) raw[idx[k]] = Math.round(tmp[k])
+  }
+  // (never more than 2.5 m off: a cliff's lip rounded, not cut back — the great cliff's legs and berms keep their shape)
+  const lim = 2.5 / kq
+  for (let k = 0; k < m; k++) raw[idx[k]] = Math.round(Math.max(orig[k] - lim, Math.min(orig[k] + lim, raw[idx[k]])))
+  return m
+}
+
+/**
+ * THE STREAM ROADS' STONE WALLS THINNED (2026-11-13 — the user, of the big pale boulders shoulder to shoulder along
+ * the uphill side of the stream roads: "reduce this kind of rocks, i need those rocks but not too much, instead use
+ * the rock texture"): of scenery.mjs's 729 stones (1.1–6.6 m) about one in five stands — the big ones a little
+ * likelier — picked by a hash of where each is (the same every load; `wallStoneKept`, which Rocks.ts asks too); where
+ * one is gone the bank is ROCK in the mask instead: a ragged patch a little wider than the stone, so the ground there
+ * takes the rock's paint and relief, and no grass or tree. `?walls=1`: every stone, no patches (the A/B).
+ */
+export function wallStoneKept(x: number, z: number, size: number): boolean {
+  const h = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453
+  return h - Math.floor(h) < 0.15 + 0.08 * sm(3.5, 5.5, size)
+}
+export function wallsToRock(meta: MapMeta, mask: Uint8Array): number {
+  const M = meta.mask, n = M.n, st = M.step
+  let k = 0
+  for (const [x, z, size] of meta.scenery?.boulders ?? []) {
+    if (wallStoneKept(x, z, size)) continue
+    const R = 0.55 * size + 1.2, reach = R + 3
+    const i0 = Math.max(0, Math.floor((x - reach - M.origin) / st)), i1 = Math.min(n - 1, Math.ceil((x + reach - M.origin) / st))
+    const j0 = Math.max(0, Math.floor((z - reach - M.origin) / st)), j1 = Math.min(n - 1, Math.ceil((z + reach - M.origin) / st))
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const px = M.origin + i * st, pz = M.origin + j * st
+      // (ragged: the patch's edge pushed in and out by a hash a texel — the mask's bilinear read rounds it off)
+      const hh = Math.sin(px * 3.17 + pz * 7.31) * 9137.13, jit = (hh - Math.floor(hh) - 0.5) * 2.2
+      const v = Math.round(255 * (1 - sm(R * 0.45, R + 1.5, Math.hypot(px - x, pz - z) + jit)))
+      const q = (j * n + i) * 4
+      if (v > mask[q]) mask[q] = v
+    }
+    k++
+  }
+  return k
+}
+
+/**
  * THE HIGH PEAKS MADE JAGGED (2026-11-13, the look, round 6 — the user's frames: the far mountains are ROCK — arêtes,
  * teeth, gullies — where ours were smooth pale cones): the world's grid above ~560 m (whole by ~840 m) takes a
  * RIDGED noise at three scales (~420, ~150 and ~60 m: the ridge lines, their teeth, the break) — up to +85 m on a
@@ -920,7 +1020,7 @@ export function sculptPeaks(meta: MapMeta, raw: Uint16Array, g: Grid): number {
   return moved
 }
 
-export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean; peaks?: boolean } = {}): Promise<PreparedMap> {
+export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean; peaks?: boolean; soften?: boolean; walls?: boolean } = {}): Promise<PreparedMap> {
   const meta = (await (await fetch(`${base}/meta.json`)).json()) as MapMeta
   let done = 0
   const get = async (f: string) => {
@@ -935,20 +1035,26 @@ export async function prepareMap(base: string, leaf: number, onProgress?: (f: nu
   if (o.banks !== false) easeBanks(meta, farRaw)
   // (the look, round 3: the steep ground stepped into strata — both grids, before anything is derived from them)
   if (o.peaks === true) sculptPeaks(meta, farRaw, meta.far)          // (the look, round 6: the high peaks jagged — before their strata)
-  if (o.cliffs !== false) { const fl = distanceFields(meta); sculptCliffs(meta, innerRaw, meta.inner, true, fl); sculptCliffs(meta, farRaw, meta.far, false, fl) }
+  // (the tracks' and the shores' distance fields: once — the strata, the creases and the game all read them)
+  const fields = distanceFields(meta)
+  if (o.cliffs !== false) { sculptCliffs(meta, innerRaw, meta.inner, true, fields); sculptCliffs(meta, farRaw, meta.far, false, fields) }
+  // (the box's one-sample creases spread over a few: the banks' "m m m" — after any sculpting, before the normals)
+  if (o.soften !== false) softenCreases(meta, innerRaw, meta.inner, fields)
   const vales = o.vales === false ? [] : carveVales(meta, farRaw)
   const courts = o.courts === false ? [] : sinkCourts(meta, farRaw, vales)
   const innerH = heightsOf(innerRaw, meta.inner), farH = heightsOf(farRaw, meta.far)
   const innerNormals = normalsOf(innerH, meta.inner), farNormals = normalsOf(farH, meta.far)
   onProgress?.(0.8)
-  const fields = distanceFields(meta)
   const road = roadField(meta)
   reconcileWater(meta, innerH)
   const { tex: water, body: waterBody } = waterOwner(meta, innerH)
   onProgress?.(0.9)
   const pyramid = pyramidOf(meta, innerH, farH, leaf)
   onProgress?.(1)
-  return { meta, innerRaw, farRaw, innerH, farH, innerNormals, farNormals, road, mask: new Uint8Array(m), trail: new Uint8Array(t), mud: new Uint8Array(u), fields, water, waterBody, pyramid, courts, vales }
+  // (the stream roads' stone walls thinned: the stones gone are rock in the mask — Rocks.ts places the rest)
+  const mask = new Uint8Array(m)
+  if (o.walls !== false) wallsToRock(meta, mask)
+  return { meta, innerRaw, farRaw, innerH, farH, innerNormals, farNormals, road, mask, trail: new Uint8Array(t), mud: new Uint8Array(u), fields, water, waterBody, pyramid, courts, vales }
 }
 
 /** Every array buffer in a prepared map (posted from the worker without a copy). */

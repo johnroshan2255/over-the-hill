@@ -359,7 +359,11 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   g.trail *= 1.0 - smoothstep(0.42, 0.62, steep);
   float rut = (1.0 - smoothstep(0.15, 0.45, abs(trail - 0.85))) * near; // (a car's wheels ±0.85 m off the middle)
   float speck = mix(1.0, 0.94 + 0.12 * p.micro.g, near);
-  float tpeb = near > 0.01 && g.trail > 0.01 ? dotsAt(xz + 0.7, 1.3, 0.22, 0.06, max(0.02, foot * 0.5)) * near : 0.0;
+  // (the track's pale dots — the pebbles, the stones, the gravel below — about an eighth of what they were: 2026-11-13,
+  //  the user: "reduce the white dots … now lets say its 100, reduce it to 10-15". Each dotsAt's fill is the share of
+  //  its cells that hold a dot, measured on the noise: 0.22 → −0.04 here 72 % → 9 %; the stones' 0.3 → −0.03 87 % →
+  //  10 %, 0.1 → −0.07 40 % → 5 %; the gravel's speckle 8.4 % → 1.2 % of the ground)
+  float tpeb = near > 0.01 && g.trail > 0.01 ? dotsAt(xz + 0.7, 1.3, -0.04, 0.06, max(0.02, foot * 0.5)) * near : 0.0;
   vec3 track = TRAIL * (0.93 + 0.1 * p.fine.g + 0.06 * p.mid.r) * speck * (1.0 - 0.08 * rut) * (1.0 + 0.12 * tpeb);
   // the earth darkens a touch toward its edge, where the grass overhangs it
   track *= 0.9 + 0.1 * smoothstep(hw, hw * 0.5, trail);
@@ -380,8 +384,8 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
     //  of gravel, the wheels' lines damp and dark in stretches. None of it keyed to a narrow distance from the centre
     //  line (the ladder above): stones and gravel by the paint's noise alone, the damp inside the broad wheel bands)
     if (near > 0.01 && g.trail > 0.01) {
-      float stone = dotsAt(xz + 2.3, 0.7, 0.3, 0.075, max(0.015, foot * 0.4)) + 0.6 * dotsAt(xz - 1.7, 1.9, 0.1, 0.15, max(0.02, foot * 0.4));
-      float gravel = smoothstep(0.52, 0.74, p.fine.a * 0.35 + p.mid.b * 0.75) * smoothstep(0.5, 0.62, p.micro.r);
+      float stone = dotsAt(xz + 2.3, 0.7, -0.03, 0.075, max(0.015, foot * 0.4)) + 0.6 * dotsAt(xz - 1.7, 1.9, -0.07, 0.15, max(0.02, foot * 0.4));
+      float gravel = smoothstep(0.62, 0.82, p.fine.a * 0.35 + p.mid.b * 0.75) * smoothstep(0.64, 0.74, p.micro.r);
       // (a stone: the earth's own tone gone grey and a step lighter, its sun side — never a pale disc)
       e = mix(e, (e * 1.25 + vec3(0.05, 0.047, 0.043)) * (0.75 + 0.5 * p.micro.b), min(1.0, stone * 0.8 + gravel * 0.4) * near);
     }
