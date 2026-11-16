@@ -56,7 +56,7 @@ CARS = {
                       face='chrome', grille_style='bars', grille_n=4, crown=0.03),
     # BRONC — Ford Bronco, 1970: a plain flat box: a body-coloured face with two bright slats between round lamps, slab sides, chrome caps, the spare behind.
     'bronc': car(3.87, 1.75, 2.337, 1.45, 0.38, 0.26, fo=0.66, hood=0.9, rake=0.16, drop=0.03, lamps='round', lamp_r=0.1, face='body', grille_style='slats', grille_n=2, grille_w=0.4,
-                 crown=0.015, arch_shape=0.5, tumble=0.05, rear_rake=0.05, wheel='cap', roof_mat=W2, top_mat=W2, seats='buckets', shifter='floor', gearbox='manual', spare='rear'),
+                 crown=0.015, arch_shape=0.5, tumble=0.05, rear_rake=0.05, wheel='cap', roof_mat=W2, top_mat=W2, seats='buckets', shifter='column', gearbox='manual', spare='rear'),
     # SCOUTLING — International Scout 800, 1967: a mesh grille the width of the nose in a body-coloured face, small round lamps at its ends, chrome caps.
     'scoutling': car(3.86, 1.72, 2.54, 1.4, 0.37, 0.24, fo=0.6, hood=0.9, rake=0.14, drop=0.03, lamps='round', lamp_r=0.085, face='body', grille_style='mesh', grille_n=6, grille_bright=False,
                      grille_w=0.5, crown=0.02, arch_shape=0.5, tumble=0.04, rear_rake=0.06, wheel='cap', roof_mat=W2, top_mat=W2, seats='buckets', shifter='floor', gearbox='manual'),
@@ -90,7 +90,7 @@ CARS = {
     # WAYFARER — Ford Explorer, 1991: the modern one: soft edges, a dropping bonnet and a fast screen, wide square lamps beside bright slats, alloy wheels, a rack, a lower band.
     'wayfarer': car(4.67, 1.78, 2.842, 1.49, 0.37, 0.25, doors=4, fo=0.8, hood=1.1, rake=0.52, drop=0.13, lamps='square', face='chrome', grille_style='slats', grille_n=4, grille_w=0.4,
                     crown=0.02, arch_shape=0.7, soft=1.6, tumble=0.1, rear_rake=0.22, wheel='slot', rack=True, band=(0.55, 0.78), bumper='black', seats='buckets', shifter='floor',
-                    gearbox='manual', front_susp='coil', colours=dict(second=(206, 204, 198), rim=(196, 196, 198))),
+                    gearbox='manual', front_susp='coil', colours=dict(second=(198, 180, 146), rim=(196, 196, 198))),
     # WAGON 63 — Jeep Wagoneer, 1963: a narrow tall grille standing in a body-coloured face, round lamps wide apart, chrome caps, soft pressings.
     'wagon63': car(4.73, 1.9, 2.794, 1.45, 0.37, 0.22, doors=4, fo=0.72, hood=1.15, rake=0.34, drop=0.03, lamps='round', lamp_r=0.105, face='body', grille_style='bars', grille_n=6, grille_w=0.2,
                    crown=0.02, arch_shape=0.8, soft=1.6, tumble=0.07, rear_rake=0.12, wheel='cap', seats='bench', shifter='column', gearbox='manual'),
@@ -107,6 +107,119 @@ CARS = {
                    face='chrome', grille_style='slats', grille_n=3, grille_w=0.4, crown=0.06, crown_w=0.7, arch_shape=1.0, soft=2.2, tumble=0.05, rear_rake=0.1, ws_split=True, wheel='cap',
                    band=(0.82, 1.3), wood=True, seats='bench', shifter='floor', gearbox='manual', colours=dict(second=(150, 96, 56), rim=(170, 52, 48))),
 }
+
+# ---------------------------------------------------------------------------------------------------------------------
+# THE INSIDE AND THE COLOUR, AS THE REAL ONE'S (2026-11-16 — the user: "in first person the cars have no gear parts, no
+# gear change, no speedometer — check how each car is online, then make the inside like the original; and the default
+# colour must be the car's own in real life"). docs/VEHICLES.md §6 has each one's notes and what was found online.
+#   COCKPIT[id]: dash 'metal' (painted steel, the factory colour) | 'pad' | 'wood'; `cluster` where the instruments are
+#   ('driver': ahead of him, seen through the wheel — or at='centre': the panel in the middle of the dash) and its rim;
+#   `gauges` (kind, x, z from the cluster's middle, radius, its scale); the steering `wheel` (radius, rim, spokes in
+#   degrees, a horn ring, ivory); `shift` the floor lever's length and crank; `transfer` the levers beside it (the first
+#   is the range lever: it moves; knobs black / red / yellow / a T); `hand` the handbrake's lever (none: a foot pedal or
+#   a pull under the dash); the dash's pull `knobs`, a `radio` stack, the `glovebox` (its x; 0: none), a `grab` handle.
+#   PAINT[id]: the factory colour (sRGB), its name, a note.
+def G(kind, x, z, r, **o): return (kind, x, z, r, o)
+def pod5(unit, top, r=0.052, small=0.02, dx=0.088, dz=0.024):
+    """One big speedometer between two pairs of small gauges (fuel, temperature | oil, charge): the 50s–70s trucks'."""
+    return [G('speed', 0, 0, r, max=top, unit=unit), G('fuel', -dx, dz, small), G('temp', -dx, -dz, small), G('oil', dx, dz, small), G('volt', dx, -dz, small)]
+TRUCK_WHEEL = dict(r=0.215, rim=0.013, spokes=(30, 150, 270), boss=0.04)                 # big, thin-rimmed, three spokes
+V_WHEEL = dict(r=0.195, rim=0.015, spokes=(205, 335), boss=0.05)                         # two spokes in a shallow V
+TWO_LEVERS = [dict(x=0.1, len=0.34, back=0.06), dict(x=0.17, len=0.34, back=0.06)]       # the range lever, the front axle's
+SQUARE_BODY = dict(dash='pad', gauges=[G('volt', -0.135, 0, 0.02), G('speed', -0.062, 0, 0.048, max=85, unit='mph'), G('fuel', 0.062, 0, 0.048, a0=205, sweep=-230), G('oil', 0.135, 0.023, 0.02), G('temp', 0.135, -0.023, 0.02)],
+                   wheel=dict(r=0.195, rim=0.017, spokes=(0, 180), spoke_w=0.07, boss=0.06), transfer=[dict(x=0.02, y=0.0, len=0.3, back=0.06)])
+FORTY = dict(dash='metal', cluster=dict(bezel='chrome'), wheel=dict(r=0.205, rim=0.014, spokes=(205, 335), boss=0.045), shift=dict(len=0.52, back=0.15),
+             transfer=[dict(x=0.1, y=-0.02, len=0.32, back=0.06)], knobs=4, radio=False, grab=True)
+COCKPIT = {
+    # Power Wagon: a steel dash, one round speedometer between four small gauges; a long floor lever, the transfer
+    # case's two levers and the handbrake's beside it; a big thin three-spoke wheel
+    'powerline': dict(dash='metal', cluster=dict(bezel='chrome'), gauges=pod5('mph', 80, r=0.05), wheel=TRUCK_WHEEL, shift=dict(len=0.56, back=0.16), transfer=TWO_LEVERS,
+                      hand=dict(kind='tall', x=0.26, len=0.5), knobs=4, radio=False),
+    # the square-body GMs (1973–87): a padded dash; the speedometer (85 mph) in the left pod, the fuel gauge in the right,
+    # small gauges beside them; an automatic on the COLUMN; one transfer lever on the floor; the parking brake a pedal
+    'sierra': SQUARE_BODY, 'squarebody': SQUARE_BODY,
+    # Bronco (1966–77): a steel dash in the body's colour, the speedometer in a chrome-rimmed pod with the small gauges;
+    # three speeds on the COLUMN; the Dana 20's T-handle on the floor
+    'bronc': dict(dash='metal', cluster=dict(bezel='chrome'), gauges=pod5('mph', 100), wheel=dict(r=0.205, rim=0.014, spokes=(30, 150, 270), boss=0.045),
+                  transfer=[dict(x=0.0, y=0.0, len=0.3, back=0.05, knob_kind='T')], knobs=3, radio=False),
+    # Scout 800: a steel dash, its instruments in the CENTRE (an 80 mph speedometer between the small gauges); a floor
+    # lever and one transfer lever
+    'scoutling': dict(dash='metal', cluster=dict(at='centre', bezel='chrome'), gauges=pod5('mph', 80, r=0.05), wheel=dict(r=0.205, rim=0.013, spokes=(0, 180), boss=0.04),
+                      shift=dict(len=0.47, back=0.12), transfer=[dict(x=0.1, len=0.3, back=0.05)], hand=dict(kind='floor', y=-1.02), knobs=4, radio=False),
+    # Niva: black plastic; a speedometer (180 km/h) and a rev counter side by side, small gauges either side; THREE levers
+    # in the tunnel — the gears, and behind it the range and the centre lock; the handbrake between the seats
+    'steppe': dict(dash='pad', gauges=[G('temp', -0.132, 0.023, 0.02), G('fuel', -0.132, -0.023, 0.02), G('speed', -0.056, 0, 0.046, max=180, unit='kmh'), G('rpm', 0.056, 0, 0.046, max=8000, red=6000),
+                                         G('oil', 0.132, 0.023, 0.02), G('volt', 0.132, -0.023, 0.02)],
+                   wheel=V_WHEEL, shift=dict(len=0.4, back=0.1), transfer=[dict(x=-0.035, y=-0.13, len=0.2, back=0.02), dict(x=0.035, y=-0.13, len=0.2, back=0.02)], hand=dict(kind='floor', y=-1.02)),
+    # Series IIA: the bare steel bulkhead, a black panel in its CENTRE with two dials (the speedometer, the fuel / charge
+    # one) and warning lamps; a long cranked gear lever, the RED knob (high / low) and the YELLOW one (four-wheel drive);
+    # the handbrake's lever by the driver's leg; a big thin three-spoke wheel; no glovebox — an open shelf
+    'eightyeight': dict(dash='metal', cluster=dict(at='centre', x=0.02, lamps=3), gauges=[G('fuel', -0.068, 0, 0.042, a0=200, sweep=-220), G('speed', 0.068, 0, 0.05, max=90, unit='mph')],
+                        wheel=dict(r=0.215, rim=0.012, spokes=(30, 150, 270), spoke_w=0.03, boss=0.04), shift=dict(len=0.52, back=0.16),
+                        transfer=[dict(x=0.13, y=0.02, len=0.3, back=0.05, knob='red'), dict(x=0.07, y=0.1, len=0.22, back=0.0, knob='yellow')],
+                        hand=dict(kind='tall', x=-0.12, y=-0.2, len=0.3), radio=False, glovebox=0),
+    # Defender 90: a black binnacle ahead — the speedometer, the fuel and temperature gauges, a block of warning lamps;
+    # a long gear lever, the short transfer lever ahead of it; a four-spoke wheel; the grab handle
+    'guardian': dict(dash='pad', cluster=dict(lamps=4), gauges=[G('speed', -0.04, 0, 0.05, max=100, unit='mph'), G('fuel', 0.045, 0.024, 0.021), G('temp', 0.045, -0.024, 0.021)],
+                     wheel=dict(r=0.205, rim=0.016, spokes=(20, 160, 200, 340), spoke_w=0.035), shift=dict(len=0.46, back=0.13), transfer=[dict(x=-0.07, y=0.1, len=0.2, back=0.0)],
+                     hand=dict(kind='floor', y=-1.0), grab=True),
+    # G-Class W460: a big speedometer (180 km/h) between the fuel gauge and the rev counter; the gear lever, the transfer
+    # lever and the two differential locks' pulls in the tunnel; a thick-rimmed four-spoke wheel
+    'gelande': dict(dash='pad', gauges=[G('fuel', -0.098, 0, 0.034, a0=200, sweep=-220), G('speed', 0, 0, 0.052, max=180, unit='kmh'), G('rpm', 0.098, 0, 0.034, max=7000, red=6200)],
+                    wheel=dict(r=0.205, rim=0.018, spokes=(10, 170, 235, 305), spoke_w=0.04, boss=0.065), shift=dict(len=0.4, back=0.1),
+                    transfer=[dict(x=0.08, y=-0.04, len=0.24), dict(x=-0.15, y=-0.16, len=0.1, back=0.0, knob_kind='T'), dict(x=-0.04, y=-0.16, len=0.1, back=0.0, knob_kind='T')],
+                    hand=dict(kind='floor', y=-1.02), grab=True),
+    # FJ40 / FJ45: a steel dash in the body's colour, the round speedometer ahead with its small gauges, a row of pull
+    # knobs, the grab handle; a long gear lever and the transfer lever; the parking brake a pull under the dash
+    'forty': dict(FORTY, gauges=pod5('mph', 100, r=0.055)), 'fortyfive': dict(FORTY, gauges=pod5('kmh', 160, r=0.055)),
+    # BJ70: grey plastic, a speedometer (180 km/h) and four small gauges in a binnacle; five gears on the floor
+    'seventy': dict(dash='pad', gauges=[G('speed', -0.05, 0, 0.05, max=180, unit='kmh'), G('fuel', 0.04, 0.024, 0.021), G('temp', 0.04, -0.024, 0.021), G('oil', 0.088, 0.024, 0.021), G('volt', 0.088, -0.024, 0.021)],
+                    wheel=dict(V_WHEEL, boss=0.055), shift=dict(len=0.43, back=0.12), transfer=[dict(x=0.08, y=-0.04, len=0.26)], hand=dict(kind='floor', y=-1.0), grab=True),
+    # Iltis: an olive steel dash, one speedometer and a fuel gauge, a row of lamps; the gear lever and the front axle's
+    'lynx': dict(dash='metal', cluster=dict(lamps=4), gauges=[G('speed', 0, 0, 0.046, max=160, unit='kmh'), G('fuel', 0.078, 0, 0.022)], wheel=V_WHEEL, shift=dict(len=0.42, back=0.12),
+                 transfer=[dict(x=0.08, y=-0.03, len=0.26)], hand=dict(kind='floor', y=-1.0), radio=False, glovebox=0, knobs=3),
+    # Explorer (1991): a soft modern dash — the rev counter, the speedometer (85 mph), four small gauges; five gears on a
+    # short floor lever; four-wheel drive by push-button, the parking brake a pedal
+    'wayfarer': dict(dash='pad', cluster=dict(x=-0.01), gauges=[G('rpm', -0.1, 0, 0.042, max=6000, red=5000), G('speed', 0, 0, 0.05, max=85, unit='mph'), G('fuel', 0.085, 0.023, 0.02), G('temp', 0.085, -0.023, 0.02),
+                                                                  G('oil', 0.13, 0.023, 0.02), G('volt', 0.13, -0.023, 0.02)],
+                     wheel=dict(r=0.19, rim=0.019, spokes=(15, 165, 200, 340), spoke_w=0.045, boss=0.07), shift=dict(len=0.3, back=0.06)),
+    # Wagoneer (1963): a steel dash, a rectangular chrome-rimmed cluster — the speedometer between the fuel and the
+    # temperature gauges; an ivory two-spoke wheel with a chrome horn ring; three speeds on the COLUMN
+    'wagon63': dict(dash='metal', cluster=dict(bezel='chrome'), gauges=[G('fuel', -0.082, 0, 0.026), G('speed', 0, 0, 0.046, max=110, unit='mph'), G('temp', 0.082, 0, 0.026)],
+                    wheel=dict(r=0.21, rim=0.013, spokes=(0, 180), ring=True, ivory=True, boss=0.04), transfer=[dict(x=0.0, y=0.0, len=0.3, back=0.05)], knobs=4, radio=False),
+    # Grand Wagoneer (1986): a wood fascia, the speedometer (85 mph) and four gauges; an automatic on the COLUMN; the
+    # low range's small lever by the seat
+    'grandwagon': dict(dash='wood', gauges=[G('speed', -0.055, 0, 0.048, max=85, unit='mph'), G('fuel', 0.03, 0.024, 0.021), G('temp', 0.03, -0.024, 0.021), G('oil', 0.08, 0.024, 0.021), G('volt', 0.08, -0.024, 0.021)],
+                       wheel=dict(r=0.19, rim=0.019, spokes=(0, 180), spoke_w=0.06, boss=0.065), transfer=[dict(x=-0.16, y=0.0, len=0.16, back=0.0)]),
+    # TP21: a green steel dash, the speedometer (120 km/h) and its gauges; a long lever and two more
+    'boar': dict(dash='metal', gauges=pod5('kmh', 120, r=0.05), wheel=dict(TRUCK_WHEEL, r=0.225), shift=dict(len=0.56, back=0.16), transfer=TWO_LEVERS, hand=dict(kind='tall', x=0.26, len=0.5),
+                 knobs=3, radio=False, glovebox=0),
+    # R-140 Travelall: a steel dash, two round dials in bright rings — the speedometer, and the four gauges; a long lever
+    'woodbox': dict(dash='metal', cluster=dict(bezel='chrome', rings=True), gauges=[G('speed', -0.06, 0, 0.05, max=100, unit='mph'), G('fuel', 0.036, 0.025, 0.021), G('temp', 0.086, 0.025, 0.021),
+                                                                                     G('oil', 0.036, -0.025, 0.021), G('volt', 0.086, -0.025, 0.021)],
+                    wheel=dict(TRUCK_WHEEL, r=0.22), shift=dict(len=0.56, back=0.16), transfer=TWO_LEVERS, hand=dict(kind='tall', x=0.26, len=0.5), knobs=4, radio=False),
+}
+PAINT = {
+    'powerline': ((76, 95, 82), 'Seawolf Submarine Green', "the Power Wagon's standard colour from 1946"),
+    'sierra': ((168, 50, 43), 'Apple Red', 'over a Frost White band: the square-body two-tone'),
+    'fortyfive': ((203, 183, 140), 'Dune Beige', "Toyota's 416, under a white cab roof"),
+    'squarebody': ((43, 65, 105), 'Midnight Blue', 'under a white top'),
+    'bronc': ((147, 187, 216), 'Sky View Blue', "a 1970 Bronco colour, under a white top"),
+    'scoutling': ((191, 148, 64), 'Apache Gold', "a Scout 800 colour, under a white top"),
+    'steppe': ((216, 118, 44), 'Orange', 'the bright Soviet orange of the first Nivas'),
+    'eightyeight': ((51, 80, 59), 'Bronze Green', "Land Rover's own deep green, a sand canvas tilt"),
+    'guardian': ((79, 131, 179), 'Arles Blue', 'a 1991 Defender colour, under a white roof'),
+    'gelande': ((226, 220, 203), 'Cream White', 'the early G-Class in its pale cream'),
+    'forty': ((181, 58, 46), 'Freeborn Red', "Toyota's 309, under a white roof"),
+    'seventy': ((236, 234, 226), 'White', "Toyota's plain white, the 70 series' commonest"),
+    'lynx': ((85, 78, 54), 'Gelboliv', "the Bundeswehr's RAL 6014 yellow-olive"),
+    'wayfarer': ((31, 77, 60), 'Deep Jewel Green', 'a 1991 Explorer colour, over a sandalwood band'),
+    'wagon63': ((125, 191, 166), 'Spruce Tip Green', 'a pale 1963 Wagoneer green'),
+    'grandwagon': ((107, 39, 49), 'Garnet', 'dark red over the wood-grain strip'),
+    'boar': ((86, 96, 75), 'Army Green', "the Swedish army's grey-green"),
+    'woodbox': ((154, 47, 41), 'Harvester Red', "International's own red, the body framed in wood"),
+}
+for k_ in CARS: CARS[k_].update(cockpit=COCKPIT[k_], paint=PAINT[k_][0], paint_name=PAINT[k_][1], paint_note=PAINT[k_][2])
 
 def log(*a): print('[cars]', *a, flush=True)
 JS = os.path.join(FRONTEND, 'src', 'gameplay', 'vehicle', 'cars.json')

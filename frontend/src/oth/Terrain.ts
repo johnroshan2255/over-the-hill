@@ -376,7 +376,7 @@ export class Terrain {
   get patches(): number { return this.count }
 }
 
-/** COST TESTS (docs/PERF.md, scripts/harness/abq.mjs): ?tcut=flat,relief,atmos — a part of the ground's fragment
+/** COST TESTS (docs/PERF.md, scripts/harness/abq.mjs): ?tcut=flat,relief,atmos (… nosurf, surfonly, nonorm, nonb, nobank, nopave: 2026-11-16) — a part of the ground's fragment
  *  shader cut (TC_FLAT: a plain colour, hazed — the floor any paint can reach); nothing is cut without it. */
 function tcut(): Record<string, string> {
   const o: Record<string, string> = {}
@@ -1160,6 +1160,8 @@ void main() {
   gSkinIn = vSkin.x;
   gSkinRock = max(vSkin.y, smoothstep(0.2, 0.5, 1.0 - Ns.y) * vSkin.x);
   float ckS = caveK(vWorld) * vSkin.x;
+#elif defined(TC_NONORM)
+  vec3 Ns = vec3(0.0, 1.0, 0.0);
 #else
   vec3 Ns = groundNormal(xz, box);
 #endif
@@ -1178,6 +1180,9 @@ void main() {
   //  creases lost; past the reach, the far level holds them too: there a texel is under a pixel's worth of haze)
   Surf s;
   bool cached = false;
+#ifdef TC_NOSURF
+  s.col = vec3(0.12, 0.13, 0.06); s.rock = 0.0; s.rough = 0.9; s.aoB = 1.0; s.grassy = 1.0; s.under = 0.5; s.relief = 0.0; s.trail = 0.0; s.bog = 0.0; s.pudN = 0.0; s.dots = 0.0; s.flower = 0.0; s.rip = vec2(0.0); s.shape = 0.0;
+#else
 #ifdef GC_ON
   float Lf = farG ? GC_LEVELS : gcLevel(xz, foot);
   if (steep < GC_STEEP || Lf >= GC_LEVELS) {
@@ -1194,13 +1199,21 @@ void main() {
     vec3 Nf = normalize(cross(dpx, dpy));
     s = surfaceAt(xz, vWorld.y, Ns, abs(Nf.y), foot, farG, box, farDots, beyond, uWet > 0.05);
   }
+#endif
+#ifdef TC_SURFONLY
+  gl_FragColor = vec4(applyAtmos(s.col * (0.4 + 0.6 * max(Ns.y, 0.0)), vWorld), 1.0);
+#else
   vec3 col = s.col;
   vec3 N = Ns;
 #if defined(OTH_PAVE) && !defined(OTH_SKIN)
   // THE PAVING (PAVE_GLSL): the places' flagstones, live over the ground — where the paving's mask reaches
   // (only within a near paved place's reach — an ALU test first, no texture read elsewhere)
   vec4 PF;
+#ifdef TC_NOPAVE
+  if (false) {
+#else
   if (box && paveFrame(xz, PF)) {
+#endif
     float pmk = texture(uTrail, gridUv(uInGrid, xz)).g;
     if (pmk > 0.004) {
       float pk = paveAt(xz, pmk, foot, PF, col, N, s.rough);
@@ -1218,7 +1231,11 @@ void main() {
   // (the four nearest — uShore: x, z, reach, level) the ground from its waterline to ~30 cm above it darkened and a
   // little glossy, its top edge ragged — the bed under the water as wet (the water's own sheet can't draw it: the bank
   // stands over its plane)
+#ifdef TC_NOBANK
+  if (false) {
+#else
   if (box) {
+#endif
     vec4 S0 = uShore0, S1 = uShore1, S2 = uShore2, S3 = uShore3;
     float lv = -1e6;
     if (dot(xz - S0.xy, xz - S0.xy) < S0.z * S0.z) lv = S0.w;
@@ -1227,8 +1244,14 @@ void main() {
     else if (dot(xz - S3.xy, xz - S3.xy) < S3.z * S3.z) lv = S3.w;
     float up = vWorld.y - lv;
     if (up < 0.5) {
-      float rag = texture(uNoise, xz * (1.0 / 3.3)).g;
-      float wet = 1.0 - smoothstep(0.1 + 0.12 * rag, 0.3 + 0.14 * rag, up);
+      // (the ragged edge's noise read only where it can change anything — 2026-11-16, docs/PERF.md: the edge lies
+      //  between 0.1 and 0.44 m up, so at up ≤ 0.1 — the whole bed under the water, and the first 10 cm of bank — the
+      //  smoothstep is 0 whatever the noise says and wet is exactly 1. It was read on every pixel of a lake's floor.)
+      float wet = 1.0;
+      if (up > 0.1) {
+        float rag = texture(uNoise, xz * (1.0 / 3.3)).g;
+        wet = 1.0 - smoothstep(0.1 + 0.12 * rag, 0.3 + 0.14 * rag, up);
+      }
       col *= 1.0 - 0.36 * wet * (1.0 - s.rock * 0.4);
       s.rough = mix(s.rough, 0.5, wet * 0.7);
       s.grassy *= 1.0 - wet;
@@ -1281,7 +1304,11 @@ void main() {
   vec3 lit = col * (1.0 - 0.14 * under);
 #ifdef OTH_SHAPE
   // the small shapes' light: the hollows, and the bumps' slopes against the hill's (its normal ~30 m across)
+#ifdef TC_NONB
+  vec3 Nb = Ns;
+#else
   vec3 Nb = box ? normalize(mix(unpackN(texture(uNIn, gridUv(uInGrid, xz), 4.0).rg), Ns, boxRimN(xz))) : Ns;
+#endif
 #ifdef OTH_SKIN
   lit *= mix(shapeLight(s.shape, Ns, Nb, sun), 1.0, vSkin.x); // (outside as the ground; none in the cave)
 #else
@@ -1340,6 +1367,7 @@ void main() {
   gl_FragColor = vec4(c, 1.0);
 #else
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
+#endif
 #endif
 #endif
   #include <tonemapping_fragment>

@@ -66,9 +66,15 @@
 
 /* garage: the cars, the paint */
 .oh-cars { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; }
-.oh-car { padding: 14px 16px 12px; background: rgba(244, 239, 230, 0.06); border: 2px solid transparent; text-align: left; }
+.oh-car { padding: 14px 16px 12px; background: rgba(244, 239, 230, 0.06); border: 2px solid transparent; text-align: left; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; }
 .oh-car.sel { border-color: var(--oh-ink); background: rgba(244, 239, 230, 0.12); }
 .oh-car.chosen { border-color: var(--oh-accent); }
+/* (the ride's picture — 2026-11-16: over its name in the tile, larger at the head of the side panel) */
+.oh-car-img, .oh-side-img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; background: #18181b; }
+.oh-car-img { margin: -14px -16px 10px; width: calc(100% + 32px); max-width: none; }
+.oh-side-img { margin: 0 0 12px; border: 2px solid rgba(244, 239, 230, 0.14); }
+/* (a phone's side panel is a third of the screen: the tiles' own pictures are enough there) */
+@media (max-width: 760px), (max-height: 560px) { .oh-side-img { display: none; } }
 .oh-car h3 { margin: 0 0 4px; font-family: var(--oh-title); font-weight: 400; font-size: clamp(20px, 2.2vw, 28px); letter-spacing: 0.03em; text-transform: uppercase; }
 .oh-car p { margin: 0; font-size: 13px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--oh-dim); }
 .oh-tag { display: inline-block; margin-top: 8px; padding: 2px 8px 1px; background: var(--oh-accent); color: var(--oh-accent-ink); font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
@@ -76,7 +82,7 @@
 .oh-swatch { aspect-ratio: 1; border: 3px solid rgba(0, 0, 0, 0.25); }
 .oh-swatch.chosen { border-color: var(--oh-ink); box-shadow: inset 0 0 0 3px rgba(0, 0, 0, 0.55); }
 .oh-swatch.sel { outline: 3px solid var(--oh-accent); outline-offset: 1px; }
-.oh-swatch.own { background: repeating-linear-gradient(45deg, #2a2a2e 0 6px, #3a3a40 6px 12px); color: var(--oh-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; }
+.oh-swatch.own { color: var(--oh-ink); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; }
 
 /* the side panel: what the selection means */
 .oh-side h4 { margin: 0 0 6px; font-family: var(--oh-title); font-weight: 400; font-size: clamp(22px, 2.4vw, 30px); letter-spacing: 0.03em; text-transform: uppercase; }
@@ -100,8 +106,7 @@
 /* coins (the garage / journal header), a paint's price, a camp's title */
 .oh-coins { margin-left: auto; padding: 8px 14px 6px; background: var(--oh-panel); color: var(--oh-accent); font-family: var(--oh-title); font-size: clamp(18px, 2vw, 24px); letter-spacing: 0.04em; white-space: nowrap; }
 .oh-swatch { position: relative; }
-.oh-swatch.locked { filter: saturate(0.55) brightness(0.7); }
-.oh-price { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 0; background: rgba(8, 8, 10, 0.78); color: var(--oh-accent); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+.oh-price { position: absolute; left: 0; right: 0; bottom: 0; padding: 1px 0; background: rgba(8, 8, 10, 0.78); color: var(--oh-accent); font-size: 9px; font-weight: 700; letter-spacing: 0.04em; }
 .oh-note { color: var(--oh-accent) !important; font-weight: 700; }
 .oh-brand-camp h1 { font-size: clamp(36px, 6vw, 76px); }
 

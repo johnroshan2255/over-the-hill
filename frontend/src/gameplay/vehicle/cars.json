@@ -1,11 +1,68 @@
 {
  "boar": {
-  "bytes": 1945768,
-  "bytesSmall": 1755904,
+  "bytes": 2012772,
+  "bytesSmall": 1822836,
   "exhaust": [
    -0.62,
    0.39,
    2.335
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 120,
+    "r": 0.05,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "kmh"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.16,
@@ -15,12 +72,15 @@
   "hip": 1.08,
   "hub": [
    -0.41708,
-   1.44,
+   1.37,
    -0.325
   ],
   "length": 4.691,
+  "paint": "#56604b",
+  "paintName": "Army Green",
+  "paintNote": "the Swedish army's grey-green",
   "roofInner": 1.96,
-  "triangles": 29115,
+  "triangles": 30473,
   "wheelPos": [
    [
     -0.755,
@@ -46,12 +106,69 @@
   "wheelRadius": 0.45
  },
  "bronc": {
-  "bytes": 1846232,
-  "bytesSmall": 1683136,
+  "bytes": 1885260,
+  "bytesSmall": 1722100,
   "exhaust": [
    -0.62,
    0.32,
    1.922
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 100,
+    "r": 0.052,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.085,
@@ -61,12 +178,15 @@
   "hip": 1.01,
   "hub": [
    -0.38271,
-   1.37,
+   1.3,
    -0.2985
   ],
   "length": 4.03,
+  "paint": "#93bbd8",
+  "paintName": "Sky View Blue",
+  "paintNote": "a 1970 Bronco colour, under a white top",
   "roofInner": 1.89,
-  "triangles": 27684,
+  "triangles": 28774,
   "wheelPos": [
    [
     -0.725,
@@ -92,12 +212,36 @@
   "wheelRadius": 0.38
  },
  "eightyeight": {
-  "bytes": 1955908,
-  "bytesSmall": 1799236,
+  "bytes": 1974188,
+  "bytesSmall": 1817472,
   "exhaust": [
    -0.62,
    0.32,
    1.823
+  ],
+  "gauges": [
+   {
+    "a0": 3.4907,
+    "face": "black",
+    "k": 0,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.042,
+    "red": 0,
+    "sweep": -3.8397,
+    "unit": ""
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 1,
+    "kind": "speed",
+    "max": 90,
+    "r": 0.05,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   }
   ],
   "half": {
    "x": 1.05,
@@ -107,12 +251,15 @@
   "hip": 1.01,
   "hub": [
    -0.36667,
-   1.37,
+   1.3,
    -0.2275
   ],
   "length": 3.698,
+  "paint": "#33503b",
+  "paintName": "Bronze Green",
+  "paintNote": "Land Rover's own deep green, a sand canvas tilt",
   "roofInner": 1.89,
-  "triangles": 29518,
+  "triangles": 30016,
   "wheelPos": [
    [
     -0.655,
@@ -138,12 +285,69 @@
   "wheelRadius": 0.38
  },
  "forty": {
-  "bytes": 1997888,
-  "bytesSmall": 1826744,
+  "bytes": 2056408,
+  "bytesSmall": 1885292,
   "exhaust": [
    -0.62,
    0.32,
    1.957
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 100,
+    "r": 0.055,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.045,
@@ -153,12 +357,15 @@
   "hip": 1.01,
   "hub": [
    -0.36437,
-   1.37,
+   1.3,
    -0.2625
   ],
   "length": 3.977,
+  "paint": "#b53a2e",
+  "paintName": "Freeborn Red",
+  "paintNote": "Toyota's 309, under a white roof",
   "roofInner": 1.89,
-  "triangles": 30434,
+  "triangles": 32120,
   "wheelPos": [
    [
     -0.7,
@@ -184,12 +391,69 @@
   "wheelRadius": 0.38
  },
  "fortyfive": {
-  "bytes": 1815204,
-  "bytesSmall": 1658928,
+  "bytes": 1895152,
+  "bytesSmall": 1738788,
   "exhaust": [
    -0.62,
    0.33,
    2.585
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 160,
+    "r": 0.055,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "kmh"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.06,
@@ -199,12 +463,15 @@
   "hip": 1.02,
   "hub": [
    -0.37125,
-   1.38,
+   1.31,
    -0.595
   ],
   "length": 4.911,
+  "paint": "#cbb78c",
+  "paintName": "Dune Beige",
+  "paintNote": "Toyota's 416, under a white cab roof",
   "roofInner": 1.9,
-  "triangles": 28065,
+  "triangles": 29991,
   "wheelPos": [
    [
     -0.705,
@@ -230,12 +497,47 @@
   "wheelRadius": 0.39
  },
  "gelande": {
-  "bytes": 1900180,
-  "bytesSmall": 1752312,
+  "bytes": 1966480,
+  "bytesSmall": 1818560,
   "exhaust": [
    -0.62,
    0.33,
    2.13
+  ],
+  "gauges": [
+   {
+    "a0": 3.4907,
+    "face": "black",
+    "k": 0,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.034,
+    "red": 0,
+    "sweep": -3.8397,
+    "unit": ""
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 1,
+    "kind": "speed",
+    "max": 180,
+    "r": 0.052,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "kmh"
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 2,
+    "kind": "rpm",
+    "max": 7000,
+    "r": 0.034,
+    "red": 6200,
+    "sweep": -4.7124,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.06,
@@ -245,12 +547,15 @@
   "hip": 1.02,
   "hub": [
    -0.37125,
-   1.38,
+   1.31,
    -0.32
   ],
   "length": 4.28,
+  "paint": "#e2dccb",
+  "paintName": "Cream White",
+  "paintNote": "the early G-Class in its pale cream",
   "roofInner": 1.9,
-  "triangles": 29895,
+  "triangles": 31241,
   "wheelPos": [
    [
     -0.713,
@@ -276,12 +581,69 @@
   "wheelRadius": 0.39
  },
  "grandwagon": {
-  "bytes": 1848292,
-  "bytesSmall": 1680272,
+  "bytes": 1885920,
+  "bytesSmall": 1717840,
   "exhaust": [
    -0.62,
    0.32,
    2.499
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 85,
+    "r": 0.048,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.16,
@@ -291,12 +653,15 @@
   "hip": 1.01,
   "hub": [
    -0.41708,
-   1.37,
+   1.3,
    -0.3705
   ],
   "length": 4.751,
+  "paint": "#6b2731",
+  "paintName": "Garnet",
+  "paintNote": "dark red over the wood-grain strip",
   "roofInner": 1.89,
-  "triangles": 27537,
+  "triangles": 28391,
   "wheelPos": [
    [
     -0.74,
@@ -322,12 +687,47 @@
   "wheelRadius": 0.38
  },
  "guardian": {
-  "bytes": 1970000,
-  "bytesSmall": 1815620,
+  "bytes": 2044684,
+  "bytesSmall": 1890328,
   "exhaust": [
    -0.62,
    0.34,
    1.96
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 100,
+    "r": 0.05,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.105,
@@ -337,12 +737,15 @@
   "hip": 1.03,
   "hub": [
    -0.39187,
-   1.39,
+   1.32,
    -0.29
   ],
   "length": 4.02,
+  "paint": "#4f83b3",
+  "paintName": "Arles Blue",
+  "paintNote": "a 1991 Defender colour, under a white roof",
   "roofInner": 1.91,
-  "triangles": 31322,
+  "triangles": 32980,
   "wheelPos": [
    [
     -0.743,
@@ -368,12 +771,36 @@
   "wheelRadius": 0.4
  },
  "lynx": {
-  "bytes": 1632600,
-  "bytesSmall": 1489320,
+  "bytes": 1693368,
+  "bytesSmall": 1550088,
   "exhaust": [
    -0.62,
    0.3,
    1.862
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 160,
+    "r": 0.046,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "kmh"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.022,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 0.97,
@@ -383,12 +810,15 @@
   "hip": 0.99,
   "hub": [
    -0.33,
-   1.35,
+   1.28,
    -0.1585
   ],
   "length": 3.901,
+  "paint": "#554e36",
+  "paintName": "Gelboliv",
+  "paintNote": "the Bundeswehr's RAL 6014 yellow-olive",
   "roofInner": 1.87,
-  "triangles": 25760,
+  "triangles": 27240,
   "wheelPos": [
    [
     -0.625,
@@ -414,12 +844,69 @@
   "wheelRadius": 0.36
  },
  "powerline": {
-  "bytes": 1868288,
-  "bytesSmall": 1700480,
+  "bytes": 1949028,
+  "bytesSmall": 1781120,
   "exhaust": [
    -0.62,
    0.39,
    2.53
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 80,
+    "r": 0.05,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.205,
@@ -429,12 +916,15 @@
   "hip": 1.08,
   "hub": [
    -0.43771,
-   1.44,
+   1.37,
    -0.5
   ],
   "length": 5.061,
+  "paint": "#4c5f52",
+  "paintName": "Seawolf Submarine Green",
+  "paintNote": "the Power Wagon's standard colour from 1946",
   "roofInner": 1.96,
-  "triangles": 29062,
+  "triangles": 30856,
   "wheelPos": [
    [
     -0.82,
@@ -460,12 +950,69 @@
   "wheelRadius": 0.45
  },
  "scoutling": {
-  "bytes": 1652040,
-  "bytesSmall": 1491560,
+  "bytes": 1722144,
+  "bytesSmall": 1561664,
   "exhaust": [
    -0.62,
    0.31,
    1.87
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 80,
+    "r": 0.05,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.07,
@@ -475,12 +1022,15 @@
   "hip": 1.0,
   "hub": [
    -0.37583,
-   1.36,
+   1.29,
    -0.37
   ],
   "length": 3.898,
+  "paint": "#bf9440",
+  "paintName": "Apache Gold",
+  "paintNote": "a Scout 800 colour, under a white top",
   "roofInner": 1.88,
-  "triangles": 24699,
+  "triangles": 26249,
   "wheelPos": [
    [
     -0.7,
@@ -506,12 +1056,69 @@
   "wheelRadius": 0.37
  },
  "seventy": {
-  "bytes": 1873500,
-  "bytesSmall": 1724972,
+  "bytes": 1940696,
+  "bytesSmall": 1792100,
   "exhaust": [
    -0.62,
    0.33,
    1.985
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 180,
+    "r": 0.05,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "kmh"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.055,
@@ -521,12 +1128,15 @@
   "hip": 1.02,
   "hub": [
    -0.36896,
-   1.38,
+   1.31,
    -0.275
   ],
   "length": 4.11,
+  "paint": "#eceae2",
+  "paintName": "White",
+  "paintNote": "Toyota's plain white, the 70 series' commonest",
   "roofInner": 1.9,
-  "triangles": 27966,
+  "triangles": 29284,
   "wheelPos": [
    [
     -0.705,
@@ -552,12 +1162,69 @@
   "wheelRadius": 0.39
  },
  "sierra": {
-  "bytes": 1745724,
-  "bytesSmall": 1586072,
+  "bytes": 1796708,
+  "bytesSmall": 1637060,
   "exhaust": [
    -0.62,
    0.36,
    2.478
+  ],
+  "gauges": [
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 0,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 1,
+    "kind": "speed",
+    "max": 85,
+    "r": 0.048,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 3.5779,
+    "face": "black",
+    "k": 2,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.048,
+    "red": 0,
+    "sweep": -4.0143,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.22,
@@ -567,12 +1234,15 @@
   "hip": 1.05,
   "hub": [
    -0.44458,
-   1.41,
+   1.34,
    -0.5825
   ],
   "length": 5.011,
+  "paint": "#a8322b",
+  "paintName": "Apple Red",
+  "paintNote": "over a Frost White band: the square-body two-tone",
   "roofInner": 1.93,
-  "triangles": 26165,
+  "triangles": 27103,
   "wheelPos": [
    [
     -0.83,
@@ -598,12 +1268,69 @@
   "wheelRadius": 0.42
  },
  "squarebody": {
-  "bytes": 1751368,
-  "bytesSmall": 1583512,
+  "bytes": 1802164,
+  "bytesSmall": 1634308,
   "exhaust": [
    -0.62,
    0.36,
    2.308
+  ],
+  "gauges": [
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 0,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 1,
+    "kind": "speed",
+    "max": 85,
+    "r": 0.048,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 3.5779,
+    "face": "black",
+    "k": 2,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.048,
+    "red": 0,
+    "sweep": -4.0143,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.22,
@@ -613,12 +1340,15 @@
   "hip": 1.05,
   "hub": [
    -0.44458,
-   1.41,
+   1.34,
    -0.4425
   ],
   "length": 4.701,
+  "paint": "#2b4169",
+  "paintName": "Midnight Blue",
+  "paintNote": "under a white top",
   "roofInner": 1.93,
-  "triangles": 25796,
+  "triangles": 26734,
   "wheelPos": [
    [
     -0.83,
@@ -644,12 +1374,80 @@
   "wheelRadius": 0.42
  },
  "steppe": {
-  "bytes": 1667448,
-  "bytesSmall": 1500224,
+  "bytes": 1735192,
+  "bytesSmall": 1567968,
   "exhaust": [
    -0.62,
    0.285,
    1.84
+  ],
+  "gauges": [
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 0,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 2,
+    "kind": "speed",
+    "max": 180,
+    "r": 0.046,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "kmh"
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 3,
+    "kind": "rpm",
+    "max": 8000,
+    "r": 0.046,
+    "red": 6000,
+    "sweep": -4.7124,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 5,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.05,
@@ -659,12 +1457,15 @@
   "hip": 0.975,
   "hub": [
    -0.36667,
-   1.335,
+   1.265,
    -0.265
   ],
   "length": 3.731,
+  "paint": "#d8762c",
+  "paintName": "Orange",
+  "paintNote": "the bright Soviet orange of the first Nivas",
   "roofInner": 1.855,
-  "triangles": 24289,
+  "triangles": 25465,
   "wheelPos": [
    [
     -0.71,
@@ -690,12 +1491,47 @@
   "wheelRadius": 0.345
  },
  "wagon63": {
-  "bytes": 1818656,
-  "bytesSmall": 1643408,
+  "bytes": 1853204,
+  "bytesSmall": 1677892,
   "exhaust": [
    -0.62,
    0.31,
    2.493
+  ],
+  "gauges": [
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 0,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.026,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 1,
+    "kind": "speed",
+    "max": 110,
+    "r": 0.046,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.026,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.16,
@@ -705,12 +1541,15 @@
   "hip": 1.0,
   "hub": [
    -0.41708,
-   1.36,
+   1.29,
    -0.367
   ],
   "length": 4.741,
+  "paint": "#7dbfa6",
+  "paintName": "Spruce Tip Green",
+  "paintNote": "a pale 1963 Wagoneer green",
   "roofInner": 1.88,
-  "triangles": 27023,
+  "triangles": 28317,
   "wheelPos": [
    [
     -0.725,
@@ -736,12 +1575,80 @@
   "wheelRadius": 0.37
  },
  "wayfarer": {
-  "bytes": 1859068,
-  "bytesSmall": 1676652,
+  "bytes": 1874980,
+  "bytesSmall": 1692504,
   "exhaust": [
    -0.62,
    0.31,
    2.329
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "rpm",
+    "max": 6000,
+    "r": 0.042,
+    "red": 5000,
+    "sweep": -4.7124,
+    "unit": ""
+   },
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 1,
+    "kind": "speed",
+    "max": 85,
+    "r": 0.05,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 5,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.02,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.1,
@@ -751,12 +1658,15 @@
   "hip": 1.0,
   "hub": [
    -0.38958,
-   1.36,
+   1.29,
    -0.521
   ],
   "length": 4.681,
+  "paint": "#1f4d3c",
+  "paintName": "Deep Jewel Green",
+  "paintNote": "a 1991 Explorer colour, over a sandalwood band",
   "roofInner": 1.88,
-  "triangles": 27944,
+  "triangles": 28456,
   "wheelPos": [
    [
     -0.745,
@@ -782,12 +1692,69 @@
   "wheelRadius": 0.37
  },
  "woodbox": {
-  "bytes": 1911216,
-  "bytesSmall": 1727896,
+  "bytes": 2110704,
+  "bytesSmall": 1927484,
   "exhaust": [
    -0.62,
    0.34,
    2.57
+  ],
+  "gauges": [
+   {
+    "a0": 3.927,
+    "face": "black",
+    "k": 0,
+    "kind": "speed",
+    "max": 100,
+    "r": 0.05,
+    "red": 0,
+    "sweep": -4.7124,
+    "unit": "mph"
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 1,
+    "kind": "fuel",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 2,
+    "kind": "temp",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 3,
+    "kind": "oil",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   },
+   {
+    "a0": 2.4435,
+    "face": "black",
+    "k": 4,
+    "kind": "volt",
+    "max": 1,
+    "r": 0.021,
+    "red": 0,
+    "sweep": -1.7453,
+    "unit": ""
+   }
   ],
   "half": {
    "x": 1.175,
@@ -797,12 +1764,15 @@
   "hip": 1.03,
   "hub": [
    -0.42396,
-   1.39,
+   1.32,
    -0.4105
   ],
   "length": 4.961,
+  "paint": "#9a2f29",
+  "paintName": "Harvester Red",
+  "paintNote": "International's own red, the body framed in wood",
   "roofInner": 1.91,
-  "triangles": 29610,
+  "triangles": 35724,
   "wheelPos": [
    [
     -0.77,

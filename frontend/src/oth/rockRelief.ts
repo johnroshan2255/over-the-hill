@@ -10,7 +10,11 @@
  * Cost where it shows: 3 height samples × the projections in use (1–2 typically) × 2 fetches. Shared by the terrain's
  * rock and scree (Terrain.ts) and the boulders (Rocks.ts); needs ATMOS_GLSL (uNoise) before it.
  */
+/** `?relieffine=0` (the A/B): the fine creases' read on every relief pixel, as before 2026-11-16. */
+const FINE_ALWAYS = typeof location !== 'undefined' && new URLSearchParams(location.search).get('relieffine') === '0'
+
 export const ROCK_RELIEF_GLSL = /* glsl */ `
+${FINE_ALWAYS ? '#define RELIEF_FINE_ALWAYS' : ''}
 #ifdef OTH_ROCK_RELIEF
 // how much of the relief shows on a pixel px metres across: 1 near … 0 once its creases shrink under a pixel (~0.2 →
 // ~0.9 m). The rock's PAINTED colour breakup (paint.ts, Rocks.ts) — the fake relief from before — fades in only as
@@ -26,7 +30,15 @@ float reliefH1(vec2 uv, float wi, float o, float lod1, float lod2, float fine) {
   // (read a mip or so blurrier than the pixel needs: the noise's finest octaves drop out — clean creases between
   //  smooth faces, not a busy grain)
   vec4 a = textureLod(uNoise, uv * (1.0 / 7.0) + o * 0.31, lod1 + 1.5);
+  // (THE FINE CREASES' READ ONLY WHERE THEY SHOW — 2026-11-16, docs/PERF.md: their term below is × fine, and fine is
+  //  exactly 0 once a pixel is over ~5 cm of rock (past ~50 m at 1080p) — yet the read ran out to where the whole
+  //  relief ends (~900 m): 9 of a far rock pixel's 18 fetches, each multiplied by nothing. The same sum, to the bit.
+  //  ?relieffine=0: read always, as before — the A/B)
+#ifdef RELIEF_FINE_ALWAYS
   float g = textureLod(uNoise, uv * (1.0 / 2.3) + vec2(0.37, 0.61) + o * 0.17, lod2 + 1.0).g;
+#else
+  float g = fine > 0.0 ? textureLod(uNoise, uv * (1.0 / 2.3) + vec2(0.37, 0.61) + o * 0.17, lod2 + 1.0).g : 0.5;
+#endif
   // ridged blotches: sharp crease lines where the noise crosses its middle; finer creases between them; the cells
   // a faint chipping
   return wi * (0.6 * (1.0 - abs(a.r * 2.0 - 1.0)) + 0.3 * fine * (1.0 - abs(g * 2.0 - 1.0)) + 0.12 * (1.0 - a.a));

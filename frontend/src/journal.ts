@@ -1,6 +1,8 @@
 /**
  * THE JOURNAL — what the player has found and earned, kept in this browser (localStorage) like the journey (save.ts):
- * COINS (supply crates, places discovered), the crates picked up, the paints bought. Where the landmarks / camps were
+ * COINS (supply crates, places discovered), the crates picked up. (The paints are FREE since 2026-11-16 — the user:
+ * "the car's colour change is based on collecting money — remove that, it must be free"; `paints`, what was bought,
+ * stays in the save's shape and is no longer read.) Where the landmarks / camps were
  * found stays where Landmarks.ts keeps it (`oth.found.<map>`). The backend's save API takes the same shape later.
  */
 export interface Journal {
@@ -8,7 +10,7 @@ export interface Journal {
   coins: number
   /** Crate ids picked up (Places.ts — stable for a map: its placement is seeded). */
   crates: number[]
-  /** Paints bought (#rrggbb). */
+  /** (paints bought, #rrggbb — before they were free: kept in the shape, not read) */
   paints: string[]
   /** How many there are to find in each world (the game writes them; the title screen's journal shows x / n). */
   totals?: Record<string, { crates: number; places: number }>
@@ -40,14 +42,3 @@ export function saveJournal(j: Journal): void {
   }
 }
 
-/** Paints you start with: the valley's own (null), the model's own ('#ffffff') and a few classics. */
-const FREE = new Set<string | null>([null, '#ffffff', '#e83a2a', '#e8a23a', '#3aa64a', '#1b1d22', '#c8b28a'])
-
-/** A paint's price in coins (0 = free); the rest cost more the further down the garage's list they are. */
-export function paintPrice(hex: string | null, index: number): number {
-  return FREE.has(hex) ? 0 : 100 + 25 * index
-}
-
-export function paintOwned(j: Journal, hex: string | null, index: number): boolean {
-  return paintPrice(hex, index) === 0 || (hex !== null && j.paints.includes(hex))
-}

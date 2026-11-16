@@ -1054,6 +1054,8 @@ export class Drivetrain {
     return this.clock - (dir > 0 ? this.lastUp : this.lastDown)
   }
 
+  /** The gear the box is in — or, mid-shift, the one it is going to (the cockpit's lever moves as the shift starts). */
+  get gearTarget(): number { return this.shifting ? this.shiftTo : this.gear }
   private beginShift(to: number): void {
     const gb = this.R.gearbox
     if (to > this.gear) this.lastUp = this.clock

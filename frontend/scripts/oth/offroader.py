@@ -54,8 +54,8 @@ MATS = [mat('CarPaint', srgb(70, 71, 72), 0.7), mat('trim', srgb(58, 59, 53), 0.
         mat('rim', srgb(128, 128, 125), 0.6), mat('tyre', srgb(51, 53, 47), 0.9), mat('glas_light', srgb(205, 208, 215), 0.3),
         mat('glows', srgb(176, 40, 30), 0.4), mat('Under', srgb(34, 36, 36), 0.9), mat('marker', srgb(170, 170, 166), 0.5)]
 MATS += [mat('interior', srgb(196, 190, 176), 0.9), mat('seat', srgb(156, 152, 146), 0.85), mat('dash', srgb(58, 58, 60), 0.85), mat('lamp_lens', srgb(242, 242, 236), 0.3), mat('dialface', srgb(200, 198, 190), 0.5), mat('steel', srgb(120, 122, 124), 0.5),
-         mat('can_red', srgb(178, 52, 40), 0.7), mat('can_green', srgb(84, 112, 62), 0.7), mat('canvas', srgb(176, 150, 104), 0.9), mat('plate', srgb(232, 232, 226), 0.6), mat('amber', srgb(214, 128, 36), 0.5), mat('teal', srgb(58, 128, 126), 0.7)]
-PAINT, TRIM, GLASS, RIM, TYRE, _GL, GLOW, UNDER, MARK, INNER, SEAT, DASH, LENS, DIAL, STEEL, CAN_R, CAN_G, CANVAS, PLATE, AMBER, TEAL = range(21)
+         mat('can_red', srgb(178, 52, 40), 0.7), mat('can_green', srgb(84, 112, 62), 0.7), mat('canvas', srgb(176, 150, 104), 0.9), mat('plate', srgb(232, 232, 226), 0.6), mat('amber', srgb(214, 128, 36), 0.5), mat('teal', srgb(58, 128, 126), 0.7), mat('needle', srgb(226, 86, 40), 0.5)]
+PAINT, TRIM, GLASS, RIM, TYRE, _GL, GLOW, UNDER, MARK, INNER, SEAT, DASH, LENS, DIAL, STEEL, CAN_R, CAN_G, CANVAS, PLATE, AMBER, TEAL, NEEDLE = range(22)
 # (names the loader reads — assets/loadModels.ts: CarPaint takes the paint; 'glass' is drawn as the windows; 'interior'
 #  the linings, darkened; 'lamp_lens' (pale, facing forward) and 'glows' (red, facing back) are where it finds the head
 #  and tail lamps — opaque here: a 'glas…' name would be drawn as window glass.)
@@ -345,15 +345,15 @@ bx(bm, V(0, -0.99, 1.4), (0.6, 0.05, 0.32), SEAT, X, V(0, 0.985, 0.17), V(0, -0.
 cab.append(finish(bm, 'cab_seats', 0.03, 2))
 bm, _ = new_bm()
 bx(bm, V(0, 0.53, 1.47), (HW - 0.07, 0.16, 0.16), DASH)                                # the dash
-bx(bm, V(-0.4, 0.4, 1.655), (0.17, 0.07, 0.05), DASH)                                 # the binnacle over the dials
+bx(bm, V(-0.4, 0.4, 1.68), (0.17, 0.07, 0.075), DASH)                                 # the binnacle the dials sit in (2026-11-16: taller — they were behind the wheel's hub)
+bx(bm, V(-0.4, 0.37, 1.765), (0.175, 0.1, 0.012), DASH)                               # its hood
+bx(bm, V(-0.4, 0.332, 1.69), (0.15, 0.005, 0.06), TRIM)                               # the dials' black field
 bx(bm, V(0.38, 0.365, 1.44), (0.2, 0.012, 0.07), TRIM)                                # the glovebox's lid
 bx(bm, V(0, 0.36, 1.46), (0.13, 0.014, 0.1), TRIM)                                    # the centre stack
 bx(bm, V(0, 0.0, 0.92), (0.11, 0.42, 0.16), DASH)                                     # the console between the seats
 bx(bm, V(0.035, -0.2, 1.1), (0.02, 0.1, 0.02), TRIM)                                  # the handbrake
 cab.append(finish(bm, 'cab_dash', 0.02, 2))
 bm, uvl = new_bm()
-for x in (-0.47, -0.33):
-    tube(bm, uvl, [V(x, 0.335, 1.655), V(x, 0.325, 1.655)], [(0.052, 0.052)] * 2, DIAL, 14)   # the two dials' faces
 # the linings that are single faces: the floor's mats (three, round the tubs), the headliner, the bulkhead's
 for ya, yb, hx in ((DF - 0.01, QF, 0.78), (QF, -AY - AB, 0.37), (-AY - AB, REAR + 0.05, 0.78)):
     sheet(bm, [V(-hx, ya, S0 + 0.004), V(hx, ya, S0 + 0.004), V(hx, yb, S0 + 0.004), V(-hx, yb, S0 + 0.004)], DASH, Z)
@@ -546,7 +546,28 @@ bm, uvl = new_bm()
 g0, g1 = Tp((0, 0.12, 1.08)), Tp((0, 0.1, 1.27))
 tube(bm, uvl, [g0, g1], [(0.014, 0.014)] * 2, STEEL, 8)
 bx(bm, g1, (0.028, 0.028, 0.03), DASH)
-o = finish(bm, 'gear_lever', 0.0); o['pivot'] = gl(g0); o['axis'] = [1.0, 0.0, 0.0]; movers.append(o)
+o = finish(bm, 'gear_lever', 0.0); o['pivot'] = gl(g0); o['axis'] = [1.0, 0.0, 0.0]; o['knob'] = gl(g1); o['shift'] = 'autofloor'; movers.append(o)   # (an automatic's selector on the console: P R N D, front to back)
+# THE DIALS (2026-11-16, the user: "no speedometer … make the inside like the original" — oth/Cockpit.ts draws their
+# scales): each FACE its own part (`dial_k`: its UVs cell k of the game's 4 × 2 instrument canvas) and each NEEDLE a
+# mover on its centre (`needle_speed` / `needle_rpm`: `pivot`, `axis` toward the driver, `sweep` from 0 to `max`)
+dials = []
+for k, (kind, x, top, unit) in enumerate((('speed', -0.47, 200, 'kmh'), ('rpm', -0.33, 7000, ''))):
+    c = Tp((x, 0.324, 1.69)); r = 0.047
+    bm, uvd = new_bm()
+    n = 20; rim_ = [bm.verts.new(c + (X * math.cos(i / n * 2 * math.pi) + Z * math.sin(i / n * 2 * math.pi)) * r) for i in range(n)]
+    f = bm.faces.new(rim_); f.material_index = DIAL; f.normal_update()
+    if f.normal.y > 0: f.normal_flip()
+    for lp in f.loops:
+        lp[uvd].uv = ((k + 0.5 + 0.5 * (lp.vert.co.x - c.x) / r) / 4, 1 - (0.5 - 0.5 * (lp.vert.co.z - c.z) / r) / 2)
+    dials.append(finish(bm, f'dial_{k}', 0.0, recalc=False))
+    a0, sw = math.radians(225), math.radians(-270)
+    d_ = X * math.cos(a0) + Z * math.sin(a0); t_ = Vector((0, 1, 0)).cross(d_).normalized(); cn = c + V(0, -0.005, 0)
+    bm, uvn = new_bm()
+    hexa(bm, [cn - d_ * 0.22 * r - t_ * 0.07 * r, cn - d_ * 0.22 * r + t_ * 0.07 * r, cn + d_ * 0.86 * r + t_ * 0.02 * r, cn + d_ * 0.86 * r - t_ * 0.02 * r,
+              cn - d_ * 0.22 * r - t_ * 0.07 * r - Y * 0.003, cn - d_ * 0.22 * r + t_ * 0.07 * r - Y * 0.003, cn + d_ * 0.86 * r + t_ * 0.02 * r - Y * 0.003, cn + d_ * 0.86 * r - t_ * 0.02 * r - Y * 0.003], NEEDLE)
+    tube(bm, uvn, [cn, cn - Y * 0.006], [(0.16 * r + 0.002,) * 2] * 2, TRIM, 8)
+    o = finish(bm, f'needle_{kind}', 0.0); o['pivot'] = gl(c); o['axis'] = [0.0, 0.0, 1.0]; o['sweep'] = round(sw, 4); o['max'] = top; o['unit'] = unit
+    movers.append(o)
 # the wipers: parked along the screen's foot, each pivot at its left end; they sweep up the glass
 wt = V(0, -(COWL - WS_TOP), (ROOF - BELT) * K).normalized()                           # up the screen (after the fit)
 wno = X.cross(wt).normalized()                                                        # out of it
@@ -611,7 +632,7 @@ for name, sx, yc in (('wheel_FL', -1, AY), ('wheel_FR', 1, AY), ('wheel_RL', -1,
 # shading is baked (carkit.weather: it would shadow the door behind it into one dark patch), then part of the body.
 spare = make_wheel('spare', 1)
 spare.data.transform(Matrix.Translation((0.18 * K, REAR - TW / 2 - 0.03, 1.3 * K + LIFT)) @ Matrix.Rotation(-math.pi / 2, 4, 'Z'))
-allp = [body, cabin, steer] + movers + doors + wheels
+allp = [body, cabin, steer] + dials + movers + doors + wheels
 tot = 0
 for o in allp + [spare]:
     o.data.calc_loop_triangles(); tot += len(o.data.loop_triangles); log(f'{o.name}: {len(o.data.loop_triangles)} triangles')
