@@ -5,6 +5,103 @@ will give const 60+ in ultra"*; *"we can hide things from far"*; *"do all the st
 preserve the visual appearance while reducing the actual rendering cost"*; *"check the cheapest way to create water"*.
 This is step 8 of `MIGRATION.md`, with the phone made a goal of its own.
 
+## 2026-11-16 — the 1000 fps question: what can go without changing a pixel (next to nothing), and why
+
+The user: *"check where we can optimize our code to get 1000 fps in ultra for pc, and 100+ const fps in mobile
+snapdragon 600+"*; then, of the list below: *"do all the steps, dont change the look"*. So: only changes that leave the
+picture as it is, each proven with a pixel comparison. **They are in, and they bought nothing that can be measured on
+the M4** — the frame has no free waste left in it; what it costs is shading that shows.
+
+The M4, release builds (`vite build` + `preview`; the commit before, bd91498, frozen on :5201), ULTRA, 1920 × 1080,
+uncapped, WebGPU. The machine was IN USE all day (an editor, a VPN): 3–4 reps were ±0.2 ms and gave wrong signs twice —
+everything below is ≥ 6–8 interleaved reps, medians (four IDENTICAL tabs, 8 reps: 2.29 / 2.33 / 2.35 / 2.36 — the tool
+is good to ±0.04).
+
+**Old vs new** (`abq.mjs "port=5201|" … 8`): forest 2.281 → 2.322, lake 2.508 → 2.428, rockhill 1.745 → 1.779, canyon
+2.336 → 2.369, omeadow 2.204 → 2.188, spawn 2.079 → 2.084 ms — no change (the lake's −0.08 the only one outside the
+spread). `fps.mjs ultra` today: spawn 2.064, forest 2.278, lake 2.443, cliff 2.568, oasis 2.140, plain 1.552 — mean
+2.174 ms (460 fps). Triangles: spawn 913 k → 700 k, omeadow (5 km from the cave) 971 k → 758 k.
+
+### Where the frame goes
+
+| | spawn | lake | forest |
+|---|---|---|---|
+| the frame | 1.955 ms (512 fps) | 2.398 (417) | 2.187 (457) |
+| half the pixels (`scale=71`) | 1.428 | 1.561 | 1.594 |
+| a quarter (`scale=50`) | **1.052** | **1.060** | **1.190** |
+| a hundredth (`scale=10`: the work that isn't pixels) | 0.688 | 0.505 | — (omeadow 0.770) |
+| the ground a flat colour (`tcut=flat`) | 1.427 | 1.497 | 1.475 |
+| no MSAA (`aa=0`) | −0.161 | −0.134 | −0.086 |
+| no look (`look=0`) | −0.225 | −0.287 | −0.209 |
+
+- **1000 fps at 1080p is not in this picture**: at a QUARTER of the pixels the frame is still 1.05–1.19 ms, with the
+  ground painted one flat colour 1.43–1.50. ~0.5–0.8 ms does not shrink with the pixels at all.
+- **Nothing drawn: 0.32 ms** (`emptyframe.mjs forest`: every object of the scene hidden — the clear, the 4× resolve, the
+  present, the page). `floor.mjs`'s 0.54 was the spawn with the car's HUD; what `parts()` leaves out (wonders, mist,
+  clutter, wardens) is 0.06 ms together. A bare WebGPU page clearing a 1080p canvas: 0.24 ms (0.27 with MSAA 4×).
+- **The page's own JavaScript: 0.42–0.5 ms a frame** (`cpuprof`; `getCurrentTexture`'s 0.87 is the wait for the GPU). At
+  `scale=10` the main thread runs 1590 fps: no bar to 1000 here; on the CPU-bound Windows laptop it is the bar.
+- `ablate.mjs`: terrain 0.60 (spawn) / 0.76 (forest) / 0.99 (lake); water 0.53 (lake); grass 0.26–0.32; trees 0.30
+  (forest); the rest under 0.1 each.
+- **THE GROUND'S SHADER, taken apart** (new `?tcut=` cuts, lake / forest): reading the cached surface 0.22 / 0.13 ms
+  (`flat` → `surfonly`); EVERYTHING AFTER IT 0.60 / 0.70 — the rock relief 0.08 / 0.28, the two shade reads (`sun`: the
+  box's 4 m bake and the forests' 2 m one, 4 MB, no mips — a far pixel lands on a texel of its own) 0.14 / 0.16, `shade()`
+  0.14 / 0.16, the hill's normal for the shapes' light (`nonb`) 0.13 / 0, the wet bank + the paving 0.2 / 0.06; all six
+  cut together 0.54 / 0.36. No one of them is waste: each is on the screen.
+- **THE GRASS'S VERTICES** (`scale=10`, omeadow: 0.34 ms of the 0.77): **0.16 ms is only SUBMITTING its ~490 k
+  vertices** (`gcut=early`: every one culled at once — the fetch of 40 bytes each and the call); the texture reads
+  0.07, the light 0.04, the ground's height 0.02. The tufts are stored in rank order, so a tile could draw only the
+  share its nearest point can keep: 72–74 % of the vertices (`grassneed`) — ~0.04 ms for 12 more draws. Not done.
+
+### What went in — each the same picture
+
+`pixcmp.mjs "port=5201|"` (new: two builds, the shaders' clock frozen — `?freeze=1` — every pixel compared): 16 views at
+noon, 8 under a low sun, 6 on WebGL2 with `mobile=1` — **no pixel off by more than 2 of 255**, which is what the same
+build shows against itself. (One blade-edge pixel on WebGL2, omeadow: there with every change switched off too — the
+reordered shader's arithmetic.)
+
+| | what | switch | measured |
+|---|---|---|---|
+| 1 | **The cave's inside only down its mouth's sight lines** (`CaveWorld.update`): "in front of the mouth" was a 68° wedge at ANY distance — the spawn, 2 km off and 420 m under its shelf, drew the hall's 211 k triangles every frame. `cavevis.mjs` (the inside switched on and off in one tab, 60 m … 4 km, noon and its lamps at night): it shows from 26° left … 20° right and 10° under … 13° over the level, the same cone at every distance, nothing past 3 km. Drawn in that cone + a margin (34° / 28°, 15° / 18°) to 3.5 km; under 150 m as it was | `?cavecone=0` | −213 k triangles, −7 draws in front of it; the frame ±0.03 on the M4 (a tiler bins every one of them: for the phones) |
+| 2 | **A blade of no height stops at once** (`Grass.ts`): on rock, water, a track's bed, the forest's floor the blade's height is 0 — three triangles of no area — and it ran the whole shader for them. The field is read first; such a blade goes the way of a culled tuft | `?gcut=nozero` | forest −0.03, rockhill −0.02, lake / omeadow 0 (inside the spread) |
+| 3 | **The relief's fine creases read only where they show** (`rockRelief.ts`): their term is × `fine`, exactly 0 over ~5 cm a pixel (past ~50 m) — the read ran to ~900 m: 9 of a far rock pixel's 18 fetches | `?relieffine=0` | cliff 2.599 vs 2.600: nothing |
+| 4 | **The wet bank's ragged edge read only in its band** (`Terrain.ts`): at up ≤ 0.1 m — the whole bed under a lake — wet is 1 whatever the noise | — | in the lake's −0.08 |
+| 5 | **The forests' shade not read where the hills' is whole** (`TerrainShadow.ts`: 0 × it is 0) | — | — |
+
+Also new: `?tcut=nosurf,surfonly,nonorm,nonb,nobank,nopave`, `?gcut=…` (cost tests), `?freeze=1`, and the harness's
+`pixcmp.mjs`, `tris.mjs` (triangles and draws a part), `emptyframe.mjs`, `cavevis.mjs`.
+
+### Tried, taken out: the canvas `premultiplied`
+
+An `opaque` WebGPU canvas has its alpha set by the browser in a pass of its own; on the bare page `premultiplied`
+was 0.10 ms against 0.24. In the game (the alpha sealed at 1 by a last full-screen draw, so the picture is the same —
+it was, to the pixel): the seal alone costs 0.11 ms, and without it the frame is BIMODAL — 2.06 or 2.45 ms rep by rep
+in one tab (the opaque canvas: 2.45 steady), +0.2 in one run, −0.3 in another. Whatever the compositor does there is
+not ours to hold. Not kept.
+
+### What the day taught
+
+- **naga keeps a ternary's arms apart (an if / else: one side's fetches run) but hoists a call out of `&&` / `||`**:
+  `if (box && costly(xz))` runs `costly` on every pixel. Ours: `paveFrame` and `inHoleC`, arithmetic only. Write a
+  nested `if` round anything that reads a texture.
+- `abq.mjs` with 3–4 reps on a machine in use lies; 8 reps, and two tabs of each variant when the answer matters.
+- The spawn (the car, the chase camera) is not a repeatable picture — the physics runs: fixed views for `pixcmp`.
+- `abq.mjs`'s `caveFront` / `caveHall` / `caveAbove` point at where the cave was before the 12 km valley (it is at
+  1324.6, −1661 now, on a shelf 240 m over the land before it): stale.
+- **The phone profile (`mobile=1`, ULTRA) draws the PC's triangles** — 0.7–1.16 M a frame — and on WebGL2 the work that
+  isn't pixels (`scale=10`) took 1.84 ms here against WebGPU's 0.69 (ANGLE on Metal: this Mac's, not a phone's — the
+  A/B to run on one). No phone was on USB: nothing here is a phone's number.
+
+### What 1000 fps would take — each changes the picture, none taken
+
+A smaller render scale (`?scale=71`, half the pixels: 640–700 fps today; `?scale=50`: 840–950 — `?fsr=`'s sharpening
+upscale, two full-screen passes, comes off that); ULTRA without
+MSAA 4× (0.09–0.16 ms); the look's grade and haze (0.21–0.29); `?water=oth` (0.23 at the lake); the rock relief
+(0.08–0.28); the shade textures mip-mapped (the far ground's shadow edges soften; some of `sun`'s 0.15); the ground
+lit into its cache (the sun's light then lags the sun by a bake, and every live thing — relief, paving, wet banks,
+rain, headlights — needs its own way round it). And a constant 100 on a Snapdragon 6: a 120 Hz screen, about half the
+frame's cost again or ~0.45 Mpx, and a phone to measure it on.
+
 ## 2026-11-13 — the look measured for what it costs; NOT at 500 fps with it on (`docs/LOOK.md` rounds 5–7)
 
 The user: *"make sure all mobile devices with Snapdragon 600+ get a constant 60+ fps in ULTRA and other devices 500+"*.
@@ -434,6 +531,8 @@ the phone's resolution. A phone held landscape at 2× density is 1830 × 824 = 1
 | Chrome DevTools (`chrome://inspect`) | the phone's JS / CPU frame | its GPU times are unreliable on phones |
 | `?stats=1` / F3 (MiniStats) | a live look | |
 | **PERF MARKS** (F9 in game, `?perfmark=1`; `src/oth/PerfMarks.ts`) | the spots where the frame rate FALLS as you play — a half second ≥ 1.5× the run's usual frame (and < 450 fps), or one stall ≥ 6× / 40 ms — marked with the camera's place and look, the frame vs the usual, the CPU's and the GPU's share, what was drawn; red ✕ on the map (Tab); `__oth.perfMarks()`, Shift F9 clears | in any browser — a player's own marks: `copy(JSON.stringify(__oth.perfMarks()))` |
+| **`pixcmp.mjs`** | THE SAME PICTURE, strictly: `"port=5201\|"` or `"cavecone=0\|"` — two variants, each in its own tab with `?freeze=1`, every view compared pixel by pixel (how many differ at all, by > 2, by > 8; where the worst is). Views by name, `x,z,h,yaw,pitch`, or `caves:D,az,el` (round the cave's mouth) | here; fixed views only (the spawn's car moves) |
+| `tris.mjs`, `emptyframe.mjs`, `cavevis.mjs` | triangles and draws a part; the frame with truly nothing drawn and each thing outside `parts()` alone; from where the cave's inside can be seen | here |
 | **`perfmarks.mjs`** | `drive`: the car carried along every track on the chase camera (ZOOM m back) with the marks on → a JSON; `why`: each mark flown back to, each part of the world hidden in turn — the cause | here |
 
 Several windows at once are fine for CHECKING (browsers, phones), never for MEASURING: they share one GPU.
@@ -528,3 +627,4 @@ Several windows at once are fine for CHECKING (browsers, phones), never for MEAS
 | 2026-11-10 | the off-roader PAINTED (carkit.py `paint_texture`: one image over the paint's panels — chips, scratches, rust, mud — baked by rules in Blender; the garage's paint through the game's white-paint mask). PC: `offroader.glb`, 2048² (2.15 MB); PHONES (a weak GPU, LOW / MEDIUM): `offroader.m.glb`, 1024² (1.97 MB), drawn at 512² on LOW (loadModels `carDetailFor`) | `abq.mjs "car=g500\|car=offroader" spawn 5` (M4, 1080p): ULTRA 4.664 → 4.748 ms (+0.085), LOW 2.971 → 3.051 (+0.08). Texture memory with mips: 21 MB at 2048², 5.6 MB at 1024², 1.4 MB at 512². All 19 cars load on LOW the phones' way (`Q=mobile=1 fleetshot.mjs <dir> low`): no errors | a real phone: not measured | — |
 | 2026-11-10 | EVERY CAR PAINTED, and the BLINK fixed (the user: "some pixels or the car's body parts blink"). Three causes, all in the models / their look: (1) the paint GRAIN's dots are one pixel each at a few metres and sparkled as the car moved — off on the painted cars (catalogue `smooth`; the texture carries the wear), three height samples a pixel fewer; (2) TWO SKINS IN ONE PLANE (arch liners / flares on the body's arch, the tail between the quarters, a flush bonnet, grille bars, and a doubled nose on the four winged cars) — found by the new `scripts/oth/coplanar.py`, 17 of 19 cars clean, the other two ≤ 100 cm² under the sills; (3) the paint atlas's unbaked ground was BLACK and bled into the islands' edges through the mips (the off-roader's "black, unpainted" back) — now the paint's pale. The spares are real wheels (`make_wheel`, +3 k triangles where a car carries one). Files: PC `<id>.glb` 2048² (1.7–2.3 MB), phones `<id>.m.glb` 1024² (1.5–2.1 MB), LOW draws 512². | abq, spawn, 4 reps, interleaved — ULTRA 1080p: G500 (the old car, grain on) 4.947 ms · off-roader 4.975 (+0.03) · Sierra 4.881 (−0.07) · Eighty-Eight 4.875 (−0.07). LOW + `mobile=1`: G500 3.064 · off-roader 3.098 (+0.03) · Sierra 3.003 (−0.06). All within the run's noise (±0.15 ms): no cost. Not measured on a real phone. |
 | 2026-11-10 | THE BIG VALLEY, first steps (docs/NEXT.md): the playable land 4 km → 12 km (walls at ±6104 m), the world's grid 8 m (2049², far.bin 2.1 → 8.4 MB; the valley's folder 29 MB), the outland's woods (+117 k trees: 160 k), 10 ranger towers, 12 gorge bridges, the buildings in flat colours | `fps.mjs ultra` (pace.mjs's timer): mean 1.709 → 1.584 ms (585 → 631 fps; the spawn is a new spot), every view ≥ 500; `abq "\|flat=0"` spawn: 1.475 vs 1.471 (the flat look: no cost). Load to ready in headless: ~5–7 s (not A/B'd against before). Memory not measured: + ~25 MB of world heights / normals | not measured (no phone); LOW + `mobile=1` loads without errors | — |
+| 2026-11-16 | the 1000 fps question, without changing a pixel (above): the cave's inside only down its mouth's sight lines (−213 k triangles in front of it), a blade of no height stops at once, the relief's fine read and the wet bank's only where they show, the trees' shade not read in the hills' — all pixel-identical (`pixcmp.mjs`); the canvas `premultiplied` tried and taken out | old vs new, 8 reps: forest +0.04, lake −0.08, rockhill +0.03, canyon +0.03, omeadow −0.02, spawn +0.01 ms — no change; `fps.mjs ultra` mean 2.174 (460 fps), the machine in use | not measured (no phone) | — |

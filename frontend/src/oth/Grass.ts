@@ -159,7 +159,7 @@ export class Grass {
       const mat = new GFX.ShaderMaterial({
         glslVersion: GFX.GLSL3,
         uniforms: { ...uniforms, uBuild: { value: density }, uRin: { value: bounds[r] }, uRout: { value: bounds[r + 1] }, uFan: { value: blades[r] } },
-        defines: { ...map.biomeDefines, ...shapeDefines(), ...rimDefines(), ...caveDef, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}) }, // (no specular: on blades of roughness 0.85 it never showed)
+        defines: { ...map.biomeDefines, ...shapeDefines(), ...rimDefines(), ...caveDef, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}), ...gcut() }, // (no specular: on blades of roughness 0.85 it never showed)
         vertexShader: VERT,
         fragmentShader: FRAG,
         side: GFX.DoubleSide,
@@ -287,6 +287,16 @@ uniform vec4 uField;
 /** ?carflat=0 (the cost A/B): the grass not pressed flat under the car. */
 const CARFLAT_OFF = typeof location !== 'undefined' && new URLSearchParams(location.search).get('carflat') === '0'
 
+/** COST TESTS (docs/PERF.md, abq.mjs): ?gcut=early,nonorm,nowind,nosun,nolight,nofield,noh — a part of the blade's
+ *  vertex shader cut out (the picture is wrong: a measurement, never a setting); nozero: the blades of no height run the
+ *  whole shader again, as before 2026-11-16 (the same picture: the A/B). */
+function gcut(): Record<string, string> {
+  const o: Record<string, string> = {}
+  if (typeof location === 'undefined') return o
+  for (const k of (new URLSearchParams(location.search).get('gcut') ?? '').split(',')) if (k) o[`GCUT_${k.toUpperCase()}`] = ''
+  return o
+}
+
 const VERT = /* glsl */ `
 ${ATMOS_GLSL}
 ${HEIGHT_GLSL}
@@ -341,6 +351,9 @@ void main() {
   float share = (uD0 / (1.0 + pow(d / 9.0, 1.5))) / uBuild;
   float keep = step(aTuft.z, share) * step(uRin - 0.5, d) * step(d, uRout + 0.5);
   float widen = inversesqrt(clamp(share, 0.05, 1.0));
+#ifdef GCUT_EARLY
+  keep = 0.0;
+#endif
   // (2026-10-27, 400 fps at 1080p: a tuft the rank cull drops — ~9 in 10 at 36 m — used to run the whole shader below
   //  (the ground's paint, the wind, the shadow: ~20 texture reads a vertex) only to end at height 0; now it stops here,
   //  its vertices outside the clip volume: the triangle is discarded)
@@ -349,8 +362,51 @@ void main() {
     gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
     return;
   }
-  // THE GROUND HERE: its height and soft normal; what the root reads off the map, from the field
+  // the root's paint and growth: the FIELD's two texels (GrassField — baked from the map as the camera moves)
+#ifdef GCUT_NOFIELD
+  vec4 FA = vec4(0.5, 0.6, 0.3, 1.0), FB = vec4(0.8, 0.5, 0.0, 0.5);
+#else
+  vec4 FA = textureLod(uFieldA, root * uField.z, 0.0), FB = textureLod(uFieldB, root * uField.z, 0.0);
+#endif
+  vec3 col0 = FA.rgb * FA.rgb;
+  float grow = FA.a;
+  float approach = FB.r * 1.15;
+  float flower = step(fract(aTuft.w * 71.37 + aBlade.x * 5.71), FB.b * 0.22);
+  float tall = mix(0.95, 1.45, smoothstep(0.2, 0.8, FB.g)) * aBlade.z;
+  float edge = 1.0 - smoothstep(uRadius * 0.8, uRadius, d);
+  float height = tall * grow * edge * keep * mix(0.1, 1.0, approach) * (1.0 + 0.12 * flower);
+#ifdef OTH_SHAPE
+  // (the carpet follows the shapes: a little taller in the hollows, shorter on the crests — the field's B.a: its relief)
+  float rel = (FB.a - 0.5) * 4.0;
+  height *= clamp(1.0 - 0.14 * rel, 0.82, 1.22);
+#endif
+#ifndef NO_CARFLAT
+  // UNDER THE CAR: pressed flat in its footprint (its local x = (cos h, −sin h), z = (sin h, cos h) in the world)
+  vec2 rc = root - uCarBox.xy;
+  vec2 rl = vec2(rc.x * uCarBox.z - rc.y * uCarBox.w, rc.x * uCarBox.w + rc.y * uCarBox.z);
+  height *= 1.0 - 0.88 * step(abs(rl.x), uCarHalf.x) * step(abs(rl.y), uCarHalf.y);
+#endif
+  // A BLADE THAT COMES TO NOTHING STOPS HERE (2026-11-16, docs/PERF.md): where nothing grows at its root — rock, water, a
+  // track's bed, the forest's floor, a paved yard — its height is 0 and its width with it (the step below): three
+  // triangles of no area, no pixel. It ran the whole shader for them all the same — the ground's height (4 fetches), its
+  // normals, the wind's two noise reads, the shade, the light, the haze, at each of its vertices. The field is read
+  // FIRST now (the growth is its), and such a blade goes the way of a culled tuft. The picture is the same, to the pixel.
+#ifndef GCUT_NOZERO
+  if (height < 0.001) {
+    vWorld = vec3(0.0); vColor = vec3(0.0); vFlower = vec3(0.0); vT = 0.0; vN = vec3(0.0, 1.0, 0.0); vSun = 0.0;
+    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+    return;
+  }
+#endif
+  // THE GROUND HERE: its height and soft normal
+#ifdef GCUT_NOH
+  float h = uCamPos.y - 2.5;
+#else
   float h = terrainHeight(root) + hillLift(root);
+#endif
+#ifdef GCUT_NONORM
+  vec3 N = vec3(0.0, 1.0, 0.0), Nb = N;
+#else
 #ifdef OTH_SHAPE
   // (the ground's normal a mip up — ~4 m: the field's bumps light the blades; it was 2.5 mips, ~11 m: every bump under
   //  that lit as flat ground — 2026-11-06) and the hill's (~45 m) the small slopes' light is measured against
@@ -378,25 +434,6 @@ void main() {
 #endif
     }
   }
-  // the root's paint and growth: the FIELD's two texels (GrassField — baked from the map as the camera moves)
-  vec4 FA = textureLod(uFieldA, root * uField.z, 0.0), FB = textureLod(uFieldB, root * uField.z, 0.0);
-  vec3 col0 = FA.rgb * FA.rgb;
-  float grow = FA.a;
-  float approach = FB.r * 1.15;
-  float flower = step(fract(aTuft.w * 71.37 + aBlade.x * 5.71), FB.b * 0.22);
-  float tall = mix(0.95, 1.45, smoothstep(0.2, 0.8, FB.g)) * aBlade.z;
-  float edge = 1.0 - smoothstep(uRadius * 0.8, uRadius, d);
-  float height = tall * grow * edge * keep * mix(0.1, 1.0, approach) * (1.0 + 0.12 * flower);
-#ifdef OTH_SHAPE
-  // (the carpet follows the shapes: a little taller in the hollows, shorter on the crests — the field's B.a: its relief)
-  float rel = (FB.a - 0.5) * 4.0;
-  height *= clamp(1.0 - 0.14 * rel, 0.82, 1.22);
-#endif
-#ifndef NO_CARFLAT
-  // UNDER THE CAR: pressed flat in its footprint (its local x = (cos h, −sin h), z = (sin h, cos h) in the world)
-  vec2 rc = root - uCarBox.xy;
-  vec2 rl = vec2(rc.x * uCarBox.z - rc.y * uCarBox.w, rc.x * uCarBox.w + rc.y * uCarBox.z);
-  height *= 1.0 - 0.88 * step(abs(rl.x), uCarHalf.x) * step(abs(rl.y), uCarHalf.y);
 #endif
   // the blade: out of the tuft along its fan angle, leaning out, bending with the wind
   float ang = aBlade.x + aTuft.w * 6.2832;
@@ -407,8 +444,12 @@ void main() {
   // A FLOWER is a grass blade like its neighbours, only its TOP in bloom (2026-11-02, the user: "they're grass blades —
   // change only the top part, don't colour the grass"; it was the blade turned over, all of it the flower's colour):
   // the fragment shader paints its top third the flower's colour (vFlower, below), the rest stays the field's
+#ifdef GCUT_NOWIND
+  vec2 gn = vec2(0.0); float gust = 0.0;
+#else
   vec2 gn = textureLod(uNoise, root * (1.0 / 37.0) - uTime * vec2(0.035, 0.02), 0.0).rg - 0.5;
   float gust = smoothstep(0.45, 0.75, textureLod(uNoise, root * (1.0 / 140.0) - uTime * vec2(0.022, 0.009), 0.0).r);
+#endif
   vec2 wind = vec2(0.8, 0.35) * ((0.35 + 0.65 * sin(uTime * 1.5 + dot(root, vec2(0.21, 0.13)))) * 0.12 + gust * 0.32) + gn * 0.3;
   vec2 lean = dir * (0.05 + 0.22 * aBlade.y) + wind;
   vec2 base = root + dir * (0.03 + 0.12 * aBlade.y); // (roots spread: the tufts merge into one carpet)
@@ -426,7 +467,11 @@ void main() {
   vColor = col0 * ${LOOK ? '(1.0 + face * 0.07 + (br - 0.5) * 0.24) * (br < 0.2 ? 0.66 : 1.0)' : '(1.0 + face * 0.04 + (br - 0.5) * 0.1) * (br < 0.12 ? 0.8 : 1.0)'} * (1.0 + gust * 0.08);
   // the ground's light: its soft normal, leaning a little with the blade
   vN = normalize(N + vec3(dir.x, 0.0, dir.y) * 0.18);
+#ifdef GCUT_NOSUN
+  vSun = 1.0;
+#else
   vSun = sunVisibility(root);
+#endif
 #ifdef CAVE_GRASS
   float ckG = caveK(vec3(root.x, h, root.y));
   vSun *= 1.0 - ckG;
@@ -441,8 +486,12 @@ void main() {
 #ifdef OTH_SHAPE
   albedo *= shapeLight(rel, N, Nb, vSun);
 #endif
+#ifdef GCUT_NOLIGHT
+  vec3 c = albedo;
+#else
   vec3 c = shade(albedo, vN, Vv, 0.85, 0.03, ao, vSun, 0.62);
   c += headlight(albedo, vN, p);
+#endif
   float back = pow(max(dot(-Vv, uSunDir), 0.0), 3.0);
   c += albedo * uSunColor * back * t * 0.16 * vSun; // (back-lit by a low sun, the tips glow: a soft rim)
 #ifdef CAVE_GRASS
@@ -453,7 +502,11 @@ void main() {
     c += albedo * (uSunColor * 0.3 + uAmbSky * 0.3) * caveBounce(p) * ckG * smoothstep(-0.05, 0.25, uSunDir.y) * (0.3 + 0.95 * dl);
   }
 #endif
+#ifdef GCUT_NOLIGHT
+  vColor = c;
+#else
   vColor = applyAtmos(c, p);
+#endif
   // a flower's head, lit the same way (only the flower blades pay for the second light; elsewhere it is the grass)
   vFlower = vColor;
   if (flower > 0.5) {

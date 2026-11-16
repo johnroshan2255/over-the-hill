@@ -1360,6 +1360,8 @@ export class CaveWorld {
     this.lamps = u.uLamps
   }
   private flies: GFX.Mesh | null = null
+  /** (the mouth's height — the cone's apex: the land at its sill + 4 m) */
+  private mouthY: number | undefined
   private lamps: GFX.IUniform | null = null
 
   /** The cave's inside drawn only from on or near the hill (once a frame). */
@@ -1375,10 +1377,24 @@ export class CaveWorld {
     // (in front: only low enough to see in — from high over the land before it, the mouth's roof hides all but its lip)
     const agl = cam.y - this.map!.height(cam.x, cam.z), d0 = Math.hypot(lx, lz), ahead = lz > -4 && Math.abs(lx) < lz * 2.5 + 30
     const d1 = Math.hypot(lx - sx, lz - sz), d2 = s2 ? Math.hypot(lx - s2[0], lz - s2[1]) : 1e9
-    const on = this.cameraInside || d0 < 45 || d1 < 30 || d2 < 30 || (ahead && agl < 20 + 0.35 * d0)
+    const front = ahead && agl < 20 + 0.35 * d0
+    // THE INSIDE FROM AFAR, ONLY DOWN ITS MOUTH'S SIGHT LINES (2026-11-16, docs/PERF.md — "in front" was a 68° wedge at
+    // any distance: the spawn, 2 km off and 420 m under the mouth's shelf, drew the hall's 211 k triangles every frame,
+    // and so did a meadow 5 km away). What lies past the way in shows only where a sight line through the mouth
+    // reaches it — measured (the inside switched on and off in one tab, 60 m … 4 km, by day and by its lamps at night):
+    // from the mouth, 26° to its left … 20° to its right and 10° under … 13° over the level, the same cone at every
+    // distance, and nothing of it past 3 km (a pixel or two at 2.5 km). Drawn within that cone and a margin (34° / 28°,
+    // 15° / 18°) to 3.5 km; from under 150 m as it always was. Not a pixel differs outside it.
+    let seen = front
+    if (front && d0 >= 150 && INSIDE_CONE) {
+      const my = (this.mouthY ??= this.map!.height(this.frame.wx(0, 2), this.frame.wz(0, 2)) + 4)
+      const az = Math.atan2(lx, lz), el = Math.atan2(cam.y - my, d0)
+      seen = d0 < 3500 && az > -0.6 && az < 0.49 && el > -0.262 && el < 0.315
+    }
+    const on = this.cameraInside || d0 < 45 || d1 < 30 || d2 < 30 || seen
     // (the WAY IN from in front at any height — 2026-11-07: the ground under the passage is the hill's top now, so
     //  through the mouth there's only the cave's own floor to see)
-    const wayOn = on || (ahead && d0 < 320)
+    const wayOn = on || front || (ahead && d0 < 320)
     // (drawn AFTER the hill's turf and the land when looked at from outside — the depth test throws away what's behind
     //  them before it's shaded; FIRST from inside, so the turf over the roof is thrown away instead: 2026-11-07, abq
     //  caveAbove / caveHall — the taller cave's rock, ~1.9 ms seen through the mouth from the air)
@@ -1391,6 +1407,8 @@ export class CaveWorld {
     if (this.flies) this.flies.visible = on && (this.lamps!.value as number) > 0.02
   }
 }
+/** `?cavecone=0`: the cave's inside drawn from anywhere in front of its mouth, as before 2026-11-16 (the A/B). */
+const INSIDE_CONE = gameParams().get('cavecone') !== '0'
 let draco: InstanceType<typeof DRACOLoader> | null = null
 
 /** THE FLANKS' GRADE (2026-11-08): hr raised wherever it falls away faster than its grade from a neighbour — the grade

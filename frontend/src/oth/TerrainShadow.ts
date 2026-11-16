@@ -166,7 +166,8 @@ float sunVisibilityTerrain(vec2 xz) {
 // … and the forests' shade on top
 float sunVisibility(vec2 xz) {
   float v = sunVisibilityTerrain(xz);
-  if (uTreeShOn > 0.5 && abs(xz.x) < -uTreeShGrid.z && abs(xz.y) < -uTreeShGrid.z)
+  // (… not read where the hills' shade is already whole: 0 × the trees' is 0 — 2026-11-16, docs/PERF.md)
+  if (v > 0.0 && uTreeShOn > 0.5 && abs(xz.x) < -uTreeShGrid.z && abs(xz.y) < -uTreeShGrid.z)
     v *= textureLod(uTreeSh, ((xz - uTreeShGrid.z) / uTreeShGrid.y + 0.5) / uTreeShGrid.x, 0.0).r;
   return v;
 }

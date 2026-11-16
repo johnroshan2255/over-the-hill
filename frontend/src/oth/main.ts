@@ -108,6 +108,9 @@ async function boot() {
   atmos.hour = num('hour', 15.5)
   // ?time=0 stops the clock (the shot harness); [ / ] an hour back / on, T stops / starts it
   if (q.get('time') === '0') atmos.dayMinutes = 0
+  // ?freeze=1 (pixdiff.mjs): the shaders' clock held still — the wind, the water, the leaves the same in every capture,
+  // so two builds' frames can be compared pixel for pixel (the physics and the day keep their own clocks)
+  const FREEZE = q.get('freeze') === '1'
   const runMinutes = num('day', 24)
   if (atmos.dayMinutes) atmos.dayMinutes = runMinutes
   window.addEventListener('keydown', (e) => {
@@ -1297,7 +1300,7 @@ async function boot() {
       atmos.mistFloor = mistInit && Math.abs(want - atmos.mistFloor) < 150 ? atmos.mistFloor + (want - atmos.mistFloor) * Math.min(1, dt * 0.4) : want
       mistInit = true
     }
-    atmos.update(camera.position, clock.elapsedTime)
+    atmos.update(camera.position, FREEZE ? 100 : clock.elapsedTime)
     // (the look's grade — gfx/material.ts othGrade: the valley's; the desert keeps its own calibrated colours)
     GFX.outputState.grade = atmos.desert ? 0 : LOOK * GRADE_K
     GFX.outputState.warm = 1 - atmos.uniforms.uNight.value
@@ -1320,7 +1323,7 @@ async function boot() {
     //  first person, on the map, in the free camera)
     world.trees.seeThrough(ride.pos, driving && !inFpp && !mapView.isOpen ? (onFoot ? 1.1 : riding ? 1.5 : 2.8) : 0)
     const t0 = performance.now()
-    world.update(camera, dt, clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, ride.pos.x, ride.pos.z)
+    world.update(camera, FREEZE ? 0 : dt, FREEZE ? 100 : clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, ride.pos.x, ride.pos.z)
     // (what's out of view or behind the hills isn't drawn: 2026-11-02)
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     view.setFromProjectionMatrix(viewPV, GFX.WebGLCoordinateSystem, camera.reversedDepth)
