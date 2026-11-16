@@ -3,7 +3,7 @@
 import puppeteer from 'puppeteer-core'
 import fs from 'node:fs'
 const out = process.argv[2]; fs.mkdirSync(out, { recursive: true })
-const b = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--mute-audio'] })
+const b = await puppeteer.launch({ executablePath: process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: [`--use-angle=${process.platform === 'win32' ? 'd3d11' : 'metal'}`, '--ignore-gpu-blocklist', '--mute-audio'] })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const click = (p, text) => p.evaluate((t) => { const e = [...document.querySelectorAll('button, .oh-tab, .oh-item, [role=button]')].find((x) => x.textContent.trim().toLowerCase().startsWith(t.toLowerCase())); if (e) e.click(); return !!e }, text)
 for (const [name, vp] of [['desk', { width: 1280, height: 720 }], ['phone', { width: 360, height: 740, isMobile: true, hasTouch: true }], ['phone-land', { width: 740, height: 360, isMobile: true, hasTouch: true }]]) {

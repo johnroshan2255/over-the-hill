@@ -81,23 +81,32 @@ comments over each car in `cars.py` `COCKPIT`. Still to write: a §6 in `docs/VE
 ## 3. What is left, in order
 
 1. (Committed and pushed, 2026-11-16.)
-2. **Play it in a real window** — none of this was seen moving, only in stills and numbers: the hand going to the lever
-   (is it too quick? `CockpitAnim` `reach` 9 / s out, 5.5 / s back, 0.16 s held), the view's tilt (the HUD's hint bar and
-   the "PITCH CAMP" prompt lie over the dials' lower edge at 0.24 rad — try `?fpptilt=0.28`, or lift the hints in first
-   person), the dials at NIGHT (their lamps: `uLamps` × 0.55 — never looked at), reverse and P → D on an automatic's
-   column, the range lever in low range, the handbrake.
+2. **Played, 2026-11-16 (Windows, `scripts/harness/cockpitplay.mjs` — first person, driven with the keys: W through the
+   shifts, Space, S into reverse, then at night)**: Forty, Bronc, Sierra, Overlander, Eighty-Eight. The levers go
+   through their gates (the Forty 1 → 2 → 3 and across to R; the Bronc up the column; the automatics D → R), the hand is
+   on the knob ~0.2 s after a shift starts and back on the wheel ~0.6 s after — quick but a real hand's pace: left as it
+   is. The dials read at night (the lamps light the faces). No page errors. FIXED: the "PITCH CAMP" prompt lay over the
+   lower dials at 720p (at 1080p it clears them; phones hide it) — in the car's first person it now sits under the
+   compass (`body.oth-fpp`, index.html); the key-help bar only crosses the wheel's bottom rim: kept, and the tilt kept
+   at 0.24. FOUND: **low range has no key** — `Drivetrain.toggleLow` is never called by the game, so the range lever
+   (and 4L) can't be reached by a player: a key to choose (the user's call). In first person the floor levers sit low
+   on the right, mostly under the speed box — where the real ones are; the right hand leaves the frame for a shift.
 3. **The Steppe's +0.04–0.06 ms**: not the fine parts (measured with them off at chase distance). Suspects: the cabin's
    ~2 k more triangles (dash brow, pod, knobs, gaiters) in the body's draw; the old build's car file. A/B `?car=steppe`
-   old vs new at `scale=10` to see if it is vertices.
-4. **`docs/VEHICLES.md` §6** — the interiors and colours, car by car, with the ✓ / e marks above; and its §0 says "each
-   its own colour" of the old invented ones. A row in `docs/PERF.md`'s log for the cost above.
+   old vs new at `scale=10` to see if it is vertices. (Not done: it needs a baseline build from a worktree.)
+4. DONE: `docs/VEHICLES.md` §6 (the cabins and colours, car by car, ✓ / e) and its §0; the `docs/PERF.md` log row.
 5. **Confirm the "e" facts** (the table and the list above) against photographs — the search tool returned shop
    listings, not pictures. Likeliest to be wrong: the Boar's and the Lynx's instruments, the Scoutling's single transfer
    lever, the Guardian's four-spoke wheel, the Niva's small gauges' order, the colour names marked e.
-6. **Small things seen**: the Wayfarer's sandalwood lower band does not show (its `band` seems to take the body's
-   colour); the Woodbox's screen divider draws as a red line from inside; the steel dashes are flat colour (no baked
-   shade inside the cabin: the cab parts are not in `carkit.weather`); the garage's pictures show the FACTORY colour
-   whatever paint is chosen; another player's car (`Remotes`) draws no dials.
+6. **Small things seen**: FIXED — the two-tone BANDS: `carkit.py` `band()` cut a span round the arches wrongly (a span
+   ending ahead of the rear arch jumped past it), so no door and no front wing had its lower band: the Wayfarer's
+   sandalwood was gone, the Sierra's white only a strip on the doors, the Grand Wagon's wood strip and the Woodbox's
+   panels broken at the doors. The four rebuilt (Blender 5.2 on Windows: +150–430 triangles each, the files ~80 kB
+   smaller than the Mac's build — the same look side by side), coplanar 4 of 4 clean, their pictures shot again. NOT A
+   BUG — the Woodbox's "red line" from inside is its split windscreen's centre post in the body's colour (right of the
+   view's centre because the driver sits left). Still open: the steel dashes are flat colour (no baked shade inside the
+   cabin: the cab parts are not in `carkit.weather`); the garage's pictures show the FACTORY colour whatever paint is
+   chosen; another player's car (`Remotes`) draws no dials.
 7. Still open from before: the three cab-overs (Forward, Rust Ox, Mammoth — a body kind the kit lacks); a phone on USB
    (`docs/PERF.md`); the look-changing speed options the user has not chosen among (`docs/PERF.md`, 2026-11-16).
 
@@ -111,6 +120,7 @@ blender -b --factory-startup --python scripts/oth/offroader.py              # th
 node scripts/harness/garageshots.mjs                          # the garage's pictures again (after a model or a colour changes)
 node scripts/harness/fppshot.mjs <dir> forty,steppe           # first person, the dash, the levers — a PNG each
 node scripts/harness/shifttest.mjs <dir> forty                # drive off, log the lever's gate and the hand
+node scripts/harness/cockpitplay.mjs <dir> forty,sierra        # PLAY it in first person: shifts, handbrake, reverse, night — log + PNGs
 node scripts/harness/garageui.mjs <dir>                       # the garage's tabs: desktop, phone, phone sideways
 ls src/assets/models/vehicles/{forty,steppe}.glb | xargs blender -b --factory-startup --python scripts/oth/coplanar.py --
 npm test

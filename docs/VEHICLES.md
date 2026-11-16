@@ -26,9 +26,9 @@ figure given here as its peak (gross ≈ net × 1.3 — noted where it matters).
 > **2026-11-16** (`docs/NEXT_garage.md`): each car now wears its real machine's FACTORY colour (`scripts/oth/cars.py`
 > `PAINT`), the paint is free and per car, and every cabin is the real one's — its dash, its instruments with working
 > needles, its gear lever (floor / column / automatic) moving through its gate, its transfer levers and handbrake
-> (`cars.py` `COCKPIT`, `src/oth/Cockpit.ts`). A §6 with each car's interior notes is still to write.
+> (`cars.py` `COCKPIT`, `src/oth/Cockpit.ts`). Car by car: §6.
 
-**18 of the 21 are in the garage**, each its own model, its own physics (`SPECS[id]`), its own colour and engine voice —
+**18 of the 21 are in the garage**, each its own model, its own physics (`SPECS[id]`), its real machine's factory colour (§6) and its own engine voice —
 plus the Overlander 4×4 (ours, `scripts/oth/offroader.py`).
 
 **All 19 are painted** (2026-11-10): `carkit.paint_texture` bakes one image over each car's paint — chips, scratches,
@@ -239,6 +239,41 @@ pale steel wheels, a little worn.
    `oth/Vehicle.ts`.
 5. **Cost.** Each model's draws and triangles measured as the off-roader's were (`abq.mjs "car=offroader|car=<id>"`).
    ~25–30 k triangles each keeps them level with it; only the car you drive is loaded (plus co-op players' cars).
+
+## 6. The cabins and the colours, car by car (2026-11-16)
+
+From `scripts/oth/cars.py` (`COCKPIT`, `PAINT`; the kit `carkit.py`, the Overlander `offroader.py`) and the game's
+`src/oth/Cockpit.ts`. **✓** = found online (2026-11-16); **e** = from memory, **to confirm against photographs** (the
+hex values are all by eye; `docs/NEXT_garage.md` §3.5 lists the likeliest to be wrong).
+
+| car | real machine | factory colour | the dash and its instruments | the levers |
+|---|---|---|---|---|
+| Powerline | Dodge Power Wagon | Seawolf Submarine Green ✓ | steel; one round speedometer between four small gauges (the early dash, 1946–50 ✓) | a long floor lever, the transfer case's two, the handbrake's beside them; a big thin three-spoke wheel |
+| Sierra K | GMC K1500, 1984 | Apple Red over a Frost White band e | padded; the 85 mph speedometer in the left pod, the fuel gauge in the right, small gauges beside | an automatic on the COLUMN; one transfer lever; the parking brake a pedal |
+| Forty-Five | Land Cruiser FJ45 | Dune Beige (416 ✓), white cab roof | steel in the body's colour; the round speedometer ahead, small gauges, pull knobs, the grab handle | a long floor lever and the transfer lever; the parking brake a pull under the dash ✓ |
+| Squarebody | Chevrolet K5 Blazer | Midnight Blue, white top e | as the Sierra's (the square-body GMs, 1973–87) | an automatic on the COLUMN; one transfer lever |
+| Bronc | Ford Bronco, 1970 | Sky View Blue ✓, white top | steel in the body's colour; the speedometer in a chrome-rimmed pod with the small gauges | three speeds on the COLUMN ✓; the Dana 20's T-handle ✓ |
+| Scoutling | IH Scout 800 | Apache Gold, white top e | steel; the instruments in the CENTRE — the 80 mph speedometer ✓ between the small gauges | a floor lever and one transfer lever e |
+| Steppe | Lada Niva | Orange e | black plastic; a 180 km/h speedometer and a rev counter side by side, small gauges either side e | THREE in the tunnel — the gears, the range, the centre lock; the handbrake between the seats |
+| Eighty-Eight | Land Rover Series IIA | Bronze Green e, sand tilt | the bare bulkhead, a black panel in its CENTRE: the speedometer, the fuel / charge dial, warning lamps | a long cranked lever, the RED knob (high / low) ✓ and the YELLOW (4WD) ✓; the handbrake by the driver's leg; the three-spoke wheel (from 1967 ✓) |
+| Guardian | Land Rover Defender 90, 1991 | Arles Blue ✓, white roof | a black binnacle ahead: the speedometer, fuel and temperature, a block of warning lamps | a long gear lever, the short transfer lever ahead of it; a four-spoke wheel e; the grab handle |
+| Gelände | Mercedes W460 280 GE | Cream White e | a big 180 km/h speedometer between the fuel gauge and the rev counter | the gear and transfer levers and the two diff locks' pulls in the tunnel; a thick four-spoke wheel |
+| Forty | Land Cruiser FJ40 | Freeborn Red (309 ✓), white roof | as the Forty-Five's | as the Forty-Five's ✓ |
+| Seventy | Land Cruiser BJ70 | White e | grey plastic; a 180 km/h speedometer and four small gauges in a binnacle | five gears on the floor |
+| Lynx | VW Iltis | Gelboliv RAL 6014 ✓ | olive steel; one speedometer, a fuel gauge, a row of lamps e | the gear lever and the front axle's |
+| Wayfarer | Ford Explorer, 1991 | Deep Jewel Green ✓ over a sandalwood band | soft and modern: the rev counter, the 85 mph speedometer, four small gauges | five gears on a short floor lever; 4WD by push-button, the parking brake a pedal |
+| Wagon 63 | Jeep Wagoneer, 1963 | Spruce Tip Green e | steel; a RECTANGULAR chrome-rimmed cluster ✓ — the speedometer between fuel and temperature | three speeds on the COLUMN; an ivory two-spoke wheel with a chrome horn ring ✓ |
+| Grand Wagon | Jeep Grand Wagoneer, 1986 | Garnet e, the wood strip | a wood fascia; the 85 mph speedometer and four gauges | an automatic on the COLUMN; the low range's small lever by the seat |
+| Boar | Volvo TP21 | Army Green e | green steel; a 120 km/h speedometer and its gauges e | a long lever and two more |
+| Woodbox | IH R-140 Travelall | Harvester Red e | steel; two round dials in bright rings — the speedometer (100 mph), the four gauges | a long floor lever, two transfer levers; a split windscreen's centre post (body colour) |
+| Overlander | ours | Rust Red | two dials | a console selector (automatic) |
+
+**In the game** (`Cockpit.ts`): the needles follow the car (speed in the dial's own unit, revs, the oil with the revs,
+the temperature warming up); the lamps light the faces at night; the gear lever goes through its gate as the box shifts
+and the driver's right hand goes to the knob (~0.2 s to it, ~0.6 s a shift); an automatic's selector P R N D; the range
+lever back in low range; the handbrake up when it's on. Played 2026-11-16 (`scripts/harness/cockpitplay.mjs`): Forty,
+Bronc, Sierra, Overlander, Eighty-Eight — 1 → 2 → 3, into R, the handbrake, night: all as above. **Low range has no key
+yet** (`Drivetrain.toggleLow` is never called by the game): the range lever only moves when something calls it.
 
 ---
 

@@ -256,8 +256,8 @@ async function boot() {
   const doorCamFrom = new GFX.Vector3(), doorCamLook = new GFX.Vector3()
   // FIRST PERSON (V): the eye in the head — the driver's in the car (his hands on the wheel in view), the rider's on a
   // bike, the character's on foot; the mouse (or a finger's drag) looks round (in a vehicle it eases back ahead a moment after)
-  let fpp = false
-  const look = { yaw: 0, pitch: 0, idle: 9, footYaw: 0 }
+  let fpp = false, fppClass = false
+  const look ={ yaw: 0, pitch: 0, idle: 9, footYaw: 0 }
   {
     let dragId = -1, lx = 0, ly = 0
     // (the mouse: just moving it — mouseLook.ts; a finger drags)
@@ -1289,6 +1289,7 @@ async function boot() {
     const inFpp = fpp && driving && !cut
     hero.hideHead = inFpp && (onFoot || hero.seated || riding)
     car.inside = inFpp && !onFoot && !riding
+    if (car.inside !== fppClass) { fppClass = car.inside; document.body.classList.toggle('oth-fpp', fppClass) } // (the camp prompt off the dials)
     { const dc = camera.position.distanceTo(car.pos); car.near = car.inside || dc < 14; car.close = car.inside || dc < 6 }
     const nearWant = inFpp ? 0.05 : 0.3
     // (on a bike in first person, a wider lens — 70° — as games give it: the bars and the hands in the bottom of the view)

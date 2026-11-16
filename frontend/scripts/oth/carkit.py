@@ -352,10 +352,15 @@ def build(P, out, log=print):
         zc = ARCH + 0.05
         if TT1 > zc: bar(bm, V(x, ya, (max(TT0, zc) + TT1) / 2), V(x, yb, (max(TT0, zc) + TT1) / 2), BW, TT1 - max(TT0, zc), PAINT2)
         if TT0 < zc:
+            # (the span ya → yb, front to back, less each arch's gap c0 → c1; an arch wholly ahead of what's left is
+            #  passed, one wholly behind its end ends it — 2026-11-16: it jumped past the rear arch from a door ending
+            #  ahead of it, and every door's and front wing's lower band was lost)
             cuts = sorted([(yc + AB + 0.05, yc - AB - 0.05) for yc in (AY, -AY)], reverse=True); y = ya
             for c0, c1 in cuts:
-                if y > c0 and c0 > yb: bar(bm, V(x, y, (TT0 + min(TT1, zc)) / 2), V(x, max(c0, yb), (TT0 + min(TT1, zc)) / 2), BW, min(TT1, zc) - TT0, PAINT2)
-                y = min(y, c1)
+                if c1 >= y: continue
+                if c0 <= yb: break
+                if y > c0: bar(bm, V(x, y, (TT0 + min(TT1, zc)) / 2), V(x, c0, (TT0 + min(TT1, zc)) / 2), BW, min(TT1, zc) - TT0, PAINT2)
+                y = c1
             if y > yb: bar(bm, V(x, y, (TT0 + min(TT1, zc)) / 2), V(x, yb, (TT0 + min(TT1, zc)) / 2), BW, min(TT1, zc) - TT0, PAINT2)
 
     # ---------------------------------------------------------------------------------------------- the doors

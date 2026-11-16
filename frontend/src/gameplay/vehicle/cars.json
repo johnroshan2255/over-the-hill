@@ -581,8 +581,8 @@
   "wheelRadius": 0.39
  },
  "grandwagon": {
-  "bytes": 1885920,
-  "bytesSmall": 1717840,
+  "bytes": 1805324,
+  "bytesSmall": 1633388,
   "exhaust": [
    -0.62,
    0.32,
@@ -661,7 +661,7 @@
   "paintName": "Garnet",
   "paintNote": "dark red over the wood-grain strip",
   "roofInner": 1.89,
-  "triangles": 28391,
+  "triangles": 28655,
   "wheelPos": [
    [
     -0.74,
@@ -1162,8 +1162,8 @@
   "wheelRadius": 0.39
  },
  "sierra": {
-  "bytes": 1796708,
-  "bytesSmall": 1637060,
+  "bytes": 1721556,
+  "bytesSmall": 1557496,
   "exhaust": [
    -0.62,
    0.36,
@@ -1242,7 +1242,7 @@
   "paintName": "Apple Red",
   "paintNote": "over a Frost White band: the square-body two-tone",
   "roofInner": 1.93,
-  "triangles": 27103,
+  "triangles": 27311,
   "wheelPos": [
    [
     -0.83,
@@ -1575,8 +1575,8 @@
   "wheelRadius": 0.37
  },
  "wayfarer": {
-  "bytes": 1874980,
-  "bytesSmall": 1692504,
+  "bytes": 1799560,
+  "bytesSmall": 1618644,
   "exhaust": [
    -0.62,
    0.31,
@@ -1666,7 +1666,7 @@
   "paintName": "Deep Jewel Green",
   "paintNote": "a 1991 Explorer colour, over a sandalwood band",
   "roofInner": 1.88,
-  "triangles": 28456,
+  "triangles": 28888,
   "wheelPos": [
    [
     -0.745,
@@ -1692,8 +1692,8 @@
   "wheelRadius": 0.37
  },
  "woodbox": {
-  "bytes": 2110704,
-  "bytesSmall": 1927484,
+  "bytes": 2032840,
+  "bytesSmall": 1845396,
   "exhaust": [
    -0.62,
    0.34,
@@ -1772,7 +1772,7 @@
   "paintName": "Harvester Red",
   "paintNote": "International's own red, the body framed in wood",
   "roofInner": 1.91,
-  "triangles": 35724,
+  "triangles": 35876,
   "wheelPos": [
    [
     -0.77,

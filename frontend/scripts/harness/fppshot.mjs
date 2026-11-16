@@ -4,7 +4,7 @@ import fs from 'node:fs'
 const [out, cars = 'offroader', extra = ''] = process.argv.slice(2)
 fs.mkdirSync(out, { recursive: true })
 const W = 1280, H = 720
-const b = await puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: ['--use-angle=metal', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--mute-audio', `--window-size=${W},${H}`], defaultViewport: { width: W, height: H } })
+const b = await puppeteer.launch({ executablePath: process.platform === 'win32' ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', args: [`--use-angle=${process.platform === 'win32' ? 'd3d11' : 'metal'}`, '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--mute-audio', `--window-size=${W},${H}`], defaultViewport: { width: W, height: H } })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 for (const id of cars.split(',')) {
   const p = await b.newPage()
