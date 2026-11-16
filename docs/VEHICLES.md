@@ -23,6 +23,11 @@ figure given here as its peak (gross ≈ net × 1.3 — noted where it matters).
 
 ## 0. Status (what's built — 2026-11-10)
 
+> **2026-11-16** (`docs/NEXT_garage.md`): each car now wears its real machine's FACTORY colour (`scripts/oth/cars.py`
+> `PAINT`), the paint is free and per car, and every cabin is the real one's — its dash, its instruments with working
+> needles, its gear lever (floor / column / automatic) moving through its gate, its transfer levers and handbrake
+> (`cars.py` `COCKPIT`, `src/oth/Cockpit.ts`). A §6 with each car's interior notes is still to write.
+
 **18 of the 21 are in the garage**, each its own model, its own physics (`SPECS[id]`), its own colour and engine voice —
 plus the Overlander 4×4 (ours, `scripts/oth/offroader.py`).
 

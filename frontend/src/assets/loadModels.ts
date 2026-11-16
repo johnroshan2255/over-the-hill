@@ -91,12 +91,22 @@ export interface TowHook {
 }
 
 /** A moving cockpit part (Blender `pedal_gas|brake|clutch`, `gear_lever`, `wiper_L|R` with `pivot` + `axis` extras):
- *  geometry with its pivot at the origin; it turns about `axis` (unit, truck space) at `pivot` (m, truck space). */
+ *  geometry with its pivot at the origin; it turns about `axis` (unit, truck space) at `pivot` (m, truck space).
+ *  (2026-11-16, the cars' insides — scripts/oth/carkit.py:) the dials' NEEDLES (`needle_speed|rpm|fuel|temp|oil|volt`:
+ *  `sweep` rad from 0 to `max`, in `unit`), the transfer case's RANGE lever and the HANDBRAKE's (`lever_transfer`,
+ *  `lever_hand`), and on the gear lever how it moves (`shift`: 'floor' | 'column' | 'auto' | 'autofloor'), the column's line (`col`,
+ *  unit, truck space) and where its knob is (`knob`, m, truck space). */
 export interface CockpitPart {
   kind: string
   geo: GFX.BufferGeometry
   pivot: [number, number, number]
   axis: [number, number, number]
+  sweep?: number
+  max?: number
+  unit?: string
+  shift?: 'floor' | 'column' | 'auto' | 'autofloor'
+  col?: [number, number, number]
+  knob?: [number, number, number]
 }
 
 /** Boat hull parts in normalised hull space (scripts/blender/boat_hull.py): geometry + hinge pivot (glTF space). */
@@ -554,7 +564,7 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   const steerParts: GFX.BufferGeometry[] = []
   // Cockpit (vehicle_cabin.py): static cabin parts, gauge faces, moving controls (pivot / axis extras, glTF space).
   const cabParts: GFX.BufferGeometry[] = [], dialParts: GFX.BufferGeometry[] = []
-  const controlParts: { kind: string; geo: GFX.BufferGeometry; pivot: GFX.Vector3; axis: GFX.Vector3 }[] = []
+  const controlParts: { kind: string; geo: GFX.BufferGeometry; pivot: GFX.Vector3; axis: GFX.Vector3; ex: Record<string, unknown>; col: GFX.Vector3 | null; knob: GFX.Vector3 | null }[] = []
   // Brake hardware (`caliper_<FL|FR|RL|RR>`, scripts/blender/vehicle_brakes.py): kept out of the body and of the
   // wheel search (a drum is round and near the ground); the left corners become the per-axle geometry.
   const brakeParts = new Map<string, GFX.BufferGeometry[]>()
@@ -608,12 +618,13 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
     // (1 the paint — tinted; 2 the rest of the BODYWORK — the roof, trim, bumpers, mirrors: untinted, but the paint's
     //  grain on it too — 2026-11-05, the user: "the grains only show on the red parts"; 0 the wheels, the cabin, the
     //  controls, the hardware: smooth)
-    const paint = inner || /^(wheel|caliper_|acc_|cab_|pedal_|gear_|wiper_|tow_|steering)/i.test(m.name) ? 0 : def.paintRegex ? (def.paintRegex.test(m.mat.name) ? 1 : 2) : 1
+    const paint = inner || /^(wheel|caliper_|acc_|cab_|pedal_|gear_|wiper_|needle_|lever_|tow_|steering)/i.test(m.name) ? 0 : def.paintRegex ? (def.paintRegex.test(m.mat.name) ? 1 : 2) : 1
     const g = paintGeometry(m.geo, textured ? new GFX.Color(inner ? 0.3 : 1, inner ? 0.3 : 1, inner ? 0.3 : 1) : inner ? color.clone().multiplyScalar(0.35) : color, textured, paint, (vertexAo && !inner) || /^wheel_/i.test(m.name)) // (a big-triangle cabin liner would draw AO gradients as X shapes)
     if (!textured) flat.push(g)
-    const control = /^(pedal_(?:gas|brake|clutch)|gear_lever|wiper_[LR])/i.exec(m.name)?.[1].toLowerCase()
+    const control = /^(pedal_(?:gas|brake|clutch)|gear_lever|wiper_[LR]|needle_[a-z]+|lever_(?:transfer|hand))/i.exec(m.name)?.[1].toLowerCase()
     if (def.wheelRegex && def.wheelRegex.test(m.name)) wheelParts.push({ geo: g, name: m.name })
-    else if (control && Array.isArray(m.extras.pivot)) controlParts.push({ kind: control, geo: g, pivot: new GFX.Vector3(...(m.extras.pivot as number[])), axis: new GFX.Vector3(...((m.extras.axis as number[]) ?? [1, 0, 0])) })
+    else if (control && Array.isArray(m.extras.pivot)) controlParts.push({ kind: control, geo: g, pivot: new GFX.Vector3(...(m.extras.pivot as number[])), axis: new GFX.Vector3(...((m.extras.axis as number[]) ?? [1, 0, 0])), ex: m.extras,
+      col: Array.isArray(m.extras.col) ? new GFX.Vector3(...(m.extras.col as number[])) : null, knob: Array.isArray(m.extras.knob) ? new GFX.Vector3(...(m.extras.knob as number[])) : null })
     else if (/^cab_/i.test(m.name)) cabParts.push(g)
     else if (door) door.body.push(g)
     else if (/steering_wheel/i.test(m.name)) steerParts.push(g)
@@ -718,7 +729,7 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   const cabin = cabParts.length ? mergeGeometries(cabParts, false)!.applyMatrix4(norm) : null
   const dials = dialParts.length ? mergeGeometries(dialParts, false)!.applyMatrix4(norm) : null
   const turn = new GFX.Matrix4().makeRotationY(rot)
-  for (const c of controlParts) (c.geo.applyMatrix4(norm), c.pivot.applyMatrix4(norm), c.axis.applyMatrix4(turn).normalize())
+  for (const c of controlParts) (c.geo.applyMatrix4(norm), c.pivot.applyMatrix4(norm), c.axis.applyMatrix4(turn).normalize(), c.col?.applyMatrix4(turn).normalize(), c.knob?.applyMatrix4(norm))
   for (const l of lampParts) l.geo.applyMatrix4(norm)
   for (const w of wheels) (w.c.applyMatrix4(norm), (w.r *= k), w.geo.applyMatrix4(norm))
   for (const d of doorGeo) (d.body.applyMatrix4(norm), d.glass?.applyMatrix4(norm), d.hinge.applyMatrix4(norm))
@@ -735,10 +746,15 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   const controls: CockpitPart[] = controlParts.map((c) => {
     c.geo.applyMatrix4(shift)
     c.pivot.applyMatrix4(shift)
+    c.knob?.applyMatrix4(shift)
     c.geo.translate(-c.pivot.x, -c.pivot.y, -c.pivot.z)
     c.geo.computeBoundingSphere()
     zeroTyre(c.geo)
-    return { kind: c.kind, geo: c.geo, pivot: c.pivot.toArray() as [number, number, number], axis: c.axis.toArray() as [number, number, number] }
+    const ex = c.ex, num = (k: string) => (typeof ex[k] === 'number' ? (ex[k] as number) : undefined)
+    return { kind: c.kind, geo: c.geo, pivot: c.pivot.toArray() as [number, number, number], axis: c.axis.toArray() as [number, number, number],
+      sweep: num('sweep'), max: num('max'), unit: typeof ex.unit === 'string' ? ex.unit : undefined,
+      shift: ex.shift === 'floor' || ex.shift === 'column' || ex.shift === 'auto' || ex.shift === 'autofloor' ? ex.shift : undefined,
+      col: c.col ? (c.col.toArray() as [number, number, number]) : undefined, knob: c.knob ? (c.knob.toArray() as [number, number, number]) : undefined }
   })
   if (cabin) (zeroTyre(cabin), cabin.computeBoundingSphere())
   dials?.computeBoundingSphere()

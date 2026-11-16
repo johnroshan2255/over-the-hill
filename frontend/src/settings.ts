@@ -13,8 +13,11 @@ export type Quality = 'auto' | 'low' | 'medium' | 'high' | 'ultra'
 export interface Settings {
   car: CarId
   ride: RideId
-  /** '#rrggbb', or null: the car's own colour on this map. */
-  paint: string | null
+  /** THE PAINT, car by car ('#rrggbb'). A car not in it wears its FACTORY colour — the real machine's own (the
+   *  catalogue's `stock.paint`). (2026-11-16, the user: "now all look the same colour … the default must be the car's
+   *  original in real life; I can change it later" — it was ONE `paint` for the whole garage: a paint picked once
+   *  coloured every car.) */
+  paints: Record<CarId, string>
   gearbox: 'auto' | 'manual'
   aids: 'off' | 'standard' | 'full'
   offroadAssist: boolean
@@ -34,7 +37,7 @@ export interface Settings {
 export const DEFAULTS: Settings = {
   car: 'offroader',
   ride: 'car',
-  paint: null,
+  paints: {},
   gearbox: 'auto',
   aids: 'full',
   offroadAssist: true,
@@ -56,6 +59,9 @@ export function loadSettings(): Settings {
     const s: Settings = { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>), ride: 'car' }
     // (a car no longer in the garage — the G500 `gwagen`, the E30 `bmw`, shelved 2026-11-10: the main car, the off-roader)
     if (s.car === 'gwagen' || s.car === 'bmw' || s.car === 'g500' || s.car === 'e30') s.car = DEFAULTS.car
+    // (the one paint for every car — before 2026-11-16 — is dropped: each car back in its factory colour)
+    delete (s as unknown as { paint?: unknown }).paint
+    if (!s.paints || typeof s.paints !== 'object') s.paints = {}
     return s
   } catch {
     return { ...DEFAULTS } // (private window / blocked storage: the defaults)
@@ -75,7 +81,7 @@ export function gameParams(): URLSearchParams {
   const s = loadSettings(), p = new URLSearchParams()
   p.set('car', s.car)
   if (s.ride !== 'car') p.set('ride', s.ride)
-  if (s.paint) p.set('paint', s.paint.replace('#', ''))
+  if (s.paints[s.car]) p.set('paint', s.paints[s.car].replace('#', ''))
   if (s.quality !== 'auto') p.set('tier', s.quality)
   if (s.antialias === 'off') p.set('aa', '0')
   if (s.resolution !== 'auto') { p.set('dpr', 'fixed'); p.set('scale', s.resolution) }

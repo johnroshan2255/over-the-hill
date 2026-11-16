@@ -1,7 +1,7 @@
 import keyArt from '../assets/ui/key-art.jpg'
 import keyArtSmall from '../assets/ui/key-art-sm.jpg'
-import { PAINTS, VEHICLES, type VehicleDef } from '../gameplay/vehicle/catalogue'
-import { loadJournal, paintOwned, paintPrice, saveJournal, type Journal } from '../journal'
+import { PAINTS, VEHICLES, vehicleDef, type VehicleDef } from '../gameplay/vehicle/catalogue'
+import { loadJournal, type Journal } from '../journal'
 import { loadProgress, type Progress } from '../save'
 import { DEFAULTS, loadSettings, saveSettings, type CarId, type RideId, type Settings } from '../settings'
 import { type Account, ApiError, createWorld, joinWorld, listWorlds, loadAccount, signIn, type WorldRow } from '../net/api'
@@ -43,8 +43,8 @@ type Screen = 'main' | 'garage' | 'settings' | 'journal' | 'coop'
 interface Opt<T> { v: T; label: string }
 interface Choice<K extends keyof Settings = keyof Settings> { key: K; label: string; help: string; options: Opt<Settings[K]>[] }
 
-/** The paint swatches: this map's own colour per car (null), then the catalogue's paints ('Stock' = the model's own). */
-const SWATCHES: { name: string; hex: string | null }[] = [{ name: 'Valley colour', hex: null }, ...PAINTS]
+/** The paint swatches: the car's FACTORY colour (null — its real machine's own), then the catalogue's paints. */
+const SWATCHES: { name: string; hex: string | null }[] = [{ name: 'Factory colour', hex: null }, ...PAINTS]
 
 const DRIVING: Choice[] = [
   { key: 'gearbox', label: 'Gearbox', help: 'Automatic shifts for you. Manual: the ▲ ▼ gear box by the speed (tap or click), or X up / Z down on a keyboard.', options: [{ v: 'auto', label: 'Automatic' }, { v: 'manual', label: 'Manual' }] },
@@ -75,20 +75,32 @@ const KEYS: [string, string][] = [
 
 /** THE GARAGE's vehicles (2026-11-05, the user: "car to bike must be chosen where we choose the jeep and the BMW"):
  *  the cars, and the two-wheelers they carry. */
-interface Ride { ride: RideId; car?: VehicleDef; name: string; line: string; blurb: string }
+interface Ride { ride: RideId; car?: VehicleDef; name: string; line: string; blurb: string; img?: string }
+/** THE GARAGE'S PICTURES (2026-11-16, the user: "while selecting cars show an image of the car — now we don't know which
+ *  one we are going to select"): each ride as the game draws it, in its factory colour — src/assets/ui/cars/<id>.jpg,
+ *  640 × 360, made by scripts/harness/garageshots.mjs (run it again after a model changes). */
+const RIDE_IMG = import.meta.glob('../assets/ui/cars/*.jpg', { query: '?url', import: 'default', eager: true }) as Record<string, string>
+const rideImg = (id: string): string | undefined => RIDE_IMG[`../assets/ui/cars/${id}.jpg`]
 const RIDES: Ride[] = [
-  ...VEHICLES.map((v): Ride => ({ ride: 'car', car: v, name: v.name, line: carLine(v), blurb: v.blurb })),
-  { ride: 'moto', name: 'Motorbike', line: '450 cm³ · ~80 hp · 5 gears', blurb: 'A motocross bike: 310 mm of travel, ~180 km/h, climbs faces to 70°. Wheelies (↓ + throttle), stoppies, jumps and flips. Your car waits where you take it out.' },
+  ...VEHICLES.map((v): Ride => ({ ride: 'car', car: v, name: v.name, line: carLine(v), blurb: v.blurb, img: rideImg(v.id) })),
+  { ride: 'moto', name: 'Motorbike', line: '450 cm³ · ~80 hp · 5 gears', img: rideImg('moto'), blurb: 'A motocross bike: 310 mm of travel, ~180 km/h, climbs faces to 70°. Wheelies (↓ + throttle), stoppies, jumps and flips. Your car waits where you take it out.' },
 ]
 
 const TABS: Record<Exclude<Screen, 'main'>, string[]> = { garage: ['Vehicle', 'Paint', 'Driving'], settings: ['Graphics', 'Audio', 'Co-op', 'Controls'], journal: ['Journal'], coop: ['Worlds'] }
+
+/** A ride's picture (a tile's, the side panel's): loaded when it comes into view, never dragged. */
+function picture(src: string, name: string, cls = 'oh-car-img'): HTMLImageElement {
+  const i = document.createElement('img')
+  i.className = cls; i.src = src; i.alt = name; i.loading = 'lazy'; i.decoding = 'async'; i.draggable = false
+  i.width = 640; i.height = 360
+  return i
+}
 
 export class Menu {
   readonly root = document.createElement('div')
   private s: Settings = loadSettings()
   private j: Journal = loadJournal()
   /** A line for the side panel after a try (e.g. "Need 40 more coins"). */
-  private note = ''
   private readonly progress: Progress | null = loadProgress()
   private screen: Screen = 'main'
   private tab = 0
@@ -257,14 +269,14 @@ export class Menu {
     const tiles = RIDES.map((r, i) => {
       const on = this.chosen(r)
       const b = el('button', 'oh-car' + (i === this.sel ? ' sel' : '') + (on ? ' chosen' : ''), [
-        el('h3', '', [r.name]), el('p', '', [r.line]), ...(on ? [el('span', 'oh-tag', ['Selected'])] : []),
+        ...(r.img ? [picture(r.img, r.name)] : []), el('h3', '', [r.name]), el('p', '', [r.line]), ...(on ? [el('span', 'oh-tag', ['Selected'])] : []),
       ])
       b.addEventListener('pointerenter', (ev) => { if (hover(ev) && this.sel !== i) { this.sel = i; this.render() } })
       b.addEventListener('click', () => { this.sel = i; this.pickCar(i) })
       return b
     })
     const r = RIDES[this.sel]
-    return [el('div', 'oh-list', [el('div', 'oh-cars', tiles)]), el('div', 'oh-side', [el('h4', '', [r.name]), el('p', '', [r.blurb]), ...(r.car ? [stats(r.car)] : [])])]
+    return [el('div', 'oh-list', [el('div', 'oh-cars', tiles)]), el('div', 'oh-side', [...(r.img ? [picture(r.img, r.name, 'oh-side-img')] : []), el('h4', '', [r.name]), el('p', '', [r.blurb]), ...(r.car ? [stats(r.car)] : [])])]
   }
 
   private pickCar(i: number): void {
@@ -277,35 +289,31 @@ export class Menu {
     this.render()
   }
 
+  /** THE PAINT of the car picked in the garage: FREE (2026-11-16, the user: "it must be free" — it cost coins), and each
+   *  car its own — the first swatch its FACTORY colour, the real machine's (the catalogue's `stock.paint`). */
   private paints(): [HTMLElement, HTMLElement] {
     this.sel = Math.min(this.sel, SWATCHES.length - 1)
+    const def = vehicleDef(this.s.car), mine = this.s.paints[this.s.car] ?? null
     const sw = SWATCHES.map((p, i) => {
-      const owned = paintOwned(this.j, p.hex, i)
-      const b = el('button', 'oh-swatch' + (p.hex === null ? ' own' : '') + (i === this.sel ? ' sel' : '') + (p.hex === this.s.paint ? ' chosen' : '') + (owned ? '' : ' locked'), p.hex === null ? ['MAP'] : owned ? [] : [el('span', 'oh-price', [`${paintPrice(p.hex, i)}◆`])])
-      if (p.hex) b.style.background = p.hex
-      b.title = p.name
+      const b = el('button', 'oh-swatch' + (p.hex === null ? ' own' : '') + (i === this.sel ? ' sel' : '') + (p.hex === mine ? ' chosen' : ''), p.hex === null ? [el('span', 'oh-price', ['FACTORY'])] : [])
+      b.style.background = p.hex ?? def.stock.paint
+      b.title = p.hex === null ? `${def.paintName ?? 'Factory colour'} — the ${def.name}'s own` : p.name
       b.addEventListener('pointerenter', (ev) => { if (hover(ev) && this.sel !== i) { this.sel = i; this.render() } })
       b.addEventListener('click', () => { this.sel = i; this.pickPaint(i) })
       return b
     })
-    const p = SWATCHES[this.sel], price = paintPrice(p.hex, this.sel), owned = paintOwned(this.j, p.hex, this.sel)
-    const help = p.hex === null ? "This valley's colour for the car: each car its own." : p.name === 'Stock' ? "The model's own colours." : owned ? 'Enter or click to paint the car.' : `${price} ◆ — Enter or click to buy (you have ${this.j.coins} ◆). Coins: supply crates and the places you find.`
-    return [el('div', 'oh-list', [el('div', 'oh-swatches', sw)]), el('div', 'oh-side', [el('h4', '', [p.name]), el('p', '', [help]), ...(this.note ? [el('p', 'oh-note', [this.note])] : [])])]
+    const p = SWATCHES[this.sel]
+    const name = p.hex === null ? (def.paintName ?? 'Factory colour') : p.name
+    const help = p.hex === null ? `The ${def.name}'s factory colour${def.paintNote ? ` — ${def.paintNote}` : ''}. Every car starts in its own.` : `Enter or click to paint the ${def.name}. Free — and only this car: the others keep theirs.`
+    return [el('div', 'oh-list', [el('div', 'oh-swatches', sw)]), el('div', 'oh-side', [el('h4', '', [name]), el('p', '', [help])])]
   }
 
   private pickPaint(i: number): void {
-    const p = SWATCHES[i], price = paintPrice(p.hex, i)
-    this.note = ''
-    if (!paintOwned(this.j, p.hex, i)) {
-      if (this.j.coins < price) { this.note = `Need ${price - this.j.coins} more coins.`; this.render(); return }
-      this.j.coins -= price
-      this.j.paints.push(p.hex!)
-      saveJournal(this.j)
-      this.note = `Bought — ${this.j.coins} ◆ left.`
-    }
-    this.s.paint = p.hex
+    const p = SWATCHES[i]
+    if (p.hex === null) delete this.s.paints[this.s.car]
+    else this.s.paints[this.s.car] = p.hex
     saveSettings(this.s)
-    this.h.onSettings?.(this.s, 'paint')
+    this.h.onSettings?.(this.s, 'paints')
     this.render()
   }
 
@@ -521,7 +529,6 @@ export class Menu {
       return
     }
     const rows = tabName === 'Driving' ? DRIVING : tabName === 'Graphics' ? GRAPHICS : tabName === 'Audio' ? AUDIO : tabName === 'Co-op' ? COOP : []
-    this.note = ''
     if (!rows.length) return
     if (c === 'ArrowDown' || c === 'KeyS') this.sel = (this.sel + 1) % rows.length
     else if (c === 'ArrowUp' || c === 'KeyW') this.sel = (this.sel + rows.length - 1) % rows.length

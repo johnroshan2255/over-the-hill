@@ -173,7 +173,7 @@ def make_wheel(name, s):
 # (names the loader reads — assets/loadModels.ts: CarPaint takes the paint; 'glass' is drawn as the windows; 'interior'
 #  the linings, darkened; 'lamp_lens' (pale, facing forward) and 'glows' (red, facing back) are where it finds the lamps)
 MATS = []
-PAINT, TRIM, GLASS, RIM, TYRE, GLOW, UNDER, MARK, INNER, SEAT, DASH, LENS, DIAL, STEEL, PLATE, AMBER, PAINT2 = range(17)
+PAINT, TRIM, GLASS, RIM, TYRE, GLOW, UNDER, MARK, INNER, SEAT, DASH, LENS, DIAL, STEEL, PLATE, AMBER, PAINT2, DASHP, NEEDLE, KRED, KYEL, IVORY = range(22)
 R = RI = TW = 0.0
 WHEEL = 'steel'       # the wheel's kind: 'steel' (a dished disc with holes), 'cap' (a plain disc under a bright domed cap), 'slot' (an alloy: five long slots)
 def materials(P):
@@ -185,7 +185,11 @@ def materials(P):
                mat('Under', srgb(54, 56, 58), 0.9), mat('marker', srgb(170, 170, 166), 0.5), mat('interior', srgb(196, 190, 176), 0.9),
                mat('seat', srgb(*c.get('seat', (150, 120, 92))), 0.85), mat('dash', srgb(58, 58, 60), 0.85), mat('lamp_lens', srgb(242, 242, 236), 0.3),
                mat('dialface', srgb(200, 198, 190), 0.5), mat('steel', srgb(*c.get('steel', (150, 152, 154))), 0.45), mat('plate', srgb(232, 232, 226), 0.6),
-               mat('amber', srgb(214, 128, 36), 0.5), mat('second', srgb(*c.get('second', (226, 224, 214))), 0.7)]
+               mat('amber', srgb(214, 128, 36), 0.5), mat('second', srgb(*c.get('second', (226, 224, 214))), 0.7),
+               # (the cockpit's own — 2026-11-16: a painted steel dash wears the car's FACTORY colour (P['paint']) and keeps it under a
+               #  respray, as the real ones do; the dials' needles; the transfer levers' red and yellow knobs; an ivory wheel)
+               mat('dashmetal', tuple(0.4 * c_ + 0.012 for c_ in srgb(*P.get('paint', (150, 150, 150)))), 0.6), mat('needle', srgb(226, 86, 40), 0.5), mat('knob_red', srgb(190, 40, 34), 0.5),
+               mat('knob_yellow', srgb(226, 186, 44), 0.5), mat('ivory', srgb(214, 206, 180), 0.6)]
 
 
 def build(P, out, log=print):
@@ -211,7 +215,7 @@ def build(P, out, log=print):
         bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=(0, 0, CREASE), plane_no=(0, 0, 1))
         for v in bm.verts:
             if v.co.z < CREASE - 0.01: v.co.x *= (HW - TUCK) / HW
-    parts, cab, doors, movers = [], [], [], []
+    parts, cab, cabx, doors, movers = [], [], [], [], []
     AEX = g('arch_shape', 0.62)                 # the arches: 1 a round arc (the 50s), 0.62 a rounded square, 0.4 nearly square
     SOFT = g('soft', 1.0)                       # how rounded its edges are (the 50s' pressings: 2; an 80s box: 1)
     global WHEEL
@@ -424,8 +428,12 @@ def build(P, out, log=print):
     parts.append(finish(bm, 'lights_tail_glows', 0.006, 1))
 
     # ---------------------------------------------------------------------------------------------- the cabin
-    HUB = V(-0.44 * HW / 0.96, COWL - 0.4, S0 + 0.76)
-    SEAT_Z = HUB.z - 0.46
+    # (THE WHEEL 7 cm LOWER — 2026-11-16: its hub stood over the dash's top, the dials behind it; now the hub is under the
+    #  dash's brow and the instruments show through the rim's upper half, as in the real ones. The seat and the
+    #  driver's hips stay where they were: `hip` in cars.json is the seat's, not the hub's)
+    HUB = V(-0.44 * HW / 0.96, COWL - 0.4, S0 + 0.69)
+    SEAT_Z = S0 + 0.30
+    CK = g('cockpit', {}); ck = lambda k, d=None: CK.get(k, d)
     bm, _ = new_bm()
     c_, s_ = math.cos(math.radians(10)), math.sin(math.radians(10))
     if g('seats', 'bench') == 'bench':
@@ -442,16 +450,73 @@ def build(P, out, log=print):
         bx(bm, V(0, by, SEAT_Z - 0.08), (hw, 0.2, 0.08), SEAT)
         bx(bm, V(0, by - 0.25, SEAT_Z + 0.26), (hw, 0.05, 0.28), SEAT, X, V(0, c_, s_), V(0, -s_, c_))
     cab.append(finish(bm, 'cab_seats', 0.03, 2))
+    # THE DASH, AS THE REAL ONE'S (2026-11-16, the user: "check how each car is online, then make the inside like the
+    # original" — docs/VEHICLES.md §6): `cockpit` in cars.py says what it is — a PAINTED STEEL dash in the body's own
+    # colour (the 40s–70s trucks) or a black padded one (a wood fascia on the Grand Wagon); where the INSTRUMENTS are
+    # (ahead of the driver, or the panel in the dash's centre), which dials and how big; the steering wheel; the gear
+    # lever (the floor's long stick, the column's, an automatic's), the transfer levers and their knobs, the handbrake.
     bm, uvl = new_bm()
     DT = BELT - 0.02
-    bx(bm, V(0, COWL - 0.17, DT - 0.16), (HW - 0.07, 0.16, 0.16), DASH)                                     # the dash
-    bx(bm, V(HUB.x, COWL - 0.3, DT + 0.03), (0.18, 0.07, 0.045), DASH)                                      # the binnacle
-    bx(bm, V(0.42, COWL - 0.335, DT - 0.18), (0.22, 0.012, 0.07), TRIM)                                     # the glovebox
-    bx(bm, V(0, COWL - 0.34, DT - 0.16), (0.14, 0.014, 0.09), TRIM)                                         # the radio's stack
+    DSTY = ck('dash', 'pad'); DM = DASHP if DSTY == 'metal' else DASH
+    YF = COWL - 0.33                                                                                        # the dash's face (toward the seats)
+    bx(bm, V(0, COWL - 0.17, DT - 0.16), (HW - 0.07, 0.16, 0.16), DM)                                       # the dash
+    bx(bm, V(0, COWL - 0.215, DT + 0.025), (HW - 0.09, 0.115, 0.03), DASH if DSTY != 'metal' else DM)       # its brow: a roll over the scuttle
+    if DSTY == 'wood': bx(bm, V(0, YF - 0.004, DT - 0.13), (HW - 0.1, 0.004, 0.075), PAINT2)                # the wood fascia
+    gb = ck('glovebox', 0.42)
+    if gb: bx(bm, V(gb, YF - 0.005, DT - 0.18), (0.2, 0.012, 0.07), DM if DSTY == 'metal' else TRIM); bx(bm, V(gb, YF - 0.02, DT - 0.13), (0.012, 0.006, 0.008), STEEL)   # the glovebox, its latch
+    if ck('radio', DSTY != 'metal'): bx(bm, V(ck('radio_x', 0.0), YF - 0.01, DT - 0.16), (0.14, 0.014, 0.09), TRIM)           # the radio's stack
+    for i in range(ck('knobs', 0)):                                                                         # a row of pull knobs (the choke, the lights, the wipers, the heater)
+        kx = ck('knobs_x', 0.0) + (i - (ck('knobs', 0) - 1) / 2) * 0.06
+        tube(bm, uvl, [V(kx, YF - 0.002, DT - 0.24), V(kx, YF - 0.03, DT - 0.24)], [(0.006, 0.006), (0.012, 0.012)], STEEL if i % 2 else DASH, 8)
+    if ck('grab'):                                                                                          # the passenger's grab handle
+        for sx in (-1, 1): bx(bm, V(0.42 + sx * 0.13, YF - 0.025, DT - 0.07), (0.01, 0.025, 0.01), STEEL)
+        bx(bm, V(0.42, YF - 0.05, DT - 0.07), (0.14, 0.009, 0.011), DASH)
+    # THE INSTRUMENTS: each dial's FACE its own part (`dial_k`: a disc whose UVs are cell k of the game's instrument
+    # canvas — 4 across, 2 down: the game draws the scale on it, oth/Cockpit.ts) and its NEEDLE a mover on the dial's
+    # centre (`needle_<kind>`: `pivot`, `axis` toward the driver, `sweep` — how far it turns from 0 to `max`).
+    CL = ck('cluster', {}); GAUGES = ck('gauges', [('speed', -0.075, 0.0, 0.05, {}), ('rpm', 0.075, 0.0, 0.05, {})])
+    centre = CL.get('at', 'driver') == 'centre'
+    if centre: GO = V(CL.get('x', 0.0), YF - 0.012, DT - 0.105)                                             # the panel in the dash's centre
+    else: GO = V(HUB.x + CL.get('x', 0.0), COWL - 0.372, HUB.z + CL.get('z', 0.07))                         # ahead of the driver: over the hub, through the rim
+    gx0 = min(q[1] - q[3] for q in GAUGES); gx1 = max(q[1] + q[3] for q in GAUGES); gz0 = min(q[2] - q[3] for q in GAUGES); gz1 = max(q[2] + q[3] for q in GAUGES)
+    pw, ph, pcx, pcz = (gx1 - gx0) / 2 + 0.018, (gz1 - gz0) / 2 + 0.016, (gx0 + gx1) / 2, (gz0 + gz1) / 2
+    BEZ = dict(chrome=STEEL, black=TRIM, body=DM)[CL.get('bezel', 'black')]
+    if not centre:
+        # the pod the dials sit in: a hood over them on a padded dash, a housing in the dash's colour on a steel one
+        bx(bm, V(GO.x + pcx, (GO.y + YF) / 2 + 0.012, GO.z + pcz), (pw + 0.02, (YF - GO.y) / 2 + 0.012, ph + 0.022), DM if DSTY == 'metal' else DASH)
+        if CL.get('hood', DSTY != 'metal'): bx(bm, V(GO.x + pcx, GO.y - 0.012, GO.z + pcz + ph + 0.03), (pw + 0.024, 0.045, 0.01), DASH)
+    bx(bm, V(GO.x + pcx, GO.y + 0.006, GO.z + pcz), (pw + 0.008, 0.005, ph + 0.008), BEZ)                   # the panel's rim
+    bx(bm, V(GO.x + pcx, GO.y + 0.004, GO.z + pcz), (pw, 0.005, ph), TRIM)                                  # its black field
+    for kind, dx, dz, r, o_ in GAUGES:
+        if o_.get('ring', CL.get('rings', False)):                                                          # a bright ring round the dial
+            c = GO + V(dx, -0.002, dz)
+            tube(bm, uvl, [c + (X * math.cos(i / 16 * 2 * math.pi) + Z * math.sin(i / 16 * 2 * math.pi)) * (r + 0.004) for i in range(17)], [(0.004, 0.004)] * 17, STEEL, 6, caps=False)
+    for i in range(CL.get('lamps', 0)):                                                                     # warning lamps: small jewels on the panel
+        bx(bm, GO + V(pcx + (i - (CL.get('lamps', 0) - 1) / 2) * 0.03, -0.003, gz0 - 0.004 if centre else gz1 + 0.004), (0.006, 0.004, 0.005), (GLOW, AMBER, KYEL, MARK)[i % 4])
     cab.append(finish(bm, 'cab_dash', 0.02, 2))
+    dials, gauge_info = [], []
+    for k, (kind, dx, dz, r, o_) in enumerate(GAUGES):
+        c = GO + V(dx, -0.004, dz); col_, row_ = k % 4, k // 4
+        bm, uvd = new_bm()
+        n = 20; rim_ = [bm.verts.new(c + (X * math.cos(i / n * 2 * math.pi) + Z * math.sin(i / n * 2 * math.pi)) * r) for i in range(n)]
+        f = bm.faces.new(rim_); f.material_index = DIAL; f.normal_update()
+        if f.normal.y > 0: f.normal_flip()                                                                  # (it faces the driver: −y)
+        for lp in f.loops:
+            lx, lz = (lp.vert.co.x - c.x) / r, (lp.vert.co.z - c.z) / r
+            lp[uvd].uv = ((col_ + 0.5 + 0.5 * lx) / 4, 1 - (row_ + 0.5 - 0.5 * lz) / 2)
+        dials.append(finish(bm, f'dial_{k}', 0.0, recalc=False))
+        a0, sw = math.radians(o_.get('a0', 225 if r > 0.03 else 140)), math.radians(o_.get('sweep', -270 if r > 0.03 else -100))
+        gauge_info.append(dict(k=k, kind=kind, r=round(r, 3), max=o_.get('max', {'speed': 160, 'rpm': 6000}.get(kind, 1)), unit=o_.get('unit', 'kmh' if kind == 'speed' else ''),
+                               a0=round(a0, 4), sweep=round(sw, 4), face=o_.get('face', CL.get('face', 'black')), red=o_.get('red', 0)))
+        # the needle: a tapered pointer from behind the centre to the scale, at rest on its zero
+        d_ = X * math.cos(a0) + Z * math.sin(a0); t_ = Vector((0, 1, 0)).cross(d_).normalized(); cn = c + V(0, -0.005, 0)
+        bm, _ = new_bm()
+        hexa(bm, [cn - d_ * 0.22 * r - t_ * 0.07 * r, cn - d_ * 0.22 * r + t_ * 0.07 * r, cn + d_ * 0.86 * r + t_ * 0.02 * r, cn + d_ * 0.86 * r - t_ * 0.02 * r,
+                  cn - d_ * 0.22 * r - t_ * 0.07 * r - Y * 0.003, cn - d_ * 0.22 * r + t_ * 0.07 * r - Y * 0.003, cn + d_ * 0.86 * r + t_ * 0.02 * r - Y * 0.003, cn + d_ * 0.86 * r - t_ * 0.02 * r - Y * 0.003], NEEDLE)
+        tube(bm, _, [cn - Y * 0.0006, cn - Y * 0.006], [(0.16 * r + 0.002,) * 2] * 2, TRIM, 8)              # its boss
+        o = finish(bm, f'needle_{kind}', 0.0); o['pivot'] = gl(c); o['axis'] = [0.0, 0.0, 1.0]; o['sweep'] = round(sw, 4); o['max'] = gauge_info[-1]['max']; o['unit'] = gauge_info[-1]['unit']
+        movers.append(o)
     bm, uvl = new_bm()
-    for x in (HUB.x - 0.075, HUB.x + 0.075):
-        tube(bm, uvl, [V(x, COWL - 0.365, DT + 0.03), V(x, COWL - 0.375, DT + 0.03)], [(0.05, 0.05)] * 2, DIAL, 14)
     for ya, yb, hx in (((DF - 0.01, QF, HW - 0.1), (QF, max(-AY - AB - 0.1, REAR + 0.05), 0.42), (-AY - AB - 0.1, REAR + 0.05, HW - 0.1)) if WAGON else ((DF - 0.01, CABR + 0.05, HW - 0.1),)):
         if ya - yb < 0.02: continue                                                                         # (a short tail: nothing behind the tubs)
         sheet(bm, [V(-hx, ya, S0 + 0.015), V(hx, ya, S0 + 0.015), V(hx, yb, S0 + 0.015), V(-hx, yb, S0 + 0.015)], DASH, Z)
@@ -565,14 +630,30 @@ def build(P, out, log=print):
     col = V(0, math.cos(math.radians(22)), -math.sin(math.radians(22)))
     e1, e2 = X.copy(), V(0, math.sin(math.radians(22)), math.cos(math.radians(22)))
     bm, uvl = new_bm()
-    RIMR = 0.195
-    tube(bm, uvl, [hub + (e1 * math.cos(i / 20 * 2 * math.pi) + e2 * math.sin(i / 20 * 2 * math.pi)) * RIMR for i in range(21)], [(0.016, 0.016)] * 21, DASH, 8, caps=False)
-    for deg in (0, 180, 270):
-        a_ = math.radians(deg); bar(bm, hub, hub + (e1 * math.cos(a_) + e2 * math.sin(a_)) * RIMR, 0.04, 0.016, DASH, col)
-    tube(bm, uvl, [hub - col * 0.02, hub + col * 0.02], [(0.05, 0.05)] * 2, TRIM, 12)
+    # THE STEERING WHEEL, the real one's: its size, its rim's thickness, its spokes (degrees round it, 0 = to the right,
+    # 270 = down), the boss — and a chrome horn ring on some
+    WS = ck('wheel', {}); RIMR = WS.get('r', 0.195); RT_ = WS.get('rim', 0.016); WM = IVORY if WS.get('ivory') else DASH
+    tube(bm, uvl, [hub + (e1 * math.cos(i / 20 * 2 * math.pi) + e2 * math.sin(i / 20 * 2 * math.pi)) * RIMR for i in range(21)], [(RT_, RT_)] * 21, WM, 8, caps=False)
+    for i_, deg in enumerate(WS.get('spokes', (0, 180, 270))):
+        # (each spoke a hair further down the column than the last: where two cross by the boss they were two skins in one plane)
+        a_ = math.radians(deg); h_ = hub + col * (0.0007 * i_)
+        bar(bm, h_, h_ + (e1 * math.cos(a_) + e2 * math.sin(a_)) * RIMR, WS.get('spoke_w', 0.04), WS.get('spoke_t', 0.016), WM if not WS.get('bright') else STEEL, col)
+    BR_ = WS.get('boss', 0.05)
+    tube(bm, uvl, [hub - col * 0.02, hub + col * 0.02], [(BR_, BR_)] * 2, TRIM if not WS.get('ivory') else IVORY, 12)
+    if WS.get('ring'):                                                                                      # the horn ring: bright, half way out
+        tube(bm, uvl, [hub - col * 0.012 + (e1 * math.cos(i / 16 * 2 * math.pi) + e2 * math.sin(i / 16 * 2 * math.pi)) * RIMR * 0.5 for i in range(17)], [(0.005, 0.005)] * 17, STEEL, 6, caps=False)
     steer = finish(bm, 'steering_wheel', 0.0)
     bm, uvl = new_bm()
-    tube(bm, uvl, [hub + col * 0.02, hub + col * 0.3], [(0.03, 0.03)] * 2, DASH, 8)
+    tube(bm, uvl, [hub + col * 0.02, hub + col * 0.3], [(0.03, 0.03)] * 2, DASH if DSTY != 'metal' else DM, 8)
+    # (the levers' fixed parts: a rubber gaiter at each floor lever's foot, the tunnel's plate, a column lever's collar)
+    SH = dict(kind=g('shifter', 'column'), **ck('shift', {}))
+    floor_lever = SH['kind'] == 'floor'
+    # (the floor levers stand AHEAD of a bench seat's front edge — at COWL − 0.60: they came up through its cushion)
+    LX, LY = SH.get('x', 0.0), COWL + SH.get('y', -0.5 if g('seats', 'bench') == 'bench' else -0.62)
+    def gaiter(x, y, r=0.05, h=0.07): tube(bm, uvl, [V(x, y, S0 + 0.012), V(x, y, S0 + 0.012 + h)], [(r, r), (0.016, 0.016)], TRIM, 10, caps=False)   # (open: two gaiters' feet side by side shared a plane)
+    if floor_lever: gaiter(LX, LY, 0.06, 0.09)
+    else: tube(bm, uvl, [hub + col * 0.09, hub + col * 0.15], [(0.036, 0.036)] * 2, TRIM, 10)
+    for t_ in ck('transfer', []): gaiter(LX + t_.get('x', 0.1), LY + t_.get('y', -0.02), 0.04, 0.05)
     cab.append(finish(bm, 'cab_column', 0.0))
     cabin = join('cab_interior', cab)
     def turned(v, axis, ang):
@@ -588,13 +669,45 @@ def build(P, out, log=print):
         movers.append(o)
     pedal('pedal_gas', HUB.x + 0.12, 0.03); pedal('pedal_brake', HUB.x - 0.04, 0.055)
     if g('gearbox', 'auto') == 'manual': pedal('pedal_clutch', HUB.x - 0.2, 0.04)
+    # THE GEAR LEVER (a mover: `pivot`; `shift` — how it moves: 'floor' an H in the floor, 'column' a manual's on the
+    # column, 'auto' an automatic's column selector; `col` — the column's line, for those two) and its knob
+    def knob(bm, at, kind, m=DASH, r=0.024):
+        if kind == 'T': bx(bm, at, (0.045, 0.012, 0.012), STEEL)                                            # a T-handle, across
+        else: tube(bm, uvl, [at - Z * r, at - Z * r * 0.5, at + Z * r * 0.5, at + Z * r], [(r * 0.55,) * 2, (r,) * 2, (r,) * 2, (r * 0.55,) * 2], m, 10)   # a ball
+    KM = dict(black=DASH, red=KRED, yellow=KYEL, ivory=IVORY, steel=STEEL)
     bm, uvl = new_bm()
-    if g('shifter', 'column') == 'column':
+    if not floor_lever:
         g0 = hub + col * 0.12; g1 = g0 + V(0.2, -0.02, 0.07)                                                 # the column's lever, to the right
+        tube(bm, uvl, [g0, g1], [(0.008, 0.008)] * 2, STEEL, 8); knob(bm, g1, 'ball', KM[SH.get('knob', 'black')], 0.018)
     else:
-        g0, g1 = V(0, COWL - 0.62, S0 + 0.02), V(0, COWL - 0.66, S0 + 0.42)                                  # a floor lever
-    tube(bm, uvl, [g0, g1], [(0.012, 0.012)] * 2, STEEL, 8); bx(bm, g1, (0.024, 0.024, 0.026), DASH)
-    o = finish(bm, 'gear_lever', 0.0); o['pivot'] = gl(g0); o['axis'] = [1.0, 0.0, 0.0]; movers.append(o)
+        # a floor lever: up out of its gaiter, cranked back toward the driver's hand (the long ones), a ball on top
+        L_ = SH.get('len', 0.45); back = SH.get('back', 0.1)
+        g0 = V(LX, LY, S0 + 0.02); gm = g0 + V(0, -back * 0.25, L_ * 0.55); g1 = g0 + V(SH.get('side', 0.0), -back, L_)
+        tube(bm, uvl, [g0, gm, g1], [(0.011, 0.011)] * 3, STEEL, 8); knob(bm, g1, SH.get('knob_kind', 'ball'), KM[SH.get('knob', 'black')])
+    o = finish(bm, 'gear_lever', 0.0); o['pivot'] = gl(g0); o['axis'] = [1.0, 0.0, 0.0]; o['knob'] = gl(g1)
+    o['shift'] = 'floor' if floor_lever else ('auto' if g('gearbox', 'auto') != 'manual' else 'column'); o['col'] = [round(c, 5) for c in gl(col)]
+    movers.append(o)
+    # THE TRANSFER LEVERS (the first is the RANGE lever — `lever_transfer`, a mover: it goes back as low range goes in;
+    # the rest stand still: the front axle's, a lock's, a PTO's) and THE HANDBRAKE (`lever_hand`: up as it is pulled)
+    tls = ck('transfer', [])
+    for i, t_ in enumerate(tls):
+        bm, uvl = new_bm()
+        p0 = V(LX + t_.get('x', 0.1), LY + t_.get('y', -0.02), S0 + 0.02); p1 = p0 + V(0, -t_.get('back', 0.04), t_.get('len', 0.26))
+        tube(bm, uvl, [p0, p1], [(0.008, 0.008)] * 2, STEEL, 8); knob(bm, p1, t_.get('knob_kind', 'ball'), KM[t_.get('knob', 'black')], 0.019)
+        if i == 0: o = finish(bm, 'lever_transfer', 0.0); o['pivot'] = gl(p0); o['axis'] = [1.0, 0.0, 0.0]; movers.append(o)
+        else: cabx.append(finish(bm, f'cab_lever{i}', 0.0))
+    HB = ck('hand')
+    if HB:
+        bm, uvl = new_bm()
+        if HB.get('kind', 'floor') == 'floor':
+            p0 = V(HB.get('x', 0.0), COWL + HB.get('y', -1.0), S0 + 0.06); p1 = p0 + V(0, 0.26, 0.11)       # between the seats: forward, a little up
+            tube(bm, uvl, [p0, p1], [(0.012, 0.012)] * 2, DASH, 8); tube(bm, uvl, [p1 - Y * 0.01, p1 + V(0, 0.09, 0.035)], [(0.017, 0.017)] * 2, TRIM, 8)
+            ax = [1.0, 0.0, 0.0]
+        else:
+            p0 = V(HB.get('x', LX + 0.2), LY + HB.get('y', 0.04), S0 + 0.02); p1 = p0 + V(0, -0.1, HB.get('len', 0.5))   # a tall lever on the floor (the trucks')
+            tube(bm, uvl, [p0, p1], [(0.011, 0.011)] * 2, STEEL, 8); tube(bm, uvl, [p1 - Z * 0.09, p1 + Z * 0.01], [(0.016, 0.016)] * 2, DASH, 8)
+            ax = [1.0, 0.0, 0.0]
+        o = finish(bm, 'lever_hand', 0.0); o['pivot'] = gl(p0); o['axis'] = ax; movers.append(o)
     wt = V(0, -(COWL - WS_TOP), ROOF - BELT).normalized(); wno = X.cross(wt).normalized()
     if wno.y < 0: wno = -wno
     scr = lambda x, t: V(x, COWL - (COWL - WS_TOP) * t, BELT + (ROOF - BELT) * t) + wno * 0.022
@@ -614,7 +727,7 @@ def build(P, out, log=print):
     wheels = []
     for name, sx, yc in (('wheel_FL', -1, AY), ('wheel_FR', 1, AY), ('wheel_RL', -1, -AY), ('wheel_RR', 1, -AY)):
         w = make_wheel(name, sx); w.location = (sx * TRK, yc, R); w['rim'] = round(RI / R, 3); wheels.append(w)
-    allp = [body, cabin, steer] + movers + doors + wheels
+    allp = [body, cabin, steer] + cabx + dials + movers + doors + wheels
     bpy.context.view_layer.update()
     def bounds(objs):
         lo, hi = Vector((1e9,) * 3), Vector((-1e9,) * 3)
@@ -639,7 +752,9 @@ def build(P, out, log=print):
     for o in allp: o.data.calc_loop_triangles(); tot += len(o.data.loop_triangles)
     info = dict(triangles=tot, wheelRadius=R, bytes=os.path.getsize(out), bytesSmall=os.path.getsize(out[:-4] + '.m.glb'), length=round(hi.y - lo.y, 4), half=dict(x=round((bhi.x - blo.x) / 2, 3), y=round((bhi.z - blo.z) / 2, 3), z=round((bhi.y - blo.y) / 2, 3)),
                 wheelPos=[[round(sx * TRK, 3), R, round(-yc, 4)] for sx, yc in ((-1, AY), (1, AY), (-1, -AY), (1, -AY))], hub=gl(hub),
-                exhaust=[-0.62, round(FZ - 0.1, 3), round(-(REAR - 0.05), 3)], roofInner=round(TOPZ, 3), hip=round(HUB.z - 0.36, 3))
+                exhaust=[-0.62, round(FZ - 0.1, 3), round(-(REAR - 0.05), 3)], roofInner=round(TOPZ, 3), hip=round(S0 + 0.40, 3),
+                # (the cockpit: the dials the game draws — oth/Cockpit.ts — and the FACTORY colour, the real machine's)
+                gauges=gauge_info, paint='#%02x%02x%02x' % tuple(P.get('paint', (150, 150, 150))), paintName=P.get('paint_name', ''), paintNote=P.get('paint_note', ''))
     log(f'{os.path.basename(out)}: {info}')
     return allp, info
 

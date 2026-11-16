@@ -1,11 +1,12 @@
 import * as GFX from './gfx'
 const { mergeGeometries } = GFX
-import { carDetailFor, driverDoor, loadVehicle, type TruckModel } from '../assets/loadModels'
+import { carDetailFor, driverDoor, loadVehicle, type CockpitPart, type TruckModel } from '../assets/loadModels'
 import { VEHICLES, vehicleDef } from '../gameplay/vehicle/catalogue'
 import { resolveSpec } from '../gameplay/vehicle/drivetrain/spec'
 import { blendRoughness, Surf, type SurfaceMix } from '../gameplay/vehicle/drivetrain/tyre'
 import { TruckSim } from '../gameplay/vehicle/VehicleSim'
 import { ATMOS_GLSL, FRAG_OUT, LOOK, type Atmosphere } from './Atmosphere'
+import { CockpitAnim, dialMaterial, dialTexture, type CockpitState } from './Cockpit'
 import type { Horizon } from './Horizon'
 import type { MapData } from './MapData'
 import type { OthPhysics } from './Physics'
@@ -105,7 +106,19 @@ export class Vehicle {
   // drawn) — the wipers always, the rest only near (the camera within 14 m, or inside: `inside`)
   private cockpit: GFX.Group | null = null
   private wheelPivot: GFX.Group | null = null
-  private parts: { kind: string; g: GFX.Group; axis: GFX.Vector3 }[] = []
+  private parts: { kind: string; g: GFX.Group; axis: GFX.Vector3; src?: CockpitPart }[] = []
+  // THE COCKPIT THAT WORKS (2026-11-16, Cockpit.ts): the dials' drawn faces, their needles, the gear lever through its
+  // gate, the range lever, the handbrake — and where the driver's hand goes for a shift (`shiftGrip`, main.ts)
+  private anim: CockpitAnim | null = null
+  /** The cockpit's FINE parts — the dials' faces, their needles, the range and handbrake levers: drawn from inside or
+   *  within 6 m (`close`) only. From the chase camera they are under a pixel, and their nine draws were +0.06 ms a
+   *  frame (abq, the Steppe at the spawn, 2026-11-16); the wheel, the pedals and the gear lever stay to 14 m. */
+  private fine: GFX.Object3D[] = []
+  close = true
+  private dialTex: GFX.Texture | null = null
+  private readonly ckState: CockpitState = { speed: 0, rpm: 0, gear: 1, gears: 4, selector: 'D', lowRange: false, handbrake: false }
+  /** The gear lever's knob (car space) and how far the driver's right hand has gone to it (0 on the wheel … 1). */
+  get shiftGrip(): { k: number; pos: GFX.Vector3 } | null { return this.anim?.grip ?? null }
   /** The camera is inside (first person): the whole cockpit drawn, whatever the distance; `near`: within 14 m. */
   inside = false
   near = true
@@ -311,6 +324,7 @@ export class Vehicle {
     this.cockpit?.removeFromParent()
     for (const pt of this.parts) pt.g.removeFromParent()
     this.parts = []
+    this.fine = []
     this.wheelPivot = null
     const ck = (this.cockpit = new GFX.Group())
     const partMesh = (geo: GFX.BufferGeometry) => {
@@ -329,8 +343,21 @@ export class Vehicle {
       g.position.set(...c.pivot)
       g.add(partMesh(c.geo))
       ;(c.kind.startsWith('wiper') ? this.root : ck).add(g)
-      this.parts.push({ kind: c.kind, g, axis: new GFX.Vector3(...c.axis).normalize() })
+      this.parts.push({ kind: c.kind, g, axis: new GFX.Vector3(...c.axis).normalize(), src: c })
+      if (c.kind.startsWith('needle_') || c.kind.startsWith('lever_')) this.fine.push(g)
     }
+    // the dials' faces (their scales drawn for this car — Cockpit.ts) and what moves the needles and the levers
+    this.dialTex?.dispose()
+    this.dialTex = null
+    const gauges = vehicleDef(this.id).gauges
+    if (truck.dials && gauges?.length) {
+      this.dialTex = dialTexture(gauges)
+      const dm = new GFX.Mesh(truck.dials, dialMaterial(u, this.dialTex))
+      dm.frustumCulled = false
+      ck.add(dm)
+      this.fine.push(dm)
+    }
+    this.anim = new CockpitAnim(this.parts)
     this.root.add(ck)
     const wheelMat = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) })
     this.wheelMesh = new GFX.InstancedMesh(truck.wheel, wheelMat, 4)
@@ -445,10 +472,24 @@ export class Vehicle {
       const open = 1 - (this.sim.drivetrain?.clutch ?? 1)
       this.clutchK += Math.max(-dt * 7, Math.min(dt * 9, open - this.clutchK))
       for (const pt of this.parts) {
+        if (pt.kind.startsWith('needle_') || pt.kind.startsWith('lever_') || pt.kind === 'gear_lever') continue // (Cockpit.ts moves them)
         const a = pt.kind === 'pedal_gas' ? gas * 0.32 : pt.kind === 'pedal_brake' ? brk * 0.3 : pt.kind === 'pedal_clutch' ? this.clutchK * 0.34 : pt.kind.startsWith('wiper') ? sweep : 0
         pt.g.quaternion.setFromAxisAngle(pt.axis, a)
       }
       if (this.cockpit) this.cockpit.visible = this.inside || (this.near && this.root.visible)
+      { const fine = this.inside || this.close; for (let i = 0; i < this.fine.length; i++) this.fine[i].visible = fine }
+      // the needles and the levers: what the car is doing now (only while the cockpit is drawn)
+      if (this.anim && this.cockpit?.visible) {
+        const D = this.sim.drivetrain, st = this.ckState
+        st.speed = this.sim.speed
+        st.rpm = D ? (D.we * 30) / Math.PI : 800 + Math.abs(this.sim.speed) * 90
+        st.gear = D ? D.gearTarget : 1
+        st.gears = D ? D.R.gearbox.ratios.length : 4
+        st.selector = D ? D.selector : 'D'
+        st.lowRange = !!D?.lowRange
+        st.handbrake = !!c.handbrake || !!c.parked
+        this.anim.update(dt, st)
+      }
     }
     tr.wheelPos.forEach(([x, y, z], k) => {
       const right = k === 1 || k === 3
@@ -622,7 +663,7 @@ export const GRAIN_OFF = typeof location !== 'undefined' && new URLSearchParams(
 /** Paint per car on this map: the off-roader in rust red (the shelved G500 too), the shelved E30 in cream. */
 // (muted, a little faded — worn paint, not a toy's: 2026-11-10, the user: "too cartoonish")
 // (the kit's cars: each its own colour — catalogue `stock.paint`)
-const OTH_PAINT: Record<string, string> = { offroader: '#a8573f', g500: '#b8452e', e30: '#efe4cc' }
+const OTH_PAINT: Record<string, string> = { g500: '#b8452e', e30: '#efe4cc' }
 
 const VERT = /* glsl */ `
 in float paintMask;

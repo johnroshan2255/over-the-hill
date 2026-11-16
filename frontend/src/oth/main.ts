@@ -4,7 +4,7 @@ import { loadJournal, REWARD, saveJournal } from '../journal'
 import { lettersKnown, lettersTaught, wardenHtml } from './wardenScript'
 import { SECRET } from './Wardens'
 import { type Camp, continueRequested, loadProgress, requestContinue, saveProgress } from '../save'
-import { gameParams, type Settings } from '../settings'
+import { gameParams, loadSettings, type Settings } from '../settings'
 import { Menu } from '../ui/Menu'
 import { Atmosphere, LOOK } from './Atmosphere'
 import { Bike, MotoBike } from './Bike'
@@ -43,7 +43,7 @@ import { Fsr } from './Fsr'
 import { initMouseLook, lockMouse, lookBlocked, mouseLocked, onMouseLook, releaseMouse } from './mouseLook'
 import { PerfMarks, type PerfSnap } from './PerfMarks'
 import { carKind, Coop, type Local } from './Coop'
-import { DEFAULT_VEHICLE } from '../gameplay/vehicle/catalogue'
+import { DEFAULT_VEHICLE, vehicleDef } from '../gameplay/vehicle/catalogue'
 import { Gather } from './Gather'
 import { GroundEdits } from './GroundEdits'
 import { Trailer } from './Trailer'
@@ -282,6 +282,7 @@ async function boot() {
   const qYaw = new GFX.Quaternion(), qPitch = new GFX.Quaternion(), UP = new GFX.Vector3(0, 1, 0), RIGHT = new GFX.Vector3(1, 0, 0), eye = new GFX.Vector3()
   const eyeOff = new GFX.Vector3(), eyeAvg = new GFX.Vector3()
   let eyeAvgOn = false
+  const FPP_TILT = num('fpptilt', 0.24), FPP_FOV = num('fppfov', 62)
   const placeFpp = (dt: number) => {
     if (!onFoot) eyeAvgOn = false
     look.idle += dt
@@ -321,6 +322,11 @@ async function boot() {
       lo.y = Math.min(lo.y, car.roofY - 0.2)
       eye.copy(lo).applyQuaternion(car.root.quaternion).add(car.root.position)
       qYaw.setFromAxisAngle(UP, look.yaw)
+      // (THE DRIVER'S VIEW TIPPED DOWN — 2026-11-16, the user: "in first person … no speedometer, nothing": the eye
+      //  looked level, the top third of the frame the roof's lining and the dash wholly under it. Tipped ~14° — with
+      //  the wider lens below — the wheel and the instruments behind it sit in the bottom of the view, the road still
+      //  in its middle. `?fpptilt=` rad, `?fppfov=` °.)
+      qPitch.setFromAxisAngle(RIGHT, look.pitch - FPP_TILT)
       camera.quaternion.copy(car.root.quaternion).multiply(qYaw).multiply(qPitch)
     }
     camera.position.copy(eye)
@@ -329,20 +335,29 @@ async function boot() {
   /** The driver in his seat (the character seen through the windows — and his hands on the wheel in first person): his
    *  hips set from the steering wheel (behind and under its hub), his hands at ten to two on its rim, turning with it. */
   let seatedIn = ''
+  const shiftHand = new GFX.Vector3()
   const seatDriver = () => {
     const rim = car.wheelRim, d = car.driverDoor
     // (under the roof: a low car — the E30 — sits the driver lower, his head clear of it)
-    const hips = rim ? new GFX.Vector3(rim.hub.x, Math.min(rim.hub.y - 0.36, car.roofY - 0.92), rim.hub.z + 0.5) : d ? d.seat.clone() : null
+    // (his hips in the SEAT: the kit's cars say where — `seatHip`: their wheel sits lower than the seat was once measured
+    //  from; else under the hub, as it was)
+    const hipY = vehicleDef(car.id).seatHip ?? (rim ? rim.hub.y - 0.36 : 0)
+    const hips = rim ? new GFX.Vector3(rim.hub.x, Math.min(hipY, car.roofY - 0.92), rim.hub.z + 0.5) : d ? d.seat.clone() : null
     if (!hips) return
     hero.sitIn(car.root, hips, () => {
       const r = car.wheelRim
       if (!r) return null
       const a = r.axis, up = new GFX.Vector3(0, 1, 0).addScaledVector(a, -a.y).normalize(), right = new GFX.Vector3().crossVectors(a, up).normalize()
       const turn = Math.max(-1.4, Math.min(1.4, car.steerWheel))
-      return [150, 30].map((deg) => {
+      const hands = [150, 30].map((deg) => {
         const t = (deg * Math.PI) / 180 - turn
         return r.hub.clone().addScaledVector(right, Math.cos(t) * r.r).addScaledVector(up, Math.sin(t) * r.r)
       }) as [GFX.Vector3, GFX.Vector3]
+      // THE GEAR CHANGE (2026-11-16, Cockpit.ts): his right hand leaves the wheel for the lever's knob as the box
+      // shifts — down on it while it goes through the gate — and comes back
+      const gr = car.shiftGrip
+      if (gr && gr.k > 0.001) { const k = gr.k * gr.k * (3 - 2 * gr.k); hands[1].lerp(shiftHand.copy(gr.pos).setY(gr.pos.y + 0.02), k) }
+      return hands
     })
     seatedIn = car.id
   }
@@ -754,7 +769,8 @@ async function boot() {
     if (cut || !car.sim) return
     clearFallen(r === 'moto' ? moto : undefined)
     if (r === 'car') {
-      if (car.id !== carId) await car.setCar(carId)
+      // (each car its own paint — settings `paints`; none: its factory colour)
+      if (car.id !== carId) { car.paint = loadSettings().paints[carId] ?? null; await car.setCar(carId) }
       if (riding) { toggleRide(two); return }
       if (onFoot) {
         const p = hero.pos.clone(), h = hero.heading
@@ -980,7 +996,7 @@ async function boot() {
   const applySettings = (st: Settings, key: keyof Settings) => {
     const url = new URLSearchParams(location.search)
     if (key === 'gearbox' || key === 'aids' || key === 'offroadAssist') car.setDriving({ manual: st.gearbox === 'manual', aids: st.aids, offroadAssist: st.offroadAssist })
-    else if (key === 'paint') car.setPaint(st.paint)
+    else if (key === 'paints') car.setPaint(st.paints[car.id] ?? null)
     else if (key === 'sound') audio.muted = !st.sound
     else if (key === 'fpsOverlay') { showStats = st.fpsOverlay; renderer.showStats(showStats) }
     else if (key === 'resolution' && !url.has('scale')) {
@@ -1273,10 +1289,10 @@ async function boot() {
     const inFpp = fpp && driving && !cut
     hero.hideHead = inFpp && (onFoot || hero.seated || riding)
     car.inside = inFpp && !onFoot && !riding
-    car.near = car.inside || camera.position.distanceTo(car.pos) < 14
+    { const dc = camera.position.distanceTo(car.pos); car.near = car.inside || dc < 14; car.close = car.inside || dc < 6 }
     const nearWant = inFpp ? 0.05 : 0.3
     // (on a bike in first person, a wider lens — 70° — as games give it: the bars and the hands in the bottom of the view)
-    const fovWant = inFpp && riding ? 70 : 55
+    const fovWant = inFpp && riding ? 70 : inFpp && !onFoot ? FPP_FOV : 55
     if (camera.near !== nearWant || camera.fov !== fovWant) { camera.near = nearWant; camera.fov = fovWant; camera.updateProjectionMatrix() }
     ui.update(driving, atmos.clock)
     audio.update(dt, camera)

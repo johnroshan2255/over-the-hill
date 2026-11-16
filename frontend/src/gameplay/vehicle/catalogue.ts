@@ -42,13 +42,21 @@ export const TUNE_RANGES: TuneRange[] = [
   { key: 'mass', label: 'Weight', min: 700, max: 3600, step: 50, unit: 'kg' },
 ]
 
+/** The garage's paints (free, and each car its own — settings `paints`). A car's FACTORY colour is its `stock.paint`:
+ *  the garage's first swatch. (No pure white here: #ffffff means "the model's own untinted panels" to the shader — every
+ *  car the same pale grey: the old 'Stock'.) */
 export const PAINTS: { name: string; hex: string }[] = [
-  { name: 'Stock', hex: '#ffffff' }, { name: 'Rally Red', hex: '#e83a2a' }, { name: 'Safari Orange', hex: '#e8a23a' },
+  { name: 'Arctic White', hex: '#f0eee8' }, { name: 'Rally Red', hex: '#e83a2a' }, { name: 'Safari Orange', hex: '#e8a23a' },
   { name: 'Desert Yellow', hex: '#f2d838' }, { name: 'Lime', hex: '#c8d82a' }, { name: 'Forest Green', hex: '#3aa64a' },
   { name: 'Teal', hex: '#2aa6a0' }, { name: 'Sky Blue', hex: '#2a7ee8' }, { name: 'Navy', hex: '#1e3a78' },
   { name: 'Violet', hex: '#7a3ae8' }, { name: 'Midnight', hex: '#1b1d22' }, { name: 'Sand', hex: '#c8b28a' },
   { name: 'Mud Brown', hex: '#8a6a48' }, { name: 'Silver', hex: '#c8ccd2' }, { name: 'Gunmetal', hex: '#5a616c' }, { name: 'Cream', hex: '#f2ead8' },
 ]
+
+/** One dial of a car's instruments (scripts/oth/carkit.py writes them to cars.json): its cell `k` on the instrument
+ *  canvas, what it shows, its radius (m), its scale's end and unit, the needle's rest angle and sweep (rad, counter-
+ *  clockwise from 3 o'clock — a speedometer's −270° runs clockwise), its face ('black' | 'cream' | 'white'), the red line. */
+export interface GaugeSpec { k: number; kind: string; r: number; max: number; unit: string; a0: number; sweep: number; face: string; red: number }
 
 export interface VehicleDef {
   id: string
@@ -80,6 +88,15 @@ export interface VehicleDef {
   lamps?: { head: [number, number, number]; tail: [number, number, number]; head2?: [number, number, number]; headSize?: [number, number]; tailSize?: [number, number] }
   /** The dash: 'twin' round speedo + tacho, 'single' speedo + lamp strip, 'screen' a wide twin screen (Cockpit). */
   dash: 'twin' | 'single' | 'screen'
+  /** THE FACTORY COLOUR's name and a line about it (`stock.paint` is the colour itself): the real machine's own —
+   *  what the car wears until the garage paints it. */
+  paintName?: string
+  paintNote?: string
+  /** THE DIALS (oth/Cockpit.ts): each `dial_k` face on the model — what it shows, its scale, where its needle rests. */
+  gauges?: GaugeSpec[]
+  /** The driver's hips' height in the seat (m, car space) where it isn't the steering hub's − 0.36: the kit's cars,
+   *  whose wheel sits lower than their seat was measured from. */
+  seatHip?: number
   /** Paint mask for a WHITE (unsaturated) textured body: the bright neutral texels take the paint (buildPaintMap
    *  otherwise picks the body's dominant saturated hue). */
   whitePaint?: boolean
@@ -124,41 +141,42 @@ import bmwUrl from '../../assets/models/vehicles/bmw_e30.lod0.glb?url'
 
 /** THE KIT'S CARS (docs/VEHICLES.md — the garage of 21, 18 built): each OUR model of a real machine, made from its
  *  numbers by scripts/oth/cars.py + carkit.py (→ <id>.glb, its measures in cars.json), with its own physics
- *  (SPECS[id]). A row: id, name, year, the colour it wears here, its engine's voice (engineSynth VOICES), its sound's
- *  pitch, and a line about it. */
+ *  (SPECS[id]). A row: id, name, year, its engine's voice (engineSynth VOICES), its sound's pitch, and a line about it.
+ *  Its COLOUR is the real machine's factory colour (cars.py PAINT → cars.json `paint`, `paintName`). */
 const KIT_URL = import.meta.glob('../../assets/models/vehicles/*.glb', { query: '?url', import: 'default', eager: true }) as Record<string, string>
-const KIT_ROWS: [id: keyof typeof CARS & keyof typeof SPECS, name: string, year: string, paint: string, voice: string, pitch: number, blurb: string][] = [
-  ['sierra', 'Sierra K', '1984', '#7d9cb8', 'v8', 0.85, 'A square-bodied half-ton pickup: a lazy V8, three gears, leaf springs and an open bed. Light at the back.'],
-  ['powerline', 'Powerline', '1946', '#a8483a', 'i6', 0.75, 'A one-ton with round wings and a flathead six: slow, heavy, geared to pull a house.'],
-  ['fortyfive', 'Forty-Five', '1975', '#c9a94e', 'i6', 0.85, 'The long pickup: a big six, four gears, leaf springs, a bed for the lumber.'],
-  ['squarebody', 'Squarebody', '1984', '#6f93b5', 'v8', 0.85, 'The pickup made a wagon: the same V8 on a shorter wheelbase, a pale top.'],
-  ['bronc', 'Bronc', '1970', '#c4674a', 'v8', 0.95, 'Small, square and over-engined: a V8 in 3.9 metres. The liveliest thing here.'],
-  ['scoutling', 'Scoutling', '1967', '#c0623c', 'i4', 0.95, 'Half a V8 in a light little box: three gears and not much else.'],
-  ['steppe', 'Steppe', '1977', '#4d8a8c', 'i4', 1.15, 'The smallest: 1150 kg, permanent four-wheel drive, coils. It skips where the others plough.'],
-  ['eightyeight', 'Eighty-Eight', '1965', '#4f6b45', 'i4', 0.95, 'Flat panels on leaf springs and narrow tyres: 72 horsepower and all the time in the world.'],
-  ['guardian', 'Guardian', '1991', '#7fb7c9', 'd4', 0.9, 'The crawler: a turbo-diesel, coils, permanent four-wheel drive and the deepest low range.'],
-  ['gelande', 'Gelände', '1982', '#d9d6cc', 'i6', 1.05, 'A short flat box with a twin-cam six and lockers front and rear.'],
-  ['forty', 'Forty', '1978', '#c9634c', 'i6', 0.85, 'The short one with the white roof: a big lazy six on leaf springs.'],
-  ['seventy', 'Seventy', '1985', '#4c5f8f', 'd4', 0.85, 'Square and plain: a slow diesel, five gears, leaf springs. It just keeps going.'],
-  ['lynx', 'Lynx', '1980', '#c8b98c', 'i4', 1.15, 'Tiny and military: independent at both ends, a crawler first gear, a rear locker.'],
-  ['wayfarer', 'Wayfarer', '1991', '#b04a52', 'v8', 1.0, 'The modern one: a V6, five gears, a softer ride — the quickest on a road.'],
-  ['wagon63', 'Wagon 63', '1963', '#7fc4a8', 'i6', 0.9, 'A four-door wagon with an overhead-cam six: room for six and their luggage.'],
-  ['grandwagon', 'Grand Wagon', '1986', '#3f6f9f', 'v8', 0.8, 'The same wagon twenty years on: a big V8, an automatic, a strip of wood down its side.'],
-  ['boar', 'Boar', '1954', '#8a7a52', 'i6', 0.75, 'Two and a half tons of round-nosed command car on tall tyres. Unhurried.'],
-  ['woodbox', 'Woodbox', '1953', '#b84a4a', 'i6', 0.8, 'A truck nose with a long wagon body in wood: the family hauler of 1953.'],
+const KIT_ROWS: [id: keyof typeof CARS & keyof typeof SPECS, name: string, year: string, voice: string, pitch: number, blurb: string][] = [
+  ['sierra', 'Sierra K', '1984', 'v8', 0.85, 'A square-bodied half-ton pickup: a lazy V8, three gears, leaf springs and an open bed. Light at the back.'],
+  ['powerline', 'Powerline', '1946', 'i6', 0.75, 'A one-ton with round wings and a flathead six: slow, heavy, geared to pull a house.'],
+  ['fortyfive', 'Forty-Five', '1975', 'i6', 0.85, 'The long pickup: a big six, four gears, leaf springs, a bed for the lumber.'],
+  ['squarebody', 'Squarebody', '1984', 'v8', 0.85, 'The pickup made a wagon: the same V8 on a shorter wheelbase, a pale top.'],
+  ['bronc', 'Bronc', '1970', 'v8', 0.95, 'Small, square and over-engined: a V8 in 3.9 metres. The liveliest thing here.'],
+  ['scoutling', 'Scoutling', '1967', 'i4', 0.95, 'Half a V8 in a light little box: three gears and not much else.'],
+  ['steppe', 'Steppe', '1977', 'i4', 1.15, 'The smallest: 1150 kg, permanent four-wheel drive, coils. It skips where the others plough.'],
+  ['eightyeight', 'Eighty-Eight', '1965', 'i4', 0.95, 'Flat panels on leaf springs and narrow tyres: 72 horsepower and all the time in the world.'],
+  ['guardian', 'Guardian', '1991', 'd4', 0.9, 'The crawler: a turbo-diesel, coils, permanent four-wheel drive and the deepest low range.'],
+  ['gelande', 'Gelände', '1982', 'i6', 1.05, 'A short flat box with a twin-cam six and lockers front and rear.'],
+  ['forty', 'Forty', '1978', 'i6', 0.85, 'The short one with the white roof: a big lazy six on leaf springs.'],
+  ['seventy', 'Seventy', '1985', 'd4', 0.85, 'Square and plain: a slow diesel, five gears, leaf springs. It just keeps going.'],
+  ['lynx', 'Lynx', '1980', 'i4', 1.15, 'Tiny and military: independent at both ends, a crawler first gear, a rear locker.'],
+  ['wayfarer', 'Wayfarer', '1991', 'v8', 1.0, 'The modern one: a V6, five gears, a softer ride — the quickest on a road.'],
+  ['wagon63', 'Wagon 63', '1963', 'i6', 0.9, 'A four-door wagon with an overhead-cam six: room for six and their luggage.'],
+  ['grandwagon', 'Grand Wagon', '1986', 'v8', 0.8, 'The same wagon twenty years on: a big V8, an automatic, a strip of wood down its side.'],
+  ['boar', 'Boar', '1954', 'i6', 0.75, 'Two and a half tons of round-nosed command car on tall tyres. Unhurried.'],
+  ['woodbox', 'Woodbox', '1953', 'i6', 0.8, 'A truck nose with a long wagon body in wood: the family hauler of 1953.'],
 ]
-const KIT: VehicleDef[] = KIT_ROWS.map(([id, name, year, paint, voice, pitch, blurb]) => {
+const KIT: VehicleDef[] = KIT_ROWS.map(([id, name, year, voice, pitch, blurb]) => {
   const c = CARS[id], spec: VehicleSpec = SPECS[id], top = (spec.published?.topSpeed ?? 130) / 3.6, n = spec.transmission.ratios?.length ?? 4
   return {
     id, name, maker: 'Overhill', year, blurb,
     url: KIT_URL[`../../assets/models/vehicles/${id}.glb`], length: c.length, forward: '-z', wheelRegex: /wheel_(FL|FR|RL|RR)/i, paintRegex: /CarPaint/i, bytes: c.bytes, dash: 'twin',
     urlSmall: KIT_URL[`../../assets/models/vehicles/${id}.m.glb`], whitePaint: true, smooth: true,      // painted (chips, rust, mud — carkit.paint_texture): the phones' file its texture at 1024²
     glassTint: 0.9, voice,
-    cabin: { hip: c.hip, roof: c.roofInner, behind: 0.5 },
+    cabin: { hip: c.hip, roof: c.roofInner, behind: 0.5 }, seatHip: c.hip,
+    paintName: c.paintName, paintNote: c.paintNote, gauges: c.gauges,
     // (the sound's gear steps: spread to its own top speed)
     engine: { pitch, gears: [0, ...Array.from({ length: n - 1 }, (_, k) => (top * (k + 1)) / (n + 0.6)), 70] },
     exhaust: [{ at: c.exhaust as [number, number, number], dir: [0, 0, 1] }],
-    stock: { power: spec.power.peakPower, force: Math.min(22, 8 + spec.mass.kerb / 300), boost: 2.0, grip: 2.4, suspension: 40, tyre: 1, mass: Math.min(3600, spec.mass.kerb), paint },
+    stock: { power: spec.power.peakPower, force: Math.min(22, 8 + spec.mass.kerb / 300), boost: 2.0, grip: 2.4, suspension: 40, tyre: 1, mass: Math.min(3600, spec.mass.kerb), paint: c.paint },
     spec,
   }
 })
@@ -190,7 +208,11 @@ export const VEHICLES: VehicleDef[] = [
     engine: { pitch: 0.8, gears: [0, 7, 14, 22, 31, 42, 70] },
     // one tailpipe under the back bumper, on the left
     exhaust: [{ at: [-0.45, 0.6, 2.15], dir: [0, 0, 1] }],
-    stock: { power: 310, force: 18, boost: 2.0, grip: 2.8, suspension: 44, tyre: 1, mass: 3000, paint: '#5a5c5e' }, // (the reference's matte grey)
+    // (its own colour: the rust red it has always worn in the valley — it was a grey here that Vehicle.ts overrode)
+    stock: { power: 310, force: 18, boost: 2.0, grip: 2.8, suspension: 44, tyre: 1, mass: 3000, paint: '#a8573f' },
+    paintName: 'Rust Red', paintNote: 'our own truck, in its own colour',
+    // (its two dials — scripts/oth/offroader.py `dial_0`, `dial_1`: 200 km/h, 7000 rpm with the line at 6000)
+    gauges: [{ k: 0, kind: 'speed', r: 0.047, max: 200, unit: 'kmh', a0: 3.927, sweep: -4.7124, face: 'black', red: 0 }, { k: 1, kind: 'rpm', r: 0.047, max: 7000, unit: '', a0: 3.927, sweep: -4.7124, face: 'black', red: 6000 }],
     spec: SPECS.offroader,
   },
   ...KIT,
