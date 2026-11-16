@@ -165,10 +165,13 @@ export class World {
       for (let i = ci - 1; i <= ci + 1; i++) for (let j = cj - 1; j <= cj + 1; j++) for (const [kx, kz, r] of wk.get(i * 4096 + j) ?? []) if ((x - kx) ** 2 + (z - kz) ** 2 < r * r) return false
       return true
     }
-    const open = (x: number, z: number) => plan.keep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r) && wardenOpen(x, z)
+    // (… and off the NARROW WAYS — paths.ts, the towns' alleys the Wardens' plan just added: no trunk within 1.2 m of an edge)
+    const open = (x: number, z: number) => plan.keep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r) && wardenOpen(x, z) && map.pathEdge(x, z) > 1.2
     const keepEvery = (a: ArrayLike<number>, stride: number) => { const o: number[] = []; for (let i = 0; i < a.length; i += stride) if (open(a[i], a[i + 2])) for (let k = 0; k < stride; k++) o.push(a[i + k]); return new Float32Array(o) }
     rocks.removeWithin(plan.keep)
     rocks.removeWithin(wplan.keep)
+    // (the alleys came after the stones: a stone in one taken out)
+    { const ps = map.meta.paths; if (ps) rocks.removeWithin(ps.lines.flatMap((L, i) => (ps.kind[i] === 'alley' ? L.map(([x, z]) => [x, z, 2.6] as [number, number, number]) : []))) }
     // (the cave's hill: the land round it raised into its long flanks — before anything is placed on it)
     { const cs = plan.sites.find((l) => l.kind === 'cave'); if (cs && caveMeta && gameParams().get('caveflanks') === '1') CaveWorld.spreadFoot(map, cs, caveMeta) } // (off: it made walls and creases — 2026-11-08)
     // (and the small things on it: pebbles, logs, stumps — never a crate, a sign, a camp's)

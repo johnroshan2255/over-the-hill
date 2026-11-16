@@ -417,4 +417,14 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
       yield
     }
   }
+  // (the NARROW WAYS — paths.ts: a bush standing in one is taken off, after every draw: no other bush moves)
+  if (map.meta.paths?.lines.length) {
+    let w = 0
+    for (let k = 0; k < out.length; k += STRIDE) {
+      if (map.pathEdge(out[k], out[k + 2]) < 0.3 + out[k + 3] * 0.35) continue
+      if (w !== k) for (let c = 0; c < STRIDE; c++) out[w + c] = out[k + c]
+      w += STRIDE
+    }
+    out.length = w
+  }
 }

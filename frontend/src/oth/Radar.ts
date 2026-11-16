@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
-import { type Chart, drawGate, drawOutPlace, drawPin, drawPlace, drawRoads, drawRoute, drawTracks, type ClaimMark, drawClaim } from './Chart'
+import { type Chart, drawGate, drawOutPlace, drawPaths, drawPin, drawPlace, drawRoads, drawRoute, drawTracks, type ClaimMark, drawClaim } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, turnArrow } from './Nav'
@@ -201,6 +201,7 @@ export class Radar {
       }
     }
     drawRoads(g, meta, P, 2.6)
+    drawPaths(g, meta, P, 1.5, view)
     drawTracks(g, meta, P, 2.2, view)
     // the route ahead
     const gd = this.o.guide, r = gd.route

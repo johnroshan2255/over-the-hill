@@ -377,3 +377,44 @@ mud). Open: line 63 FLIPPED once at (1512, 1632) on a 21 % pitch inside the box 
 `wardens=0` or `woods=0`, both far from it: the bot on the edge there); line 65 (the 50 m spur to the Skyfall Overlook)
 stalls at the deck's foot in some runs. Look at both by hand.
 
+
+## 15. The narrow ways (2026-11-14) — "we now have the main road to go to places … but we have lot of place like lake and some vallies and all. we want some narrow paths, alleyways, shortcuts, or secret passages to some places, and all must be connected to main road in some ways"
+
+`frontend/src/oth/paths.ts` — found as the map loads (the loader's worker, `mapPrep.prepareMap`, after every cut and
+before the heights are read), `meta.paths` = lines, kinds, where each goes. One car wide (half width `PATH_HW` 1.7 m),
+the tracks' earth and ruts (`groundPaint` with the way's own width), the grass's ragged clumps over its edge.
+
+| kind | what | count (the valley) |
+|---|---|---|
+| `path` | from each lake's / pond's shore no road comes within 45 m of (the shore nearest a road), a big lake's far shore too; each VALLEY floor (25 m+ under the ground 260 m round, enclosed on 8 of 12 sides, gentle, dry, no road within 250 m but one within 650 m — the deepest, 1 km apart); the Boulder Field; the Fallen Star — on to the nearest road or way | 24 (~15 km) |
+| `short` | between two roads 140–500 m apart as the crow flies but 3.5 × that (and 700 m+ more) by road — the road graph's distances (a node every ~40 m), the way no longer than 1.8 × the straight line, 700 m from another's ends | 4–5 |
+| `secret` | where a RIDGE (12–40 m over the line, ends within 12 %) stands between two such roads: a GORGE cut through it (the vales' rule: only lowering, a parabola into a 56° wall, the lip rounded; 10 m floor on the 8 m grid, 7 m in the box; the box's mask painted rock on its walls), a bend a sixth of its length out so you can't see through; no other road or way near it. On no map; no route takes it | 2 |
+| `alley` | each Wardens town's back lanes (17 m out from the street, between the house rows), round the last house to the street's end, and the street out of the gate to the road (`Wardens.ts` → `MapData.addPaths`); a lane with a step over 45 % in 4 m isn't laid | ~80 pieces |
+
+- **Routing**: least cost over the world's 8 m grid (the box's heights inside it): length × (1 + 28·grade² + 9·slope²)
+  × a slow wander (0.72–1.32, ~260 m); a step over 30 %, side slope over 50 %, the lakes and ponds under their level
+  + 0.5 m, bridges, landmarks, the vales, courts, the World Tree's trunk, the arch: walls; the river a ford (× 6), a
+  stream × 2.5; the ways already found × 0.45 (they merge). Then Chaikin × 3, a point every 4 m, relaxed × 8 (no
+  bend under ~20 m).
+- **The box**: a BENCH across each path (toward its middle's height, ≤ 1.2 m) and a RAMP where it meets a road (its
+  first 16 m eased from the road's height, ≤ 3 m — a track's cut bank is a 2 m step the 8 m search never sees: a
+  shortcut met one at 100 %). Drivable: paths ≤ 51 % over 4 m at one point (23 of 3588 over 35 %), shortcuts ≤ 41 %,
+  alleys ≤ 44 %, the passages ≤ 32 %.
+- **The field**: the road texture is RG now (`roadField`): G = the distance to a way's CENTRE LINE (0 … 10 m), 4 m
+  texels. Read bilinear its V fills in (a 3.4 m way would vanish between two texels) — `pathCentre` (Terrain.ts) /
+  `pathCentreAt` (paths.ts, the CPU's) take the four texels round a point and the signs that put them on one plane
+  with a line's slope (a metre a metre — four distances alone can't tell a way between two rows of texels from none):
+  on random bends, 59 of 82 505 samples off by > 0.3 m. Only near a way (the bilinear read says < 5.9 m) are the
+  four read. No new texture: the terrain's draw is at WebGPU's 16.
+- **What keeps off**: the grass (the bake), trees (1.4 m from the edge — and `World.open`, which takes everything
+  placed), bushes, stones and crags (after every draw: nothing else moves), the alleys' stones (`rocks.removeWithin`);
+  the Wardens' walls — a piece or collider within 1.25 m of a way's middle comes out at the end of the plan (a gap in
+  the wall; no site moves; a vault's door and keystone keep their indices). The tyres and the dust: `wayEdge` holds it.
+- **Map / GPS**: `Chart.drawPaths` (thin dashed brown, the map and the radar); `Nav.RoadGraph` takes them as rough
+  going. Never the secret passages.
+- **A/B**: `?paths=0` — none planned, cut or painted (`OTH_NO_PATH`: not even read).
+- **Cost**: per frame none measurable (below, docs/PERF.md); the load +~0.3 s in the worker (Node: 0.30 s; in the page
+  5.1 vs 4.6–4.9 s warm); the road texture 9.4 → 18.9 MB (RG8, 3072²).
+- **Open**: the outland's ways get no bench or ramp (its 8 m grid); a way's sign at its road (a fingerpost — the forts'
+  `trod` has one); the passages' mouths could use a marker only the curious notice. Drive one at speed by hand: the test
+  here was the chase camera in a background tab (~1 fps) — the car on the lake path, the grades measured instead.

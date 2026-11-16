@@ -675,6 +675,8 @@ void main() {
   // (the blade's colour is the FIELD's: painted without the track, so the blades at its edge don't take the earth)
   // (an outland road — scripts/oth/wilds.py — is a track here: its edge where the box's tracks' is)
   { float rd = roadCentre(root) - (uRoadG.z - uTrailHW); if (rd < trail) trail = rd; }
+  // (… and a narrow way — paths.ts: its edge where the track's is, so the same blades keep off it)
+  { float pd = pathCentre(root) - (PATH_HW - uTrailHW); if (pd < trail) trail = pd; }
   Ground g = groundPaint(root, m, h, 1.0 - N.y, pn, 0.0, 99.0, uTrailHW, 0.0); // (no painted shrub dots under the grass: the bushes are real there)
   // (the early snow, Terrain.ts earlySnow: where it lies solid, no blade; in the dusting the tips stand through it)
   // (… and none in a lake or on its wet shore)

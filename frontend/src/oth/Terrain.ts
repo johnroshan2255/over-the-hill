@@ -1,7 +1,8 @@
 import * as GFX from './gfx'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
-import { ROAD_REACH } from './mapPrep'
+import { ROAD_REACH, ROAD_STEP } from './mapPrep'
+import { PATH_HW, PATH_REACH } from './paths'
 import { PAINT_GLSL } from './paint'
 import { ROCK_RELIEF_GLSL } from './rockRelief'
 import type { Tier } from './quality'
@@ -147,7 +148,7 @@ export class Terrain {
       uShore0: { value: new GFX.Vector4(0, 0, 0, 0) }, uShore1: { value: new GFX.Vector4(0, 0, 0, 0) },
       uShore2: { value: new GFX.Vector4(0, 0, 0, 0) }, uShore3: { value: new GFX.Vector4(0, 0, 0, 0) },
     }
-    const defines: Record<string, string> = { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...shapeDefines(), ...rimDefines() }
+    const defines: Record<string, string> = { ...(gameParams().get('paths') === '0' ? { OTH_NO_PATH: '' } : {}), ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...shapeDefines(), ...rimDefines() }
     if (tier.groundCache > 0 && gameParams().get('gcache') !== '0') {
       this.cache = new GroundCache(renderer, tier.groundCache, 2 * map.farHalf, this.uniforms, defines, HEIGHT_GLSL, SURF_GLSL)
       Object.assign(this.uniforms, this.cache.uniforms)
@@ -527,6 +528,9 @@ void main() {
  * 110–230 m higher; on a steep face only in streaks, none where it's too steep to hold any. Needs the paint's noises (big.r, mid.g, fine.g, mid.b).
  */
 export const ROAD_GLSL = /* glsl */ `
+#define PATH_HW ${PATH_HW.toFixed(2)}
+#define PATH_REACH ${PATH_REACH.toFixed(1)}
+#define ROAD_STEP_M ${ROAD_STEP.toFixed(1)}
 uniform vec4 uRoadG;
 uniform vec4 uSnowAt;
 // THE BOX'S RIM (2026-11-11, the user: "the lines … and sudden colour changes" — a hard line across the field and the
@@ -587,9 +591,40 @@ float roadCentre(vec2 xz) {
   float sd = ROAD_TEX(xz * uRoadG.y + 0.5).r * 2.0 * uRoadG.w - uRoadG.w;
   return sd > uRoadG.w - 0.2 ? 99.0 : sd + uRoadG.z;
 }
+// THE NARROW WAYS (paths.ts — 2026-11-14: paths to the lakes and valleys, shortcuts, secret passages, the towns' alleys):
+// metres to the nearest one's centre line, from the road field's G (99: none near). That holds the UNSIGNED distance,
+// a V across the line — read bilinear between 4 m texels its bottom fills in (a 3.4 m way would vanish where it runs
+// between two), but never under the truth: far reads far, no more. Near one, the four texels round xz and the signs
+// that put them on one plane (a line's signed distance is a plane: f00 + f11 = f10 + f01) — that plane read at xz:
+// exact on a straight way, near it on a bend. MapData.pathCentre does the same on the CPU (paths.ts pathCentreAt).
+// (… and whose slope is a line's: a metre a metre — 0.4 of the field a texel. Four distances alone can't tell a way
+//  running between two rows of texels from none there at all — (2, 2, 2, 2) is both — but nothing is flat)
+void pathTry(vec4 d, vec3 s, inout float best, inout vec3 sg) {
+  float r = abs(d.x + s.z * d.w - s.x * d.y - s.y * d.z);
+  vec2 gr = vec2(s.x * d.y - d.x + s.z * d.w - s.y * d.z, s.y * d.z - d.x + s.z * d.w - s.x * d.y) * 0.5;
+  r += abs(length(gr) - ROAD_STEP_M / PATH_REACH);
+  if (r < best - 1e-6) { best = r; sg = s; }
+}
+float pathCentre(vec2 xz) {
+#ifdef OTH_NO_PATH
+  return 99.0;   // (?paths=0: none — the A/B: not even read)
+#endif
+  if (max(abs(xz.x), abs(xz.y)) >= uRoadG.x - 8.0) return 99.0;
+  float lin = ROAD_TEX(xz * uRoadG.y + 0.5).g * PATH_REACH;
+  if (lin > PATH_HW + 4.2) return lin > PATH_REACH - 0.3 ? 99.0 : lin;
+  vec2 f = (xz + uRoadG.x) / ROAD_STEP_M - 0.5;
+  ivec2 c = ivec2(floor(f));
+  vec2 t = f - vec2(c);
+  vec4 d = vec4(texelFetch(uRoad, c, 0).g, texelFetch(uRoad, c + ivec2(1, 0), 0).g, texelFetch(uRoad, c + ivec2(0, 1), 0).g, texelFetch(uRoad, c + ivec2(1, 1), 0).g);
+  float best = 1e9; vec3 sg = vec3(1.0);
+  pathTry(d, vec3(1.0, 1.0, 1.0), best, sg); pathTry(d, vec3(1.0, 1.0, -1.0), best, sg); pathTry(d, vec3(1.0, -1.0, 1.0), best, sg); pathTry(d, vec3(1.0, -1.0, -1.0), best, sg);
+  pathTry(d, vec3(-1.0, 1.0, 1.0), best, sg); pathTry(d, vec3(-1.0, 1.0, -1.0), best, sg); pathTry(d, vec3(-1.0, -1.0, 1.0), best, sg); pathTry(d, vec3(-1.0, -1.0, -1.0), best, sg);
+  return abs(mix(mix(d.x, sg.x * d.y, t.x), mix(sg.y * d.z, sg.z * d.w, t.x), t.y)) * PATH_REACH;
+}
 #else
 // (a draw already at WebGPU's 16 textures a stage — the cave's skin, the patches round its openings: no road is read)
 float roadCentre(vec2 xz) { return 99.0; }
+float pathCentre(vec2 xz) { return 99.0; }
 #endif
 // THE MIRES (MapData.findMires — 2026-11-12, the user: "dirt roads … a mixture of mud and watery, slippery places"):
 // where a road crosses a low hollow it turns to mud. mireK: how deep into a mire xz is (0 outside all twelve — most of
@@ -754,6 +789,8 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   // (an outland road, where it's nearer than a track of the box: the same earth, its own width)
   float rd = roadCentre(xz), outRoad = 0.0;
   if (rd - uRoadG.z < trail - thw) { trail = rd; thw = uRoadG.z; outRoad = 1.0; }
+  // (a NARROW WAY — paths.ts: the same earth, one car wide)
+  { float pd = pathCentre(xz); if (pd - PATH_HW < trail - thw) { trail = pd; thw = PATH_HW; outRoad = 0.0; } }
   // (the outland's MIRES: mud on the road and round it — ROAD_GLSL mireMud)
   if (rim > 0.0) { float mk = mireK(xz); if (mk > 0.0) trailT.b = max(trailT.b, rim * mireMud(mk, rd, p.fine.r, texture(uNoise, xz * 0.034 + 0.21).g)); }   // (the wallows: round blotches ~15 m — the noise's G; its B is streaks)
   Ground g = groundPaint(xz, m, h, steep, p, foot, trail, thw, farG ? 0.0 : farDots); // (painted shrub dots only beyond the real bushes)

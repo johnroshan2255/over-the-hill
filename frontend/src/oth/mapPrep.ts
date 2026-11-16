@@ -5,6 +5,7 @@
  * the results as they come.
  */
 import type { Grid, MapMeta } from './MapData'
+import { pathField, planPaths } from './paths'
 
 /** Everything MapData and Terrain need, the arrays transferable. */
 export interface PreparedMap {
@@ -15,7 +16,7 @@ export interface PreparedMap {
   farH: Float32Array
   innerNormals: Uint8Array
   farNormals: Uint8Array
-  /** The outland's roads as a field (roadField). */
+  /** The outland's roads as a field (roadField) — RG pairs: R the roads, G the narrow ways (paths.ts pathField). */
   road: { n: number; half: number; hw: number; tex: Uint8Array }
   mask: Uint8Array
   trail: Uint8Array
@@ -213,16 +214,17 @@ export function heightsOf(raw: Uint16Array, g: Grid): Float32Array {
  *  2026-11-11): the SIGNED distance to the nearest road's EDGE (−ROAD_REACH … +ROAD_REACH m ↔ 0 … 255; negative on the
  *  road), ROAD_STEP m texels over the playable land. Signed to the edge, not the distance to the centre line: read
  *  bilinear, a straight edge between texels comes out exact — a 6.6 m road keeps its width from 4 m texels (the centre
- *  line's V would not). 3072² bytes for the valley's 12 km (9.4 MB); 2 × 2 where a world has no roads. */
+ *  line's V would not). 3072² bytes for the valley's 12 km (9.4 MB); 2 × 2 where a world has no roads.
+ *  (2026-11-14: TWO bytes a texel — R this, G the narrow ways' field, paths.ts pathField: 18.9 MB.) */
 export const ROAD_STEP = 4, ROAD_REACH = 8
 /** A world without roads: 2 × 2 texels of "far from any" (half 1: the shader and `roadEdge` read nothing; a 1 × 1
  *  texture the WebGPU backend would not bind — every frame an error, the desert black). */
-export const NO_ROADS = (): PreparedMap['road'] => ({ n: 2, half: 1, hw: 3, tex: new Uint8Array(4).fill(255) })
+export const NO_ROADS = (): PreparedMap['road'] => ({ n: 2, half: 1, hw: 3, tex: new Uint8Array(8).fill(255) })
 export function roadField(meta: MapMeta): PreparedMap['road'] {
   const tr = meta.outland?.trails
   if (!tr?.lines?.length) return NO_ROADS()
   const half = meta.outland!.play, n = Math.round((2 * half) / ROAD_STEP), hw = tr.hw, R = hw + ROAD_REACH
-  const tex = new Uint8Array(n * n).fill(255)
+  const tex = new Uint8Array(n * n * 2).fill(255)
   // (… and under an overlook's DECK — Wonders.lookout: out from its road's end over the brink — the same bare earth: no
   //  grass up through its planks)
   const decks = (meta.outland!.places ?? []).filter((p) => p.deck).map((p) => [[p.x, p.z], [p.x + Math.cos(p.rot ?? 0) * 24, p.z + Math.sin(p.rot ?? 0) * 24]])
@@ -236,7 +238,7 @@ export function roadField(meta: MapMeta): PreparedMap['road'] {
         const x = -half + (i + 0.5) * ROAD_STEP
         const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / l2)), ex = x - ax - t * dx, ez = z - az - t * dz
         const v = Math.round(Math.max(0, Math.min(1, (Math.sqrt(ex * ex + ez * ez) - hw + ROAD_REACH) / (2 * ROAD_REACH))) * 255)
-        if (v < tex[j * n + i]) tex[j * n + i] = v
+        if (v < tex[(j * n + i) * 2]) tex[(j * n + i) * 2] = v
       }
     }
   }
@@ -1020,7 +1022,7 @@ export function sculptPeaks(meta: MapMeta, raw: Uint16Array, g: Grid): number {
   return moved
 }
 
-export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean; peaks?: boolean; soften?: boolean; walls?: boolean } = {}): Promise<PreparedMap> {
+export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean; peaks?: boolean; soften?: boolean; walls?: boolean; paths?: boolean } = {}): Promise<PreparedMap> {
   const meta = (await (await fetch(`${base}/meta.json`)).json()) as MapMeta
   let done = 0
   const get = async (f: string) => {
@@ -1042,17 +1044,28 @@ export async function prepareMap(base: string, leaf: number, onProgress?: (f: nu
   if (o.soften !== false) softenCreases(meta, innerRaw, meta.inner, fields)
   const vales = o.vales === false ? [] : carveVales(meta, farRaw)
   const courts = o.courts === false ? [] : sinkCourts(meta, farRaw, vales)
+  const mask = new Uint8Array(m)
+  // (the narrow ways — paths.ts: after every cut, before the heights are read; the secret passages cut here too, and
+  //  kept clear of the vales, the courts, the World Tree's trunk and the stone arch)
+  if (o.paths !== false) {
+    const keepOff = [
+      ...vales.flatMap((v) => [{ x: v.x, z: v.z, r: v.r + 90 }, ...v.path.map(([x, z]) => ({ x, z, r: 30 }))]),
+      ...courts.map((c) => ({ x: c.x, z: c.z, r: 30 })),
+      ...(meta.outland?.places ?? []).filter((q) => q.kind === 'worldtree' || q.kind === 'arch').map((q) => ({ x: q.x, z: q.z, r: q.kind === 'arch' ? q.r + 10 : 50 })),
+    ]
+    meta.paths = planPaths(meta, innerRaw, farRaw, mask, keepOff)
+  }
   const innerH = heightsOf(innerRaw, meta.inner), farH = heightsOf(farRaw, meta.far)
   const innerNormals = normalsOf(innerH, meta.inner), farNormals = normalsOf(farH, meta.far)
   onProgress?.(0.8)
   const road = roadField(meta)
+  if (meta.paths?.lines.length && road.n > 2) pathField(road.tex, road.n, road.half, ROAD_STEP, meta.paths.lines)
   reconcileWater(meta, innerH)
   const { tex: water, body: waterBody } = waterOwner(meta, innerH)
   onProgress?.(0.9)
   const pyramid = pyramidOf(meta, innerH, farH, leaf)
   onProgress?.(1)
   // (the stream roads' stone walls thinned: the stones gone are rock in the mask — Rocks.ts places the rest)
-  const mask = new Uint8Array(m)
   if (o.walls !== false) wallsToRock(meta, mask)
   return { meta, innerRaw, farRaw, innerH, farH, innerNormals, farNormals, road, mask, trail: new Uint8Array(t), mud: new Uint8Array(u), fields, water, waterBody, pyramid, courts, vales }
 }

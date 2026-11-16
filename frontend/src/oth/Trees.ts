@@ -1109,10 +1109,11 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
   }
   // (the outland's roads run a little way into the box, to its own tracks — scripts/oth/wilds.py: no tree stands on
   //  one. Taken off AFTER the box's placement, so its one shared random sequence is as it was: no other tree moves)
+  // (… nor in a NARROW WAY — paths.ts: 1.4 m clear of its edge, the crowns still meeting over it)
   if (map.roadHalf > 1) {
     let w = 0
     for (let k = 0; k < out.length; k += 8) {
-      if (map.roadEdge(out[k], out[k + 2]) < 2.2) continue
+      if (map.roadEdge(out[k], out[k + 2]) < 2.2 || map.pathEdge(out[k], out[k + 2]) < 1.4) continue
       if (w !== k) for (let c = 0; c < 8; c++) out[w + c] = out[k + c]
       w += 8
     }
@@ -1150,7 +1151,7 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       if (r1() > pw) continue
       const x = gx + (r1() * 1.6 - 0.3) * GO, z = gz + (r1() * 1.6 - 0.3) * GO
       if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) continue
-      if (map.roadEdge(x, z) < 4.0) continue                                       // (off the outland's roads, and their verges)
+      if (map.roadEdge(x, z) < 4.0 || map.pathEdge(x, z) < 1.4) continue          // (off the outland's roads, and their verges — and the narrow ways)
       if (rocks.onCrag(x, z, 1.5)) continue                                        // (… and the crags, the ledges: Rocks.ts)
       const y = map.height(x, z)
       if (map.lakeShore(x, z, y, 0.6)) continue   // (not in a lake, nor on its wet shore)
@@ -1183,7 +1184,7 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
         if (r1() > (WOODS ? (region < R0 ? 0.9 : 0.5) : region < 0.34 ? 0.78 : 0.34)) continue
         const cx = gx + (0.1 + 0.8 * r1()) * PG, cz = gz + (0.1 + 0.8 * r1()) * PG
         const ok = (x: number, z: number) => {
-          if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr) || map.roadEdge(x, z) < 6.5 || rocks.onCrag(x, z, 2)) return null
+          if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr) || map.roadEdge(x, z) < 6.5 || map.pathEdge(x, z) < 1.4 || rocks.onCrag(x, z, 2)) return null
           const y = map.height(x, z)
           if (y > 760 || map.lakeShore(x, z, y, 0.8)) return null
           // (up the hillsides too — half the outland is over 23°, and that was where it stood bare: to ~37°)

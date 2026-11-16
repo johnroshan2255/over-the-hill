@@ -9,6 +9,7 @@ import type { Tier } from './quality'
 import { cellSeed, type Rocks } from './Rocks'
 import type { TerrainShadow } from './TerrainShadow'
 import { gameParams } from '../settings'
+import { smoothLine } from './paths'
 
 /**
  * THE WARDENS' COUNTRY (2026-11-12, the user: "only the centre part of the valley has those explorable things — we need
@@ -1441,6 +1442,23 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
     }
     const nm = word(c.rnd, (w) => (c.rnd() < 0.5 ? `${townWords[Math.floor(c.rnd() * townWords.length)]} ${w}` : `Ruins of ${w}`))
     site(nm, 'town', c.x, c.z, Math.min(40, R * 0.45), undefined, a)
+    // THE ALLEYS (2026-11-14, the user: "narrow paths, alleyways, shortcuts … all must be connected to main road"): the
+    // back lane each side — between the street's houses and the row behind them (17 m out: their walls 15.4 and 18.7 at
+    // most and least) — on past the last house and in to the street's end, and the street on out of the gate to the
+    // road: narrow ways (MapData.addPaths — the ground paints them, the grass and the trees keep off); a wall standing in
+    // one comes out below. A big town's lanes start past its cross street. No draw of the plan's random: nothing moves.
+    if (LOOK) {
+      const lanes: [number, number][][] = [], from = big ? R * 0.72 + 14 : -R * 0.8, end = R + 5
+      if (from < end - 20) for (const sd of [-1, 1]) lanes.push(smoothLine([L(sd * 17, from), L(sd * 17, end), L(sd * 9, end + 3), L(0, end + 4), L(0, RW + 3)], 2, 4))
+      const [gx, gz] = L(0, RW + 3), gd = Math.hypot(rp[0] - gx, rp[1] - gz)
+      if (Math.hypot(rp[0] - c.x, rp[1] - c.z) > RW + 10) {
+        let ok = true
+        for (let t = 0; t <= 1 && ok; t += 8 / gd) { const x = gx + (rp[0] - gx) * t, z = gz + (rp[1] - gz) * t; if (slopeAt(x, z, 3) > 0.4 || map.lakeShore(x, z, H(x, z), 0.5)) ok = false }
+        if (ok) lanes.push(smoothLine([[gx, gz], rp], 0, 4))
+      }
+      // (a lane that climbs a step — off the town's gentle middle onto its rim — over 45 % in 4 m: not laid)
+      map.addPaths(lanes.filter((Ln) => Ln.every((q, k) => !k || Math.abs(H(q[0], q[1]) - H(Ln[k - 1][0], Ln[k - 1][1])) < 0.45 * Math.hypot(q[0] - Ln[k - 1][0], q[1] - Ln[k - 1][1]))), 'alley', nm)
+    }
     writing(...L(3.5, 3.5), nm)
     // (the look: the town's fallen stone, its burned roofs — round the square, along the wall)
     strew(L, dressRnd(c.x, c.z, 2), big ? 16 : 10, 6, RW + 4, big ? 3 : 2)
@@ -1942,6 +1960,28 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
       q.y -= drop
       if (GROW.has(q.k)) q.sy += drop
     }
+  }
+  // THE NARROW WAYS through the ruins (paths.ts, the towns' alleys above): a piece or a collider standing in a way's
+  // middle — within 1.25 m of its centre line: a car's width — comes out (the way goes through a gap in the wall; no
+  // site moves). A vault's door and keystone stay (their places in the list are kept for them).
+  if (map.meta.paths?.lines.length) {
+    const inWay = (x: number, z: number, rot: number, hx: number, hz: number) => {
+      if (map.pathCentre(x, z) > Math.hypot(hx, hz) + 1.3) return false
+      const c = Math.cos(rot), s = Math.sin(rot), ni = Math.max(1, Math.ceil((2 * hx) / 1.2)), nj = Math.max(1, Math.ceil((2 * hz) / 1.2))
+      for (let i = 0; i <= ni; i++) for (let j = 0; j <= nj; j++) { const u = -hx + (2 * hx * i) / ni, v = -hz + (2 * hz * j) / nj; if (map.pathCentre(x + u * c + v * s, z - u * s + v * c) < 1.25) return true }
+      return false
+    }
+    const vaultBits = new Set<number>(plan.vaults.flatMap((v) => [v.door, v.key])), vaultCols = new Set(plan.vaults.flatMap((v) => [v.standing, v.fallen]))
+    const remap = new Int32Array(plan.pieces.length)
+    let w = 0
+    plan.pieces.forEach((q, i) => {
+      const col = KIT[q.k].col, hx = col ? col[1] * q.sx : q.sx * 0.4, hz = col ? col[3] * q.sz : q.sz * 0.4
+      if (!vaultBits.has(i) && inWay(q.x, q.z, q.rot, hx, hz)) { remap[i] = -1; return }
+      remap[i] = w; plan.pieces[w++] = q
+    })
+    plan.pieces.length = w
+    for (const v of plan.vaults) { v.door = remap[v.door]; v.key = remap[v.key] }
+    plan.cols = plan.cols.filter((q) => vaultCols.has(q) || q.ground || !inWay(q.x, q.z, q.rot, q.hx, q.hz))
   }
   return plan
 }

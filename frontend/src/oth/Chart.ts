@@ -161,6 +161,25 @@ export function drawRoads(g: CanvasRenderingContext2D, meta: MapMeta, P: Project
     g.stroke()
   }
 }
+/** THE NARROW WAYS (meta.paths — paths.ts: paths to the lakes and valleys, shortcuts, the towns' alleys): a thin dashed
+ *  line in the tracks' brown, `w` px; the SECRET passages are on no map. */
+export function drawPaths(g: CanvasRenderingContext2D, meta: MapMeta, P: Project, w: number, view?: { x0: number; z0: number; x1: number; z1: number }): void {
+  const ps = meta.paths
+  if (!ps?.lines.length) return
+  g.lineJoin = g.lineCap = 'round'
+  for (const pass of [0, 1]) {
+    g.setLineDash(pass ? [w * 2.2, w * 1.6] : [])
+    g.strokeStyle = pass ? 'rgba(120, 78, 44, 0.95)' : 'rgba(250, 236, 205, 0.75)'; g.lineWidth = pass ? w : w * 2
+    g.beginPath()
+    ps.lines.forEach((L, i) => {
+      if (ps.kind[i] === 'secret') return
+      if (view && !L.some(([x, z]) => x > view.x0 - 50 && x < view.x1 + 50 && z > view.z0 - 50 && z < view.z1 + 50)) return
+      L.forEach(([x, z], k) => { const [px, py] = P(x, z); if (k) g.lineTo(px, py); else g.moveTo(px, py) })
+    })
+    g.stroke()
+  }
+  g.setLineDash([])
+}
 /** A place of the outland (the World Tree, the crater, the mesa, the arch, a view, a lake) and a peak: its mark. */
 const OUT_ICON: Record<OutPlace['kind'], string> = { worldtree: '♣', crater: '◎', mesa: '▬', arch: '∩', peak: '▲', view: '◭', pass: '⇡', lake: '≈', canyon: '⋁', rocks: '∎', bog: '∴', ford: '≋' }
 export function drawOutPlace(g: CanvasRenderingContext2D, kind: OutPlace['kind'], x: number, y: number, k: number): void {

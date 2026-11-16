@@ -878,6 +878,8 @@ export class Rocks {
       }
     }
     this.verge = out.splice(v0)
+    // (… and none in a NARROW WAY — paths.ts: a stone or a crag standing in one is taken off, after every draw)
+    if (map.meta.paths?.lines.length) { const clear = (r: Inst) => map.pathEdge(r.x, r.z) > r.s * 0.55 + (r.crag ? 1.5 : 0.4); this.verge = this.verge.filter(clear); let w = 0; for (const r of out) if (clear(r)) out[w++] = r; out.length = w }
     // (the outland's roads run a little way into the box, to its own tracks — scripts/oth/wilds.py: a stone of the
     //  valley's that stands in one is taken off, after every draw: no other stone moves. A 4.8 m block stood in the
     //  west connector — the bot stopped dead against it, scripts/harness/trackdrive.mjs SET=outland)

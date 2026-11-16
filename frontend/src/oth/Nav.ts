@@ -163,7 +163,8 @@ export class RoadGraph {
     // (the box's tracks, then the outland's roads — scripts/oth/wilds.py: `rough` indexes the first)
     // (… then the ways the map found for itself — MapData: the ravine into each hidden vale, from the nearest road; rough
     //  going, drawn on no map, but the GPS and the autopilot can take them)
-    const base = [...meta.trails.lines, ...(meta.outland?.trails?.lines ?? [])], extra = meta.navExtra ?? []
+    // (… and the NARROW WAYS — paths.ts: paths, shortcuts, the towns' alleys — rough going; never the secret passages)
+    const base = [...meta.trails.lines, ...(meta.outland?.trails?.lines ?? [])], extra = [...(meta.navExtra ?? []), ...(meta.paths?.lines.filter((_, i) => meta.paths!.kind[i] !== 'secret') ?? [])]
     const lines = [...base, ...extra], rough = new Set([...(meta.trails.rough ?? []), ...extra.map((_, i) => base.length + i)])
     this.roughLine = Uint8Array.from(lines, (_, i) => (rough.has(i) ? 1 : 0))
     let n = 0

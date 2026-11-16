@@ -1,7 +1,7 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
 import { SECRET } from './Wardens'
-import { bakedChart, type Chart, type ClaimMark, claimTag, drawClaim, drawGate, drawOutPlace, drawPin, drawPlace, drawRoads, drawRoute, drawTracks, foundIn, ICON, label, onMap, ROUTE, wardenBig } from './Chart'
+import { bakedChart, type Chart, type ClaimMark, claimTag, drawClaim, drawGate, drawOutPlace, drawPin, drawPaths, drawPlace, drawRoads, drawRoute, drawTracks, foundIn, ICON, label, onMap, ROUTE, wardenBig } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { Landmark, MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, type Waypoint, worldMeta } from './Nav'
@@ -405,6 +405,7 @@ export class MapView {
     if (s) {
       const zoomK = Math.max(0.55, 1 + 0.8 * (1 - V.v / half))
       drawRoads(g, s.meta, P, 1.9 * k * zoomK)
+      drawPaths(g, s.meta, P, 1.1 * k * zoomK, { x0: V.cx - V.v, z0: V.cz - V.v, x1: V.cx + V.v, z1: V.cz + V.v })
       drawTracks(g, s.meta, P, 1.6 * k * zoomK, { x0: V.cx - V.v, z0: V.cz - V.v, x1: V.cx + V.v, z1: V.cz + V.v })
       const ms = s.meta.mud?.marsh
       if (ms) { const [mx, my] = P(ms.x, ms.z); label(g, 'The Bog', mx, my, '#4a3423', Math.round(12 * k), true) }

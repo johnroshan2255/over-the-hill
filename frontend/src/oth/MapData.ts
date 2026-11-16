@@ -1,5 +1,6 @@
 import * as GFX from './gfx'
 import { type Court, NO_ROADS, type Vale, type PreparedMap, ROAD_REACH, ROAD_STEP } from './mapPrep'
+import { type PathKind, type Paths, PATH_HW, PATH_REACH, pathCentreAt, pathField } from './paths'
 import { gameParams } from '../settings'
 import { LOOK } from './Atmosphere'
 
@@ -104,6 +105,9 @@ export interface MapMeta {
    *  ROADS (centre lines every ~8 m, half width hw — mapPrep.ts roadField). */
   /** (made as the map loads — the ways into the hidden vales: lines the route finder may take, Nav.ts; never drawn) */
   navExtra?: [number, number][][]
+  /** (made as the map loads — paths.ts planPaths: the NARROW WAYS — paths to the lakes, the valleys and the far places,
+   *  shortcuts, secret passages; the towns' alleys added by the Wardens, MapData.addPaths) */
+  paths?: Paths
   outland?: {
     play: number
     peaks: { x: number; z: number; h: number; name?: string }[]
@@ -280,11 +284,13 @@ export class MapData {
     // (?roads=0: none painted, asked or kept clear — the A/B)
     const road = gameParams().get('roads') === '0' ? NO_ROADS() : p.road
     this.road = road.tex; this.roadN = road.n; this.roadHalf = road.half; this.roadHW = road.hw
-    this.roadTex = new GFX.DataTexture(road.tex, road.n, road.n, GFX.RedFormat, GFX.UnsignedByteType)
+    // (RG: R the roads, G the narrow ways — paths.ts pathField)
+    if (gameParams().get('roads') === '0' || gameParams().get('paths') === '0') for (let k = 1; k < road.tex.length; k += 2) road.tex[k] = 255
+    this.roadTex = new GFX.DataTexture(road.tex, road.n, road.n, GFX.RGFormat, GFX.UnsignedByteType)
     this.roadTex.minFilter = road.n > 2 ? GFX.LinearMipmapLinearFilter : GFX.LinearFilter
     this.roadTex.magFilter = GFX.LinearFilter
     this.roadTex.generateMipmaps = road.n > 2
-    this.roadTex.unpackAlignment = 1
+    this.roadTex.unpackAlignment = 2
     this.roadTex.wrapS = this.roadTex.wrapT = GFX.ClampToEdgeWrapping
     this.roadTex.needsUpdate = true
     this.waterTex = new GFX.DataTexture(p.water, mn, mn, GFX.RGBAFormat, GFX.UnsignedByteType)
@@ -496,7 +502,7 @@ export class MapData {
         else resolve(e.data.map as PreparedMap)
       }
       w.addEventListener('message', on)
-      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') !== '0', cliffs: LOOK === 1 && gameParams().get('cliffs') === '1', peaks: LOOK === 1 && gameParams().get('peaks') !== '0', soften: gameParams().get('soften') !== '0', walls: gameParams().get('walls') !== '1' })   // (?courts=0: no sunken courts cut — the A/B; ?cliffs=1: the hills stepped into strata again — OFF since 2026-11-13, the user: "the terrain rises and we show rock texture, but we use a pattern of 'm' or zigzag — remove any patterns like that": the strata's wandering bands were that pattern, on both grids)
+      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') !== '0', cliffs: LOOK === 1 && gameParams().get('cliffs') === '1', peaks: LOOK === 1 && gameParams().get('peaks') !== '0', soften: gameParams().get('soften') !== '0', walls: gameParams().get('walls') !== '1', paths: gameParams().get('paths') !== '0' })   // (?courts=0: no sunken courts cut — the A/B; ?cliffs=1: the hills stepped into strata again — OFF since 2026-11-13, the user: "the terrain rises and we show rock texture, but we use a pattern of 'm' or zigzag — remove any patterns like that": the strata's wandering bands were that pattern, on both grids)
     })
     return new MapData(p)
   }
@@ -566,12 +572,26 @@ export class MapData {
     if (this.roadHalf <= 1) return ROAD_REACH
     const fx = (x + this.roadHalf) / ROAD_STEP - 0.5, fz = (z + this.roadHalf) / ROAD_STEP - 0.5
     if (fx < 0 || fz < 0 || fx > n - 1.001 || fz > n - 1.001) return ROAD_REACH
-    const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, a = j * n + i, R = this.road
-    return (((R[a] * (1 - u) + R[a + 1] * u) * (1 - v) + (R[a + n] * (1 - u) + R[a + n + 1] * u) * v) / 255) * 2 * ROAD_REACH - ROAD_REACH
+    const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, a = (j * n + i) * 2, R = this.road, b = a + n * 2
+    return (((R[a] * (1 - u) + R[a + 2] * u) * (1 - v) + (R[b] * (1 - u) + R[b + 2] * u) * v) / 255) * 2 * ROAD_REACH - ROAD_REACH
+  }
+  /** Metres from x, z to the nearest NARROW WAY's centre line (paths.ts — PATH_REACH and beyond: none near): the field
+   *  read as the ground reads it (pathCentreAt). */
+  pathCentre(x: number, z: number): number { return this.roadHalf <= 1 ? PATH_REACH : pathCentreAt(this.road, this.roadN, this.roadHalf, ROAD_STEP, x, z) }
+  /** … and to its EDGE (negative on it). */
+  pathEdge(x: number, z: number): number { return this.pathCentre(x, z) - PATH_HW }
+  /** MORE NARROW WAYS, made after the map (Wardens.ts: a town's alleys): into meta.paths and the field — the texture
+   *  sent again (once, at the load). */
+  addPaths(lines: [number, number][][], kind: PathKind, to: string): void {
+    if (!lines.length || this.roadHalf <= 1 || gameParams().get('paths') === '0') return
+    const P = (this.meta.paths ??= { hw: PATH_HW, lines: [], kind: [], to: [] })
+    for (const L of lines) { P.lines.push(L); P.kind.push(kind); P.to.push(to) }
+    pathField(this.road, this.roadN, this.roadHalf, ROAD_STEP, lines)
+    this.roadTex.needsUpdate = true
   }
   /** Metres from x, z to the nearest track's or road's EDGE, either kind (negative on it): what the tyres, the dust
    *  and the woods ask. (`trailDist` stays the box's tracks alone: the box's own placement reads it.) */
-  wayEdge(x: number, z: number): number { return Math.min(this.trailDist(x, z) - this.meta.trails.hw, this.roadEdge(x, z)) }
+  wayEdge(x: number, z: number): number { return Math.min(this.trailDist(x, z) - this.meta.trails.hw, this.roadEdge(x, z), this.pathEdge(x, z)) }
 
   /** The box's mask at x, z (0..1 each: rock, dryness, wet, forest), nearest 4 m cell; zeros outside the box. */
   maskAt(x: number, z: number, out: [number, number, number, number]): [number, number, number, number] {
