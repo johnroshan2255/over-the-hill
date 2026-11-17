@@ -24,7 +24,10 @@ export class BufferAttribute {
   get count(): number { return this.array.length / this.itemSize }
   set needsUpdate(v: boolean) { if (v) this.version++ }
   setUsage(u: number): this { this.usage = u; return this }
-  addUpdateRange(start: number, count: number): void { this.updateRanges.push({ start, count }) }
+  // (not kept — 2026-11-17, scripts/harness/leakprof.mjs: nothing reads them (the whole buffer is re-sent), and a caller
+  //  that never clears them — the grass's rings and the terrain's nodes, every frame — grew this list without end: ~1 600
+  //  objects a second, the heap +1.6 MB a km driven, longer and longer GC pauses, then the page died on a long drive)
+  addUpdateRange(_start: number, _count: number): void { /* accepted, not stored */ }
   clearUpdateRanges(): void { this.updateRanges.length = 0 }
   /** (three's rule: a normalized integer attribute reads as 0 … 1 / −1 … 1 and writes from it) */
   private den(v: number): number {

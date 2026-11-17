@@ -1165,11 +1165,16 @@ async function boot() {
 
   // PERF MARKS (PerfMarks.ts — F9, ?perfmark=1): the spots where the frame rate falls, marked as you play, with why
   const perf = new PerfMarks((m, merged) => toast(`FPS drop ${merged ? 'again ' : ''}marked · ${m.fps} fps (usual ${m.baseFps})${m.kind === 'hitch' ? ' · a stall' : ''}`, 2200))
-  if (perf.on) renderer.gpuTime() // (the GPU's timestamps on — the marks keep the GPU's share where the browser has them)
+  // (the GPU's timestamps only on ?perfgpu=1 — 2026-11-17, scripts/harness/hitchprof.mjs: once on, PlayCanvas's GPU
+  //  profiler times every pass of every frame and reads it back — the median frame 2.9 → 6.2 ms and a 150–180 ms stall
+  //  every two seconds, the marks marking the tool itself. A mark keeps the CPU's share and what was drawn; the GPU's
+  //  per part is the harness's `why`)
+  const perfGpu = q.get('perfgpu') === '1'
+  if (perf.on && perfGpu) renderer.gpuTime()
   const perfSnap = (): PerfSnap => ({
     world: world.id, camera, ground: map.height(camera.position.x, camera.position.z), player: ride.pos,
     mode: !driving ? 'fly' : fpp ? 'fpp' : onFoot ? 'foot' : riding ? 'bike' : 'chase', cpuMs,
-    gpu: () => renderer.gpuTime(), hour: atmos.hour, weather: atmos.weather, zoom: !fpp && driving ? chase.distance : undefined,
+    gpu: () => (perfGpu ? renderer.gpuTime() : { frame: undefined, passes: {} }), hour: atmos.hour, weather: atmos.weather, zoom: !fpp && driving ? chase.distance : undefined,
     drawn: () => ({ draws: renderer.info.render.calls, tris: renderer.info.render.triangles, patches: world.terrain.patches, blades: world.grass.blades, trees: world.trees.drawn.slice(), bushes: world.bushes.drawn.slice(), rocks: world.rocks.count, dpr: +(baseDpr * dprScale).toFixed(2), fsr: fsr?.scale ?? 1 }),
   })
 

@@ -37,6 +37,30 @@ const CALLS = {
 type CallKind = keyof typeof CALLS
 /** At most this many calls at once (on top of the beds). */
 const MAX_VOICES = 5
+// THE AUDIO GRAPH'S PARAMETERS, SPARINGLY (2026-11-17 — scripts/harness/hitchprof.mjs, driving a track: a third of the
+// time in the long frames was Web Audio — ~12 parameters set every frame (setTargetAtTime; `.value =` on the beds and
+// the pans), each a call into the audio thread that adds to the parameter's timeline). A parameter is set now only
+// when its value has moved enough to hear (0.4 %; within 50 ms of the last, 10 %), its old events cleared first.
+const LAST = new WeakMap<AudioParam, [number, number]>()
+const moved = (p: AudioParam, v: number, t: number, small: number): boolean => {
+  const l = LAST.get(p)
+  if (l) {
+    const dv = Math.abs(v - l[0]), ref = Math.max(Math.abs(l[0]), 0.05)
+    if (dv <= small * ref || (t - l[1] < 0.05 && dv <= 0.1 * ref)) return false
+  }
+  LAST.set(p, [v, t])
+  return true
+}
+/** Glide `p` to `v` (time constant tc, from t) — if it's moved enough to hear. */
+function glide(p: AudioParam, v: number, t: number, tc: number): void {
+  if (!moved(p, v, t, 0.004)) return
+  p.cancelScheduledValues(t)
+  p.setTargetAtTime(v, t, tc)
+}
+/** Set `p` to `v` at once (a level eased by the caller, a pan) — if it's moved enough to hear. */
+function setParam(p: AudioParam, v: number, t: number): void {
+  if (moved(p, v, t, 0.002)) p.value = v
+}
 /** A call playing: where it is (it's re-panned as the camera turns). */
 interface Voice { kind: CallKind; x: number; z: number; pan: StereoPannerNode }
 
@@ -61,7 +85,7 @@ class Bed {
   }
   update(dt: number): void {
     this.level += (this.target - this.level) * Math.min(1, dt * 1.2)
-    this.gain.gain.value = this.level
+    setParam(this.gain.gain, this.level, this.gain.context.currentTime)
     if (this.target > 0.004 && !this.playing) { this.playing = true; this.el.play().catch(() => { this.playing = false }) }
     // (silent a while: paused — no decoding for a sound nobody hears)
     this.quiet = this.level < 0.002 && this.target < 0.002 ? this.quiet + dt : 0
@@ -72,6 +96,8 @@ class Bed {
 export class OthAudio {
   private ctx: AudioContext | null = null
   private master!: GainNode
+  /** the rain's hiss, its level (eased here: the parameter set only when it's moved — setParam) */
+  private rainLevel = 0
   /** A short CHIME for a find (a crate: two notes; a place / a camp: three, rising) — oscillators through the master
    *  gain, ~0.5 s, nothing loaded. */
   chime(kind: 'crate' | 'place'): void {
@@ -297,9 +323,9 @@ export class OthAudio {
         M.port.postMessage({ set: [ms.rpm, thr, thr, 1700, 11800] })
         if (ms.gear !== this.motoGear) { if (this.motoGear) M.port.postMessage({ event: 'shift' }); this.motoGear = ms.gear }
         const dM = camera.position.distanceTo(this.moto!.pos), nearM = Math.min(1, Math.max(0.15, 9 / Math.max(dM, 1)))
-        this.motoTone.frequency.setTargetAtTime(2000 + 8000 * nearM, ctx.currentTime, 0.2)
-        this.motoBus.gain.setTargetAtTime(0.75 * nearM, ctx.currentTime, 0.2)
-      } else this.motoBus.gain.setTargetAtTime(0, ctx.currentTime, 0.6)
+        glide(this.motoTone.frequency, 2000 + 8000 * nearM, ctx.currentTime, 0.2)
+        glide(this.motoBus.gain, 0.75 * nearM, ctx.currentTime, 0.2)
+      } else glide(this.motoBus.gain, 0, ctx.currentTime, 0.6)
     }
     // (the car parked — the rider on the bike: its engine runs down; back in, it starts again)
     if (this.engine && this.car.parked !== this.parkedWas) { this.parkedWas = this.car.parked; this.engine.port.postMessage({ event: this.car.parked ? 'stop' : 'start' }) }
@@ -329,8 +355,8 @@ export class OthAudio {
       if (gear !== this.lastGear && /\d$/.test(gear) && /\d$/.test(this.lastGear)) E.port.postMessage({ event: 'shift' })
       this.lastGear = gear
       // the car from the camera: the further, the quieter and the duller
-      this.engineTone.frequency.setTargetAtTime(1500 + 7500 * near, t, 0.2)
-      this.engineBus.gain.setTargetAtTime(0.8 * near, t, 0.2)
+      glide(this.engineTone.frequency, 1500 + 7500 * near, t, 0.2)
+      glide(this.engineBus.gain, 0.8 * near, t, 0.2)
     }
     // TYRES: a squeal sliding on hard ground; on dirt and gravel a scrub when sliding, a soft roll when not
     const n = bk ? null : sim?.tyreNoise() ?? null
@@ -343,19 +369,19 @@ export class OthAudio {
     //  AudioParam throws on it, every frame after; 2026-11-10: 2 000 of them from a phone while the cars were rebuilt)
     const squealK = Math.min(1, slide * 1.2 + spin * 0.5) * hard * 0.5 * Math.min(1, speed / 6) * near
     if (this.squeal && Number.isFinite(squealK) && Number.isFinite(fast)) {
-      this.squeal.gain.gain.setTargetAtTime(squealK, t, 0.06)
-      this.squeal.src.playbackRate.setTargetAtTime(0.9 + 0.2 * fast, t, 0.1)
+      glide(this.squeal.gain.gain, squealK, t, 0.06)
+      glide(this.squeal.src.playbackRate, 0.9 + 0.2 * fast, t, 0.1)
     }
     if (this.gravel) {
       const scrub = Math.min(1, slide * 1.2 + spin * 0.8) * loose * 0.75, roll = fast * loose * 0.16
-      this.gravel.gain.gain.setTargetAtTime(Math.max(scrub, roll) * Math.min(1, speed / 3) * near, t, 0.08)
-      this.gravel.src.playbackRate.setTargetAtTime(0.55 + 0.3 * fast, t, 0.1)
+      glide(this.gravel.gain.gain, Math.max(scrub, roll) * Math.min(1, speed / 3) * near, t, 0.08)
+      glide(this.gravel.src.playbackRate, 0.55 + 0.3 * fast, t, 0.1)
     }
     // the FREEWHEEL: clicking while the bike rolls without being pedalled
     if (this.freewheel) {
       const coast = bk && !ms && !bk.crashed && !bk.pedalling && bk.rear.contact ? Math.min(1, Math.max(0, Math.abs(bk.speed) - 0.4)) : 0
-      this.freewheel.gain.gain.setTargetAtTime(coast * 0.22 * near, t, 0.05)
-      if (bk) this.freewheel.src.playbackRate.setTargetAtTime(Math.max(0.05, Math.abs(bk.rear.spinRate) / (2 * Math.PI)), t, 0.05)
+      glide(this.freewheel.gain.gain, coast * 0.22 * near, t, 0.05)
+      if (bk) glide(this.freewheel.src.playbackRate, Math.max(0.05, Math.abs(bk.rear.spinRate) / (2 * Math.PI)), t, 0.05)
     }
     // BEDS: what's round the camera (a few times a second)
     this.sense -= dt
@@ -369,24 +395,24 @@ export class OthAudio {
     B.night.target = night * (desert ? 0.2 + 0.4 * this.near.forest : 0.5) * (1 - 0.7 * this.atmos.uniforms.uRain.value)
     // (the rain's hiss — and the sandstorm's: sand on the car, in the scrub)
     const dust = this.atmos.uniforms.uDust.value
-    if (this.rainGain) this.rainGain.gain.value += (Math.max(0.5 * this.atmos.uniforms.uRain.value, 0.42 * dust) - this.rainGain.gain.value) * Math.min(1, dt * 1.5)
+    if (this.rainGain) { this.rainLevel += (Math.max(0.5 * this.atmos.uniforms.uRain.value, 0.42 * dust) - this.rainLevel) * Math.min(1, dt * 1.5); setParam(this.rainGain.gain, this.rainLevel, t) }
     B.stream.target = 0.65 * smooth(70, 8, this.near.stream)
-    B.stream.pan.pan.value = this.near.streamPan * 0.7
+    setParam(B.stream.pan.pan, this.near.streamPan * 0.7, t)
     B.fall.target = 0.85 * smooth(110, 10, this.near.fall)
-    B.fall.pan.pan.value = this.near.fallPan * 0.7
+    setParam(B.fall.pan.pan, this.near.fallPan * 0.7, t)
     // a campfire: loud close by, gone past ~34 m; a pond's frogs and birds by day (at night: the frogs' own calls)
     B.fire.target = 2.4 * (2.5 / Math.max(this.near.fire, 2.5)) * smooth(34, 20, this.near.fire)
-    B.fire.pan.pan.value = this.near.firePan * 0.6
+    setParam(B.fire.pan.pan, this.near.firePan * 0.6, t)
     B.pond.target = day * 0.6 * smooth(90, 12, this.near.pond) * (1 - 0.6 * this.atmos.uniforms.uRain.value)
-    B.pond.pan.pan.value = this.near.pondPan * 0.6
+    setParam(B.pond.pan.pan, this.near.pondPan * 0.6, t)
     for (const k of Object.keys(B) as (keyof typeof B)[]) B[k].update(dt)
     // the RIDGE WIND: high and open ground, in slow gusts, more under a heavy sky
     if (this.windGain) {
       const gust = 0.55 + 0.25 * Math.sin(t * 0.37) + 0.15 * Math.sin(t * 0.83 + 1) + 0.1 * Math.sin(t * 1.9 + 2)
       const sky = 0.6 + 0.4 * this.atmos.uniforms.uCloud.value
       // (a sandstorm howls everywhere, not only on the ridges)
-      this.windGain.gain.setTargetAtTime(Math.max(0.5 * this.near.ridge * sky, 0.85 * dust) * gust, t, 0.4)
-      this.windHowl.frequency.setTargetAtTime(330 + 300 * gust + 160 * dust, t, 0.5)
+      glide(this.windGain.gain, Math.max(0.5 * this.near.ridge * sky, 0.85 * dust) * gust, t, 0.4)
+      glide(this.windHowl.frequency, 330 + 300 * gust + 160 * dust, t, 0.5)
     }
     this.calls(dt, camera.position)
   }
@@ -554,7 +580,7 @@ export class OthAudio {
     const crest = smooth(4, 45, g0 - ring / 8), high = smooth(120, 420, g0), up = smooth(4, 60, p.y - g0)
     this.near.ridge = Math.min(1, 0.75 * crest + 0.35 * high + 0.3 * up)
     // the calls playing: re-panned as the camera turns
-    for (const v of this.voices) v.pan.pan.value = this.side(v.x, v.z, p) * 0.8
+    for (const v of this.voices) setParam(v.pan.pan, this.side(v.x, v.z, p) * 0.8, v.pan.context.currentTime)
   }
 }
 

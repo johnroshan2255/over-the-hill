@@ -65,11 +65,16 @@ export class PerfMarks {
   private lastX = NaN
   private lastZ = NaN
   private lastMark = 0
+  private hitchMs = 40
   private readonly tag: HTMLDivElement
 
   constructor(private readonly onMark: (m: PerfMark, merged: boolean) => void) {
     const q = new URLSearchParams(location.search)
     this.on = q.get('perfmark') === '1' || (q.get('perfmark') !== '0' && localStorage.getItem(ON_KEY) === '1')
+    // (?hitchms=: a hitch's floor — 40 ms; a harness uncapped in headless Chrome sees the browser's own ~46 ms frames
+    //  twice a second, standing still: scripts/harness/perfmarks.mjs runs at 70)
+    const hm = Number(q.get('hitchms'))
+    if (q.get('hitchms') !== null && Number.isFinite(hm)) this.hitchMs = hm
     let saved: PerfMark[] = []
     try { saved = JSON.parse(localStorage.getItem(KEY) ?? '[]') } catch { /* none */ }
     this.marks = Array.isArray(saved) ? saved : []
@@ -119,7 +124,7 @@ export class PerfMarks {
     if (now < this.quiet) return
     const base = this.base()
     // HITCH: one long frame
-    if (!Number.isNaN(base) && dtMs >= Math.max(40, base * 6)) this.mark('hitch', dtMs, base, snap())
+    if (!Number.isNaN(base) && dtMs >= Math.max(this.hitchMs, base * 6)) this.mark('hitch', dtMs, base, snap())
     this.winT += dtMs; this.winN++
     if (this.winT < 500) return
     const avg = this.winT / this.winN
