@@ -123,6 +123,6 @@ for (const s of shots) {
   }
   const st = await page.evaluate(() => window.__oth.stats())
   if (st.trees) console.log('   trees', st.trees.join(' / '), ' bushes', (st.bushes ?? []).join(' / '))
-  console.log(s.name.padEnd(22), `${(s.tier ?? 'high').padEnd(6)} fps ${st.fps.toFixed(0)}  cpu ${st.cpuMs.toFixed(2)}  gpu ${st.gpuMs.toFixed(2)} ms  draws ${st.draws}  tris ${(st.tris / 1000).toFixed(0)}k  patches ${st.patches}  blades ${(st.blades / 1000).toFixed(0)}k  pos ${st.pos.join(',')} ground ${st.ground}`)
+  console.log(s.name.padEnd(22), `${(s.tier ?? 'high').padEnd(6)} fps ${st.fps.toFixed(0)}  cpu ${st.cpuMs.toFixed(2)}  gpu ${(st.gpuMs ?? NaN).toFixed(2)} ms  draws ${st.draws}  tris ${(st.tris / 1000).toFixed(0)}k  patches ${st.patches}  blades ${(st.blades / 1000).toFixed(0)}k  pos ${st.pos.join(',')} ground ${st.ground}`)
 }
 await browser.close()

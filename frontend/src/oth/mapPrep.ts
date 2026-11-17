@@ -5,6 +5,7 @@
  * the results as they come.
  */
 import type { Grid, MapMeta } from './MapData'
+import { fetchGrid } from './pack'
 import { pathField, planPaths } from './paths'
 
 /** Everything MapData and Terrain need, the arrays transferable. */
@@ -15,6 +16,9 @@ export interface PreparedMap {
   innerH: Float32Array
   farH: Float32Array
   innerNormals: Uint8Array
+  /** The world grid's normals, RGBA8: x / z in RG — and in B THE OUTLAND'S ROCK (outlandRock: 0 none … 1 bare rock,
+   *  its knolls' caps and shoulders; the ground paints it — Terrain.ts outlandBare —, the stones stand by it —
+   *  MapData.outlandMaskAt). In the normals' texture: the terrain's materials have no texture slot left (WebGPU: 16). */
   farNormals: Uint8Array
   /** The outland's roads as a field (roadField) — RG pairs: R the roads, G the narrow ways (paths.ts pathField). */
   road: { n: number; half: number; hw: number; tex: Uint8Array }
@@ -34,6 +38,8 @@ export interface PreparedMap {
   courts: Court[]
   /** The HIDDEN VALES (carveVales): a hollow cut into a hill, the ravine into it. */
   vales: Vale[]
+  /** Each preparing step's time (ms). */
+  ms?: Record<string, number>
 }
 
 /** A HIDDEN VALE: its hollow's middle, floor (m) and floor radius; the ravine's mouth (ex, ez) and its bend (mx, mz). */
@@ -279,11 +285,16 @@ export function distanceFields(meta: MapMeta): PreparedMap['fields'] {
   const stamp = (out: Float32Array, pts: [number, number][], cap: number) => {
     out.fill(cap)
     const r = Math.ceil(cap / C)
+    // (Math.sqrt, not Math.hypot — 2026-11-17, the load: hypot is several times slower in V8, and this is ~15 M of
+    //  them; stored as Float32 the field is the same to the bit — checked)
     for (const [x, z] of pts) {
       const ci = Math.round((x + half) / C), cj = Math.round((z + half) / C)
-      for (let j = Math.max(0, cj - r); j <= Math.min(n - 1, cj + r); j++) for (let i = Math.max(0, ci - r); i <= Math.min(n - 1, ci + r); i++) {
-        const d = Math.hypot(i * C - half - x, j * C - half - z)
-        if (d < out[j * n + i]) out[j * n + i] = d
+      for (let j = Math.max(0, cj - r); j <= Math.min(n - 1, cj + r); j++) {
+        const dz = j * C - half - z, row = j * n
+        for (let i = Math.max(0, ci - r); i <= Math.min(n - 1, ci + r); i++) {
+          const dx = i * C - half - x, d = Math.sqrt(dx * dx + dz * dz)
+          if (d < out[row + i]) out[row + i] = d
+        }
       }
     }
   }
@@ -582,6 +593,8 @@ function vn2(x: number, z: number): number {
   const hsh = (i: number, j: number) => { let q = (Math.imul(i, 374761393) + Math.imul(j, 668265263)) | 0; q = Math.imul(q ^ (q >>> 13), 1274126177); return ((q ^ (q >>> 16)) >>> 0) / 4294967296 }
   return (hsh(xi, zi) * (1 - u) + hsh(xi + 1, zi) * u) * (1 - v) + (hsh(xi, zi + 1) * (1 - u) + hsh(xi + 1, zi + 1) * u) * v
 }
+/** √(a² + b²) — Math.hypot is several times slower in V8 (the load's hot loops). */
+const hyp = (a: number, b: number) => Math.sqrt(a * a + b * b)
 const sm = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t) }
 
 /**
@@ -799,6 +812,181 @@ function joinRoads(meta: MapMeta, trail: Uint8Array, farRaw: Uint16Array): void 
   for (const [li, end, pts] of adds) { if (end) lines[li].push(...pts); else lines[li].unshift(...pts.reverse()) }
 }
 
+/**
+ * THE OUTLAND'S ROCK (2026-11-17, the user: "the plain flat ground — no small hills, no hill roads, no big bumps, no
+ * ROCKY TEXTURE"): the valley's rock is on its hills — bare caps on the knolls' tops, ledges on their shoulders
+ * (terrain.py: ROCKTEX, the trekking hills, the rises' bare patches) — where the outland's was only on the big faces'
+ * slope, and a first try (patches from a noise) put grey stains on the flats. From the final heights (8 m): a CAP where
+ * the ground stands over its surroundings (24 m and 64 m rings — the knolls' tops, the crests), a LEDGE on a shoulder
+ * steep enough (~16–27°), both broken by slow noise into ragged pieces; none on a road's bed (eased in 9 → 16 m), up
+ * on the big hills (their slope paints them) or past the land's edge. R8 on the world grid: 0 … 1.
+ */
+export function outlandRock(meta: MapMeta, farH: Float32Array): Uint8Array {
+  const g = meta.far, n = g.n, st = g.step, out = new Uint8Array(n * n)
+  const O = meta.outland
+  if (!O || meta.id !== 'valley') return out
+  const half = -meta.inner.origin, play = Math.max(half, -g.origin - 2048)
+  if (play <= half + 100) return out
+  const rd = roadDistances(meta, g, 16), H = (i: number, j: number) => farH[j * n + i]
+  const OFF3 = [3, -3, 3 * n, -3 * n, 2 + 2 * n, -2 + 2 * n, 2 - 2 * n, -2 - 2 * n], OFF8 = [8, -8, 8 * n, -8 * n, 6 + 6 * n, -6 + 6 * n, 6 - 6 * n, -6 - 6 * n]
+  const lo = Math.max(7, Math.floor((-play - g.origin) / st)), hi = Math.min(n - 8, Math.ceil((play - g.origin) / st))
+  for (let j = lo; j <= hi; j++) for (let i = lo; i <= hi; i++) {
+    const x = g.origin + i * st, z = g.origin + j * st, m = Math.max(Math.abs(x), Math.abs(z))
+    if (m < half - 300 || m > play - 60) continue
+    const h = H(i, j)
+    if (h > 700) continue
+    // (the rings' samples by their index offsets — the same 8 directions, 3 and 8 samples out)
+    const q0 = j * n + i
+    let r3 = 0, r6 = 0
+    for (let o = 0; o < 8; o++) { r3 += farH[q0 + OFF3[o]]; r6 += farH[q0 + OFF8[o]] }
+    const rise = h - (r3 + r6) / 16, sl = hyp(H(i + 1, j) - H(i - 1, j), H(i, j + 1) - H(i, j - 1)) / (2 * st)
+    // (neither a cap nor a ledge can come of it: no noise asked — most of the land; 0.7 s → ~0.15 s at load)
+    if (rise + 1.5 <= ROCK_RISE && sl <= 0.26) continue
+    const cap = sm(ROCK_RISE, ROCK_RISE + 3.5, rise + (vn2(x / 19 + 3.3, z / 19 - 8.1) - 0.5) * 3)
+    const ledge = sm(0.26, 0.5, sl) * sm(0.38, 0.62, vn2(x / 33 - 5.2, z / 33 + 2.7)) * (1 - sm(0.9, 1.3, sl))
+    // (broken: grass pockets and gaps through a cap ~10–25 m across — one smooth grey dome read as a pond of concrete)
+    const brk = sm(0.24, 0.5, vn2(x / 13 + 2.2, z / 13 - 6.6) * 0.55 + vn2(x / 29 - 1.4, z / 29 + 3.8) * 0.45)
+    let v = Math.max(cap * brk, ledge) * sm(0.2, 0.45, vn2(x / 61 + 9.4, z / 61 + 1.1) + 0.3)
+    const d = rd.get(j * n + i)
+    if (d !== undefined) v *= sm(9, 16, d)
+    v *= sm(half - 300, half - 80, m) * (1 - sm(play - 200, play - 60, m)) * (1 - sm(560, 700, h))
+    if (v > 0.004) out[j * n + i] = Math.round(Math.min(1, v) * 255)
+  }
+  return out
+}
+/** RG normals (normalsOf) + B the outland's rock → RGBA8. */
+function withRock(nrg: Uint8Array, rock: Uint8Array): Uint8Array {
+  const n = rock.length, out = new Uint8Array(n * 4)
+  for (let k = 0; k < n; k++) { out[k * 4] = nrg[k * 2]; out[k * 4 + 1] = nrg[k * 2 + 1]; out[k * 4 + 2] = rock[k]; out[k * 4 + 3] = 255 }
+  return out
+}
+/** How far over its surroundings (m — outlandRock's rings) the ground stands before its top is bare rock. */
+export const ROCK_RISE = 1.8
+
+/**
+ * THE KNOLLS (2026-11-17, the user: "the main issue was the plain flat ground — no small hills, no hill roads, no big
+ * bumps, no rocky texture: what we had was flat places and some huge hills"). Measured on the low ground (under
+ * 520 m): the valley is rolling — 37 % of it 10–20° slopes, ~12 small hill tops (4 m over a 60 m ring) per 1 000
+ * samples; the outland 17 % and 1.7 — plains, then the big hills' faces (28 % over 35°). As the map loads: a SMALL HILL
+ * in most cells of a jittered 88 m grid where the ground is low and not a big hill's face (≤ ~22° over ±60 m) — 6–30 m high, 100–300 m across (mostly 10–20° flanks, the valley's rolling), oval,
+ * its outline ragged, one side steeper (the steep side takes the rock paint, the outcrops stand on its top: Rocks.ts),
+ * close ones run together into ridges. A road crossing one climbs it: such a knoll is broad and low (≤ 12 % grade), the
+ * road goes up and over — the hill roads. Clear of the box (320 m), the places, the lakes, the bridges and the land's
+ * edge; nothing over 45 m added anywhere. ?knolls=0: none (the A/B).
+ */
+export function sculptKnolls(meta: MapMeta, raw: Uint16Array): number {
+  const O = meta.outland, g = meta.far, n = g.n
+  if (!O || meta.id !== 'valley') return 0
+  const half = -meta.inner.origin, play = Math.max(half, -g.origin - 2048), kq = g.range / 65535, st = g.step
+  if (play <= half + 100) return 0
+  const src = raw.slice(), Hs = (i: number, j: number) => src[Math.max(0, Math.min(n - 1, j)) * n + Math.max(0, Math.min(n - 1, i))] * kq + g.min
+  const Hw = (x: number, z: number) => Hs(Math.round((x - g.origin) / st), Math.round((z - g.origin) / st))
+  const roadNear = roadFinder(meta), keep = outlandKeep(meta, 20)
+  type Knoll = { x: number; z: number; R: number; H: number; ca: number; sa: number; el: number; sk: number; seed: number }
+  const all: Knoll[] = [], KG = 88
+  let count = 0
+  for (let gz = -play; gz < play; gz += KG) for (let gx = -play; gx < play; gx += KG) {
+    let s = (Math.imul(Math.round(gx) + 0x3c6e, 73856093) ^ Math.imul(Math.round(gz) - 0x1f2b, 19349663) ^ 0x5eed) >>> 0
+    const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
+    // (some country is hillier than other — a slow noise; most cells hold one)
+    const country = sm(0.2, 0.55, vn2(gx / 1100 + 4.4, gz / 1100 - 1.7))
+    if (rnd() > 0.55 + 0.45 * country) continue
+    const x = gx + rnd() * KG, z = gz + rnd() * KG, m = Math.max(Math.abs(x), Math.abs(z))
+    if (m > play - 260 || (Math.abs(x) < half + 320 && Math.abs(z) < half + 320)) continue
+    const y = Hw(x, z)
+    if (y > 520) continue
+    // (on gentle ground: the broad slope over ±60 m — a knoll isn't set on a big hill's face)
+    if (hyp(Hw(x + 60, z) - Hw(x - 60, z), Hw(x, z + 60) - Hw(x, z - 60)) / 120 > 0.4) continue
+    let R = 50 + rnd() * 100, H = 6 + Math.pow(rnd(), 1.3) * 24 * (0.6 + 0.4 * country)
+    if (keep.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < (kr + R) ** 2)) continue
+    // (a road over it: broad and low — the road climbs it at ≤ ~12 %)
+    // (the valley's knolls are rolling: flanks mostly 10–20°, few over 35° — a knoll's height at most 0.28 × its radius)
+    H = Math.min(H, 0.28 * R)
+    if (roadNear(x, z, R * 1.15)) { R = Math.max(R, 80); H = Math.min(H, 0.1 * R) }
+    const an = rnd() * Math.PI, k: Knoll = { x, z, R, H, ca: Math.cos(an), sa: Math.sin(an), el: 0.7 + rnd() * 0.6, sk: 0.25 + rnd() * 0.5, seed: rnd() * 100 }
+    all.push(k)
+    count++
+  }
+  if (!count) return 0
+  // (each knoll walks only the samples under it — its box: ~3 M visits for the whole outland, not every sample asking
+  //  every knoll of its cell: 0.9 s → ~0.15 s at load, the same hills)
+  const i0 = Math.max(2, Math.floor((-play + 200 - g.origin) / st)), i1 = Math.min(n - 3, Math.ceil((play - 200 - g.origin) / st)), W = i1 - i0 + 1
+  const sum = new Float32Array(W * W), top = new Float32Array(W * W)
+  for (const k of all) {
+    const B = 1.3 * k.R * Math.max(k.el, 1 / k.el)
+    const a0 = Math.max(i0, Math.floor((k.x - B - g.origin) / st)), a1 = Math.min(i1, Math.ceil((k.x + B - g.origin) / st))
+    const b0 = Math.max(i0, Math.floor((k.z - B - g.origin) / st)), b1 = Math.min(i1, Math.ceil((k.z + B - g.origin) / st))
+    for (let j = b0; j <= b1; j++) for (let i = a0; i <= a1; i++) {
+      const x = g.origin + i * st, z = g.origin + j * st
+      const dx = x - k.x, dz = z - k.z, lx = dx * k.ca + dz * k.sa, lz = -dx * k.sa + dz * k.ca
+      const d0 = hyp(lx / k.el, lz * k.el)
+      if (d0 > 1.3 * k.R) continue
+      // (oval, ragged; one side steeper — the profile pushed toward the knoll's lee)
+      const dd = d0 + (vn2(x / 41 + k.seed, z / 41 - k.seed) - 0.5) * 0.3 * k.R
+      const t = dd / (k.R * (1 + k.sk * Math.sign(lx) * 0.2))
+      if (t >= 1) continue
+      const h = k.H * (1 - sm(0, 1, t)), q = (j - i0) * W + (i - i0)
+      sum[q] += h; if (h > top[q]) top[q] = h
+    }
+  }
+  let moved = 0
+  for (let j = i0; j <= i1; j++) for (let i = i0; i <= i1; i++) {
+    const q = (j - i0) * W + (i - i0)
+    let add = sum[q]
+    if (add <= 0.02) continue
+    // (close ones run together: their sum, but never more than the tallest + a half — and 45 m at most)
+    add = Math.min(45, Math.min(add, top[q] * 1.5))
+    // (faded in from the box's rim and out at the land's edge)
+    const x = g.origin + i * st, z = g.origin + j * st, m = Math.max(Math.abs(x), Math.abs(z))
+    add *= sm(half + 320, half + 480, m) * (1 - sm(play - 260, play - 200, m))
+    if (add <= 0.02) continue
+    raw[j * n + i] = Math.max(0, Math.min(65535, Math.round((Hs(i, j) + add - g.min) / kq)))
+    moved++
+  }
+  return moved
+}
+
+/**
+ * THE OUTLAND'S SMALL SHAPES (2026-11-17, the user: "some places look boring — make them look like the main valley"):
+ * the box's ground is a 2 m grid, eroded — its open fields measured 59 cm (rms) of bumps and dips against the ground
+ * round them (6–8.5 m out); the outland's 8 m grid, 37: smooth swells, a lawn. As the map loads (the samples
+ * themselves — the drawn ground, its normals, the grass and the wheels all read one shape): hummocks and dips ~10–17 m
+ * across (the shortest the 8 m grid holds), ±1.6 m at most, stronger in some country than other. Kept off the roads (to 10 m, eased in to 30), the
+ * places, the lakes, the bridges, the box (its rim's 150 m — eased in over 170) and the land's edge; faded on the steep
+ * faces (they have their own breaks). ?orough=0: as the file has it.
+ */
+export function roughenOutland(meta: MapMeta, raw: Uint16Array): number {
+  const O = meta.outland, g = meta.far, n = g.n
+  if (!O || meta.id !== 'valley') return 0
+  const half = -meta.inner.origin, play = Math.max(half, -g.origin - 2048), kq = g.range / 65535, st = g.step
+  if (play <= half + 100) return 0
+  const src = raw.slice(), Hs = (i: number, j: number) => src[j * n + i] * kq + g.min
+  const rd = roadDistances(meta, g, 30), keep = outlandKeep(meta, 0)
+  const kh = new Map<number, [number, number, number][]>()
+  for (const k of keep) { const m = Math.ceil((k[2] + 60) / 256); for (let j = -m; j <= m; j++) for (let i = -m; i <= m; i++) { const q = (Math.floor(k[0] / 256) + i) * 4096 + Math.floor(k[1] / 256) + j; const l = kh.get(q); if (l) l.push(k); else kh.set(q, [k]) } }
+  let moved = 0
+  const lo = Math.max(2, Math.floor((-play + 130 - g.origin) / st)), hi = Math.min(n - 3, Math.ceil((play - 130 - g.origin) / st))
+  for (let j = lo; j <= hi; j++) for (let i = lo; i <= hi; i++) {
+    const x = g.origin + i * st, z = g.origin + j * st, m = Math.max(Math.abs(x), Math.abs(z))
+    if (m < half + 150) continue
+    let w = sm(half + 150, half + 320, m) * (1 - sm(play - 280, play - 140, m))
+    const d = rd.get(j * n + i)
+    if (d !== undefined) { if (d < 10) continue; w *= sm(10, 30, d) }
+    w *= 1 - sm(0.45, 0.85, hyp(Hs(i + 1, j) - Hs(i - 1, j), Hs(i, j + 1) - Hs(i, j - 1)) / (2 * st))
+    if (w <= 0.01) continue
+    for (const [kx, kz, kr] of kh.get(Math.floor(x / 256) * 4096 + Math.floor(z / 256)) ?? []) { w *= sm(kr - 40, kr, hyp(x - kx, z - kz)); if (w <= 0.01) break }
+    if (w <= 0.01) continue
+    const country = 0.55 + 0.9 * sm(0.25, 0.7, vn2(x / 640 - 2.3, z / 640 + 5.9))
+    const b = (vn2(x / 17 + 5.1, z / 17 - 2.3) * 0.55 + vn2(x / 10.5 - 7.7, z / 10.5 + 1.9) * 0.45 - 0.5) * 2 * ROUGH_A * country * w
+    if (Math.abs(b) < 0.02) continue
+    raw[j * n + i] = Math.max(0, Math.min(65535, Math.round((Hs(i, j) + b - g.min) / kq)))
+    moved++
+  }
+  return moved
+}
+/** The outland's bumps' height (m, at most — roughenOutland): measured to give its fields the valley's relief. */
+export const ROUGH_A = 1.6
+
 /** Fetch a map's files and compute all of the above (the worker's job; also usable in place). */
 /** Each grid sample within R m of an outland road's centre line → that distance (m). */
 function roadDistances(meta: MapMeta, g: Grid, R: number): Map<number, number> {
@@ -1012,7 +1200,9 @@ export function sculptPeaks(meta: MapMeta, raw: Uint16Array, g: Grid): number {
     let w = sm(560, 840, h)   // (a trace from the tree line's top, whole on the high rock)
     const r = rd.get(q)
     if (r !== undefined) { if (r < 18) continue; w *= sm(18, 60, r) }
-    for (const [kx, kz, kr] of keep) { const d = Math.hypot(x - kx, z - kz); if (d < kr + 80) { w *= sm(kr, kr + 80, d); if (w <= 0.01) break } }
+    // (a squared test first, a metre wide of the edge — the far discs skipped without a Math.hypot: ~200 M of them were
+    //  most of a second of the load; inside it, as ever — the same heights to the bit, checked)
+    for (const [kx, kz, kr] of keep) { const dx = x - kx, dz = z - kz; if (dx * dx + dz * dz > (kr + 81) * (kr + 81)) continue; const d = Math.hypot(dx, dz); if (d < kr + 80) { w *= sm(kr, kr + 80, d); if (w <= 0.01) break } }
     if (w <= 0.01) continue
     const jag = 0.6 * ridge(x / 420 + 3.7, z / 420 - 8.1) + 0.3 * ridge(x / 150 - 5.2, z / 150 + 1.9) + 0.1 * ridge(x / 60 + 0.4, z / 60 + 7.3)
     const out = h + (jag - 0.35) * (130 + 60 * sm(840, 1100, h)) * w
@@ -1022,28 +1212,46 @@ export function sculptPeaks(meta: MapMeta, raw: Uint16Array, g: Grid): number {
   return moved
 }
 
-export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; cliffs?: boolean; peaks?: boolean; soften?: boolean; walls?: boolean; paths?: boolean } = {}): Promise<PreparedMap> {
+export async function prepareMap(base: string, leaf: number, onProgress?: (f: number) => void, o: { courts?: boolean; vales?: boolean; banks?: boolean; sculpt?: boolean; knolls?: boolean; rough?: boolean; orock?: boolean; cliffs?: boolean; peaks?: boolean; soften?: boolean; walls?: boolean; paths?: boolean } = {}): Promise<PreparedMap> {
   const meta = (await (await fetch(`${base}/meta.json`)).json()) as MapMeta
   let done = 0
   const get = async (f: string) => {
-    const b = await (await fetch(`${base}/${f}`)).arrayBuffer()
+    const b = await fetchGrid(base, f)   // (the packed .pk — pack.ts: a quarter of the download)
     onProgress?.((++done / 5) * 0.7)
     return b
   }
   const [h, f, m, t, u] = await Promise.all([get('height.bin'), get('far.bin'), get('mask.bin'), get('trail.bin'), meta.mud ? get('mud.bin') : Promise.resolve(new ArrayBuffer(0))])
   const innerRaw = new Uint16Array(h), farRaw = new Uint16Array(f)
+  // (each step's time, ms — PreparedMap.ms: the load's own account, World's timings show it)
+  const ms: Record<string, number> = {}
+  let tl = performance.now()
+  const lap = (k: string) => { const t2 = performance.now(); ms[k] = Math.round(t2 - tl); tl = t2 }
+  lap('fetch')
   joinRoads(meta, new Uint8Array(t), farRaw)   // (first: the joined ends are ROAD to everything after — the sculpt keeps off them)
+  lap('joinRoads')
   if (o.sculpt !== false) sculptLowlands(meta, farRaw)               // (before anything is derived from the heights)
+  lap('sculpt')
+  if (o.knolls !== false) sculptKnolls(meta, farRaw)                 // (the small hills — after the lowlands' sculpt, before the bumps)
+  lap('knolls')
+  if (o.rough !== false) roughenOutland(meta, farRaw)                // (the outland's small shapes — after the sculpt, before the banks)
+  lap('rough')
   if (o.banks !== false) easeBanks(meta, farRaw)
+  lap('banks')
   // (the look, round 3: the steep ground stepped into strata — both grids, before anything is derived from them)
   if (o.peaks === true) sculptPeaks(meta, farRaw, meta.far)          // (the look, round 6: the high peaks jagged — before their strata)
+  lap('peaks')
   // (the tracks' and the shores' distance fields: once — the strata, the creases and the game all read them)
   const fields = distanceFields(meta)
+  lap('fields')
   if (o.cliffs !== false) { sculptCliffs(meta, innerRaw, meta.inner, true, fields); sculptCliffs(meta, farRaw, meta.far, false, fields) }
+  lap('cliffs')
   // (the box's one-sample creases spread over a few: the banks' "m m m" — after any sculpting, before the normals)
   if (o.soften !== false) softenCreases(meta, innerRaw, meta.inner, fields)
+  lap('soften')
   const vales = o.vales === false ? [] : carveVales(meta, farRaw)
+  lap('vales')
   const courts = o.courts === false ? [] : sinkCourts(meta, farRaw, vales)
+  lap('courts')
   const mask = new Uint8Array(m)
   // (the narrow ways — paths.ts: after every cut, before the heights are read; the secret passages cut here too, and
   //  kept clear of the vales, the courts, the World Tree's trunk and the stone arch)
@@ -1055,19 +1263,28 @@ export async function prepareMap(base: string, leaf: number, onProgress?: (f: nu
     ]
     meta.paths = planPaths(meta, innerRaw, farRaw, mask, keepOff)
   }
+  lap('paths')
   const innerH = heightsOf(innerRaw, meta.inner), farH = heightsOf(farRaw, meta.far)
-  const innerNormals = normalsOf(innerH, meta.inner), farNormals = normalsOf(farH, meta.far)
+  lap('heights')
+  const orock = o.orock === false ? new Uint8Array(meta.far.n * meta.far.n) : outlandRock(meta, farH)
+  lap('orock')
+  const innerNormals = normalsOf(innerH, meta.inner), farNormals = withRock(normalsOf(farH, meta.far), orock)
+  lap('normals')
   onProgress?.(0.8)
   const road = roadField(meta)
   if (meta.paths?.lines.length && road.n > 2) pathField(road.tex, road.n, road.half, ROAD_STEP, meta.paths.lines)
+  lap('roadField')
   reconcileWater(meta, innerH)
   const { tex: water, body: waterBody } = waterOwner(meta, innerH)
+  lap('water')
   onProgress?.(0.9)
   const pyramid = pyramidOf(meta, innerH, farH, leaf)
+  lap('pyramid')
   onProgress?.(1)
   // (the stream roads' stone walls thinned: the stones gone are rock in the mask — Rocks.ts places the rest)
   if (o.walls !== false) wallsToRock(meta, mask)
-  return { meta, innerRaw, farRaw, innerH, farH, innerNormals, farNormals, road, mask, trail: new Uint8Array(t), mud: new Uint8Array(u), fields, water, waterBody, pyramid, courts, vales }
+  lap('walls')
+  return { meta, innerRaw, farRaw, innerH, farH, innerNormals, farNormals, road, mask, trail: new Uint8Array(t), mud: new Uint8Array(u), fields, water, waterBody, pyramid, courts, vales, ms }
 }
 
 /** Every array buffer in a prepared map (posted from the worker without a copy). */

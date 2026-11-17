@@ -98,9 +98,13 @@ async function boot() {
   const saved = continueRequested() && !coopWorld ? loadProgress() : null
   requestContinue(false)
   const startId: WorldId = q.get('world') === 'desert' || (!q.has('world') && saved?.map === 'desert') ? 'desert' : 'valley'
-  const loading = (f: number) => (status.textContent = `Loading ${WORLDS[startId].name}… ${Math.round(f * 100)}%`)
+  // ONE BAR from PLAY to playable (2026-11-17, the user: "why showing 2 loadings"): it read 100 % when the map's files
+  // were in, sat there through the world's build, then began again at 0 for the 4×4 and the shaders. Now: the map
+  // 0–40 %, the world's build 40–80 %, the 4×4 to 85 %, the shaders' warm-up to 100 % — one label, only forward.
+  let shown = 0
+  const loading = (f: number) => { shown = Math.max(shown, Math.min(1, f)); status.textContent = `Loading ${WORLDS[startId].name}… ${Math.round(shown * 100)}%` }
   loading(0)
-  const first = await MapData.load(WORLDS[startId].path, tier.terrainLeaf, loading)
+  const first = await MapData.load(WORLDS[startId].path, tier.terrainLeaf, (f) => loading(f * 0.4))
   const noise = createPaintTexture()
   const atmos = new Atmosphere(noise)
   atmos.uniforms.uFogRange.value.set(tier.fogNear, tier.haze)
@@ -153,7 +157,7 @@ async function boot() {
     occlusion: q.get('occlusion') !== '0',
     crates: journal.crates,
   }
-  let world = await World.build(startId, env, undefined, undefined, first)
+  let world = await World.build(startId, env, undefined, (f) => loading(0.4 + 0.4 * f), first)
   // what lasts across worlds reads the current one's map through this
   const map = liveMap(() => world.map)
   const enterWorld = (w: World) => {
@@ -190,7 +194,7 @@ async function boot() {
   scene.add(sky.mesh, rain.mesh, sand.mesh)
 
   // THE 4×4: the game's vehicle physics on this map's ground and rocks
-  status.textContent = 'Loading the 4×4…'
+  loading(0.82) // (the 4×4)
   const physics = await OthPhysics.create(world.map, world.rocks)
   physics.trees = world.trees
   physics.addLandmarks(world.landmarks.colliders)
@@ -1411,12 +1415,18 @@ async function boot() {
   // not a stall each time a new kind of thing first comes into view (2026-11-08, the perf marks). In play it goes on
   // at 2 a frame for what's added later (a crossing's world: compileAsync, a new car, a variant)
   {
-    status.textContent = `Loading ${WORLDS[startId].name}… shaders`
+    loading(0.85)
     GFX.warm.perFrame = 12
     const t0 = performance.now()
+    let p0 = 0
     await new Promise<void>((res) => {
       let n = 0
-      const tick = () => { n++; if ((n > 3 && GFX.warm.pending === 0) || performance.now() - t0 > 20000) res(); else requestAnimationFrame(tick) }
+      const tick = () => {
+        n++
+        p0 = Math.max(p0, GFX.warm.pending)
+        if (p0 > 0) loading(0.85 + 0.15 * (1 - GFX.warm.pending / p0))
+        if ((n > 3 && GFX.warm.pending === 0) || performance.now() - t0 > 20000) res(); else requestAnimationFrame(tick)
+      }
       requestAnimationFrame(tick)
     })
     GFX.warm.perFrame = 1

@@ -178,8 +178,7 @@ async function webpTexture(url: string, srgb: boolean): Promise<GFX.Texture> {
 function skinTexture(): Promise<[GFX.Texture, GFX.Texture]> {
   return (skinTex ??= Promise.all([webpTexture(skinUrl, true), webpTexture(skinNormalUrl, false)]))
 }
-async function readGlb(url: string): Promise<{ json: any; bin: ArrayBuffer }> {
-  const buf = await (await fetch(url)).arrayBuffer()
+function readGlb(buf: ArrayBuffer): { json: any; bin: ArrayBuffer } {
   const dv = new DataView(buf)
   let o = 12, json: any = null, bin: ArrayBuffer | null = null
   while (o < dv.getUint32(8, true)) {
@@ -321,7 +320,11 @@ export class Character {
 
   /** The mesh (Draco, via the game's loader) and the skin + clips (read here: the loader keeps neither). */
   async load(url: string): Promise<void> {
-    const [{ json, bin }, gltf, tex] = await Promise.all([readGlb(url), new GFX.GLTFLoader().setDRACOLoader(new GFX.DRACOLoader().setDecoderPath('/draco/')).loadAsync(url), skinTexture()])
+    // (one download: the file read here for its skin and clips, and the same bytes handed to the loader — it was
+    //  fetched twice, 1.2 MB each)
+    const [buf, tex] = await Promise.all([fetch(url).then((r) => r.arrayBuffer()), skinTexture()])
+    const { json, bin } = readGlb(buf)
+    const gltf = await new GFX.GLTFLoader().setDRACOLoader(new GFX.DRACOLoader().setDecoderPath('/draco/')).parse(buf, url)
     const skin = json.skins[0], joints: number[] = skin.joints
     const ibm = floats(json, bin, skin.inverseBindMatrices)
     const nodeToBone = new Map<number, number>(joints.map((n, i) => [n, i]))

@@ -8,6 +8,7 @@ import { gameParams } from '../settings'
 import { wallStoneKept } from './mapPrep'
 import { ROCK_RELIEF_GLSL } from './rockRelief'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
+import { OBARE_T } from './Terrain'
 
 /**
  * ROCKS — Over-the-Hill boulders: chunky low-poly blocks (the convex hull of a few points on a squashed, boxy blob:
@@ -297,10 +298,26 @@ export class Rocks {
    *  (the journal keeps them). Each keeps clear of the trees (`treeData`, `stride` numbers a tree: x, y, z first) and of
    *  the props (x, z); the kept ones join `all`, the grid and the footprint. */
   settleVerge(treeData: Float32Array, stride: number, props: { x: number; z: number }[], keep: [number, number, number][] = []): void {
-    this.verge = this.verge.filter((r) => keep.every(([x, z, rr]) => (r.x - x) ** 2 + (r.z - z) ** 2 > (rr + r.s * 0.5) ** 2))
+    // (the kept discs by 64 m cell — 2026-11-17, the load: the Wardens' thousands of discs asked by each of ~40 k stones
+    //  was a second of the load; the same answers)
+    {
+      const KC = 64, kh = new Map<number, [number, number, number][]>()
+      for (const k of keep) {
+        const rr = k[2] + 12   // (+ the biggest stone's half: ≤ ~10 m)
+        for (let j = Math.floor((k[1] - rr) / KC); j <= Math.floor((k[1] + rr) / KC); j++) for (let i = Math.floor((k[0] - rr) / KC); i <= Math.floor((k[0] + rr) / KC); i++) { const q = this.key(i, j); const l = kh.get(q); if (l) l.push(k); else kh.set(q, [k]) }
+      }
+      this.verge = this.verge.filter((r) => (kh.get(this.key(Math.floor(r.x / KC), Math.floor(r.z / KC))) ?? []).every(([x, z, rr]) => (r.x - x) ** 2 + (r.z - z) ** 2 > (rr + r.s * 0.5) ** 2))
+    }
     if (!this.verge.length) return
     const H = new Map<number, number[]>(), C = 8
-    const put = (x: number, z: number, i: number) => { const k = this.key(Math.floor(x / C), Math.floor(z / C)); const l = H.get(k); if (l) l.push(i); else H.set(k, [i]) }
+    // (only the cells a verge stone asks — 2026-11-17, the load: every tree of the world (~300 k) was hashed for ~40 k
+    //  stones, 1 s at load; the same answers)
+    const want = new Set<number>()
+    for (const r of this.verge) {
+      const rr = r.s * 0.55 + 3
+      for (let j = Math.floor((r.z - rr) / C); j <= Math.floor((r.z + rr) / C); j++) for (let i = Math.floor((r.x - rr) / C); i <= Math.floor((r.x + rr) / C); i++) want.add(this.key(i, j))
+    }
+    const put = (x: number, z: number, i: number) => { const k = this.key(Math.floor(x / C), Math.floor(z / C)); if (!want.has(k)) return; const l = H.get(k); if (l) l.push(i); else H.set(k, [i]) }
     const n = treeData.length / stride
     for (let i = 0; i < n; i++) put(treeData[i * stride], treeData[i * stride + 2], i)
     for (let i = 0; i < props.length; i++) put(props[i].x, props[i].z, n + i)
@@ -331,7 +348,15 @@ export class Rocks {
    *  (the footprint keeps their mark: the grass there is short anyway). After the places are placed — nothing moves. */
   removeWithin(keep: [number, number, number][]): void {
     if (!keep.length) return
-    const out = (r: Inst) => keep.some(([x, z, rr]) => (r.x - x) ** 2 + (r.z - z) ** 2 < (rr + r.s * 0.4) ** 2) && r.v < STACK0
+    // (the discs by 64 m cell — 2026-11-17, the load: ~40 k stones each asking the Wardens' thousands of discs was 4 s of
+    //  it; the same stones go)
+    const KC = 64, kh = new Map<number, [number, number, number][]>()
+    for (const k of keep) {
+      const rr = k[2] + 24   // (+ a stone's 0.4 × its size up to 24 m; a bigger one — a crag — asks every disc, as before)
+      for (let j = Math.floor((k[1] - rr) / KC); j <= Math.floor((k[1] + rr) / KC); j++) for (let i = Math.floor((k[0] - rr) / KC); i <= Math.floor((k[0] + rr) / KC); i++) { const q = this.key(i, j); const l = kh.get(q); if (l) l.push(k); else kh.set(q, [k]) }
+    }
+    const cands = (r: Inst) => (r.s * 0.4 <= 24 ? kh.get(this.key(Math.floor(r.x / KC), Math.floor(r.z / KC))) ?? [] : keep)
+    const out = (r: Inst) => r.v < STACK0 && cands(r).some(([x, z, rr]) => (r.x - x) ** 2 + (r.z - z) ** 2 < (rr + r.s * 0.4) ** 2)
     const gone = new Set(this.all.filter(out))
     if (!gone.size) return
     const kept = this.all.filter((r) => !gone.has(r))
@@ -870,6 +895,72 @@ export class Rocks {
               for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
                 const px = x + (rnd() - 0.5) * 3.5, pz = z + (rnd() - 0.5) * 3.5
                 if (dry(px, pz)) add(px, pz, (k === 0 ? 1.5 : 0.9) + rnd() * (k === 0 ? 1.5 : 1.0), 0.3)
+              }
+            }
+          }
+          t -= l
+        }
+      }
+    }
+    // THE OUTLAND AS THE VALLEY (2026-11-17, the user: "some places look boring — make them look like the main valley"):
+    // measured against the box, the outland's open country had 60 % of its big rocks / km² (and those on the slopes —
+    // the falls above), none in its meadows (its lone boulders it has: the falls' loop). The valley's own two, out there — each cell its own seed, on the verge
+    // list (after every stone above, so no stone's index moves; kept clear of the trees, the props and the Wardens'
+    // places by settleVerge):
+    //   OUTCROPS   a 40 m grid, likelier by the ground's bare rock (MapData.outlandMaskAt — the patches the ground
+    //              paints): 4–9 blocks 2–14 m, none on a patch's middle or a hillside (the look's rule above)
+    //   THE VERGES along the outland's roads — stones in ones, twos and threes, a boulder set back now and then
+    // ?orock2=0: none (the A/B).
+    if (map.play > map.half + 100 && !map.desert && gameParams().get('orock2') !== '0') {
+      const smoothRise = (a: number, b: number, t: number) => { const k = Math.min(1, Math.max(0, (t - a) / (b - a))); return k * k * (3 - 2 * k) }
+      const ho = map.play - 80, hb = map.half - 40, hwR = map.roadHW
+      const om: [number, number, number, number] = [0, 0, 0, 0]
+      const steep4 = (x: number, z: number) => Math.hypot(map.height(x + 4, z) - map.height(x - 4, z), map.height(x, z + 4) - map.height(x, z - 4)) / 8
+      // (the road field reads 8 m out at most: a big block asks its own edges too)
+      const oDry = (x: number, z: number, size: number) => {
+        const r = size * 0.55
+        if (Math.max(Math.abs(x), Math.abs(z)) > ho || (Math.abs(x) < hb && Math.abs(z) < hb) || map.roadEdge(x, z) < Math.min(7.5, r + 1.6)) return false
+        if (r > 5.5 && (map.roadEdge(x + r, z) < 1.5 || map.roadEdge(x - r, z) < 1.5 || map.roadEdge(x, z + r) < 1.5 || map.roadEdge(x, z - r) < 1.5)) return false
+        const y = map.height(x, z)
+        return y < 780 && map.lakeAt(x, z) === null && !map.lakeShore(x, z, y, 0.6)
+      }
+      for (let gz = -ho; gz < ho; gz += 40) for (let gx = -ho; gx < ho; gx += 40) {
+        if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }
+        s = cellSeed(Math.round(gx), Math.round(gz), 77)
+        const x = gx + rnd() * 40, z = gz + rnd() * 40
+        map.outlandMaskAt(x, z, om)
+        // (by a cap: its field from 0.24 under the paint's edge to just over it — the valley's mask is blurred, its
+        //  patches' edges ~12 m wide; the paint's here are 2–3 m)
+        const edge = map.bareRaw > OBARE_T + 0.06 ? 0 : smoothRise(OBARE_T - 0.24, OBARE_T - 0.04, map.bareRaw)
+        // (… and the valley's slope term: its outcrops stand on the shoulders too — the look's rule takes the steep ones)
+        const pSl = Math.max(0, (steep4(x, z) - 0.22) * 1.6)
+        if (om[0] > 0.6 || (edge <= 0 && pSl <= 0)) continue
+        if (rnd() > Math.min(0.85, edge * 1.15 + pSl) * (1 - om[3] * 0.5)) continue
+        const n = 4 + Math.floor(rnd() * 6), big = 5 + rnd() * 9
+        for (let i = 0; i < n; i++) {
+          const a = rnd() * Math.PI * 2, d = rnd() * big * 1.4, px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d, size = big * (0.35 + 0.65 * rnd()) * (i === 0 ? 1.3 : 1)
+          if (!oDry(px, pz, size) || steep4(px, pz) > 0.3 || map.outlandMaskAt(px, pz, om)[0] > 0.35) { rnd(); rnd(); rnd(); rnd(); continue }
+          add(px, pz, size, 0.25)
+        }
+      }
+      for (const L of map.meta.outland?.trails?.lines ?? []) {
+        let t = 0
+        for (let i = 1; i < L.length; i++) {
+          const [x0, z0] = L[i - 1], dx = L[i][0] - x0, dz = L[i][1] - z0, l = Math.hypot(dx, dz)
+          if (l < 1e-3) continue
+          const ux = dx / l, uz = dz / l
+          for (; t < l; t += 9) {
+            const cx = x0 + ux * t, cz = z0 + uz * t
+            for (const side of [-1, 1]) {
+              s = cellSeed(Math.round(cx), Math.round(cz), side > 0 ? 43 : 44)
+              if (rnd() > 0.24) continue   // (the valley's 0.32: the outland has its slopes' falls besides)
+              const big = rnd() < 0.24
+              const off = big ? hwR + 6 + rnd() * 12 : hwR + 2.8 + Math.pow(rnd(), 1.5) * 9, slide = (rnd() - 0.5) * 6
+              const x = cx - uz * off * side + ux * slide, z = cz + ux * off * side + uz * slide
+              if (big) { const size = 3 + rnd() * 2.5; if (oDry(x, z, size)) add(x, z, size, 0.3); continue }
+              for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
+                const px = x + (rnd() - 0.5) * 3.5, pz = z + (rnd() - 0.5) * 3.5, size = (k === 0 ? 1.5 : 0.9) + rnd() * (k === 0 ? 1.5 : 1.0)
+                if (oDry(px, pz, size)) add(px, pz, size, 0.3)
               }
             }
           }

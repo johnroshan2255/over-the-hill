@@ -365,6 +365,9 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
   // the box moves; most cells turned away by the noise before the ground is asked). ?obush=0: none (the A/B).
   if (map.play > map.half + 100 && new URLSearchParams(location.search).get('obush') !== '0') {
     const GO = 13, ho = map.play - 60, hb = map.half - 50, sn = map.meta.outland?.snow
+    // (2026-11-17 — the outland as the valley: half the valley's bushes / km² out there; now as many — the thickets
+    //  fuller and the open country's scatter thicker. ?oveg=0: as it was)
+    const OVEG = new URLSearchParams(location.search).get('oveg') !== '0'
     const vn = (x: number, z: number, c: number, salt: number) => {
       const fx = x / c, fz = z / c, ix = Math.floor(fx), iz = Math.floor(fz), u0 = fx - ix, w0 = fz - iz, u = u0 * u0 * (3 - 2 * u0), w = w0 * w0 * (3 - 2 * w0)
       const h = (a: number, b: number) => cellSeed(a, b, salt) / 4294967296
@@ -372,6 +375,7 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
     }
     const stand = (x: number, z: number): number | null => {
       if (map.roadEdge(x, z) < 1.4 || rocks.onCrag(x, z, 0.8)) return null
+      if (OVEG && map.onOutlandRock(x, z, 0.6)) return null   // (the knolls' bare caps: mapPrep.outlandRock)
       const y = map.height(x, z)
       if (y > 600 || map.lakeShore(x, z, y, 0.4)) return null
       if (sn && y > sn.line + 150 && Math.hypot(x - sn.x, z - sn.z) < sn.r * 0.7) return null
@@ -386,7 +390,7 @@ export function* placeBushes(map: MapData, rocks: Rocks, out: number[]): Generat
       if (gx > -hb && gx < hb && gz > -hb && gz < hb) { gx = hb; continue }       // (the box: placed above)
       const thick = Math.min(1, Math.max(0, (0.6 * vn(gx, gz, 260, 61) + 0.4 * vn(gx, gz, 70, 62) - 0.47) / 0.2))
       s = cellSeed(Math.round(gx), Math.round(gz), 63)
-      if (rnd() > 0.012 + 0.34 * thick) continue
+      if (rnd() > (OVEG ? 0.24 + 1.25 * thick : 0.012 + 0.34 * thick)) continue
       const x = gx + rnd() * GO, z = gz + rnd() * GO, y = stand(x, z)
       if (y === null || rnd() < (y - 380) / 220) continue
       bush(x, z, y)

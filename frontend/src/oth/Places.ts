@@ -450,6 +450,76 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
       }
     }
   }
+  // ---- THE OUTLAND AS THE VALLEY (2026-11-17, the user: "some places look boring — make them look like the main
+  // valley"): the valley's ~60 small things / km² — none out there, its roads bare grass to the trees. The valley's own
+  // rules along the outland's roads: fallen trunks and stumps on both verges (by the trees mostly), little clusters
+  // of stones, a log pile where it's wooded, a cairn at each road's high point. LAST, from their own seed: every id
+  // above stays. The Wardens' ruins clear them off their ground (World.ts). ?oprops=0: none (the A/B).
+  if (!desert && map.play > half + 100 && gameParams().get('oprops') !== '0') {
+    const or = rng(0x0a7e11), om: [number, number, number, number] = [0, 0, 0, 0], ohw = map.roadHW, ho = map.play - 80
+    const outPads = pads.filter((l) => Math.abs(l.x) > half || Math.abs(l.z) > half)
+    const freeO = (x: number, z: number, o: { clear: number; maxSlope: number; offRoad: number; spacing: number; kind: PropKind; onRock?: boolean }) => {
+      if (Math.max(Math.abs(x), Math.abs(z)) > ho || (Math.abs(x) < half + 20 && Math.abs(z) < half + 20)) return false
+      if (map.lakeAt(x, z) !== null || map.lakeShore(x, z, map.height(x, z), 0.5) || map.bridgeAt(x, z) !== null) return false
+      if (slope(x, z) > o.maxSlope) return false
+      if (map.outlandMaskAt(x, z, om)[0] > 0.35 && !o.onRock) return false
+      if (map.roadEdge(x, z) < Math.min(7.5, o.offRoad) || map.pathEdge(x, z) < 1) return false
+      if (outPads.some((l) => (l.x - x) ** 2 + (l.z - z) ** 2 < (l.r + 5) ** 2)) return false
+      if (placed.some(x, z, o.spacing, (i) => { const p = props[i]; return p.kind === o.kind && (p.x - x) ** 2 + (p.z - z) ** 2 < o.spacing * o.spacing })) return false
+      return clearOf(x, z, o.clear)
+    }
+    const treeNear = (x: number, z: number, r: number) => treeHash.some(x, z, r, (j) => (td[j * TREE_STRIDE] - x) ** 2 + (td[j * TREE_STRIDE + 2] - z) ** 2 < r * r)
+    for (const L of meta.outland?.trails?.lines ?? []) {
+      let run = 0, runS = 0, runL = 0, top = 0
+      for (let i = 1; i < L.length; i++) {
+        const st = Math.hypot(L[i][0] - L[i - 1][0], L[i][1] - L[i - 1][1])
+        run += st; runS += st; runL += st
+        if (map.height(L[i][0], L[i][1]) > map.height(L[top][0], L[top][1])) top = i
+        const a = along(L, i)
+        // (the verges: a trunk or a stump, by the trees mostly — every 16 m, each side)
+        if (run >= 16) {
+          run = 0
+          for (const side of [-1, 1]) {
+            if (or() > 0.45) continue
+            const off = ohw + 2.2 + Math.pow(or(), 1.3) * 9, x = L[i][0] + Math.cos(a) * off * side, z = L[i][1] - Math.sin(a) * off * side
+            map.outlandMaskAt(x, z, om)
+            const woody = om[3] > 0.15 || treeNear(x, z, 14)
+            const r = or(), rot = or() * 6.283
+            if (r < (woody ? 0.38 : 0.1)) {
+              const lr = a + Math.PI / 2 + (or() - 0.5) * 1.2
+              if (freeO(x, z, { clear: 1.4, maxSlope: 0.3, offRoad: 1.8, spacing: 16, kind: 'log' })) add('log', x, z, lr)
+            } else if (r < (woody ? 0.68 : 0.18)) {
+              if (freeO(x, z, { clear: 0.7, maxSlope: 0.35, offRoad: 1.5, spacing: 9, kind: 'stump' })) add('stump', x, z, rot)
+            }
+          }
+        }
+        // (the stones: a little cluster on one side, every 45 m, seven in ten)
+        if (runS >= 45) {
+          runS = 0
+          if (or() < 0.7) {
+            const side = or() < 0.5 ? 1 : -1, off = ohw + 1.2 + or() * 2.5, cx = L[i][0] + Math.cos(a) * off * side, cz = L[i][1] - Math.sin(a) * off * side
+            for (let k = 0, n = 1 + Math.floor(or() * 3); k < n; k++) {
+              const b = or() * 6.283, d = 1.4 * Math.sqrt(or()), px = cx + Math.cos(b) * d, pz = cz + Math.sin(b) * d
+              if (freeO(px, pz, { clear: 0.25, maxSlope: 0.75, offRoad: 0.5, spacing: 1.2, kind: 'stones', onRock: true })) add('stones', px, pz, or() * 6.283, 0.5 + or() * 1.1)
+            }
+          }
+        }
+        // (a log pile where the road runs through the woods — every 110 m)
+        if (runL >= 110) {
+          runL = 0
+          if (map.outlandMaskAt(L[i][0], L[i][1], om)[3] > 0.3 || treeNear(L[i][0], L[i][1], 12)) {
+            for (const side of or() < 0.5 ? [1, -1] : [-1, 1]) {
+              const off = ohw + 3.2, x = L[i][0] + Math.cos(a) * off * side, z = L[i][1] - Math.sin(a) * off * side
+              if (freeO(x, z, { clear: 1.0, maxSlope: 0.25, offRoad: 1.5, spacing: 100, kind: 'logs' })) { add('logs', x, z, a + Math.PI / 2); break }
+            }
+          }
+        }
+      }
+      // (a cairn at the road's high point)
+      const c = ring(L[top][0], L[top][1], ohw + 2.8, or() * 6.283, 12, (x, z) => freeO(x, z, { clear: 0.8, maxSlope: 0.6, offRoad: 1.4, spacing: 120, kind: 'cairn', onRock: true }))
+      if (c) add('cairn', c[0], c[1], or() * 6.283)
+    }
+  }
   return { props, camps, swarms, ms: performance.now() - t0 }
 }
 

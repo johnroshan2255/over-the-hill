@@ -50,7 +50,11 @@ function worley(u: number, v: number, cells: number, s: number): number {
   return Math.min(1, d)
 }
 
-export function createPaintTexture(): GFX.DataTexture {
+/** The paint texture's texels (RGBA8, N × N) — made once, shared: the GPU's texture and the CPU's reads of the same
+ *  noise (MapData.paintAt — the outland's ground, placed by what the ground paints). */
+let PAINT: Uint8Array | null = null
+export function paintData(): Uint8Array {
+  if (PAINT) return PAINT
   const data = new Uint8Array(N * N * 4)
   const to8 = (v: number) => Math.max(0, Math.min(255, Math.round((v * 0.5 + 0.5) * 255)))
   for (let y = 0; y < N; y++) {
@@ -62,6 +66,19 @@ export function createPaintTexture(): GFX.DataTexture {
       data[k + 3] = Math.round(worley(u, v, 16, 4) * 255)
     }
   }
+  return (PAINT = data)
+}
+/** The paint texture at uv (its own repeat, bilinear between texels — the GPU's LinearFilter at mip 0), into out (0..1). */
+export function samplePaint(u: number, v: number, out: [number, number, number, number]): [number, number, number, number] {
+  const d = paintData(), x = u * N - 0.5, y = v * N - 0.5, ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy
+  const x0 = ((ix % N) + N) % N, y0 = ((iy % N) + N) % N, x1 = (x0 + 1) % N, y1 = (y0 + 1) % N
+  const a = (y0 * N + x0) * 4, b = (y0 * N + x1) * 4, c = (y1 * N + x0) * 4, e = (y1 * N + x1) * 4
+  for (let k = 0; k < 4; k++) out[k] = ((d[a + k] * (1 - fx) + d[b + k] * fx) * (1 - fy) + (d[c + k] * (1 - fx) + d[e + k] * fx) * fy) / 255
+  return out
+}
+
+export function createPaintTexture(): GFX.DataTexture {
+  const data = paintData()
   const t = new GFX.DataTexture(data, N, N, GFX.RGBAFormat, GFX.UnsignedByteType)
   t.wrapS = t.wrapT = GFX.RepeatWrapping
   t.minFilter = GFX.LinearMipmapLinearFilter

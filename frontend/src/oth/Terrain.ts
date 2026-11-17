@@ -433,7 +433,10 @@ float groundRelief(vec2 xz) {
  *  local normal gets minus what the hill's normal ~30 m across gets) — the hills keep their soft light, the bumps on
  *  them come back. `?shape=0` off; `?shapeao=` (per m of hollow), `?shapesun=` the strengths. */
 /** ?rim=0: the box's rim handed over to the outland at a line, as before 2026-11-11 (the A/B — ROAD_GLSL boxRim). */
-export function rimDefines(): Record<string, string> { return gameParams().get('rim') === '0' ? { OTH_NO_RIM: '' } : {} }
+export function rimDefines(): Record<string, string> { return { ...(gameParams().get('rim') === '0' ? { OTH_NO_RIM: '' } : {}), ...(gameParams().get('orock2') === '0' ? { OTH_NO_OBARE: '' } : { OBARE_T: OBARE_T.toFixed(3) }) } }
+/** The outland's bare-rock patches' threshold (outlandBare — the GPU's and MapData.outlandMaskAt's): measured to give
+ *  the open country the valley's share of bare rock. */
+export const OBARE_T = 0.45
 export function shapeDefines(): Record<string, string> {
   const q = gameParams()
   if (q.get('shape') === '0') return {}
@@ -549,10 +552,34 @@ float boxRimN(vec2 xz) { return smoothstep(uBoxHalf - 100.0, uBoxHalf - 6.0, max
 // the paint's two broad noises: the ground paints with it — and the grass's bake asks the SAME (2026-11-11, the user:
 // "it does not grow grass based on terrain colour": the bake had taken a mask of zeros out there — lush green blades
 // over golden ground, grass on the grey rock)
-vec4 outlandMask(float steep, float h, vec4 big, vec4 mid) {
+// (2026-11-17 — the outland as the valley: its open country was grass from road to hill, where the valley's has BARE
+//  ROCK on its hills — the knolls' caps, their shoulders' ledges — and its outcrops stand at their edges. The same
+//  here, from the outland's rock map (mapPrep.outlandRock, from the heights), none under the woods —
+//  MapData.outlandMaskAt is the CPU's copy (Rocks.ts stands the outcrops by it). OTH_NO_OBARE (?orock2=0): none.)
+#ifndef OBARE_T
+#define OBARE_T 0.7
+#endif
+float outlandBare(vec2 xz, float steep, vec4 mid) {
+#ifdef OTH_NO_OBARE
+  return 0.0;
+#else
+  // (mapPrep.outlandRock: the knolls' caps and shoulders, on the world grid — its edge broken by the paint noise)
+  // (in the world grid's normals' B — mapPrep.withRock: the terrain's materials have no texture slot left)
+  float c = texture(uNFar, ((xz - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x).b;
+  return smoothstep(OBARE_T, OBARE_T + 0.12, c + (mid.g - 0.5) * 0.3 + (mid.b - 0.5) * 0.15);
+#endif
+}
+vec4 outlandMask(vec2 xz, float steep, float h, vec4 big, vec4 mid) {
   float rock = smoothstep(0.1, 0.24, steep + (big.b - 0.5) * 0.12) + smoothstep(700.0, 1100.0, h) * smoothstep(0.04, 0.14, steep);
   float forest = smoothstep(0.52, 0.62, big.r + mid.g * 0.25) * (1.0 - smoothstep(560.0, 820.0, h + (mid.r - 0.5) * 160.0));
-  return vec4(clamp(rock, 0.0, 1.0), 0.6 + (big.g - 0.5) * 0.6, 0.0, forest);
+  // (a bare cap clears the forest's floor — the trees keep off it, Trees.ts: the valley's rock has no wood on it)
+  float bare = outlandBare(xz, steep, mid);
+  rock = max(rock, bare);
+  forest *= 1.0 - bare;
+  // (dryness — 2026-11-17, the user: "70 % of the world green, only 30 % golden": the field green OR golden, not one
+  //  straw-olive carpet — golden on the broad noise's top 30 %, a short blend at its edge; the box's mask.bin the same,
+  //  terrain.py DRY_GOLD. Measured over the play area's fields: 70 % green, 30 % golden)
+  return vec4(clamp(rock, 0.0, 1.0), smoothstep(0.525, 0.645, big.g), 0.0, forest);
 }
 // THE OUTLAND'S LAKES (meta.outland.lakes — x, z, reach, level each; six uniforms: the gfx layer has no uniform arrays):
 // the water's depth over ground at height h (metres; negative: that far above it, −9 away from every lake)
@@ -770,7 +797,7 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
     float rock = smoothstep(0.12, 0.26, steep + (p.big.b - 0.5) * 0.12);
     mo = vec4(rock, 0.55 + (p.big.g - 0.5) * 0.7, 0.0, 0.0);
 #else
-    mo = outlandMask(steep, h, p.big, p.mid);
+    mo = outlandMask(xz, steep, h, p.big, p.mid);
     { float st = stonyAt(xz, p.mid.g); mo.r = max(mo.r, st); mo.a *= 1.0 - st; }
 #endif
     m = mix(m, mo, rim);

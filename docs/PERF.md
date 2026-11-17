@@ -630,3 +630,46 @@ Several windows at once are fine for CHECKING (browsers, phones), never for MEAS
 | 2026-11-14 | THE NARROW WAYS (docs/NEXT.md §15, `paths.ts`): paths, shortcuts, secret passages, the towns' alleys — the ground reads a way's field from the road texture's G (one bilinear read; the four texels only within ~6 m of a way), the grass's bake the same | Windows PC, `abq.mjs "\|paths=0\|"` × 5, 1080p — ULTRA: lake 1.949 / 1.890 / 1.814 ms, rockhill 1.712 / 1.798 / 1.662, spawn 2.090 / 2.250 / 2.154, oroad 1.744 / 1.733 / 1.758, town 1.453 / 1.744 / 1.434 (the town without its alleys keeps the walls they open); LOW: lake 1.751 / 1.801 / 1.729, spawn 2.076 / 2.282 / 2.117, oroad 1.546 / 1.501 / 1.584 — no cost (base runs bracket it). Load: +~0.3 s in the map worker; road texture 9.4 → 18.9 MB | not measured (no phone) | — |
 | 2026-11-16 | the 1000 fps question, without changing a pixel (above): the cave's inside only down its mouth's sight lines (−213 k triangles in front of it), a blade of no height stops at once, the relief's fine read and the wet bank's only where they show, the trees' shade not read in the hills' — all pixel-identical (`pixcmp.mjs`); the canvas `premultiplied` tried and taken out | old vs new, 8 reps: forest +0.04, lake −0.08, rockhill +0.03, canyon +0.03, omeadow −0.02, spawn +0.01 ms — no change; `fps.mjs ultra` mean 2.174 (460 fps), the machine in use | not measured (no phone) | — |
 | 2026-11-16 | THE GARAGE (docs/NEXT_garage.md, VEHICLES.md §6): free per-car paint, each car's factory colour, working cockpits — dial faces drawn once a car (a 1024 × 512 canvas, ~2 MB), needles, the gear lever through its gate, the transfer levers, the handbrake; the fine parts drawn from inside or within 6 m only (`Vehicle.close`); the cars' pictures in the garage (20 × ~40 kB, lazy) | M4, release builds, the spawn's chase camera, `abq` 8 reps: Forty 2.041 → 2.061 ms (+0.02), Steppe 2.03 → 2.07–2.10 (+0.04–0.06: not the fine parts — open, NEXT_garage §3.3); LOW + `mobile=1` Forty 1.280 → 1.296 (+0.016). The bands fixed on four cars after (+150–430 triangles each): not measured | not measured (no phone); the 18 load the phones' way (`fleetshot` LOW, `mobile=1`): all ok | 445f948 |
+
+## The load (2026-11-17) — the download and the wait
+
+The user: "check the initial download speed, why it shows 2 loadings, why it takes so long … we can't publish this
+game if its initial download is too much." Measured title → PLAY → playable (headless Chrome on the Mac, over the
+LAN address, cache off; `scratchpad boot.mjs`: every loading text with its time, every request):
+
+| | before | after |
+|---|---|---|
+| download, production build (`vite build` + `preview`) | 45.1 MB, 51 requests | **23.6 MB**, 48 (of it ~2.6 MB after the game is up) |
+| download, dev server | 80.7 MB, 270 | 54.6 MB |
+| PLAY → the game on screen (Mac) | ~13 s (bar 100 % at +2.8 s, stuck 8 s, then 0 % again) | **~5.5 s**, one bar 0 → 100 % |
+| the world's build (`World.timings.total`) | 7.8 s | 2.9 s |
+| the map's preparing (worker, `MapData.prepMs`) | 4.8 s (node) | ~1.5 s |
+
+What went:
+- **The grids packed** (`scripts/oth/pack.mjs` → `.pk`, decoded by `src/oth/pack.ts` in the map worker with the
+  browser's own gzip): a plane predictor's residuals, zig-zagged, high / low bytes apart; Uint8 grids as left deltas.
+  Lossless — the packer decodes each back and compares. Valley 27.3 → 7.2 MB, desert 18.9 → 4.4 MB. **Run it after
+  any bake that writes a .bin** (the loader prefers the .pk: a stale one would win). The .bin stay the source (the
+  Python tools read them).
+- **three.js** (736 kB): preloaded on the title screen though nothing imports it since the PlayCanvas move.
+- **The character model fetched twice** (its skin read + the loader): one fetch, the same bytes parsed.
+- **glslang + twgsl** (2.6 MB of WebAssembly): naga translates every shader (0 fallbacks over the valley, the cave,
+  the outland, driving); they're only its fallback now — fetched once the game is up (`gfx/core.ts`), at once if naga
+  can't load.
+- **One loading bar** (`main.ts`): the map 0–40 %, the world's build 40–80 % (each step as it ends), the 4×4 to 85 %,
+  the shaders' warm-up to 100 % as its queue empties.
+- **The slow loops** (each checked to give the same world — the scatter counts and the ground's measures unchanged):
+  `Rocks.removeWithin` and `settleVerge` asked every Wardens' disc for each of ~40 k stones (4 s + 1 s → bucketed by
+  64 m cell); `distanceFields` and `sculptPeaks` spent their time in `Math.hypot` (165 → 39 ms, 765 → 494 ms — the
+  field and the heights the same to the bit); the knolls walk each knoll's own box (905 → ~110 ms), the rock map skips
+  the ground that can't be rock (703 → ~145 ms); `World.build`'s steps are timed to their end now (an async step
+  read as its first await).
+
+Tried and left out: **the cave built after the game starts** (0.7 s of the build, ~1 MB): a 664 ms freeze the moment
+the game appeared (a phone's 2–3 s) — worse than the bar's 0.7 s; it's built during the load as before.
+
+Still in the download, largest first (production): height.pk 3.3 MB, the car 2.3 MB (offroader.glb — no mesh
+compression; Draco / meshopt would roughly halve it, needs a tool not installed here), places.glb 2.4 MB (Draco),
+far.pk 2.5, naga 2.1 MB (WebAssembly — a host that gzips .wasm sends ~0.8), Rapier 1.6 MB (its WebAssembly inlined
+as base64 in the -compat build), character 1.2 MB, mask.pk 1.1. The host should gzip / brotli .js, .wasm, .json and
+.glb; the .pk are gzip already. Not measured on a phone.

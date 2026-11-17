@@ -3,6 +3,10 @@ import { type Court, NO_ROADS, type Vale, type PreparedMap, ROAD_REACH, ROAD_STE
 import { type PathKind, type Paths, PATH_HW, PATH_REACH, pathCentreAt, pathField } from './paths'
 import { gameParams } from '../settings'
 import { LOOK } from './Atmosphere'
+import { samplePaint } from './noiseTex'
+import { OBARE_T } from './Terrain'
+
+const OBARE = gameParams().get('orock2') !== '0'
 
 /** The map loader's worker (one for every load) and its request count. */
 let loader: Worker | null = null
@@ -143,14 +147,31 @@ export function lakeOff(L: OutLake, x: number, z: number): number {
 export interface OutPlace { id: number; kind: 'worldtree' | 'crater' | 'mesa' | 'arch' | 'peak' | 'view' | 'pass' | 'lake' | 'canyon' | 'rocks' | 'bog' | 'ford'; deck?: boolean; name: string; x: number; z: number; y: number; r: number; rot?: number; h?: number; seed?: number; floor?: number; breach?: number; top?: number; peak?: string }
 
 class HeightGrid {
+  /** 1 − N.y of the packed normals at (x, z), read bilinear as the shaders read them (unpackN of the filtered RG). */
+  steep(x: number, z: number): number {
+    const n = this.n, fx = Math.min(n - 1.001, Math.max(0, (x - this.origin) / this.step)), fz = Math.min(n - 1.001, Math.max(0, (z - this.origin) / this.step))
+    const c = this.ch, i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, a = (j * n + i) * c, b = a + n * c, N = this.nb
+    const r = (k: number) => ((N[a + k] * (1 - u) + N[a + c + k] * u) * (1 - v) + (N[b + k] * (1 - u) + N[b + c + k] * u) * v) / 255 * 2 - 1
+    const nx = r(0), nz = r(1)
+    return 1 - Math.sqrt(Math.max(1 - nx * nx - nz * nz, 0))
+  }
+  /** The B channel at (x, z), bilinear, 0..1 (the world grid's: the outland's rock — mapPrep.outlandRock). */
+  blue(x: number, z: number): number {
+    if (this.ch !== 4) return 0
+    const n = this.n, fx = Math.min(n - 1.001, Math.max(0, (x - this.origin) / this.step)), fz = Math.min(n - 1.001, Math.max(0, (z - this.origin) / this.step))
+    const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, a = (j * n + i) * 4 + 2, b = a + n * 4, N = this.nb
+    return ((N[a] * (1 - u) + N[a + 4] * u) * (1 - v) + (N[b] * (1 - u) + N[b + 4] * u) * v) / 255
+  }
   readonly h: Float32Array
   readonly n: number
   readonly step: number
   readonly origin: number
   readonly tex: GFX.DataTexture
   readonly normalTex: GFX.DataTexture
+  /** channels a normal (2: RG; 4: RGBA — the world grid's, B the outland's rock) */
+  readonly ch: number
 
-  constructor(readonly g: Grid, raw: Uint16Array, h: Float32Array, nb: Uint8Array) {
+  constructor(readonly g: Grid, raw: Uint16Array, h: Float32Array, readonly nb: Uint8Array) {
     this.n = g.n
     this.step = g.step
     this.origin = g.origin
@@ -163,7 +184,9 @@ class HeightGrid {
     this.tex.needsUpdate = true
     // normals (mapPrep.ts): x / z components in 0..255 (y rebuilt in the shader)
     const n = g.n
-    this.normalTex = new GFX.DataTexture(nb, n, n, GFX.RGFormat, GFX.UnsignedByteType)
+    // (RG: x / z; the world grid's RGBA — B the outland's rock, mapPrep.withRock)
+    this.ch = nb.length / (n * n)
+    this.normalTex = new GFX.DataTexture(nb, n, n, this.ch === 4 ? GFX.RGBAFormat : GFX.RGFormat, GFX.UnsignedByteType)
     this.normalTex.minFilter = GFX.LinearMipmapLinearFilter
     this.normalTex.magFilter = GFX.LinearFilter
     this.normalTex.generateMipmaps = true
@@ -197,6 +220,8 @@ export class MapData {
   /** THE OUTLAND'S ROADS (mapPrep.ts roadField): R8, the signed distance to the nearest road's edge over ± roadHalf;
    *  their half width. The ground paints them wherever they run — the stretches inside the box too. */
   readonly roadTex: GFX.DataTexture
+  /** The map worker's steps (ms — mapPrep.prepareMap): the load's account. */
+  readonly prepMs: Record<string, number>
   readonly roadHalf: number
   readonly roadHW: number
   private readonly road: Uint8Array
@@ -229,6 +254,7 @@ export class MapData {
     const meta = (this.meta = p.meta), mask = p.mask, trail = p.trail, mud = p.mud
     this.inner = new HeightGrid(meta.inner, p.innerRaw, p.innerH, p.innerNormals)
     this.far = new HeightGrid(meta.far, p.farRaw, p.farH, p.farNormals)
+    this.prepMs = p.ms ?? {}
     this.pyramid = p.pyramid
     this.courts = p.courts ?? []
     this.vales = p.vales ?? []
@@ -502,7 +528,7 @@ export class MapData {
         else resolve(e.data.map as PreparedMap)
       }
       w.addEventListener('message', on)
-      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') !== '0', cliffs: LOOK === 1 && gameParams().get('cliffs') === '1', peaks: LOOK === 1 && gameParams().get('peaks') !== '0', soften: gameParams().get('soften') !== '0', walls: gameParams().get('walls') !== '1', paths: gameParams().get('paths') !== '0' })   // (?courts=0: no sunken courts cut — the A/B; ?cliffs=1: the hills stepped into strata again — OFF since 2026-11-13, the user: "the terrain rises and we show rock texture, but we use a pattern of 'm' or zigzag — remove any patterns like that": the strata's wandering bands were that pattern, on both grids)
+      w.postMessage({ id, base, leaf, courts: gameParams().get('courts') !== '0', vales: gameParams().get('vales') !== '0', banks: gameParams().get('banks') !== '0', sculpt: gameParams().get('sculpt') === '1',   /* (2026-11-17, the user: "make it exactly the same" as the valley — the lowlands' mesas and terraces are none of the valley's: off; ?sculpt=1 brings them back — the knolls are the valley's shape, mapPrep.sculptKnolls) */ knolls: gameParams().get('knolls') !== '0', rough: gameParams().get('orough') !== '0', orock: gameParams().get('orock2') !== '0', cliffs: LOOK === 1 && gameParams().get('cliffs') === '1', peaks: LOOK === 1 && gameParams().get('peaks') !== '0', soften: gameParams().get('soften') !== '0', walls: gameParams().get('walls') !== '1', paths: gameParams().get('paths') !== '0' })   // (?courts=0: no sunken courts cut — the A/B; ?cliffs=1: the hills stepped into strata again — OFF since 2026-11-13, the user: "the terrain rises and we show rock texture, but we use a pattern of 'm' or zigzag — remove any patterns like that": the strata's wandering bands were that pattern, on both grids)
     })
     return new MapData(p)
   }
@@ -592,6 +618,40 @@ export class MapData {
   /** Metres from x, z to the nearest track's or road's EDGE, either kind (negative on it): what the tyres, the dust
    *  and the woods ask. (`trailDist` stays the box's tracks alone: the box's own placement reads it.) */
   wayEdge(x: number, z: number): number { return Math.min(this.trailDist(x, z) - this.meta.trails.hw, this.roadEdge(x, z), this.pathEdge(x, z)) }
+
+  /** THE OUTLAND'S GROUND at x, z — the CPU's copy of Terrain.ts outlandMask (rock — with its bare patches —, dryness,
+   *  wet 0, forest; 0..1 each): what the ground paints out there, from the same noise read the same way (noiseTex
+   *  samplePaint) and the world grid's normals. The boulder field's stony bed is left out (Rocks.ts has its own). */
+  outlandMaskAt(x: number, z: number, out: [number, number, number, number]): [number, number, number, number] {
+    const big = samplePaint(x / 389 + 0.37, z / 389 + 0.59, this._pb), mid = samplePaint(x / 71, z / 71, this._pm)
+    const steep = this.far.steep(x, z), h = this.height(x, z), sm = (a: number, b: number, t: number) => { const k = Math.min(1, Math.max(0, (t - a) / (b - a))); return k * k * (3 - 2 * k) }
+    let rock = Math.min(1, sm(0.1, 0.24, steep + (big[2] - 0.5) * 0.12) + sm(700, 1100, h) * sm(0.04, 0.14, steep))
+    let forest = sm(0.52, 0.62, big[0] + mid[1] * 0.25) * (1 - sm(560, 820, h + (mid[0] - 0.5) * 160))
+    if (OBARE) {
+      // (the rock map read bilinear on the world grid, its edge broken by the paint noise — as Terrain.ts outlandBare)
+      const c = this.far.blue(x, z)
+      this.bareRaw = c + (mid[1] - 0.5) * 0.3 + (mid[2] - 0.5) * 0.15
+      const bare = sm(OBARE_T, OBARE_T + 0.12, this.bareRaw)
+      rock = Math.max(rock, bare); forest *= 1 - bare
+    }
+    out[0] = rock; out[1] = sm(0.525, 0.645, big[1]); out[2] = 0; out[3] = forest
+    return out
+  }
+  /** (the last outlandMaskAt's bare-patch field before its threshold — OBARE_T: a patch's edge; Rocks.ts stands
+   *  the outcrops by it) */
+  bareRaw = 0
+  private readonly _pb: [number, number, number, number] = [0, 0, 0, 0]
+  private readonly _pm: [number, number, number, number] = [0, 0, 0, 0]
+
+  /** On the outland's bare caps / ledges (mapPrep.outlandRock), as outlandMaskAt's rock would say over `over`? — the
+   *  rock map read first: where it's under the threshold less the edge's noise (most of the land) the answer is no,
+   *  without the full mask (the woods ask it for every tree). */
+  onOutlandRock(x: number, z: number, over: number): boolean {
+    // (… and gentle enough that the slope's own rock can't reach it either: steep < 0.04 — outlandMask's terms are 0)
+    if ((!OBARE || this.far.blue(x, z) < OBARE_T - 0.23) && this.far.steep(x, z) < 0.04) return false
+    return this.outlandMaskAt(x, z, this._om)[0] > over
+  }
+  private readonly _om: [number, number, number, number] = [0, 0, 0, 0]
 
   /** The box's mask at x, z (0..1 each: rock, dryness, wet, forest), nearest 4 m cell; zeros outside the box. */
   maskAt(x: number, z: number, out: [number, number, number, number]): [number, number, number, number] {

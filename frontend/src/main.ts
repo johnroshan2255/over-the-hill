@@ -8,7 +8,7 @@ import { fullscreenButton } from './ui/fullscreen'
  * OVERHILL — the entry: the TITLE screen first (ui/Menu.ts), the game (oth/main.ts) loaded only when the player
  * starts — its code, three and Rapier are separate chunks the title screen fetches while it waits.
  *
- * While the title screen is up, in idle time: three and the physics (Rapier's WASM compiled ahead — the slowest part
+ * While the title screen is up, in idle time: the physics (Rapier's WASM compiled ahead — the slowest part
  * of a cold start), the chosen car's model (loaded and baked into the same cache the game reads), and the valley's
  * data files (into the HTTP cache). By the time the player presses PLAY most of the loading is done.
  *
@@ -20,12 +20,11 @@ const status = document.getElementById('status')!
 const direct = ['tier', 'play', 'drive', 'x', 'z', 'hour', 'at', 'coop'].some((k) => url.has(k)) || continueRequested() || !!coopRequested() // (?at=cave: straight in, before the cave; ?coop=: into a co-op world)
 
 const MAP = '/oth/valley'
-const MAP_FILES = ['meta.json', 'height.bin', 'far.bin', 'mask.bin', 'trail.bin', 'mud.bin']
+const MAP_FILES = ['meta.json', 'height.pk', 'far.pk', 'mask.pk', 'trail.pk', 'mud.pk'] // (the packed grids — scripts/oth/pack.mjs)
 
 function preload(): void {
   const idle = (f: () => void) => ('requestIdleCallback' in window ? requestIdleCallback(f, { timeout: 2000 }) : setTimeout(f, 800))
   idle(() => {
-    void import('three')
     void import('./physics/PhysicsWorld').then((m) => m.PhysicsWorld.load())
     // (the car, at the size this device will draw it: the tier as the game will pick it — phones their own file)
     void Promise.all([import('./assets/loadModels'), import('./oth/quality')]).then(([m, q]) => { m.carDetailFor(q.pickTier()); return m.loadVehicle(loadSettings().car) }).catch(() => {})

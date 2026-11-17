@@ -1579,6 +1579,7 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   }
   // ---- THE FIELD WALLS along the roads: runs of 50–180 m on one verge or both, a gap of as much between
   {
+    const OROADS = gameParams().get('oroads') !== '0'
     let run = 0, gap = 0, both = false, sideNow = 1
     for (const Ln of rdLines) for (let k = 1; k + 1 < Ln.length; k++) {
       const [x, z] = Ln[k], [x0, z0] = Ln[k - 1], [x1, z1] = Ln[k + 1], seg = Math.hypot(x1 - x, z1 - z)
@@ -1589,6 +1590,10 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
         // (the look, round 5 — the user's frames: the track a LANE between its walls for long stretches: longer runs,
         //  shorter gaps, both verges more often)
         if (LOOK) { run = 80 + r1 * 180; gap = 25 + r2 * 95; both = r1 > 0.28 }
+        // (2026-11-17 — the outland as the valley, the user: "some places look boring": a lane between walls for 70 %
+        //  of every road made every drive one picture; the valley's tracks have none. Now in RUNS — a third of the road,
+        //  one verge mostly. ?oroads=0: as the look had them)
+        if (OROADS) { run = 50 + r1 * 110; gap = 90 + r2 * 220; both = r1 > 0.62 }
       }
       if (run > 0) {
         run -= seg

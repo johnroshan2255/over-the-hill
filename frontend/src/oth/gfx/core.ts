@@ -36,8 +36,8 @@ export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | '
     transientColor: true,
     transientDepth: true,
     powerPreference: o.powerPreference ?? 'high-performance',
-    glslangUrl: '/lib/glslang/glslang.js',
-    twgslUrl: '/lib/twgsl/twgsl.js',
+    // (no glslangUrl / twgslUrl — 2026-11-17, the download: naga translates every shader (fastWgsl); glslang + twgsl
+    //  (2.6 MB of WebAssembly) are only its fallback — fetched once the game is playing, not before it starts)
   } as never)
   device.maxPixelRatio = 1
   // FEWER MSAA SAMPLES (2026-11-07, quality.ts: a weak GPU's 2×): on WebGL2 PlayCanvas draws into its own multisampled
@@ -78,14 +78,35 @@ export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | '
  * Both ways the module turns off WGSL's derivative-uniformity check (GLSL allows a texture sample in a branch on a
  * varying — a leaf card's, the paint's — WGSL refuses it unless told).
  */
+type Glslang = { compileGLSL(src: string, type: string): unknown }
+type Twgsl = { convertSpirV2WGSL(code: unknown): string }
+/** glslang + twgsl, as PlayCanvas would have loaded them (their scripts from /lib, each its WebAssembly). */
+let fallback: Promise<{ glslang: Glslang; twgsl: Twgsl }> | null = null
+function loadFallback(): Promise<{ glslang: Glslang; twgsl: Twgsl }> {
+  return (fallback ??= (async () => {
+    const url = (p: string) => new URL(p, document.baseURI).toString()
+    const [twgsl, glslang] = await Promise.all([
+      import(/* @vite-ignore */ url('/lib/twgsl/twgsl.js')).then(() => (window as unknown as { twgsl(w: string): Promise<Twgsl> }).twgsl(url('/lib/twgsl/twgsl.wasm'))),
+      import(/* @vite-ignore */ url('/lib/glslang/glslang.js')).then((m: { default(): Promise<Glslang> }) => m.default()),
+    ])
+    return { glslang, twgsl }
+  })())
+}
 async function fastWgsl(device: pc.GraphicsDevice): Promise<void> {
-  const d = device as unknown as { glslang?: { compileGLSL(src: string, type: string): unknown }; twgsl?: { convertSpirV2WGSL(code: unknown): string } }
-  if (!d.glslang || !d.twgsl) return
-  const glslang = d.glslang, tw = d.twgsl
-  const compile = glslang.compileGLSL.bind(glslang), convert = tw.convertSpirV2WGSL.bind(tw)
+  const d = device as unknown as { glslang?: Glslang; twgsl?: Twgsl }
   const head = 'diagnostic(off, derivative_uniformity);\n'
   let naga: typeof import('naga-wasm') | null = null
   try { naga = await import('naga-wasm'); await naga.init({ module_or_path: nagaWasm }) } catch (e) { console.warn('naga unavailable — glslang + twgsl for every shader', e); naga = null }
+  // (the fallback: needed before the first shader if naga isn't there; else fetched once the game is playing)
+  let real: { glslang: Glslang; twgsl: Twgsl } | null = null
+  if (!naga) real = await loadFallback()
+  else {
+    const later = () => void loadFallback().then((r) => (real = r)).catch((e) => console.warn('glslang + twgsl unavailable', e))
+    addEventListener('overhill:started', later, { once: true })
+  }
+  const compile = (src: string, type: string) => real!.glslang.compileGLSL(src, type), convert = (code: unknown) => real!.twgsl.convertSpirV2WGSL(code)
+  const glslang: Glslang = { compileGLSL: () => null }, tw: Twgsl = { convertSpirV2WGSL: () => '' }
+  d.glslang = glslang; d.twgsl = tw
   // (naga's preprocessor has no token pasting — only PlayCanvas's unused texture2D helpers use it — and Vulkan GLSL
   //  needs no precision statements)
   // PlayCanvas declares all eight colour outputs on WebGPU (it strips the unused ones only for WebGL on Apple): an
@@ -107,6 +128,7 @@ async function fastWgsl(device: pc.GraphicsDevice): Promise<void> {
       try { return head + naga.translate({ from: 'glsl', source: clean(c.src), parse: { stage: c.type as 'vertex' | 'fragment' }, to: 'wgsl' }) }
       catch (e) { console.warn('naga: falling back to glslang + twgsl for a shader —', (e as { formatted?: string }).formatted ?? e) }
     }
+    if (!real) { void loadFallback().then((r) => (real = r)); throw new Error('naga could not translate a shader and glslang + twgsl are still loading') }
     return head + convert(compile(c.src, c.type))
   }
 }

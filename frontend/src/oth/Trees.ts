@@ -1133,6 +1133,14 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
     // cells hold more (0.13 of them a tree, was 0.03), and the open country takes a grove in more of its cells.
     // ?woods=0: as it was (the A/B).
     const WOODS = gameParams().get('woods') !== '0', R0 = WOODS ? 0.14 : 0.34, R1 = WOODS ? 0.42 : 0.6, THIN = WOODS ? 0.13 : 0.03
+    // THE OUTLAND AS THE VALLEY (2026-11-17, the user: "some places look boring — make them look like the main valley"):
+    // measured against the box (trees / km², the gold share), the outland had two thirds of its trees and half of them
+    // gold — larch stands, birch and aspen groves. Now the valley's own rules: as many trees (the stands' cells fuller,
+    // the thin country thicker), 80 % spruce (the user's rule for the valley: "80 % pine, 20 % other" — the same slow
+    // noise picks the 20 %), and the parkland's groves mostly spruce, as the valley's are. ?oveg=0: as it was (the A/B).
+    const OROADS = gameParams().get('oroads') !== '0'
+    const OGROUPS = gameParams().get('ogroups') !== '0', GROUP_P = 0.25
+    const OVEG = gameParams().get('oveg') !== '0', THIN2 = OVEG ? 0.36 : THIN, STAND2 = OVEG ? 1.2 : 0.6
     // (clear of the outland's places — the ranger towers — and of the gorge bridges' ends)
     const keepOff: [number, number, number][] = [...(map.meta.landmarks ?? []).filter((l) => Math.abs(l.x) > map.half || Math.abs(l.z) > map.half).map((l) => [l.x, l.z, 18] as [number, number, number]),
       ...(map.meta.bridges ?? []).flatMap((b) => (Math.abs(b.x0) > map.half || Math.abs(b.z0) > map.half ? [[b.x0, b.z0, 12], [b.x1, b.z1, 12]] as [number, number, number][] : [])),
@@ -1147,24 +1155,56 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
       const stand = smooth(0.44, 0.6, vn(gx / 58 - 11, gz / 58 + 4))
       let q = cellSeed(Math.round(gx), Math.round(gz), 91)
       const r1 = () => ((q = (Math.imul(q ^ (q >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
-      const pw = smooth(R0, R1, region) * (THIN + 0.6 * stand)
+      // GROUPS (2026-11-17, the user: "instead of randomly putting each tree, make groups of 3–6 trees at some places —
+      // single trees and groups as well, so it feels natural"): a quarter of the cells that take a tree take a GROUP —
+      // 3–6 of one kind standing together 3–7 m apart, the tallest in the middle — the rest a lone tree. The cells' odds
+      // lowered by the groups' extra trees: as many trees as before. ?ogroups=0: every cell its one tree (the A/B).
+      const pw = smooth(R0, R1, region) * (THIN2 + STAND2 * stand) / (OGROUPS ? 1 + GROUP_P * 3.5 : 1)
       if (r1() > pw) continue
+      // one tree at (x, z), its height × hK; its kind given (a group's) or picked here — the kind it took, or −1 (none)
+      const plant = (x: number, z: number, hK: number, given: number): number => {
+        if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) return -1
+        if (map.roadEdge(x, z) < 4.0 || map.pathEdge(x, z) < 1.4) return -1          // (off the outland's roads, and their verges — and the narrow ways)
+        // (… and CLEARINGS along them — 2026-11-17, the outland as the valley: the woods walled both verges twice as often
+        //  as the valley's tracks; now stretches where the road runs out in the open, a slow noise along it. ?oroads=0)
+        if (OROADS && map.roadEdge(x, z) < 7.9 && vn(x / 85 + 13.7, z / 85 - 6.1) > 0.56) return -1
+        if (rocks.onCrag(x, z, 1.5)) return -1                                        // (… and the crags, the ledges: Rocks.ts)
+        if (OVEG && map.onOutlandRock(x, z, 0.5)) return -1                            // (… and the knolls' bare caps: mapPrep.outlandRock)
+        const y = map.height(x, z)
+        if (map.lakeShore(x, z, y, 0.6)) return -1   // (not in a lake, nor on its wet shore)
+        if (y > 640 || r1() < (y - 420) / 220) return -1
+        const sl = Math.hypot(map.height(x + 5, z) - map.height(x - 5, z), map.height(x, z + 5) - map.height(x, z - 5)) / 10
+        if (sl > 0.6) return -1
+        const low = y < 270 && vn(x / 150 + 3, z / 150 + 9) > 0.62
+        let species = low ? (r1() < 0.5 ? 3 : 4) : vn(x / 230, z / 230) > 0.66 ? 1 : r1() < 0.03 ? 2 : 0
+        // (the valley's 80 / 20: a spruce everywhere but in the slow noise's groves of the rest — a hash, no draw)
+        if (OVEG) {
+          const other = vn(x / 60 - 23, z / 60 + 41) + (hash01(x + 0.37, z + 0.11) - 0.5) * 0.3 > 0.76   // (0.76: the parkland's groves and the roads' birches are the rest of the 20 %)
+          if (!other) species = 0
+          else if (species === 0) species = low ? 6 : 1
+        }
+        // (the look, round 5: birches and aspens among the spruce along a road, as along the box's tracks — its own cell's seed)
+        // (… one in twelve with OVEG: the outland's roads are many, and a fifth of their spruce made a gold avenue of each)
+        if (LOOK && TBIRCH && species === 0 && map.roadEdge(x, z) < 30 && hash01(x - 0.19, z + 0.57) < (OVEG ? 0.08 : 0.22)) species = hash01(x + 0.43, z - 0.31) < 0.7 ? 3 : 4
+        if (given >= 0) species = given
+        let H = family(species) === 1 ? 8 + 8.5 * Math.pow(r1(), 0.8) : (7 + 15 * Math.pow(r1(), 0.8)) * (0.8 + 0.2 * stand)
+        if (species === 0 && r1() < 0.1 && hK >= 1) H = Math.max(H, 26 + 10 * r1())
+        out.push(x, y - 0.3, z, H * hK, r1() * Math.PI * 2, species, r1(), r1())
+        return species
+      }
       const x = gx + (r1() * 1.6 - 0.3) * GO, z = gz + (r1() * 1.6 - 0.3) * GO
-      if (keepOff.some(([kx, kz, kr]) => (x - kx) ** 2 + (z - kz) ** 2 < kr * kr)) continue
-      if (map.roadEdge(x, z) < 4.0 || map.pathEdge(x, z) < 1.4) continue          // (off the outland's roads, and their verges — and the narrow ways)
-      if (rocks.onCrag(x, z, 1.5)) continue                                        // (… and the crags, the ledges: Rocks.ts)
-      const y = map.height(x, z)
-      if (map.lakeShore(x, z, y, 0.6)) continue   // (not in a lake, nor on its wet shore)
-      if (y > 640 || r1() < (y - 420) / 220) continue
-      const sl = Math.hypot(map.height(x + 5, z) - map.height(x - 5, z), map.height(x, z + 5) - map.height(x, z - 5)) / 10
-      if (sl > 0.6) continue
-      const low = y < 270 && vn(x / 150 + 3, z / 150 + 9) > 0.62
-      let species = low ? (r1() < 0.5 ? 3 : 4) : vn(x / 230, z / 230) > 0.66 ? 1 : r1() < 0.03 ? 2 : 0
-      // (the look, round 5: birches and aspens among the spruce along a road, as along the box's tracks — its own cell's seed)
-      if (LOOK && TBIRCH && species === 0 && map.roadEdge(x, z) < 30 && hash01(x - 0.19, z + 0.57) < 0.22) species = hash01(x + 0.43, z - 0.31) < 0.7 ? 3 : 4
-      let H = family(species) === 1 ? 8 + 8.5 * Math.pow(r1(), 0.8) : (7 + 15 * Math.pow(r1(), 0.8)) * (0.8 + 0.2 * stand)
-      if (species === 0 && r1() < 0.1) H = Math.max(H, 26 + 10 * r1())
-      out.push(x, y - 0.3, z, H, r1() * Math.PI * 2, species, r1(), r1())
+      if (!OGROUPS || r1() >= GROUP_P) { plant(x, z, 1, -1); continue }
+      // a group: the middle one first (its kind the group's — now and then one of another among them), the rest round it
+      const kind = plant(x, z, 1.12, -1)
+      if (kind < 0) continue
+      const placed: [number, number][] = [[x, z]]
+      for (let i = 0, n = 2 + Math.floor(r1() * 4), tries = 0; i < n && tries < n * 4; tries++) {
+        const a = r1() * Math.PI * 2, d = 3.2 + r1() * 3.8, px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d
+        if (placed.some(([qx, qz]) => (qx - px) ** 2 + (qz - pz) ** 2 < 3.2 * 3.2)) continue
+        const sp = r1() < 0.15 ? (kind === 0 ? 6 : 0) : kind   // (a spruce group's odd one a green oak: the gold stays the valley's share)
+        if (plant(px, pz, 0.72 + 0.22 * r1(), sp) >= 0) placed.push([px, pz])
+        i++
+      }
     }
     // THE PARKLAND (2026-11-12, the user's Genshin Impact frames: "just an empty place … we need naturality, beauty like
     // this"): the open country between the stands was bare grass to the hills. Now, every ~110 m cell its own seed —
@@ -1196,7 +1236,9 @@ export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generato
         const hill = Math.hypot(map.height(cx + 6, cz) - map.height(cx - 6, cz), map.height(cx, cz + 6) - map.height(cx, cz - 6)) / 12 > 0.42
         const kind = r1(), lone = kind < (hill ? 0.45 : 0.28)
         // (the grove's species: mostly OAK — the round green dome; birch gold; aspen orange — one or two of another among them)
-        const main = kind < 0.2 ? (r1() < 0.7 ? 6 : 3) : kind < 0.62 ? 6 : kind < 0.88 ? 3 : 4, other = main === 6 ? 3 : 6
+        // (… and the valley's groves are mostly spruce: over half of them now, a third oak, the rest birch and aspen)
+        const m0 = kind < 0.2 ? (r1() < 0.7 ? 6 : 3) : kind < 0.62 ? 6 : kind < 0.88 ? 3 : 4
+        const main = OVEG ? (kind < 0.55 ? 0 : kind < 0.85 ? 6 : kind < 0.94 ? 3 : 4) : m0, other = OVEG ? (main === 0 ? 6 : 0) : main === 6 ? 3 : 6
         const n = lone ? 1 + (r1() < 0.35 ? 1 : 0) : hill ? 2 + Math.floor(r1() * 3) : 4 + Math.floor(r1() * 6)
         const placed: [number, number][] = []
         for (let i = 0, tries = 0; i < n && tries < n * 4; tries++) {

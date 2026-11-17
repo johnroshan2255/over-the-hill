@@ -60,6 +60,9 @@ export interface WorldEnv {
   crates: number[]
 }
 
+/** About how many steps a world's build reports (World.build's progress: distinct step labels). */
+const BUILD_STEPS = 28
+
 export class World {
   readonly group = new GFX.Group()
   /** How long each step took to build (ms) — the dev stats, the crossing's budget. */
@@ -105,12 +108,18 @@ export class World {
   static async build(id: WorldId, env: WorldEnv, pace: () => Promise<void> = async () => {}, onProgress?: (f: number) => void, loaded?: MapData, background = false): Promise<World> {
     const timings: Record<string, number> = {}
     const t0 = performance.now()
-    const map = loaded ?? (await MapData.load(WORLDS[id].path, env.tier.terrainLeaf, onProgress))
+    // (the progress: the map's files and preparing, then each step as it ends — one bar that only goes forward; a map
+    //  loaded already, the steps are the whole of it. BUILD_STEPS: the steps a world takes, about)
+    const mapShare = loaded ? 0 : 0.5, done = new Set<string>()
+    const map = loaded ?? (await MapData.load(WORLDS[id].path, env.tier.terrainLeaf, (f) => onProgress?.(f * mapShare)))
     timings.load = performance.now() - t0
-    const step = async <T>(label: string, f: () => T): Promise<T> => {
+    const stepDone = (label: string) => { done.add(label); onProgress?.(mapShare + (1 - mapShare) * Math.min(0.98, done.size / BUILD_STEPS)) }
+    const step = async <T>(label: string, f: () => T): Promise<Awaited<T>> => {
       const t = performance.now()
-      const r = f()
+      const r = await f()   // (timed to its end: an async step — a model fetched — was timed only to its first await)
       timings[label] = performance.now() - t
+      timings['@' + label] = performance.now() - t0
+      stepDone(label)
       await pace()
       return r
     }
@@ -121,6 +130,8 @@ export class World {
       for (const _ of gen) if (performance.now() - s > 6) { busy += performance.now() - s; await pace(); s = performance.now() }
       timings[label] = busy + performance.now() - s
       timings[label + ' (frames)'] = performance.now() - t
+      timings['@' + label] = performance.now() - t0
+      stepDone(label)
     }
     const { atmos, tier, shadow } = env
     await step('shadow', () => (background ? shadow.prepare(map) : shadow.setMap(map)))
@@ -176,6 +187,8 @@ export class World {
     { const cs = plan.sites.find((l) => l.kind === 'cave'); if (cs && caveMeta && gameParams().get('caveflanks') === '1') CaveWorld.spreadFoot(map, cs, caveMeta) } // (off: it made walls and creases — 2026-11-08)
     // (and the small things on it: pebbles, logs, stumps — never a crate, a sign, a camp's)
     placed.props = placed.props.filter((p) => !['stones', 'log', 'stump', 'logs'].includes(p.kind) || open(p.x, p.z))
+    // (… and the outland's cairns — Places.ts, the outland as the valley: one in a ruin's ground taken off)
+    placed.props = placed.props.filter((p) => p.kind !== 'cairn' || (Math.abs(p.x) < map.half && Math.abs(p.z) < map.half) || open(p.x, p.z))
     // (the look, 2026-11-13 — the user: "remove those from the game": the meadows' small RUINS, a lone stone chimney among
     //  low walls, read as a tall box standing in a field)
     if (LOOK) placed.props = placed.props.filter((p) => p.kind !== 'ruin')
@@ -193,7 +206,8 @@ export class World {
     const glow = tier.bloom ? null : await step('glow', () => new Glow(map, atmos))
     atmos.uniforms.uGlow.value = glow ? 1 : 0
     // (the verges' stones join the rocks now, clear of the trees, the things and the new places: Rocks.settleVerge)
-    await step('verge', () => rocks.settleVerge(trees.data, TREE_STRIDE, placed.props, plan.keep))
+    // (… and the Wardens' ground beyond the box: the outland's outcrops and verge stones — Rocks.ts — are verge stones)
+    await step('verge', () => rocks.settleVerge(trees.data, TREE_STRIDE, placed.props, [...plan.keep, ...wplan.keep.filter(([x, z]) => Math.abs(x) > map.half || Math.abs(z) > map.half)]))
     // the old landmarks' pads grown back to grass (a yard, a path to the road): Sites.regrowPads
     await step('pads', () => regrowPads(map, map.meta.landmarks ?? []))
     // the CAMPS and the NEW PLACES join the landmarks (built, found, on the map like them); the notes left at them
@@ -272,7 +286,10 @@ export class World {
       const m = (o as GFX.Mesh).material as GFX.ShaderMaterial | undefined
       if (m?.uniforms) for (const k in m.uniforms) { const v = m.uniforms[k]?.value; if (v instanceof GFX.Texture) textures.add(v) }
     })
+    const tu = performance.now()
     for (const t of textures) await step('upload', () => env.renderer.initTexture(t))
+    w.timings.upload = performance.now() - tu
+    w.timings.uploads = textures.size
     const tc = performance.now()
     await env.renderer.compileAsync(w.group, env.camera, env.scene)
     w.timings.compile = performance.now() - tc

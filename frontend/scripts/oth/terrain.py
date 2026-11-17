@@ -1297,6 +1297,11 @@ forest = forest * (1 - HL4)
 HM4 = HMEAD[::2, ::2]
 rock = rock * (1 - HM4)
 dry = dry * (1 - 0.6 * HM4)
+# GREEN OR GOLDEN (2026-11-17, the user: "70 % of the world green, only 30 % golden"): the field's dryness pushed to
+# either end — golden above DRY_GOLD (the open field's 70th percentile), green below, a short blend between — so the
+# fields are 70 % green, 30 % gold (the outland's the same: Terrain.ts outlandMask)
+DRY_GOLD = 0.635
+dry = smoothstep(DRY_GOLD - 0.06, DRY_GOLD + 0.06, dry)
 forest = np.maximum(forest, np.clip(HRING[::2, ::2] * 1.2, 0, 1))
 
 # ---------------------------------------------------------------------------------------------------------- write

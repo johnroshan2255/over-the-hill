@@ -17,6 +17,8 @@
 | `docs/ASSETS.md` | every model / image / sound not made here: source, author, licence — add a row with each new one |
 
 - Run each side's commands from its own folder (`cd frontend && npm test`).
+- After any map bake that writes a `.bin` (terrain.py, outland.py, desert.py, wilds.py, walls.mjs), run
+  `node scripts/oth/pack.mjs` in `frontend/`: the game downloads the packed `.pk` grids (docs/PERF.md, "The load").
 - Every feature states and measures its cost per quality tier (uncapped 1080p A/B, interleaved, `npm run shot`), and is
   checked visually in headless Chrome (`scripts/shot.mjs`); phones (₹15k) must hold 60 fps.
 - No code from DARK beyond what's here (the user, 2026-11-02): this is its own game.

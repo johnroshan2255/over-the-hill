@@ -704,14 +704,14 @@ void main() {
     float eb = uBoxHalf - uInGrid.y;
     if (abs(root.x) > eb || abs(root.y) > eb) {
       N = unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).rg);
-      m = outlandMask(1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); m.r = max(m.r, st); m.a *= 1.0 - st; } trail = 99.0; trailT = vec4(0.0, 0.0, mudOut(root, pn.mid.r, pn.fine.r, textureLod(uNoise, root * 0.034 + 0.21, 0.0).g), meadowAt(root, pn.mid.b));
+      m = outlandMask(root, 1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); m.r = max(m.r, st); m.a *= 1.0 - st; } trail = 99.0; trailT = vec4(0.0, 0.0, mudOut(root, pn.mid.r, pn.fine.r, textureLod(uNoise, root * 0.034 + 0.21, 0.0).g), meadowAt(root, pn.mid.b));
       floorK = onFloor(root);
     } else {
       // (the box's rim: its mask and normal handed over to the outland's, as the ground's — Terrain.ts boxRim / boxRimN)
       float rim = boxRim(root, (pn.big.g - 0.5) * 100.0 + (pn.mid.r - 0.5) * 40.0), kn = boxRimN(root);
       if (kn > 0.0) N = normalize(mix(N, unpackN(textureLod(uNFar, ((root - uFarGrid.z) / uFarGrid.y + 0.5) / uFarGrid.x, 0.0).rg), kn));
       if (rim > 0.0) {
-        vec4 mo = outlandMask(1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); mo.r = max(mo.r, st); mo.a *= 1.0 - st; }
+        vec4 mo = outlandMask(root, 1.0 - N.y, h, pn.big, pn.mid); { float st = stonyAt(root, pn.mid.g); mo.r = max(mo.r, st); mo.a *= 1.0 - st; }
         m = mix(m, mo, rim);
         trailT.ba = mix(trailT.ba, vec2(mudOut(root, pn.mid.r, pn.fine.r, textureLod(uNoise, root * 0.034 + 0.21, 0.0).g), meadowAt(root, pn.mid.b)), rim);
       }
