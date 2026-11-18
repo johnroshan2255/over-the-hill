@@ -1,4 +1,5 @@
 import * as pc from 'playcanvas'
+import { unpacked } from './gltf'
 import nagaWasm from 'naga-wasm/naga_bg.wasm?url'
 
 /**
@@ -98,7 +99,8 @@ async function fastWgsl(device: pc.GraphicsDevice): Promise<void> {
   const d = device as unknown as { glslang?: Glslang; twgsl?: Twgsl }
   const head = 'diagnostic(off, derivative_uniformity);\n'
   let naga: typeof import('naga-wasm') | null = null
-  try { naga = await import('naga-wasm'); await naga.init({ module_or_path: nagaWasm }) } catch (e) { console.warn('naga unavailable — glslang + twgsl for every shader', e); naga = null }
+  // (its WebAssembly fetched here and unpacked — gzipped at build, gltf.ts `unpacked` — then handed over as bytes)
+  try { naga = await import('naga-wasm'); await naga.init({ module_or_path: await unpacked(await (await fetch(nagaWasm)).arrayBuffer()) }) } catch (e) { console.warn('naga unavailable — glslang + twgsl for every shader', e); naga = null }
   // (the fallback: needed before the first shader if naga isn't there. With naga it is NOT loaded — 2026-11-18, the
   //  memory: glslang's and twgsl's WebAssembly heaps were ~39 MB held for shaders naga has never failed on (it was
   //  fetched once the game was playing). If naga ever does fail on one: FALLBACK_KEY is set and the pair loaded at

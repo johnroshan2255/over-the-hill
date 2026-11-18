@@ -19,6 +19,9 @@
 - Run each side's commands from its own folder (`cd frontend && npm test`).
 - After any map bake that writes a `.bin` (terrain.py, outland.py, wilds.py, walls.mjs), run
   `node scripts/oth/pack.mjs` in `frontend/`: the game downloads the packed `.pk` grids (docs/PERF.md, "The load").
+- The first download is measured on the production build: `npx vite build && npx vite preview --port 4173`, then
+  `node scripts/harness/download.mjs` (16.5 MB to PLAY, 2026-11-18); the build gzips its .glb / .wasm itself
+  (`vite.config.ts`), so check a new model path with `scripts/harness/prodcheck.mjs` too, not only on the dev server.
 - Every feature states and measures its cost per quality tier (uncapped 1080p A/B, interleaved, `npm run shot`), and is
   checked visually in headless Chrome (`scripts/shot.mjs`); phones (₹15k) must hold 60 fps.
 - No code from DARK beyond what's here (the user, 2026-11-02): this is its own game.

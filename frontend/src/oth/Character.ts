@@ -322,7 +322,7 @@ export class Character {
   async load(url: string): Promise<void> {
     // (one download: the file read here for its skin and clips, and the same bytes handed to the loader — it was
     //  fetched twice, 1.2 MB each)
-    const [buf, tex] = await Promise.all([fetch(url).then((r) => r.arrayBuffer()), skinTexture()])
+    const [buf, tex] = await Promise.all([fetch(url).then((r) => r.arrayBuffer()).then(GFX.unpacked), skinTexture()])   // (unpacked: gzipped at build — gfx/gltf.ts)
     const { json, bin } = readGlb(buf)
     const gltf = await new GFX.GLTFLoader().setDRACOLoader(new GFX.DRACOLoader().setDecoderPath('/draco/')).parse(buf, url)
     const skin = json.skins[0], joints: number[] = skin.joints

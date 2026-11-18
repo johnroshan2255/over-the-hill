@@ -668,6 +668,43 @@ What went:
 Tried and left out: **the cave built after the game starts** (0.7 s of the build, ~1 MB): a 664 ms freeze the moment
 the game appeared (a phone's 2–3 s) — worse than the bar's 0.7 s; it's built during the load as before.
 
+### 2026-11-18 — the first download again: 20.85 → 16.55 MB, whatever the host
+
+The user: "check initial downloading, make sure it's low." `scripts/harness/download.mjs` (new — it replaces the
+scratchpad's boot.mjs): the production build, no cache, the title → PLAY → the game on screen; every request's bytes
+over the wire, by phase, and what a compressing host would make of each.
+
+| to PLAY (39 requests) | MB |
+|---|---|
+| before (vite preview: scripts gzipped, .glb / .wasm as they are) | 20.85 |
+| **now** | **16.55** |
+
+- **The big binaries packed at build** (`vite.config.ts packAssets`): every emitted .glb / .wasm over 32 kB that
+  gzips ≥ 8 % smaller is written gzipped under its own name (50 files, 82.6 → 27.9 MB in `dist`); the game unpacks
+  what starts with gzip's magic (`gfx/gltf.ts unpacked` — every model goes through `GLTFLoader.parse`; the
+  character's own read of its file and naga's init too). Hosts compress scripts; few compress .glb: the 4×4 2.32 →
+  0.74 MB, naga 2.05 → 0.76, the places 2.40 → 1.71, the character 1.21 → 1.01. Every other car in the garage the
+  same (~2 MB → ~0.7 each, when it's picked). `PACK=0 vite build`: off.
+- **Rapier's WebAssembly out of its script** (`rapierWasm`): the -compat build carries its 3.1 MB .wasm as base64 in
+  the JavaScript — 1.64 MB gzipped, and 4 MB of text kept in the page. The build turns that `toByteArray("…")` into
+  a fetch of the same bytes as their own (packed) file: 1.18 + 0.04 MB. Guarded: if the package's text ever doesn't
+  match, it's left as it was and the build warns. Dev and the node tests use the package untouched.
+- NOT the grids (7.0 MB of the 16.5: height.pk 3.34, far.pk 2.54, mask.pk 1.10): other predictors were tried on the
+  real files (MED, second-order, a 3×3 fit) — all WORSE than the plane predictor in use (height 3.34 vs 3.50–4.04,
+  far 2.54 vs 2.71–3.98); gzip is already at the residuals' order-0 entropy. The mask would gain 0.09 MB. Smaller
+  means a coarser or lossy grid: a different world.
+- Checked (`prodcheck.mjs`, new): the production build started with each of the 21 vehicles, on the bike, on foot —
+  all loaded clean; `leancheck.mjs` against it: the drive, the cave, the towns, the reload — as in dev.
+- **The start is as fast as it was**: PLAY → the game on screen 6.8 s on yesterday's commit, 6.8–6.9 s now (three
+  runs each, localhost, no cache; the world's build 2.9 s of it).
+
+What's in the 16.55 MB now: the grids 7.2 (height 3.34, far 2.54, mask 1.10, trail + mud 0.2), the places' models
+1.71 (Draco), Rapier 1.22, the character 1.01 + its textures 0.35, the cave 0.96 (Draco) + bones 0.2, naga 0.76, the
+4×4 0.74, PlayCanvas + the gfx layer 0.68, the game 0.40, Draco's decoder 0.29 (0.09 if the host gzips .wasm), the
+title's art 0.26, meta.json 0.18, the rest ~0.5. A host with brotli takes ~0.6 MB more off the scripts.
+
+(The list below is 2026-11-17's.)
+
 Still in the download, largest first (production): height.pk 3.3 MB, the car 2.3 MB (offroader.glb — no mesh
 compression; Draco / meshopt would roughly halve it, needs a tool not installed here), places.glb 2.4 MB (Draco),
 far.pk 2.5, naga 2.1 MB (WebAssembly — a host that gzips .wasm sends ~0.8), Rapier 1.6 MB (its WebAssembly inlined

@@ -48,6 +48,18 @@ interface Json {
   images?: { bufferView?: number; mimeType?: string; uri?: string }[]
 }
 
+/**
+ * A file that was PACKED AT BUILD (vite.config.ts `packAssets` — 2026-11-18, the user: "check the initial download,
+ * make sure it's low"): the big .glb models and naga's WebAssembly are written gzipped into the build, so they're
+ * small whatever the host does (most hosts compress scripts, few compress .glb: the 4×4's 2.3 MB went out whole —
+ * 0.74 MB packed). A gzip stream starts 1f 8b; a .glb 'glTF', a .wasm '\0asm', a .gltf '{' — told apart by that, so
+ * the dev server's plain files and a build without the packing load the same way. The browser's own gunzip.
+ */
+export async function unpacked(data: ArrayBuffer): Promise<ArrayBuffer> {
+  if (data.byteLength < 18 || new DataView(data).getUint16(0) !== 0x1f8b) return data
+  return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()
+}
+
 export class GLTFLoader {
   private draco: DRACOLoader | null = null
   setDRACOLoader(d: DRACOLoader): this { this.draco = d; return this }
@@ -69,6 +81,7 @@ export class GLTFLoader {
   }
 
   async parse(data: ArrayBuffer, url = ''): Promise<{ scene: Group; scenes: Group[] }> {
+    data = await unpacked(data)
     const dv = new DataView(data)
     let json: Json, bin: ArrayBuffer | null = null
     if (dv.getUint32(0, true) === 0x46546c67) {
