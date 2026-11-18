@@ -9,16 +9,15 @@
 | `docs/MULTIPLAYER.md` | **the shared valley: claim land, gather, haul, build, raid — the plan and its order; the server's API in `backend/README.md`** |
 | `docs/NEXT.md` | **the hand-off (2026-11-10): the garage, the 12 km valley and its outland, the flat look — what's done, what's next, what bites** — §15 (2026-11-14): the narrow ways — paths, shortcuts, secret passages, alleys (`paths.ts`) (the one before, places and caves: `docs/NEXT_caves.md`) |
 | `docs/NEXT_outland.md` | **what's left out in the outland (2026-11-12, round 3 — done: `NEXT.md` §11 the Wardens' secrets, §12 the dirt roads' mires, §13 the rally stages out + the hidden vales + the rest): the phone, a real window, the secrets' rewards, the mires' depth and spray** |
-| `docs/DESERT_MATCH.md` | **matching Over the Hill's desert: the 0–100 score method (`scripts/oth/compare.py`), the loop, the content + terrain checks** |
 | `docs/LOOK.md` | **the look (2026-11-13): the warm height haze that hides the far land, the grade, brown tracks, the ruins' masonry + dressing, the ground clutter, the mist; round 5: four more frames measured — the colour, the tracks' stones and damp, the megaliths, the dressed walls, the forts; round 6: the glowing ground mist, jagged peaks, trodden paths, gates and hoardings — `?look=0` the A/B, the costs** |
 | `docs/PERF.md` | **500 fps on the PC, a constant 60 on a Snapdragon 6-series phone at ULTRA: the measurements, the tools, the plan in phases, the log; 2026-11-16: the 1000 fps question — where the frame goes, what went without changing a pixel (it bought nothing), what would cost the look** |
 | `docs/NEXT_garage.md` | **the garage's hand-off (2026-11-16, stopped mid-way): free per-car paint, each car's factory colour, the cockpits that work (dials, needles, the gear lever through its gate, the hand to it), the cars' pictures in the garage — what's done, what's checked, what's left** |
-| `docs/NEXT_fps.md` | **the fps drops along every way (2026-11-17, stopped mid-way): the harness fit for it (`perfmarks.mjs` SET=all, `hitchprof.mjs`, `leakprof.mjs`), what was fixed (a leak that crashed long drives, the marks' own GPU timing), the marks' leads — hitches at the box's rim, outland slow spots with no trees drawn** |
+| `docs/NEXT_fps.md` | **the fps drops along every way (2026-11-17, stopped mid-way): the harness fit for it (`perfmarks.mjs` SET=all, `hitchprof.mjs`, `leakprof.mjs`), what was fixed (a leak that crashed long drives, the marks' own GPU timing, the crossing's 687 ms build stall); 2026-11-18: the desert deleted (the gate only — the Great Cliff kept), what holds the memory (`memmap.mjs`)** |
 | `docs/VEHICLES.md` | **the garage to build: 21 vehicles (Over the Hill's roster, our own models of the real machines) — each one's real specs, physics, doors and parts** |
 | `docs/ASSETS.md` | every model / image / sound not made here: source, author, licence — add a row with each new one |
 
 - Run each side's commands from its own folder (`cd frontend && npm test`).
-- After any map bake that writes a `.bin` (terrain.py, outland.py, desert.py, wilds.py, walls.mjs), run
+- After any map bake that writes a `.bin` (terrain.py, outland.py, wilds.py, walls.mjs), run
   `node scripts/oth/pack.mjs` in `frontend/`: the game downloads the packed `.pk` grids (docs/PERF.md, "The load").
 - Every feature states and measures its cost per quality tier (uncapped 1080p A/B, interleaved, `npm run shot`), and is
   checked visually in headless Chrome (`scripts/shot.mjs`); phones (₹15k) must hold 60 fps.

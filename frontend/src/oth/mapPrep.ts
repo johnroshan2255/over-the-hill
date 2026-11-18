@@ -1018,7 +1018,6 @@ function roadDistances(meta: MapMeta, g: Grid, R: number): Map<number, number> {
  * seam between the two grids (each its own sampling of one function there). A spike limiter after. ?cliffs=0: off.
  */
 export function sculptCliffs(meta: MapMeta, raw: Uint16Array, g: Grid, inner: boolean, fields: PreparedMap['fields']): number {
-  if (meta.biome === 'desert') return 0
   const n = g.n, st = g.step, kq = g.range / 65535, half = -meta.inner.origin
   const play = meta.id === 'valley' ? Math.max(half, -meta.far.origin - 2048) : half
   const src = raw.slice(), Hs = (i: number, j: number) => src[Math.max(0, Math.min(n - 1, j)) * n + Math.max(0, Math.min(n - 1, i))] * kq + g.min
@@ -1087,7 +1086,6 @@ export function sculptCliffs(meta: MapMeta, raw: Uint16Array, g: Grid, inner: bo
  * look). `?soften=0`: off.
  */
 export function softenCreases(meta: MapMeta, raw: Uint16Array, g: Grid, fields: PreparedMap['fields']): number {
-  if (meta.biome === 'desert') return 0
   const n = g.n, kq = g.range / 65535, st = g.step, half = -meta.inner.origin, hw = meta.trails.hw
   // THE CREASE: how far a sample stands off the mean of its 8 neighbours (m) — a plane, however steep, is 0; a 45° bank's
   // lip and foot ~0.75 m, a 60° one's ~1.3; the fields' bumps and the gentle hills' roughness under ~0.3
@@ -1182,7 +1180,6 @@ export function wallsToRock(meta: MapMeta, mask: Uint8Array): number {
  * ?peaks=0: off.
  */
 export function sculptPeaks(meta: MapMeta, raw: Uint16Array, g: Grid): number {
-  if (meta.biome === 'desert') return 0
   const n = g.n, st = g.step, kq = g.range / 65535, half = -meta.inner.origin
   const rd = roadDistances(meta, g, 60)
   // (a bare summit — a `peak` with no deck — is sculpted to within 25 m of its top: the keep-off's 140 m left every

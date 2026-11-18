@@ -21,9 +21,6 @@ const VARIANTS = 12 // (2026-11-04: was 6 — the user: "the small rocks are all
 /** + the ROUNDED shapes (after the 6 blocks): the scenery's boulder walls (meta.scenery). */
 const ROUND = 2
 const CELL = 128
-/** The desert's stacks: their variants come after the stones and the round ones; drawn out to STACK_REACH m. */
-const STACK0 = 14 // (= VARIANTS + ROUND)
-const STACK_REACH = 1800
 /** The crags' cells (m): bigger than the stones' — they're drawn ~2.5 km out. */
 const CRAG_CELL = 256
 
@@ -37,8 +34,6 @@ export function cellSeed(a: number, b: number, salt: number): number {
 export interface Inst { x: number; y: number; z: number; s: number; sy: number; rot: number; tilt: number; v: number; ax?: number; az?: number
   /** (the outland's crags and ledges: drawn on their own pass, farther — and ground to the wheels) */
   crag?: boolean }
-/** The desert's stack library (Rocks.loadStacks): [kind][lod] meshes, real diameters, each kind's slabs' corners. */
-export interface StackSet { geos: GFX.BufferGeometry[][]; diam: number[]; hulls: Float32Array[][] }
 
 export class Rocks {
   readonly group = new GFX.Group()
@@ -48,115 +43,34 @@ export class Rocks {
   private readonly q = new GFX.Quaternion()
   private readonly e = new GFX.Euler()
   private readonly reach: number
-  private rubbleK = 1
-  private stoneFoot: [number, number][] | null = null
-  /** The stacks (desert): their real diameters by kind, their near / far meshes, their instances (drawn on their own
-   *  pass — big, seen from far: STACK_REACH, not the rocks' reach). */
-  private stackDiam: number[] = []
-  private readonly stackNear: GFX.InstancedMesh[] = []
-  private readonly stackFar: GFX.InstancedMesh[] = []
-  private stackList: Inst[] = []
   private readonly near: number
   /** The rounded shapes' far LOD (rockNear on): one mesh per ROUND variant. */
   private readonly farMeshes: GFX.InstancedMesh[] = []
-  /** The desert's sculpted stones' far LOD (≈ 60 triangles, not 256): one mesh per block variant (stones.glb). */
-  private readonly stoneFar: GFX.InstancedMesh[] = []
   count = 0
   /** The verges' stones, held back till settleVerge. */
   private verge: Inst[] = []
   /** Every rock (the physics builds colliders for the ones near the car) and each shape's vertices (unit size). */
   readonly all: Inst[]
   readonly shapes: Float32Array[] = []
-  /** A STACK's slabs (by variant; unit size, like its shape): each its corners — the physics builds a hull per slab. */
-  readonly slabs: Float32Array[][] = []
   /** Where the rocks stand (R8 on the box's 2 m grid, 255 = covered): the grass keeps out of them. */
   readonly footprint: GFX.DataTexture
 
-  /** The desert's STONES (2026-11-04, the user: "sculpt … the rocks"): sculpted in Blender
-   *  (scripts/oth/desert_stones.py → stones.glb) — weathered sandstone, bedded and broken — in the chamfered blocks'
-   *  place; [variant][lod]. null if the file is missing (the blocks then). */
-  static async loadStones(url: string): Promise<GFX.BufferGeometry[][] | null> {
-    try {
-      const gltf = await new GFX.GLTFLoader().loadAsync(url)
-      const out: GFX.BufferGeometry[][] = []
-      gltf.scene.traverse((o) => {
-        const m = /^stone_(\d+)_(\d+)/.exec(o.name), mesh = o as GFX.Mesh
-        if (!m || !mesh.isMesh) return
-        mesh.updateWorldMatrix(true, false)
-        const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld)
-        g.deleteAttribute('normal')
-        ;(out[+m[1]] ??= [])[+m[2]] = toCreasedNormals(g, Math.PI / 2.2) // (smooth, not faceted)
-      })
-      return out.length >= VARIANTS && out.slice(0, VARIANTS).every((l) => l?.[0] && l[1]) ? out : null
-    } catch {
-      return null
-    }
-  }
-
-  /** The desert's STACKED ROCK (desert_stacks.py → stacks.json + stacks.bin — 2026-11-04, round 2: angular slabs, not
-   *  pancakes): [kind][lod], each normalised to unit size across (its base at y −0.5, like the stones), with a per-slab
-   *  TONE attribute; its real diameter; and each SLAB's corners (unit size) — the physics' convex hull per slab. */
-  static async loadStacks(url: string): Promise<StackSet | null> {
-    try {
-      const [meta, bin] = await Promise.all([
-        fetch(url).then((r) => r.json()) as Promise<{ kinds: { radius: number; lods: number[][]; slabs: number[][] }[] }>,
-        fetch(url.replace(/\.json$/, '.bin')).then((r) => r.arrayBuffer()),
-      ])
-      const geos: GFX.BufferGeometry[][] = [], diam: number[] = [], hulls: Float32Array[][] = []
-      for (const k of meta.kinds) {
-        const d = 2 * k.radius, s = 1 / d
-        geos.push(k.lods.map(([po, nv, io, ni]) => {
-          const g = new GFX.BufferGeometry()
-          g.setAttribute('position', new GFX.BufferAttribute(new Float32Array(bin, po, nv * 3).slice(), 3))
-          g.setAttribute('tone', new GFX.BufferAttribute(new Float32Array(bin, po + nv * 12, nv).slice(), 1))
-          g.setIndex(new GFX.BufferAttribute(new Uint32Array(bin, io, ni).slice(), 1))
-          // (the creases in METRES — the hash welds within 1 cm: at unit size a chamfer would weld into its side.
-          //  30°: a slab's corners, its chamfer and its top read as planes; a big slab's many corners round off)
-          const c = toCreasedNormals(g, Math.PI / 6)
-          return c.applyMatrix4(new GFX.Matrix4().makeScale(s, s, s)).applyMatrix4(new GFX.Matrix4().makeTranslation(0, -0.5, 0))
-        }))
-        diam.push(d)
-        hulls.push(k.slabs.map((p) => {
-          const a = new Float32Array(p)
-          for (let i = 0; i < a.length; i += 3) { a[i] *= s; a[i + 1] = a[i + 1] * s - 0.5; a[i + 2] *= s }
-          return a
-        }))
-      }
-      return { geos, diam, hulls }
-    } catch {
-      return null
-    }
-  }
-
-  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, stones: GFX.BufferGeometry[][] | null = null,
-    stacks: StackSet | null = null) {
-    this.stackDiam = stacks?.diam ?? []
-    this.reach = tier.rockReach * (map.desert ? 1 : LOOK_REACH)   // (under the look's haze: Atmosphere LOOK_REACH)
+  constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
+    this.reach = tier.rockReach * LOOK_REACH   // (under the look's haze: Atmosphere LOOK_REACH)
     this.near = tier.rockNear
-    const mk = (stack: boolean, crag = false) => new GFX.ShaderMaterial({
+    const mk = (crag: boolean) => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, ...(crag ? { uCragSnow: { value: new GFX.Vector4(map.meta.outland?.snow?.x ?? 0, map.meta.outland?.snow?.z ?? 0, map.meta.outland?.snow?.r ?? 0, map.meta.outland?.snow?.line ?? 1e5) } } : {}) },
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...(stack ? { OTH_STACK: '' } : {}), ...(crag ? { OTH_CRAG: '' } : {}) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...(crag ? { OTH_CRAG: '' } : {}) },
       vertexShader: VERT,
       fragmentShader: FRAG,
     })
     const mat = mk(false)
-    const stackMat = stacks ? mk(true) : mat
-    // (LOW — the phones: the desert's small rubble 40 % as thick; the big blocks, what fills a view, all kept)
-    this.rubbleK = tier.name === 'low' ? 0.4 : 1
-    // (each sculpted stone's foot and height, unit size: [lowest y, highest − lowest] — place() stands them on it)
-    this.stoneFoot = stones ? stones.slice(0, VARIANTS).map((l) => {
-      const p = l[0].attributes.position.array as Float32Array
-      let lo = Infinity, hi = -Infinity
-      for (let i = 1; i < p.length; i += 3) { lo = Math.min(lo, p[i]); hi = Math.max(hi, p[i]) }
-      return [lo, hi - lo] as [number, number]
-    }) : null
     const all = (this.all = this.place())
     for (let v = 0; v < VARIANTS + ROUND; v++) {
-      const sculpted = v < VARIANTS ? stones?.[v] : undefined
-      const geo = sculpted ? sculpted[0] : v < VARIANTS ? boulder(0x51ed + v * 977) : roundBoulder(0x7a3 + v * 131)
-      // (the physics' hull: the sculpted stone's far shape — its hull is the near one's, near enough, from 32 points)
-      this.shapes.push((sculpted ? sculpted[1] : geo).attributes.position.array as Float32Array)
+      const geo = v < VARIANTS ? boulder(0x51ed + v * 977) : roundBoulder(0x7a3 + v * 131)
+      // (the physics' hull)
+      this.shapes.push(geo.attributes.position.array as Float32Array)
       const n = all.filter((r) => r.v === v && !r.crag).length + this.verge.filter((r) => r.v === v).length // (+ the verges', settled later)
       const mesh = new GFX.InstancedMesh(geo, mat, Math.max(1, n))
       mesh.count = 0
@@ -164,14 +78,6 @@ export class Rocks {
       mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
       this.meshes.push(mesh)
       this.group.add(mesh)
-      if (sculpted) {
-        const far = new GFX.InstancedMesh(sculpted[1], mat, Math.max(1, n))
-        far.count = 0
-        far.frustumCulled = false
-        far.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
-        this.stoneFar[v] = far
-        this.group.add(far)
-      }
       if (v >= VARIANTS) {
         const far = new GFX.InstancedMesh(roundBoulder(0x7a3 + v * 131, 1), mat, Math.max(1, n))
         far.count = 0
@@ -179,19 +85,6 @@ export class Rocks {
         far.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
         this.farMeshes.push(far)
         this.group.add(far)
-      }
-    }
-    // the STACKS' meshes: their near and far shapes, after the stones and the round ones
-    for (const [k, l] of (stacks?.geos ?? []).entries()) {
-      const v = STACK0 + k, n = all.filter((r) => r.v === v).length
-      this.shapes[v] = l[1].attributes.position.array as Float32Array // (a hull round the whole: the GPS's obstacles)
-      this.slabs[v] = stacks!.hulls[k] // (the physics: a hull per slab — the car drives on the slabs themselves)
-      for (const [lod, geo] of l.entries()) {
-        const mesh = new GFX.InstancedMesh(geo, stackMat, Math.max(1, n))
-        mesh.count = 0; mesh.frustumCulled = false
-        mesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
-        ;(lod === 0 ? this.stackNear : this.stackFar)[k] = mesh
-        this.group.add(mesh)
       }
     }
     // (the rocks' stamps go on in `stampFootprint`, a slice a frame — World.build)
@@ -204,9 +97,9 @@ export class Rocks {
     this.footprint.unpackAlignment = 1
     this.footprint.needsUpdate = true
     // THE CRAGS' meshes: the blocks' shapes again, their own instances (drawn out to cragReach — update)
-    this.cragReach = tier.rockReach * 2.8 * (tier.weakGpu ? 0.65 : 1) * (map.desert ? 1 : LOOK_REACH)   // (a weak GPU — the phones: a third nearer)
+    this.cragReach = tier.rockReach * 2.8 * (tier.weakGpu ? 0.65 : 1) * LOOK_REACH   // (a weak GPU — the phones: a third nearer)
     // (their own material: GRASS CAPS — OTH_CRAG in FRAG; ?cragcaps=0: bare grey tops, the A/B)
-    const cragMat = gameParams().get('cragcaps') === '0' ? mat : mk(false, true)
+    const cragMat = gameParams().get('cragcaps') === '0' ? mat : mk(true)
     for (let v = 0; v < VARIANTS; v++) {
       const n = all.filter((r) => r.crag && r.v === v).length
       const mesh = new GFX.InstancedMesh(this.meshes[v].geometry, cragMat, Math.max(1, n))
@@ -366,7 +259,7 @@ export class Rocks {
       for (let j = Math.floor((k[1] - rr) / KC); j <= Math.floor((k[1] + rr) / KC); j++) for (let i = Math.floor((k[0] - rr) / KC); i <= Math.floor((k[0] + rr) / KC); i++) { const q = this.key(i, j); const l = kh.get(q); if (l) l.push(k); else kh.set(q, [k]) }
     }
     const cands = (r: Inst) => (r.s * 0.4 <= 24 ? kh.get(this.key(Math.floor(r.x / KC), Math.floor(r.z / KC))) ?? [] : keep)
-    const out = (r: Inst) => r.v < STACK0 && cands(r).some(([x, z, rr]) => (r.x - x) ** 2 + (r.z - z) ** 2 < (rr + r.s * 0.4) ** 2)
+    const out = (r: Inst) => cands(r).some(([x, z, rr]) => (r.x - x) ** 2 + (r.z - z) ** 2 < (rr + r.s * 0.4) ** 2)
     const gone = new Set(this.all.filter(out))
     if (!gone.size) return
     const kept = this.all.filter((r) => !gone.has(r))
@@ -377,79 +270,6 @@ export class Rocks {
     for (const [k, list] of this.cragGrid) this.cragGrid.set(k, list.filter((r) => !gone.has(r)))
     this.cragBox.clear()
     this.cellBox.clear()
-  }
-
-  /** Each stack's slabs in the world (lazily, for solidTop): per slab its outline (the convex hull of its corners, x z
-   *  pairs, counter-clockwise), its underside and its top (m). */
-  private readonly slabCache = new Map<Inst, { P: Float32Array; bot: number; top: number }[]>()
-  private slabsOf(r: Inst): { P: Float32Array; bot: number; top: number }[] {
-    let l = this.slabCache.get(r)
-    if (l) return l
-    l = []
-    const m = this.matrixOf(r, new GFX.Matrix4()), v = new GFX.Vector3()
-    for (const src of this.slabs[r.v] ?? []) {
-      const pts: [number, number][] = []
-      let bot = Infinity, top = -Infinity
-      for (let i = 0; i < src.length; i += 3) {
-        v.set(src[i], src[i + 1], src[i + 2]).applyMatrix4(m)
-        pts.push([v.x, v.z]); bot = Math.min(bot, v.y); top = Math.max(top, v.y)
-      }
-      pts.sort((a, b) => a[0] - b[0] || a[1] - b[1])
-      const cr = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-      const lo: number[][] = [], hi: number[][] = []
-      for (const q of pts) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q) }
-      for (let i = pts.length - 1; i >= 0; i--) { const q = pts[i]; while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], q) <= 0) hi.pop(); hi.push(q) }
-      const H = lo.slice(0, -1).concat(hi.slice(0, -1))
-      l.push({ P: new Float32Array(H.flat()), bot, top })
-    }
-    this.slabCache.set(r, l)
-    return l
-  }
-
-  /** The top of the SOLID at (x, z) from height y0 up (2026-11-04 — a reset or a spawn at the terrain's height put the car
-   *  inside a slab where a stack stands on a slope): every slab whose outline holds (x, z), whose underside is within
-   *  `room` m over y and whose top is over y, lifts y to its top — again till none does. From the slabs' own outlines
-   *  (the physics' hulls), not a physics query: Rapier's queries miss colliders made since its last step. */
-  solidTop(x: number, z: number, y0: number, room = 1.8): number {
-    let y = y0
-    const near: Inst[] = []
-    for (const r of this.stackList) if ((r.x - x) ** 2 + (r.z - z) ** 2 < (r.s * 0.75) ** 2) near.push(r)
-    for (let pass = 0; pass < 64; pass++) {
-      let lifted = false
-      for (const r of near) for (const sl of this.slabsOf(r)) {
-        if (sl.top <= y + 0.01 || sl.bot > y + room) continue
-        const P = sl.P, n = P.length / 2
-        let inside = true
-        for (let a = 0, b = n - 1; a < n; b = a++) {
-          if ((P[a * 2] - P[b * 2]) * (z - P[b * 2 + 1]) - (P[a * 2 + 1] - P[b * 2 + 1]) * (x - P[b * 2]) < 0) { inside = false; break }
-        }
-        if (inside) { y = sl.top; lifted = true }
-      }
-      if (!lifted) break
-    }
-    return y
-  }
-
-  /** The STACKS as shadow casters (TerrainShadow.setOccluders): per slab [corner count, its top (m), its corners' x, z]
-   *  in the world — the slabs' own corners under each stack's matrix. */
-  occluders(): Float32Array {
-    const out: number[] = [], m = new GFX.Matrix4(), v = new GFX.Vector3()
-    for (const r of this.stackList) {
-      const slabs = this.slabs[r.v]
-      if (!slabs) continue
-      this.matrixOf(r, m)
-      for (const src of slabs) {
-        const k = src.length / 3, at = out.length
-        out.push(k, -Infinity)
-        let top = -Infinity
-        for (let i = 0; i < src.length; i += 3) {
-          v.set(src[i], src[i + 1], src[i + 2]).applyMatrix4(m)
-          out.push(v.x, v.z); top = Math.max(top, v.y)
-        }
-        out[at + 1] = top
-      }
-    }
-    return new Float32Array(out)
   }
 
   /** Every rock (the GPS: the big ones are in an off-road leg's way — Nav.ts Obstacles). */
@@ -518,10 +338,6 @@ export class Rocks {
     const map = this.map, half = map.half - 40
     let s = 0x2545f491
     const rnd = () => ((s = (Math.imul(s ^ (s >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
-    // (the DESERT draws each cell's / item's stones from its own seed: one stream for the whole map meant a mask change
-    //  in one corner moved every stone after it — DESERT_MATCH round 6. The valley keeps its one stream: its layout
-    //  stays as it is)
-    const at = (a: number, b: number, salt: number) => { if (map.desert) s = cellSeed(a, b, salt) }
     const mk: [number, number, number, number] = [0, 0, 0, 0]
     const slope = (x: number, z: number) => {
       const dx = map.height(x + 3, z) - map.height(x - 3, z), dz = map.height(x, z + 3) - map.height(x, z - 3)
@@ -535,11 +351,7 @@ export class Rocks {
       const y = Math.min(map.height(x - r, z), map.height(x + r, z), map.height(x, z - r), map.height(x, z + r), map.height(x, z))
       // (the same draws in the same order as ever: no stone in the valley moves)
       const sy = size * (1.0 + 0.6 * rnd()), rot = rnd() * Math.PI * 2, tilt = (rnd() - 0.5) * 0.2, v = Math.floor(rnd() * VARIANTS)
-      // (a SCULPTED stone stands by its own foot — 2026-11-04, the user: "some rocks are above the ground, in the air":
-      //  the flat slabs' feet are higher than the old blocks', and the old lift left them hovering — its foot a fifth of
-      //  its height into the ground, a big block's a quarter)
-      const foot = this.stoneFoot?.[v]
-      const yy = foot ? y - foot[0] * sy - (sink < 0 ? 0.25 : 0.2) * foot[1] * sy : y - sink * size * 0.3
+      const yy = y - sink * size * 0.3
       // (each its own proportions across — from a hash of where it stands: no draw, so nothing moves)
       const hh = cellSeed(Math.round(x * 4), Math.round(z * 4), 31)
       out.push({ x, y: yy, z, s: size, sy, rot, tilt, v, ax: 0.78 + 0.44 * ((hh & 1023) / 1023), az: 0.72 + 0.44 * (((hh >>> 10) & 1023) / 1023) })
@@ -548,7 +360,6 @@ export class Rocks {
     // OUTCROPS: a jittered 40 m grid; likelier on steep ground and the rock mask, never in water
     for (let gz = -half; gz < half; gz += 40) {
       for (let gx = -half; gx < half; gx += 40) {
-        at(gx, gz, 1)
         const x = gx + rnd() * 40, z = gz + rnd() * 40
         const sl = slope(x, z)
         map.maskAt(x, z, mk)
@@ -557,7 +368,7 @@ export class Rocks {
         const p = Math.min(0.6, Math.max(0, (sl - 0.22) * 1.6) + mk[0] * 1.2) * (dry(x, z) ? 1 : 0) * (1 - mk[3] * 0.5)
         if (rnd() > p) continue
         // (the desert's: stones, not house blocks — on its slickrock a car must crawl past them — 2026-11-04)
-        const n = 4 + Math.floor(rnd() * 6), big = map.desert ? 1.5 + rnd() * 3 : 5 + rnd() * 9
+        const n = 4 + Math.floor(rnd() * 6), big = 5 + rnd() * 9
         for (let i = 0; i < n; i++) {
           const a = rnd() * Math.PI * 2, d = rnd() * big * 1.4
           const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d
@@ -569,15 +380,15 @@ export class Rocks {
     // THE LOOK (2026-11-13, the user: "on the hills box-like rocks — remove them; the terrain itself sculpted, with the
     // rock texture"): the outcrops' blocks on a hillside (over ~17°) taken out after the draws — no other stone moves;
     // the ground is stepped into strata there instead (mapPrep.sculptCliffs) and painted rock. The meadows' keep theirs.
-    if (LOOK && !map.desert) {
+    if (LOOK) {
       const steep = (x: number, z: number) => Math.hypot(map.height(x + 4, z) - map.height(x - 4, z), map.height(x, z + 4) - map.height(x, z - 4)) / 8
       for (let i = out.length - 1; i >= outcrop0; i--) if (steep(out[i].x, out[i].z) > 0.3 || map.maskAt(out[i].x, out[i].z, mk)[0] > 0.35) out.splice(i, 1)
     }
     // (2026-11-06, the user: "lot of routes are impossible to drive" — a bot on every track, scripts/harness/
     //  trackdrive.mjs: an outcrop's block is kept off the track by its CENTRE only, and a big one (5–14 m) reached into
     //  the bed — 30 in the valley, the car stopped dead against them. Those taken out after the draws: no other stone
-    //  moves. The desert's are small stones a car crawls past: kept)
-    if (!map.desert) {
+    //  moves)
+    {
       // (the lines' segments bucketed by 32 m cell: each block checks the few near it — ~1 ms at load, not ~170)
       const hw = map.meta.trails.hw, C = 32, segs = new Map<number, number[]>()
       const ck = (i: number, j: number) => (i + 512) * 1024 + (j + 512)
@@ -607,87 +418,26 @@ export class Rocks {
     // round the SPAWN and along the TRACKS: a few boulders close by (the player's first view is never empty)
     const sp = map.meta.spawn
     for (let k = 0; k < 26; k++) {
-      at(k, 0, 2)
       const a = rnd() * Math.PI * 2, d = 22 + rnd() * 160
       const x = sp.x + Math.cos(a) * d, z = sp.z + Math.sin(a) * d
       if (dry(x, z)) add(x, z, 1.4 + rnd() * 3.2, 0.3)
     }
     for (const L of map.meta.trails.lines) for (let i = 0; i < L.length; i += 3) {
-      at(Math.round(L[i][0]), Math.round(L[i][1]), 3)
       // (the desert: a few by the tracks — 2026-11-04, round 2: the open sand CLEAN, as in the user's reference frames;
       //  the stones lie in piles at the walls' feet and in the river's bed, not sprinkled over every metre)
-      if (rnd() > (map.desert ? 0.07 : 0.12)) continue
+      if (rnd() > 0.12) continue
       const [x0, z0] = L[i], side = rnd() < 0.5 ? -1 : 1, j = Math.min(L.length - 1, i + 1)
       const dx = L[j][0] - x0, dz = L[j][1] - z0, l = Math.hypot(dx, dz) || 1, off = map.meta.trails.hw + 3 + rnd() * 9
       const x = x0 - (dz / l) * off * side, z = z0 + (dx / l) * off * side
       if (dry(x, z)) add(x, z, 0.9 + rnd() * 2.4, 0.3)
-      if (map.desert && rnd() < 0.2) for (let k = 0, n = 1 + Math.floor(rnd() * 3); k < n; k++) {
-        const px = x + (rnd() - 0.5) * 6, pz = z + (rnd() - 0.5) * 6
-        if (dry(px, pz) && map.trackDist(px, pz) > map.meta.trails.hw + 2.5) add(px, pz, 0.4 + rnd() * 1.2, 0.3)
-      }
     }
     // LONE BOULDERS in the open
     for (let gz = -half; gz < half; gz += 70) {
       for (let gx = -half; gx < half; gx += 70) {
-        at(gx, gz, 4)
-        if (rnd() > (map.desert ? 0.03 : 0.22)) continue
+        if (rnd() > 0.22) continue
         const x = gx + rnd() * 70, z = gz + rnd() * 70
         if (!dry(x, z)) continue
         add(x, z, 1.2 + rnd() * 2.6, 0.3)
-      }
-    }
-    // BOULDER FIELDS (the desert, 2026-11-03 — the user: "how fuller it is, even if it's just a desert"): the open sand
-    // strewn with chunky blocks — clusters of mixed sizes, now and then a big one — thick where a slow noise says, a
-    // clearing between; and RUBBLE where gentle ground meets a wall (a cliff's foot). Never on a track (big ones keep
-    // well off), in the water or on the oasis floor. ?fields=0: without them (the cost A/B)
-    if (map.desert && new URLSearchParams(location.search).get('fields') !== '0') {
-      const sm = GFX.MathUtils.smoothstep
-      const vn = (x: number, z: number, cell: number, salt: number) => {
-        const fx = x / cell, fz = z / cell, ix = Math.floor(fx), iz = Math.floor(fz), u = sm(fx - ix, 0, 1), w = sm(fz - iz, 0, 1)
-        const h = (a: number, b: number) => cellSeed(a, b, salt) / 4294967296
-        return (h(ix, iz) * (1 - u) + h(ix + 1, iz) * u) * (1 - w) + (h(ix, iz + 1) * (1 - u) + h(ix + 1, iz + 1) * u) * w
-      }
-      const hw = map.meta.trails.hw
-      for (let gz = -half; gz < half; gz += 20) {
-        for (let gx = -half; gx < half; gx += 20) {
-          at(gx, gz, 6)
-          const x = gx + rnd() * 20, z = gz + rnd() * 20
-          if (!dry(x, z) || mk[0] > 0.5 || mk[3] > 0.25) continue // (dry() reads the mask into mk)
-          // (2026-11-04, round 2: no open-sand fields — the clean sand of the reference frames; RUBBLE only where the
-          //  ground meets a wall, in piles)
-          const f = 0
-          const h0 = map.height(x, z)
-          const rise = Math.max(map.height(x + 24, z), map.height(x - 24, z), map.height(x, z + 24), map.height(x, z - 24)) - h0
-          const foot = sm(rise, 8, 20) * (1 - sm(slope(x, z), 0.25, 0.45))
-          if (foot < 0.25 || rnd() > 0.55 * foot * this.rubbleK) continue
-          const n = 1 + Math.floor(rnd() * (1 + 6 * Math.max(f, foot)))
-          for (let i = 0; i < n; i++) {
-            const a = rnd() * Math.PI * 2, d = 2 + rnd() * 12
-            const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d
-            if (!dry(px, pz)) continue
-            const big = rnd() < 0.08 && map.trackDist(px, pz) > hw + 9
-            add(px, pz, big ? 4 + rnd() * 5 : 0.7 + Math.pow(rnd(), 1.6) * 2.6, 0.3)
-          }
-        }
-      }
-      // BIG BLOCKS: house-sized chunks (6–16 m), alone or two or three leaning together, across the open ground — what
-      // fills a view out to the haze (a small stone is culled past a few hundred metres); thicker in the fields, a few
-      // even in the clearings; well off the tracks (by their own size too), the water and the oasis
-      for (let gz = -half; gz < half; gz += 60) {
-        for (let gx = -half; gx < half; gx += 60) {
-          at(gx, gz, 8)
-          const x = gx + rnd() * 60, z = gz + rnd() * 60
-          if (!dry(x, z) || mk[0] > 0.5 || mk[3] > 0.15 || mk[2] > 0.3) continue
-          const f = sm(0.65 * vn(x, z, 520, 11) + 0.35 * vn(x, z, 160, 12), 0.42, 0.72)
-          if (rnd() > 0.03 + 0.06 * f) continue // (a few: the slab stacks fill the open ground now — 2026-11-04, round 2)
-          const n = 1 + Math.floor(rnd() * 3.6)
-          for (let i = 0; i < n; i++) {
-            const a = rnd() * Math.PI * 2, d = i === 0 ? 0 : 5 + rnd() * 8
-            const px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d, size = (i === 0 ? 9 : 6) + rnd() * 7
-            if (!dry(px, pz) || map.trackDist(px, pz) < hw + 6 + size * 0.6 || slope(px, pz) > 0.35) continue
-            add(px, pz, size, -0.9) // (standing on the sand, a quarter of it sunk — the fields' stones lie half buried)
-          }
-        }
       }
     }
     // the SCENERY's WALLS (scripts/oth/scenery.mjs): big rounded stones lining the stream roads on their uphill side
@@ -704,7 +454,6 @@ export class Rocks {
     // the RIVER: stones in the shallows and on the banks
     const r = map.meta.water.river
     for (let i = 0; i < r.x.length; i += 2) {
-      at(Math.round(r.x[i]), Math.round(r.z[i]), 5)
       if (rnd() > 0.35) continue
       const a = rnd() * Math.PI * 2, d = r.hw[i] * (0.6 + rnd() * 1.4)
       add(r.x[i] + Math.cos(a) * d, r.z[i] + Math.sin(a) * d, 0.6 + rnd() * 1.8, 0.35)
@@ -853,37 +602,12 @@ export class Rocks {
         }
       }
     }
-    // the desert's STACKED ROCK (meta.stacks — desert.py): each at its own scale and turn, its base on the lowest
-    // ground under it (a little sunk: never floating)
-    // (?skyline=0: without the stacks past the box — the cost A/B)
-    const noSky = new URLSearchParams(location.search).get('skyline') === '0'
-    for (const [x, z, sc, rot, k, foot, vs] of map.meta.stacks ?? []) {
-      const D = (this.stackDiam[k] ?? 0) * sc
-      if (!D) continue
-      const skyI = Math.abs(x) > map.half || Math.abs(z) > map.half
-      // (LOW — the phones: half the skyline)
-      if (skyI && (noSky || (this.rubbleK < 1 && (Math.round(x) + Math.round(z)) % 2 !== 0))) continue
-      // (two rings of 12 — a table on a dune's crest hung over its slip face when only 8 points at 0.3 D were read)
-      // (its foot: desert.py's (meta's 6th value — fixed before it filled the gaps under the slabs, which would lift
-      //  this reckoning), else the lowest ground under it — two rings of 12: a table on a dune's crest hung over its
-      //  slip face when only 8 points at 0.3 D were read)
-      let base = foot
-      if (base === undefined || base === null) {
-        let lo = map.height(x, z)
-        for (const f of [0.18, 0.32, 0.44]) for (let a = 0; a < 12; a++) lo = Math.min(lo, map.height(x + Math.cos(a * 0.5236) * D * f, z + Math.sin(a * 0.5236) * D * f))
-        base = lo - 0.4
-      }
-      // (vs: a stack fitted to a place stretched up — the escarpment's risers, desert.py)
-      const sy = D * (vs ?? 1)
-      const inst: Inst = { x, y: base + 0.5 * sy, z, s: D, sy, rot, tilt: 0, v: STACK0 + k, ax: 1, az: 1 }
-      out.push(inst); this.stackList.push(inst)
-    }
     // THE VERGES (2026-11-06, the user: "why does our world feel empty, especially the valley"): within 25 m of a track
     // stood ~1.8 rocks — the ring the chase camera looks at most. Stones in ones, twos and threes along both edges, now
     // and then a boulder set further back; each spot draws from its own seed (cellSeed), after everything else: no
     // stone above moves. ?verge=0: without them (the A/B)
     const v0 = out.length
-    if (!map.desert && gameParams().get('verge') !== '0') {
+    if (gameParams().get('verge') !== '0') {
       const hw = map.meta.trails.hw
       for (const L of map.meta.trails.lines) {
         let t = 0
@@ -921,7 +645,7 @@ export class Rocks {
     //              paints): 4–9 blocks 2–14 m, none on a patch's middle or a hillside (the look's rule above)
     //   THE VERGES along the outland's roads — stones in ones, twos and threes, a boulder set back now and then
     // ?orock2=0: none (the A/B).
-    if (map.play > map.half + 100 && !map.desert && gameParams().get('orock2') !== '0') {
+    if (map.play > map.half + 100 && gameParams().get('orock2') !== '0') {
       const smoothRise = (a: number, b: number, t: number) => { const k = Math.min(1, Math.max(0, (t - a) / (b - a))); return k * k * (3 - 2 * k) }
       const ho = map.play - 80, hb = map.half - 40, hwR = map.roadHW
       const om: [number, number, number, number] = [0, 0, 0, 0]
@@ -1039,9 +763,6 @@ export class Rocks {
     const minRatio = 2 / pxPerRad
     for (const m of this.meshes) m.count = 0
     for (const m of this.farMeshes) m.count = 0
-    for (const m of this.stoneFar) if (m) m.count = 0
-    // (a sculpted stone under ~5 % of the view's height tall — sy / d < 0.06 at the 60° view: its 60-triangle shape)
-    const lodRatio = 0.06
     const near2 = this.near * this.near
     this.culled.frustum = this.culled.occluded = this.culled.small = 0
     const i0 = Math.floor((cx - R) / CELL), i1 = Math.floor((cx + R) / CELL), j0 = Math.floor((cz - R) / CELL), j1 = Math.floor((cz + R) / CELL)
@@ -1054,7 +775,7 @@ export class Rocks {
       let yb = this.cellBox.get(k)
       if (!yb) {
         yb = [Infinity, -Infinity]
-        for (const r of list) { yb[0] = Math.min(yb[0], r.y - r.s * 0.3); yb[1] = Math.max(yb[1], r.y + r.sy * 0.7) } // (the stacks: their own pass)
+        for (const r of list) { yb[0] = Math.min(yb[0], r.y - r.s * 0.3); yb[1] = Math.max(yb[1], r.y + r.sy * 0.7) }
         this.cellBox.set(k, yb)
       }
       // (rocks hang over their cell's edge by up to half their size)
@@ -1063,13 +784,11 @@ export class Rocks {
       if (!this.frustum.intersectsBox(this.box)) { this.culled.frustum++; continue }
       if (this.horizon?.hidden(x0 - 10, z0 - 10, x0 + CELL + 10, z0 + CELL + 10, yb[1])) { this.culled.occluded++; continue }
       for (const r of list) {
-        if (r.v >= STACK0) continue // (the stacks: their own pass, below)
         const dx = r.x - cx, dz = r.z - cz, d2 = dx * dx + dz * dz
         if (d2 > R * R) continue
         if (r.sy * r.sy < minRatio * minRatio * d2) { this.culled.small++; continue }
         // (a rounded boulder past rockNear: its coarse shape — the fog softens it there)
-        const mesh = r.v >= VARIANTS ? (d2 > near2 ? this.farMeshes[r.v - VARIANTS] : this.meshes[r.v])
-          : this.stoneFar[r.v] && r.sy * r.sy < lodRatio * lodRatio * d2 ? this.stoneFar[r.v] : this.meshes[r.v]
+        const mesh = r.v >= VARIANTS && d2 > near2 ? this.farMeshes[r.v - VARIANTS] : this.meshes[r.v]
         this.q.setFromEuler(this.e.set(r.tilt, r.rot, r.tilt * 0.6))
         this.m.compose(this.p.set(r.x, r.y, r.z), this.q, this.sc.set(r.s * (r.ax ?? 1), r.sy, r.s * (r.az ?? 0.9)))
         mesh.setMatrixAt(mesh.count++, this.m)
@@ -1105,26 +824,8 @@ export class Rocks {
         }
       }
     }
-    // the STACKS: out to STACK_REACH, in view (a sphere round each), the far shape past ~8 % of the view's height
-    for (const m of [...this.stackNear, ...this.stackFar]) if (m) m.count = 0
-    const sph = new GFX.Sphere()
-    for (const r of this.stackList) {
-      const dx = r.x - cx, dz = r.z - cz, d2 = dx * dx + dz * dz
-      // (the SKYLINE's stacks — out past the box, desert.py — stand 2–4 km off: drawn to 5.2 km, always their far shape;
-      //  the box's to STACK_REACH)
-      const sky = Math.abs(r.x) > this.map.half || Math.abs(r.z) > this.map.half
-      const reach = sky ? 5200 : STACK_REACH
-      if (d2 > reach * reach) continue
-      sph.center.set(r.x, r.y + r.sy * 0.2, r.z); sph.radius = 0.9 * Math.max(r.s, r.sy) // (a stretched one — desert.py's fitted walls — taller than it is wide)
-      if (!this.frustum.intersectsSphere(sph)) continue
-      const k = r.v - STACK0, mesh = sky || r.sy * r.sy < 0.08 * 0.08 * d2 ? this.stackFar[k] : this.stackNear[k]
-      if (!mesh) continue
-      this.q.setFromEuler(this.e.set(0, r.rot, 0))
-      this.m.compose(this.p.set(r.x, r.y, r.z), this.q, this.sc.set(r.s, r.sy, r.s))
-      mesh.setMatrixAt(mesh.count++, this.m)
-    }
     this.count = 0
-    for (const m of [...this.meshes, ...this.cragMeshes, ...this.farMeshes, ...this.stoneFar.filter(Boolean), ...this.stackNear.filter(Boolean), ...this.stackFar.filter(Boolean)]) { m.instanceMatrix.needsUpdate = true; this.count += m.count }
+    for (const m of [...this.meshes, ...this.cragMeshes, ...this.farMeshes]) { m.instanceMatrix.needsUpdate = true; this.count += m.count }
   }
 }
 
@@ -1189,20 +890,11 @@ ${ATMOS_GLSL}
 out vec3 vWorld;
 out vec3 vN;
 out float vUp;
-#ifdef OTH_STACK
-in float tone;
-out float vTone;
-out float vUpM;
-#endif
 void main() {
   vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0);
   vWorld = w.xyz;
   vN = normalize(mat3(modelMatrix * instanceMatrix) * normal);
   vUp = position.y + 0.5; // 0 at the base … 1 on top
-#ifdef OTH_STACK
-  vTone = tone;
-  vUpM = vUp * length(instanceMatrix[1].xyz); // (metres above the stack's foot)
-#endif
   gl_Position = projectionMatrix * viewMatrix * w;
 }
 `
@@ -1219,19 +911,7 @@ in float vUp;
 #ifdef OTH_CRAG
 uniform vec4 uCragSnow; // the early snow: x, z, radius, the line's height
 #endif
-#ifdef OTH_STACK
-in float vTone;
-in float vUpM;
-#endif
-#ifdef OTH_DESERT
-const vec3 STONE = vec3(0.5, 0.165, 0.09); // (the sandstone: paint.ts's STONE — keep in step)
-// (the stacks' sandstone: paint.ts's SAND × ≈ (0.86, 0.68, 0.7) — the reference frames' rock / sand ratio, linear)
-const vec3 STACK_A = vec3(0.4, 0.168, 0.098);
-const vec3 STACK_B = vec3(0.47, 0.205, 0.118);
-const vec3 STACK_SAND = vec3(0.5, 0.28, 0.155);
-#else
 const vec3 STONE = vec3(0.2, 0.205, 0.23);
-#endif
 float fhash(vec3 n) { return fract(sin(dot(floor(n * 300.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 void main() {
   vec3 N = normalize(vN);
@@ -1242,19 +922,8 @@ void main() {
 #ifdef OTH_ROCK_RELIEF
   paintK = 1.0 - reliefShow(max(length(dFdx(vWorld)), length(dFdy(vWorld))));
 #endif
-#ifdef OTH_STACK
-  // THE SLAB STACKS (2026-11-04, round 2 — the user: "like pancakes stacked"): the sand's own family, a little deeper
-  // and redder (the user's reference frames: rock in sun ≈ sRGB 222 152 120 against sand 238 180 140 — the rock read by
-  // its light and shade, not by a darker paint), each slab its own tone, the flat tops dusted with sand, the first metre
-  // sandy where it's half buried. No darkening up a stack's height: a 40 m massif is one rock top to bottom
-  vec3 albedo = mix(STACK_A, STACK_B, vTone);
-  albedo = mix(albedo, STACK_SAND, smoothstep(0.8, 0.97, N.y) * 0.32);
-  albedo = mix(albedo, STACK_SAND, (1.0 - smoothstep(0.1, 0.7, vUpM)) * 0.4);
-  float ao = mix(0.78, 1.0, smoothstep(0.0, 1.2, vUpM));
-#else
   vec3 albedo = STONE * mix(0.72, 1.0, smoothstep(0.0, 0.45, vUp)) * mix(0.86, 1.1, smoothstep(0.2, 0.9, N.y)); // (no per-face tone: smooth; a slab's top lighter than its side)
   float ao = mix(0.6, 1.0, smoothstep(0.0, 0.5, vUp));
-#endif
 #ifdef OTH_CRAG
   // GRASS CAPS (2026-11-12, docs/NEXT_outland.md §2 — the references' cliffs wear grass on every top; ours were grey
   // blocks): what faces UP on a crag is turf — the hillside's own gold, green where the paint's slow noise says (as the
@@ -1279,20 +948,9 @@ void main() {
   // HIGH / ULTRA on PCs: the crumpled 3D relief over every face (the light only: the colour above is the face's own)
   float cav = 1.0;
 #ifdef OTH_ROCK_RELIEF
-#ifdef OTH_STACK
-  N = rockRelief(vWorld, N, 0.45, dFdx(vWorld), dFdy(vWorld), cav); // (the slabs' planes stay planes: a faint grain)
-#else
   N = rockRelief(vWorld, N, 1.0, dFdx(vWorld), dFdy(vWorld), cav);
 #endif
-#endif
-#ifdef OTH_STACK
-  // (the stacks are in the shadow bake — TerrainShadow.setOccluders: a face reads the shade a little out in front of it
-  //  — its own slab's top would shade its side — the top its own cell)
-  vec2 outN = vN.xz / max(length(vN.xz), 1e-3);
-  float sun = sunVisibility(vWorld.xz + outN * 2.5 * smoothstep(0.2, 0.6, 1.0 - abs(vN.y)));
-#else
   float sun = sunVisibility(vWorld.xz);
-#endif
   vec3 c = shade(albedo, N, V, 0.75, 0.04, ao * cav, sun, 0.05);
   c += rockFill(albedo, N) * ao;
   c += headlight(albedo, N, vWorld);

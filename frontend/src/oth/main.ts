@@ -17,8 +17,7 @@ import { OthAudio } from './Audio'
 import { Dust } from './Dust'
 import { ChaseCam } from './ChaseCam'
 import { Chart } from './Chart'
-import { Crossing } from './Crossing'
-import { DESERT_IDS } from './Places'
+import { PassMist } from './PassMist'
 import { FlyCam } from './FlyCam'
 import { MapData } from './MapData'
 import { MapView } from './MapView'
@@ -60,7 +59,7 @@ import { Session } from '../net/Session'
  * Switches (settings.ts `gameParams`: the menus' settings, under the page's URL): ?tier=low|medium|high|ultra
  *      ?car=offroader (g500 | e30: the shelved models) ?paint=rrggbb ?gearbox=auto|manual ?aids=off|standard|full ?offroad=0|1 ?aa=0 ?scale=50…100
  *      ?sound=0 ?drive=0 (start in the free camera) ?x= &z= (m) ?h= (m above the ground) ?yaw= ?pitch= (rad) ?hour=
- *      ?tm=neutral|agx|aces ?exp= (exposure) ?stats=1 ?world=valley|desert ?weather=clear|cloudy|rain|sandstorm
+ *      ?tm=neutral|agx|aces ?exp= (exposure) ?stats=1 ?weather=clear|cloudy|rain
  *      ?save=0 (a test session: the journey and the journal never written) ?at=cave (start before Sky Hollow's mouth)
  * Keys: drive W A S D, Space handbrake, Shift boost, X / Z gears (manual), R reset, 1 / 2 the car, V free camera ⇄ the
  *      car, F3 stats, Esc pause.
@@ -97,7 +96,9 @@ async function boot() {
   const coopWorld = coopRequested()
   const saved = continueRequested() && !coopWorld ? loadProgress() : null
   requestContinue(false)
-  const startId: WorldId = q.get('world') === 'desert' || (!q.has('world') && saved?.map === 'desert') ? 'desert' : 'valley'
+  // (the one world since 2026-11-18 — the desert removed, the user: "delete the desert and the path to desert"; a
+  //  journey saved there starts again in the valley)
+  const startId: WorldId = 'valley'
   // ONE BAR from PLAY to playable (2026-11-17, the user: "why showing 2 loadings"): it read 100 % when the map's files
   // were in, sat there through the world's build, then began again at 0 for the 4×4 and the shaders. Now: the map
   // 0–40 %, the world's build 40–80 %, the 4×4 to 85 %, the shaders' warm-up to 100 % — one label, only forward.
@@ -133,9 +134,9 @@ async function boot() {
       }
     }
   })
-  // ?weather=clear|cloudy|rain|sandstorm pins the weather (settled at once: the shot harness)
+  // ?weather=clear|cloudy|rain pins the weather (settled at once: the shot harness)
   const wq = q.get('weather')
-  if (wq === 'clear' || wq === 'cloudy' || wq === 'rain' || wq === 'sandstorm') atmos.weather = wq
+  if (wq === 'clear' || wq === 'cloudy' || wq === 'rain') atmos.weather = wq
   let settled = false
 
   const camera = new GFX.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, num('far', tier.far)) // (?far= m: cost tests)
@@ -145,7 +146,6 @@ async function boot() {
   shadow.onBaked = () => (shadowReady = true)
   const sky = new Sky(atmos, false)
   const rain = new Rain(atmos, tier)
-  const sand = new Rain(atmos, tier, 'sand')
   const journal = loadJournal()
   const keepJournal = () => { if (saving) saveJournal(journal) }
   const env: WorldEnv = {
@@ -182,8 +182,7 @@ async function boot() {
     }
     // (a Warden vault's door fallen / standing: the physics re-streams the props' boxes)
     if (w.wardens) w.wardens.onColliders = () => physics.propsDirty()
-    atmos.desert = w.map.desert
-    // (a pinned ?weather= settled at once, in the first world's own kind: rain or a sandstorm)
+    // (a pinned ?weather= settled at once)
     if (wq && !settled) { settled = true; atmos.settleWeather() }
     // (each world's own counts: the title screen's journal shows both)
     journal.totals = { ...journal.totals, [w.id]: { crates: w.props.crateCount, places: w.places.length } }
@@ -191,14 +190,13 @@ async function boot() {
     scene.add(w.group)
   }
   enterWorld(world)
-  scene.add(sky.mesh, rain.mesh, sand.mesh)
+  scene.add(sky.mesh, rain.mesh)
 
   // THE 4×4: the game's vehicle physics on this map's ground and rocks
   loading(0.82) // (the 4×4)
   const physics = await OthPhysics.create(world.map, world.rocks)
   physics.trees = world.trees
   physics.addLandmarks(world.landmarks.colliders)
-  physics.addLandmarks(world.formations?.colliders ?? [])
   physics.addTrimesh(world.cave?.collider)
   physics.addPropColliders(world.props.colliders)
   const car = new Vehicle(map, physics, atmos, shadow, tier, env.farGrid)
@@ -380,7 +378,7 @@ async function boot() {
     camera.updateMatrixWorld()
     return true
   }
-  /** WHAT THE PLAYER IS ON — the car, or the bike while riding: the cameras, the crossing, the map and the GPS, the
+  /** WHAT THE PLAYER IS ON — the car, or the bike while riding: the cameras, the map and the GPS, the
    *  pickups, the camp, the saved spot follow it. */
   const ride = {
     // (thrown off the bike: the camera follows the rider's body, not the bike — GTA's)
@@ -869,60 +867,8 @@ async function boot() {
   const readouts = gameHud(journal.coins)
   if (q.get('sound') === '0') audio.muted = true
 
-  // ANOTHER WORLD (the crossing — Crossing.ts — or ?world / the harness): built a step a frame while this one plays
-  // (in the background: what lasts is left alone until the swap), then everything that lasts is pointed at it; the
-  // world left is DISPOSED whole (World.dispose: its GPU memory back) — by the crossing once the car is away from the
-  // gate, at once by the harness
-  const keep = new Set<GFX.Texture>([noise, shadow.box, shadow.world, shadow.treeTex])
-  const nextFrame = () => new Promise<void>((r) => requestAnimationFrame(() => r()))
-  const buildWorld = (id: WorldId) => World.build(id, env, nextFrame, undefined, undefined, true)
-  /** Enter `next`; returns the world left (out of the scene, still built). */
-  const enter = (next: World): World => {
-    const old = world
-    next.adopt(env)
-    world = next
-    old.group.removeFromParent()
-    enterWorld(next)
-    physics.setWorld(next.map, next.rocks, next.trees)
-    physics.addLandmarks(next.landmarks.colliders)
-    physics.addLandmarks(next.formations?.colliders ?? [])
-    physics.addTrimesh(next.cave?.collider)
-    physics.addPropColliders(next.props.colliders)
-    winch.setWorld(next.trees, next.rocks)
-    mapView.dispose()
-    radar?.dispose()
-    ;({ chart, mapView, radar } = charts(next))
-    guide.setWorld(next.id, next.map, obstacles(next))
-    audio.fires = next.props.fires
-    audio.setWorld()
-    // (your own camp is each world's: left pitched where it was, the one here back up)
-    camps[old.id] = myCamp
-    myCamp = camps[next.id] ?? null
-    if (myCamp) next.props.pitch(myCamp)
-    return old
-  }
-  // THE CROSSING: the mist on the pass, the other world built behind it, the swap at the gate
-  const crossing = new Crossing({
-    world: () => world,
-    build: buildWorld,
-    enter: (w) => { enter(w) },
-    move: (dx, dy, dz) => {
-      if (onFoot) hero.shift(dx, dy, dz)
-      else if (riding) two.shift(dx, dy, dz)
-      else car.shift(dx, dy, dz)
-      dust.shift(dx, dy, dz)
-      tyreTracks.clear()
-      if (!driving) { camera.position.x += dx; camera.position.y += dy; camera.position.z += dz; camera.updateMatrixWorld() }
-      lastPos.set(lastPos.x + dx, lastPos.y + dy, lastPos.z + dz)
-      safe.x = Number.NaN
-    },
-    dispose: (w) => { shadow.forget(w.map); w.dispose(keep) },
-    atmos,
-  })
-  crossing.onSwap = (_, to) => {
-    regionTitle(WORLDS[to.id].name)
-    if (riding) bringCar(false) // (the car was left in the other world: it comes along, parked by the road)
-  }
+  // THE CLOUD ON THE PASS (PassMist.ts): thickening up the Great Cliff's ledge road, thickest at its top
+  const passMist = new PassMist({ world: () => world, atmos })
 
   let baseDpr = Math.min(devicePixelRatio, num('maxdpr', tier.dpr)) * num('scale', 100) / 100 // (?maxdpr=: the pixel-ratio cap, cost tests)
   let dprScale = 1, dprT = performance.now() + 4000, dprFrames = 0, dprSlow = 0, dprGood = 0, dprWait = 8, sinceUp = 99
@@ -1215,12 +1161,11 @@ async function boot() {
     last = now
     const dt = Math.min(clock.getDelta(), 0.1)
     car.wet = dust.wet = atmos.uniforms.uWet.value
-    // the crossing first: a swap moves the car before this frame's physics, pose and cameras
     moto.wet = car.wet
     cut?.(dt)
     car.doorOpen += Math.max(-dt * 1.8, Math.min(dt * 1.8, doorTo - car.doorOpen))
     if (rideAsk && car.sim && driving && (rideWait += dt) > 0.8) { if (rideAsk === 'foot') getOut(); else toggleRide(moto); rideAsk = null }
-    crossing.update(dt, ride.sim ? ride.pos : null, camera.position)
+    passMist.update(dt, camera.position)
     {
       // (on foot, W walks away from the camera)
       const cd = camera.getWorldDirection(new GFX.Vector3())
@@ -1254,7 +1199,7 @@ async function boot() {
       journal.coins += REWARD.crate * got.length
       keepJournal()
       readouts.coins(journal.coins, REWARD.crate * got.length)
-      const here = journal.crates.filter((id) => (id >= DESERT_IDS) === world.map.desert).length
+      const here = journal.crates.filter((id) => id < 100000).length // (≥ 100 000: the desert's, removed — an old save's)
       toast(`Supply crate · +${REWARD.crate * got.length} ◆   ${here} / ${world.props.crateCount}`)
       audio.chime('crate')
     }
@@ -1328,7 +1273,7 @@ async function boot() {
     }
     atmos.update(camera.position, FREEZE ? 100 : clock.elapsedTime)
     // (the look's grade — gfx/material.ts othGrade: the valley's; the desert keeps its own calibrated colours)
-    GFX.outputState.grade = atmos.desert ? 0 : LOOK * GRADE_K
+    GFX.outputState.grade = LOOK * GRADE_K
     GFX.outputState.warm = 1 - atmos.uniforms.uNight.value
     rain.update()
     // (in the cave world no rain but down its skylight — Rain.setCave)
@@ -1340,7 +1285,6 @@ async function boot() {
         rain.setCave(true, a[0], a[1], sr * 1.3, b2[0], b2[1], s2r * 1.3)
       } else rain.setCave(false)
     }
-    sand.update()
     mapView.update(dt)
     radar?.update(dt, radarOn && driving && !mapView.isOpen, ride.speedKmh)
     winch.update(camera)
@@ -1474,7 +1418,7 @@ async function boot() {
     /** (the harness's probes: offscreen bakes re-run, targets read back) */
     renderer,
     /** The drawn parts, each with `visible` (scripts/harness/ablate.mjs: the GPU's frame, system by system). */
-    parts: () => ({ terrain: world.terrain.mesh, grass: world.grass.group, trees: world.trees.group, bushes: world.bushes.group, rocks: world.rocks.group, water: world.water.group, falls: world.falls.group, bridges: world.bridges.group, landmarks: world.landmarks.group, props: world.props.group, ...(world.glow ? { glow: world.glow.group } : {}), ...(world.formations ? { formations: world.formations.group } : {}), ...(world.birds ? { birds: world.birds.mesh } : {}), ...(world.cave ? { cave: world.cave.group } : {}), sky: sky.mesh, car: car.root, carShadow: car.shadowMesh, dust: dust.mesh, tracks: tyreTracks.mesh }),
+    parts: () => ({ terrain: world.terrain.mesh, grass: world.grass.group, trees: world.trees.group, bushes: world.bushes.group, rocks: world.rocks.group, water: world.water.group, falls: world.falls.group, bridges: world.bridges.group, landmarks: world.landmarks.group, props: world.props.group, ...(world.glow ? { glow: world.glow.group } : {}), ...(world.birds ? { birds: world.birds.mesh } : {}), ...(world.cave ? { cave: world.cave.group } : {}), sky: sky.mesh, car: car.root, carShadow: car.shadowMesh, dust: dust.mesh, tracks: tyreTracks.mesh }),
     journal,
     openCamp,
     view: (x: number, z: number, h: number, yaw: number, pitch: number) => { driving = false; fly.place(x, z, h, yaw, pitch) },
@@ -1487,20 +1431,7 @@ async function boot() {
     atmos,
     /** The sound's state (Audio.ts debug). */
     audio: () => audio.debug(),
-    /** Build world `id` behind the play, enter it, the car at its spawn (the harness: a crossing's swap without the road). */
-    swapTo: async (id: WorldId) => {
-      crossing.forget()
-      const w = await buildWorld(id)
-      const old = enter(w)
-      shadow.forget(old.map)
-      old.dispose(keep)
-      const sp = w.map.meta.spawn
-      physics.follow(sp.x, sp.z)
-      if (riding) { two.mount(sp.x, sp.z, sp.yaw); bringCar(false) } // (the bike at the spawn, the car parked beside it)
-      else car.sim?.place(sp.x, w.map.height(sp.x, sp.z) + 0.6, sp.z, sp.yaw)
-      return w.timings
-    },
-    crossing,
+    passMist,
     guide,
     autopilot,
     get mapView() { return mapView },
@@ -1636,17 +1567,6 @@ function gameHud(coins0: number) {
       campBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); f() })
     },
   }
-}
-
-/** The REGION's title (a crossing's arrival): big, centred, fading in and out over a few seconds. */
-function regionTitle(name: string): void {
-  const t = document.createElement('div')
-  t.className = 'oth-region'
-  t.innerHTML = `<small>Entering</small>${name}`
-  document.body.appendChild(t)
-  requestAnimationFrame(() => t.classList.add('on'))
-  setTimeout(() => t.classList.remove('on'), 3800)
-  setTimeout(() => t.remove(), 5200)
 }
 
 /** Fade to black, do `mid`, fade back (a rest at camp). */

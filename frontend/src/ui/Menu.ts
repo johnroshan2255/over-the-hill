@@ -322,14 +322,13 @@ export class Menu {
     const pr = this.progress, t = this.j.totals ?? {}
     const found = (w: string) => { try { return (JSON.parse(localStorage.getItem(`oth.found.${w}`) ?? '[]') as number[]).length } catch { return 0 } }
     const hrs = (pr?.playSeconds ?? 0) / 3600
-    // (each world's crates by their ids: the desert's from 100000 — Places.ts)
-    const crates = (w: string) => this.j.crates.filter((id) => (id >= 100000) === (w === 'desert')).length
+    // (the valley's crates: ids under 100000 — the desert's, removed 2026-11-18, were from there on)
+    const crates = () => this.j.crates.filter((id) => id < 100000).length
     const of = (n: number, total?: number) => (total ? `${n} / ${total}` : `${n}`)
     const rows: [string, string][] = [
       ['Coins', `${this.j.coins} ◆`],
-      ['Supply crates · valley', of(crates('valley'), t.valley?.crates)],
-      ['Places found · valley', of(found('valley'), t.valley?.places)],
-      ...(t.desert || crates('desert') || found('desert') ? [['Supply crates · desert', of(crates('desert'), t.desert?.crates)], ['Places found · desert', of(found('desert'), t.desert?.places)]] as [string, string][] : []),
+      ['Supply crates', of(crates(), t.valley?.crates)],
+      ['Places found', of(found('valley'), t.valley?.places)],
       ['Distance driven', `${((pr?.travelled ?? 0) / 1000).toFixed(1)} km`],
       ['Time on the road', hrs >= 1 ? `${Math.floor(hrs)} h ${Math.round((hrs % 1) * 60)} min` : `${Math.round(hrs * 60)} min`],
     ]

@@ -166,8 +166,8 @@ export class Glow {
   update(camera: GFX.PerspectiveCamera, dt: number): void {
     const u = this.atmos.uniforms, sun = u.uSunDir.value, night = u.uNight.value, cloud = u.uCloud.value
     const day = (1 - night) * GFX.MathUtils.smoothstep(sun.y, -0.03, 0.03)
-    // (the crossing's mist hides the sun as a heavy sky does)
-    const clear = (1 - GFX.MathUtils.smoothstep(cloud, 0.45, 0.9)) * (1 - GFX.MathUtils.smoothstep(u.uMist.value, 0.05, 0.55)) * (1 - GFX.MathUtils.smoothstep(u.uDust.value, 0.1, 0.6))
+    // (the pass's cloud hides the sun as a heavy sky does)
+    const clear = (1 - GFX.MathUtils.smoothstep(cloud, 0.45, 0.9)) * (1 - GFX.MathUtils.smoothstep(u.uMist.value, 0.05, 0.55))
     // the sun above the terrain's horizon from here? (32 steps along its bearing, 8 m … 3 km)
     const c = camera.position, hl = Math.hypot(sun.x, sun.z) || 1, ux = sun.x / hl, uz = sun.z / hl, el = sun.y / hl
     let hor = -1

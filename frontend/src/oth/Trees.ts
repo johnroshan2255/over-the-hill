@@ -9,7 +9,7 @@ import { cellSeed, type Rocks } from './Rocks'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 import { createFrondTexture, createLeafTexture, FROND_GLSL, LEAF_GLSL } from './leafTexture'
 import { PLANT_VALUE_GLSL } from './paint'
-import { broadleafGeometry, palmGeometry, CROWN, spruceGeometry } from './treeGeometry'
+import { broadleafGeometry, CROWN, spruceGeometry } from './treeGeometry'
 
 /**
  * THE FORESTS — Over-the-Hill woods, four trees in five a green spruce (the stylized conifer); the rest in small groves:
@@ -80,7 +80,7 @@ export class Trees {
   /** placed: the trees already placed (placeTrees, a row a step — World.build); else placed here. */
   constructor(private readonly map: MapData, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, rocks: Rocks, shade = true, placed?: Float32Array) {
     this.noiseU = atmos.uniforms.uNoise
-    this.ranges = [tier.treeNear, tier.treeMid, tier.treeFar, tier.treeReach * (map.desert ? 1 : LOOK_REACH)]   // (the far images' reach under the look's haze — Atmosphere LOOK_REACH)
+    this.ranges = [tier.treeNear, tier.treeMid, tier.treeFar, tier.treeReach * LOOK_REACH]   // (the far images' reach under the look's haze — Atmosphere LOOK_REACH)
     if (!placed) { const out: number[] = []; for (const _ of placeTrees(map, rocks, out)); placed = new Float32Array(out) }
     this.data = placed
     this.count = this.data.length / TREE_STRIDE
@@ -113,7 +113,7 @@ export class Trees {
       glslVersion: GFX.GLSL3,
       uniforms: { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) }, uLeafTex: this.leafU, uFrondTex: this.frondU, uSee: this.see, uSeeD: this.seeD, uSeeK: this.seeK, ...extraUni },
       vertexColors: true,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...map.biomeDefines, ...(pass === 'depth' ? { TREE_DEPTH: '' } : pass === 'shade' ? { TREE_SHADE: '' } : {}), ...extraDefs },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.msaa ? { A2C: '' } : {}), ...(pass === 'depth' ? { TREE_DEPTH: '' } : pass === 'shade' ? { TREE_SHADE: '' } : {}), ...extraDefs },
       vertexShader: VERT,
       fragmentShader: FRAG,
       side: GFX.DoubleSide,
@@ -132,7 +132,7 @@ export class Trees {
         ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: new GFX.Vector4(map.far.n, map.far.step, map.far.origin, 0) },
         uImpAlb: { value: null }, uImpNor: { value: null }, uImpSize: { value: new GFX.Vector2(IMP.cols * IMP.fw, IMP.rows * IMP.fh) },
       },
-      defines: { ...map.biomeDefines, ...(tier.spec ? { OTH_SPEC: '' } : {}), IMP_NA: IMP.cols.toFixed(1), IMP_ROWS: IMP.rows.toFixed(1), IMP_FW: IMP.FW.toFixed(3), IMP_FW_OAK: (IMP.FW * OAK_FW).toFixed(3), IMP_FH: IMP.FH.toFixed(3), IMP_CY: IMP.CY.toFixed(3), IMP_E1: ((IMP.elev[0] + IMP.elev[1]) / 2).toFixed(3), IMP_E2: ((IMP.elev[1] + IMP.elev[2]) / 2).toFixed(3) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), IMP_NA: IMP.cols.toFixed(1), IMP_ROWS: IMP.rows.toFixed(1), IMP_FW: IMP.FW.toFixed(3), IMP_FW_OAK: (IMP.FW * OAK_FW).toFixed(3), IMP_FH: IMP.FH.toFixed(3), IMP_CY: IMP.CY.toFixed(3), IMP_E1: ((IMP.elev[0] + IMP.elev[1]) / 2).toFixed(3), IMP_E2: ((IMP.elev[1] + IMP.elev[2]) / 2).toFixed(3) },
       vertexShader: IMP_VERT,
       fragmentShader: IMP_FRAG,
       // MSAA tiers: the alpha edge resolves to smooth coverage (no hard, shimmering cut-out); LOW keeps the test
@@ -146,7 +146,7 @@ export class Trees {
       const [r0, r1] = ring[l]
       const max = Math.min(l === 4 ? 60000 : 30000, Math.ceil(Math.PI * (r1 * r1 - r0 * r0) * dens * 0.6) + 64)
       // (the desert: its palms in the broadleaf family's place — their LODs, their impostors)
-      const src = l === 4 ? impostorQuad() : l < 2 ? spruceGeometry(l) : map.desert ? palmGeometry(l - 2) : broadleafGeometry(l - 2)
+      const src = l === 4 ? impostorQuad() : l < 2 ? spruceGeometry(l) : broadleafGeometry(l - 2)
       const geo = new GFX.InstancedBufferGeometry()
       for (const n of l < 4 ? ['position', 'normal', 'color', 'leaf', 'cardC'] : ['position']) geo.setAttribute(n, src.getAttribute(n))
       geo.setIndex(src.getIndex()) // (indexed: the near tree is 947 shared vertices)
@@ -437,8 +437,8 @@ export class Trees {
     const W = IMP.cols * IMP.fw, Hh = IMP.rows * IMP.fh
     const rt = new GFX.WebGLRenderTarget(W, Hh, { count: 2, type: GFX.UnsignedByteType, depthBuffer: true, generateMipmaps: true, minFilter: GFX.LinearMipmapLinearFilter, magFilter: GFX.LinearFilter })
     for (const t of rt.textures) { t.generateMipmaps = true; t.minFilter = GFX.LinearMipmapLinearFilter; t.magFilter = GFX.LinearFilter; t.colorSpace = GFX.NoColorSpace }
-    const bake = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: { uSpecies: { value: 0 }, uNoise: this.noiseU, uLeafTex: this.leafU, uFrondTex: this.frondU }, vertexColors: true, defines: { ...this.map.biomeDefines }, vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, side: GFX.DoubleSide })
-    const scene = new GFX.Scene(), geos = [spruceGeometry(0), this.map.desert ? palmGeometry(0) : broadleafGeometry(0)], mesh = new GFX.Mesh(geos[0], bake)
+    const bake = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: { uSpecies: { value: 0 }, uNoise: this.noiseU, uLeafTex: this.leafU, uFrondTex: this.frondU }, vertexColors: true, defines: {}, vertexShader: BAKE_VERT, fragmentShader: BAKE_FRAG, side: GFX.DoubleSide })
+    const scene = new GFX.Scene(), geos = [spruceGeometry(0), broadleafGeometry(0)], mesh = new GFX.Mesh(geos[0], bake)
     scene.add(mesh)
     const cam = new GFX.OrthographicCamera(-IMP.FW / 2, IMP.FW / 2, IMP.FH / 2, -IMP.FH / 2, 0.01, 10)
     const prevRT = renderer.getRenderTarget(), prevClear = renderer.getClearColor(new GFX.Color()), prevAlpha = renderer.getClearAlpha()
@@ -495,10 +495,8 @@ export class Trees {
   }
   /** The impostor atlas (two textures: albedo, normal) — kept for the harness / a debug view. */
   atlas: GFX.WebGLRenderTarget | null = null
-  /** Every tree's x, z, height, species — the terrain shadow's worker stamps their shade (World.adopt). */
+  /** Every tree's x, z, height, species — the terrain shadow's worker stamps their shade. */
   readonly shade: Float32Array
-  /** Their shade to the terrain shadow again (it was another world's). */
-  reshade(shadow: TerrainShadow): void { shadow.setTrees(this.shade, CROWN) }
 
 
 }
@@ -586,12 +584,6 @@ vec3 oakShape(vec3 p, float fol, vec3 cc) {
 }
 float aoFloor(float species) { return species > 2.5 ? 0.4 : species > 0.5 ? 0.36 : 0.22; }
 vec3 treeAlbedo(float species, float fol, float j) {
-#ifdef OTH_DESERT
-  // (the desert's palms: a warm grey-brown trunk, deep green fronds lighter at their tips)
-  // (2026-11-04, the stylised look: darker, deeper green fronds — they read bright yellow-green — a warmer trunk)
-  if (fol < 0.5) return vec3(0.32, 0.2, 0.13);
-  return mix(vec3(0.03, 0.1, 0.03), vec3(0.09, 0.2, 0.05), 0.5 + j * 0.6) * PLANT_VALUE * 1.25;
-#endif
   if (fol < 0.5) {
     if (species > 5.5) return vec3(0.17, 0.11, 0.07);         // the oak: a warm dark brown
     if (species > 2.5) return vec3(0.62, 0.61, 0.57);         // birch / aspen: white bark (a little grey: barkLight)
@@ -652,7 +644,6 @@ void main() {
   // little (the top kept), its width ×0.8–1.2 — each way its own, an oval from above, not a ball — and its depth
   // ×0.88–1.12 about its middle; and the whole tree LEANS a little (up to ~4°, the foot kept) — 2026-11-06: the one
   // upright egg on a stick, every tree alike, read as a toy beside the spruce
-#ifndef OTH_DESERT
   if (species > 2.5) {
     if (leaf.z > 0.5) {
       float lift = 0.05 * fract(aT1.z * 5.31), tall = 0.88 + 0.24 * fract(aT1.z * 9.13);
@@ -663,7 +654,6 @@ void main() {
     float la = fract(aT1.z * 21.7) * 6.2832;
     p.xz += vec2(cos(la), sin(la)) * (0.07 * fract(aT1.z * 17.3)) * smoothstep(0.1, 1.0, p.y);
   }
-#endif
   float c = cos(aT1.x), s = sin(aT1.x);
   vec3 q = vec3(p.x * c - p.z * s, p.y, p.x * s + p.z * c) * H;
   vec3 n = normal;
@@ -772,9 +762,7 @@ void main() {
 #else
   if (card) albedo = leafLight(leafTone(albedo, fract(vLeaf.z) / 0.9, vSpecies), lt, N);
   if (vLeaf.z < -0.5) albedo = frondTone(albedo, ft, vLeaf.x, fract(-vLeaf.z) / 0.9, vSpecies);
-#ifndef OTH_DESERT
   if (vFol < 0.5 && vSpecies > 2.5 && vSpecies < 5.5) albedo = barkLight(albedo, vH, N);
-#endif
 #ifdef TREE_SHADE
   alpha = 1.0;
 #endif
@@ -849,19 +837,13 @@ void main() {
   bool card = vLeaf.z > 0.5;
   float under = gl_FrontFacing || card ? 1.0 : 0.62;
   if (!gl_FrontFacing && !card) N.y = -abs(N.y) * 0.4;
-#ifdef OTH_DESERT
-  vec3 albedo = vAlb * mix(uSpecies > 0.5 ? 0.42 : 0.22, 1.15, vAo) * under * (0.9 + 0.18 * vH); // (the palms' bake, as it was)
-#else
   vec3 albedo = vAlb * mix(aoFloor(uSpecies), 1.15, vAo) * under * (0.9 + 0.18 * vH);
-#endif
   if (card) {
     vec4 lt = leafCard(vLeaf.xy, vLeaf.z);
     if (lt.a < 0.5) discard;
     albedo = leafLight(leafTone(albedo, fract(vLeaf.z) / 0.9, uSpecies), lt, N);
   }
-#ifndef OTH_DESERT
   if (vFol < 0.5 && uSpecies > 2.5 && uSpecies < 5.5) albedo = barkLight(albedo, vH, N);
-#endif
   if (vLeaf.z < -0.5) {
     vec4 ft = frondCard(vLeaf.x, vLeaf.y, -vLeaf.z);
     if (ft.a < 0.5) discard;
@@ -963,36 +945,6 @@ void main() {
  *  time — it YIELDS after each, so a world built behind another one spreads the work over frames (World.build; ~80 ms
  *  in one go was the longest frame of a crossing's build). */
 export function* placeTrees(map: MapData, rocks: Rocks, out: number[]): Generator<void, void, void> {
-  if (map.desert) {
-    // THE DESERT'S PALMS: the oasis (mask A, its growth) — groves along the water, a few strays; 9–17 m tall,
-    // green (species 5: the broadleaf family, drawn as palms)
-    let s2 = 0x2c1b3c6d
-    const r2 = () => ((s2 = (Math.imul(s2 ^ (s2 >>> 15), 2246822519) + 0x6d2b79f5) >>> 0) / 4294967296)
-    const mk: [number, number, number, number] = [0, 0, 0, 0], G2 = 7.5, h2 = map.half - 50
-    // (never in the lagoon: its ellipse with a margin — a palm or two stood in the water at its edge)
-    const L = map.meta.water.lake, lc = Math.cos(L.rot), ls = Math.sin(L.rot)
-    const inLagoon = (x: number, z: number) => ((((x - L.cx) * lc + (z - L.cz) * ls) / (L.rx * 1.12 + 3)) ** 2 + ((-(x - L.cx) * ls + (z - L.cz) * lc) / (L.rz * 1.12 + 3)) ** 2) < 1
-    for (let z = -h2; z < h2; z += G2, yield) for (let x = -h2; x < h2; x += G2) {
-      // (each cell its own seed: a mask change elsewhere moves no palm here — DESERT_MATCH round 6)
-      s2 = cellSeed(Math.round(x * 2), Math.round(z * 2), 7)
-      const px = x + (r2() - 0.5) * G2 * 1.2, pz = z + (r2() - 0.5) * G2 * 1.2
-      map.maskAt(px, pz, mk)
-      if (mk[3] < 0.08 || mk[2] > 0.86 || mk[0] > 0.3 || map.trailDist(px, pz) < map.meta.trails.hw + 2.5 || map.waterLevel(px, pz) !== null || inLagoon(px, pz)) continue
-      // (2026-11-04: half as thick — single palms and small clumps along the water, not rows of a plantation)
-      // (round 2 — the user's reference frames: palms in loose CLUMPS of a few with open sand between — a slow noise
-      //  of its own, ~50 m cells, gathers them; a few strays)
-      const cx = px / 52, cz = pz / 52, ix = Math.floor(cx), iz = Math.floor(cz), u = cx - ix, w = cz - iz
-      const hh = (a: number, b: number) => cellSeed(a, b, 41) / 4294967296
-      const su = u * u * (3 - 2 * u), sw = w * w * (3 - 2 * w)
-      const vnz = (hh(ix, iz) * (1 - su) + hh(ix + 1, iz) * su) * (1 - sw) + (hh(ix, iz + 1) * (1 - su) + hh(ix + 1, iz + 1) * su) * sw
-      const clump = 0.08 + 2.2 * Math.max(0, Math.min(1, (vnz - 0.52) / 0.2))
-      if (r2() > (0.07 + 0.38 * Math.min(1, (mk[3] - 0.08) / 0.5)) * clump) continue
-      if (rocks.biggestNear(px, pz, 3)) continue
-      const y = map.height(px, pz), H = 9 + 8 * Math.pow(r2(), 0.8)
-      out.push(px, y - 0.3, pz, H, r2() * Math.PI * 2, 5, r2(), r2())
-    }
-    return
-  }
   const G = 6.5, half = map.half - 50
   const woods = gameParams().get('woods') !== '0'
   const smooth = (a: number, b: number, v: number) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t) }

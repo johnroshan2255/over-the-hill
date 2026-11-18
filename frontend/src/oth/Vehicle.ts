@@ -535,14 +535,12 @@ export class Vehicle {
     const speed = Math.min(1, Math.abs(this.sim.speed) / 8)
     const lvl = this.map.waterAt(p.x, p.z)
     if (lvl !== null && lvl - ground > 0.2 && p.y < lvl + 0.6) { this.coat -= (dt / 3.5) * (0.3 + speed); return }
-    const m = this.map.maskAt(p.x, p.z, this.mk), onGround = p.y - ground < 1.5
+    const onGround = p.y - ground < 1.5
     const track = Math.max(0, Math.min(1, (0.3 - this.map.wayEdge(p.x, p.z)) / 0.6))
-    const desert = this.map.desert
-    const sand = desert && onGround ? m[1] * (1 - Math.min(1, m[0] * 2)) * (1 - 0.6 * track) : 0
-    const dirt = onGround ? track * (desert ? 0.5 : 0.35) * (1 - u.uWet.value) : 0
-    const gain = (dt / 70) * speed * (sand + dirt) + (dt / 90) * u.uDust.value
+    const dirt = onGround ? track * 0.35 * (1 - u.uWet.value) : 0
+    const gain = (dt / 70) * speed * dirt
     if (gain > 0) {
-      this.coatTo.setRGB(desert ? 0.8 : 0.55, desert ? 0.6 : 0.45, desert ? 0.42 : 0.33)
+      this.coatTo.setRGB(0.55, 0.45, 0.33)
       this.coatColor.lerp(this.coatTo, Math.min(1, gain / Math.max(this.coat, 0.05)))
     }
     this.coat += gain - (dt / 80) * u.uRain.value
@@ -564,11 +562,11 @@ export class Vehicle {
    *  handbrake is pulled, day or night; with the headlights on the tail lamps glow dim. */
   lights(atmos: Atmosphere, dt = 1 / 60): void {
     if (!this.sim || !this.model) return
-    // (on by themselves at night and in a sandstorm)
+    // (on by themselves at night)
     // (the look, round 5 — the user's frames: in the golden hour the lamps are already on, their pool on the track
     //  and the tail lamps' red behind: on from the sun ~12° up, down through the dusk)
-    const dusk = LOOK > 0 && !atmos.desert && atmos.sunY < 0.21
-    const on = this.lightMode === 'on' || (this.lightMode === 'auto' && (atmos.uniforms.uNight.value > 0.25 || atmos.uniforms.uDust.value > 0.45 || dusk))
+    const dusk = LOOK > 0 && atmos.sunY < 0.21
+    const on = this.lightMode === 'on' || (this.lightMode === 'auto' && (atmos.uniforms.uNight.value > 0.25 || dusk))
     const u = atmos.uniforms, head = this.model.lamps.head, tail = this.model.lamps.tail, hz = this.model.half, q = this.root.quaternion
     const h = head ? head.c : [hz.x * 0.7, 0.9, -hz.z], t = tail ? tail.c : [hz.x * 0.75, 0.9, hz.z]
     this.lampL.set(-Math.abs(h[0]), h[1], h[2] - 0.05).applyQuaternion(q).add(this.root.position)

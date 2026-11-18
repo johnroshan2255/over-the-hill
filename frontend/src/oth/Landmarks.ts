@@ -47,7 +47,7 @@ function edgeNoise(x: number, z: number): number {
  *  (ox, oz) the paving reaches (0: none — the desert, `?pave=0`). The landmarks' floors and yards; the meadows' small
  *  ruins (World.build). The caller sets the textures' needsUpdate. */
 export function pavePatch(map: MapData, fp: Uint8Array, x0: number, z0: number, a: number, hx: number, hz: number, ox: number, oz: number): number {
-  if (map.desert || PAVE_OFF) return 0
+  if (PAVE_OFF) return 0
   const gi = map.inner, pv = map.trailTex.image.data as Uint8Array, ca = Math.cos(a), sa = Math.sin(a), R = Math.hypot(hx, hz) + 1 + PAVE_OUT
   const i0 = Math.max(0, Math.floor((x0 - R - gi.origin) / gi.step)), i1 = Math.min(gi.n - 1, Math.ceil((x0 + R - gi.origin) / gi.step))
   const j0 = Math.max(0, Math.floor((z0 - R - gi.origin) / gi.step)), j1 = Math.min(gi.n - 1, Math.ceil((z0 + R - gi.origin) / gi.step))
@@ -93,7 +93,7 @@ export class Landmarks {
     if (!this.list.length) return
     const b = new Builder(0x51a3c7), ranges: [number, number][] = []
     const fp = footprint?.image.data as Uint8Array | undefined, gi = map.inner
-    const pv = map.desert || PAVE_OFF ? null : (map.trailTex.image.data as Uint8Array) // (RGBA8: G the paving)
+    const pv = PAVE_OFF ? null : (map.trailTex.image.data as Uint8Array) // (RGBA8: G the paving)
     this.reach = tier.rockReach + 100
     for (const l of this.list) {
       // SETTLED ON THE GROUND AS IT IS NOW (2026-11-13 — the user: the Lookout Peak tower stood 9 m up in the air): a

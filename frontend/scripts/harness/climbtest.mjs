@@ -91,7 +91,7 @@ await p.evaluate((sx, sz, DIR) => {
 const state = () => p.evaluate(() => {
   const o = window.__oth, c = o.car.pos, B = window.__bot, q = o.car.root.quaternion
   const upY = 1 - 2 * (q.x * q.x + q.z * q.z)
-  return { world: o.world.id, at: `${B.i}/${B.path.length}`, x: +c.x.toFixed(0), y: +c.y.toFixed(1), z: +c.z.toFixed(0), agl: +(c.y - o.height(c.x, c.z)).toFixed(2), kmh: +o.car.speedKmh.toFixed(0), off: +B.lateral.toFixed(1), maxOff: +B.maxLateral.toFixed(1), upY: +upY.toFixed(2), mist: +o.crossing.mist.toFixed(2), cross: o.crossing.state, done: B.done }
+  return { world: o.world.id, at: `${B.i}/${B.path.length}`, x: +c.x.toFixed(0), y: +c.y.toFixed(1), z: +c.z.toFixed(0), agl: +(c.y - o.height(c.x, c.z)).toFixed(2), kmh: +o.car.speedKmh.toFixed(0), off: +B.lateral.toFixed(1), maxOff: +B.maxLateral.toFixed(1), upY: +upY.toFixed(2), mist: +o.passMist.mist.toFixed(2), done: B.done }
 })
 const t0 = Date.now()
 let last = null, stall = 0, shot = 0

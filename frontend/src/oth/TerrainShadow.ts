@@ -97,24 +97,6 @@ export class TerrainShadow {
     this.worker.postMessage({ type: 'init', key, inner: g(map.inner), far })
   }
 
-  /** The OCCLUDERS standing on a world's ground (the desert's slab stacks — Rocks.occluders: per slab its corner count,
-   *  its top, then its corners' x, z): the worker raises its copy of the 2 m heights to each slab's top inside its
-   *  outline, so the stacks cast shade on the sand and on each other (the heights the game reads don't change).
-   *  Re-bakes at the next update. */
-  setOccluders(map: MapData, data: Float32Array): void {
-    this.prepare(map)
-    this.worker.postMessage({ type: 'occl', key: this.keys.get(map), data }, [data.buffer])
-    if (map === this.current) this.baked.set(0, -1, 0)
-  }
-
-  /** A world gone (World.dispose): the worker lets go of its ground. */
-  forget(map: MapData): void {
-    const key = this.keys.get(map)
-    if (key === undefined || map === this.current) return
-    this.keys.delete(map)
-    this.worker.postMessage({ type: 'drop', key })
-  }
-
   /** Another world's ground (World.ts — every world's grids are the same size): the worker bakes over it from now, all
    *  lit until its first bake (the next update re-bakes; a bake of the old ground still under way is dropped). */
   setMap(map: MapData): void {

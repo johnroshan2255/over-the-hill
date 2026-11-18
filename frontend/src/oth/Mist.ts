@@ -82,7 +82,7 @@ export class Mist {
     const u = this.atmos.uniforms, s = u.uSunDir.value.y, night = u.uNight.value
     // (dawn and dusk most — the sun under ~25° — a third of it at noon; after rain more; a little by moonlight)
     const low = 1 - GFX.MathUtils.smoothstep(s, 0.12, 0.42)
-    const k = (0.3 + 0.7 * low) * (1 - 0.55 * night) * (1 + 0.6 * u.uWet.value) * (1 - GFX.MathUtils.smoothstep(u.uMist.value, 0.05, 0.4)) * (1 - u.uDust.value)
+    const k = (0.3 + 0.7 * low) * (1 - 0.55 * night) * (1 + 0.6 * u.uWet.value) * (1 - GFX.MathUtils.smoothstep(u.uMist.value, 0.05, 0.4))
     this.mat.uniforms.uK.value = Math.min(0.55, 0.42 * k)
     this.mesh.visible = k > 0.02
     const c = camera.position

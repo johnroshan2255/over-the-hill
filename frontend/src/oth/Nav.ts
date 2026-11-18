@@ -1,5 +1,5 @@
 import type { MapData, MapMeta } from './MapData'
-import { WORLDS, type WorldId } from './World'
+import type { WorldId } from './World'
 
 /**
  * THE GPS (2026-11-03, the user: "an option like in GTA 5 — in the map we can mark a destination, and the map shows the
@@ -15,11 +15,9 @@ import { WORLDS, type WorldId } from './World'
  *   is slower, > 70 % a wall; forest, rock, a ford slower; deep water and the box's edge walls; a TREE TRUNK or a big
  *   BOULDER within 1.6 m of the line rules it out — `Obstacles`), to the track point
  *   that leaves the least off-road time to the destination; or straight there off-road when that's quicker.
- * - The GUIDE (one for the whole game: main.ts): the WAYPOINT (in either world), the route to it in this world — or to
- *   this world's GATE when it lies in the other world, plus that world's leg from its gate (drawn on its map) — the
- *   progress along it, the next turn, re-routing when the car leaves it (> 40 m off a track for 1.5 s), the arrival.
+ * - The GUIDE (one for the whole game: main.ts): the WAYPOINT, the route to it — the progress along it, the next turn, re-routing when the car leaves it (> 40 m off a track for 1.5 s), the arrival.
  * Costs: a valley graph ~4.7k nodes, built in ~3 ms once per world; a route ~2–4 ms (the off-road legs' ground
- * samples are most of it), made only when a waypoint is set, on a re-route or at a crossing.
+ * samples are most of it), made only when a waypoint is set or on a re-route.
  */
 const V_TRACK = 11 // m/s (40 km/h)
 const V_ROUGH = 2.5 // (9 km/h: a rock crawl is taken only where nothing else goes — a bot at track speed rolled off one)
@@ -388,7 +386,7 @@ export class Obstacles {
     c.push(x, z, r)
     this.maxR = Math.max(this.maxR, r)
   }
-  /** Where the route ends (the waypoint, the gate): a disc that holds it is no obstacle — a place you drive TO
+  /** Where the route ends (the waypoint): a disc that holds it is no obstacle — a place you drive TO
    *  stands on its own disc (the autopilot: the places and the buildings are obstacles too, 2026-11-11). */
   except: { x: number; z: number } | null = null
   /** A disc within `pad` m of (x, z)? */
@@ -436,24 +434,11 @@ class Heap {
   }
 }
 
-/** A world's meta.json (the other world's: its tracks, places and gate for the map, before it's ever built). */
-const metas = new Map<WorldId, Promise<MapMeta | null>>()
-export function worldMeta(id: WorldId): Promise<MapMeta | null> {
-  let p = metas.get(id)
-  if (!p) metas.set(id, (p = fetch(`${WORLDS[id].path}/meta.json`).then((r) => (r.ok ? (r.json() as Promise<MapMeta>) : null)).catch(() => null)))
-  return p
-}
-
-/**
- * THE GUIDE: the waypoint and the way there. Lasts across worlds (main.ts): `setWorld` at a crossing re-routes from
- * the car in the new world.
- */
+/** THE GUIDE: the waypoint and the way there (main.ts). */
 export class Guide {
   waypoint: Waypoint | null = null
-  /** This world's leg: the car → the waypoint, or → the gate (the waypoint in the other world). */
+  /** The car → the waypoint. */
   route: Route | null = null
-  /** The other world's leg (its gate → the waypoint) — drawn on that world's map; its length counts in the total. */
-  otherLeg: Route | null = null
   /** The waypoint reached (main.ts: the toast, the chime). */
   onArrive?: (w: Waypoint) => void
   /** Re-routed (a toast). */
@@ -465,7 +450,7 @@ export class Guide {
   private offT = 0
   private cool = 0
   private car = { x: 0, z: 0 }
-  /** Re-plan at the next update (a crossing: the car is moved after the world is entered). */
+  /** Re-plan at the next update (the world set: the car is placed after). */
   private stale = false
 
   /** The world the car is in (its ground prices the off-road legs); the route re-planned from the car next frame. */
@@ -474,21 +459,18 @@ export class Guide {
     this.map = map
     this.obstacles = obstacles ?? null
     this.built = null
-    this.route = this.otherLeg = null
+    this.route = null
     this.stale = true
   }
 
   get here(): WorldId { return this.world }
-  /** The waypoint lies in the other world: this world's route ends at its gate. */
-  get viaGate(): boolean { return !!this.waypoint && this.waypoint.world !== this.world }
-  /** Metres / seconds still to go (both legs). */
-  get remaining(): number { return (this.route?.remaining ?? 0) + (this.viaGate ? (this.otherLeg?.length ?? 0) : 0) }
-  get remainingTime(): number { return (this.route?.remainingTime ?? 0) + (this.viaGate ? (this.otherLeg?.time ?? 0) : 0) }
+  /** Metres / seconds still to go. */
+  get remaining(): number { return this.route?.remaining ?? 0 }
+  get remainingTime(): number { return this.route?.remainingTime ?? 0 }
 
   set(w: Waypoint | null, car?: { x: number; z: number }): void {
     this.waypoint = w
     if (car) this.car = { x: car.x, z: car.z }
-    this.otherLeg = null
     this.plan()
   }
 
@@ -500,9 +482,9 @@ export class Guide {
     const r = this.route, w = this.waypoint
     if (!r || !w) return
     r.track(x, z)
-    if (!this.viaGate && (Math.hypot(w.x - x, w.z - z) < 25 || r.remaining < 12)) {
+    if (Math.hypot(w.x - x, w.z - z) < 25 || r.remaining < 12) {
       this.waypoint = null
-      this.route = this.otherLeg = null
+      this.route = null
       this.onArrive?.(w)
       return
     }
@@ -527,20 +509,11 @@ export class Guide {
   private plan(): void {
     const w = this.waypoint, map = this.map
     if (!w || !map) { this.route = null; return }
-    const G = map.meta.gate, graph = RoadGraph.of(map.meta)
+    const graph = RoadGraph.of(map.meta)
     const { x, z } = this.car
     const ob = this.obstacles ? (this.built ??= this.obstacles()) : undefined
-    if (ob) ob.except = w.world === this.world ? { x: w.x, z: w.z } : G ? { x: G.x, z: G.z } : null
-    if (w.world === this.world) this.route = graph.route(x, z, w.x, w.z, map, ob)
-    else if (G) {
-      this.route = graph.route(x, z, G.x, G.z, map, ob)
-      // (the other world's leg: from its gate, priced on the flat — its ground isn't here)
-      const want = w
-      void worldMeta(w.world).then((m) => {
-        if (this.waypoint !== want || !m?.gate) return
-        this.otherLeg = RoadGraph.of(m).route(m.gate.x, m.gate.z, want.x, want.z)
-      })
-    } else this.route = null
+    if (ob) ob.except = { x: w.x, z: w.z }
+    this.route = w.world === this.world ? graph.route(x, z, w.x, w.z, map, ob) : null
     this.route?.track(x, z)
   }
 }

@@ -53,11 +53,8 @@ function leanTo(b: Builder, w: number, z0: number, y0: number, z1: number, y1: n
   b.box(V(0, (y0 + y1) / 2, (z0 + z1) / 2), X, up, wv, w, 0.035, len / 2, TIN)
 }
 
-/** The desert's stone (its sandstone, a little paler than the walls): stones, cairns, ruins, wells (`build`'s desert). */
-const SANDSTONE: RGB = [0.46, 0.24, 0.15]
-const sandOr = (desert: boolean, c: RGB, k = 1): RGB => (desert ? [SANDSTONE[0] * k, SANDSTONE[1] * k, SANDSTONE[2] * k] : c)
 
-const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; reach: number; size: number; col: [number, number, number, number] | null; more?: [number, number, number, number, number, number][]; scale?: number }> = {
+const KINDS: Record<PropKind, { build: (b: Builder) => void; reach: number; size: number; col: [number, number, number, number] | null; more?: [number, number, number, number, number, number][]; scale?: number }> = {
   sign: {
     reach: 380, size: 2.6, col: [1.2, 0.09, 1.2, 0.09],
     build(b) {
@@ -127,8 +124,8 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
   },
   stones: {
     reach: 200, size: 0.4, col: null,
-    build(b, desert) {
-      const G: RGB = sandOr(desert, [0.27, 0.27, 0.285])
+    build(b) {
+      const G: RGB = [0.27, 0.27, 0.285]
       const u = V(Math.cos(0.4), 0.14, Math.sin(0.4)).normalize(), w = new GFX.Vector3().crossVectors(u, Y).normalize(), v = new GFX.Vector3().crossVectors(w, u).normalize()
       b.box(V(0, 0.12, 0), u, v, w, 0.3, 0.17, 0.22, G)
       b.box(V(0.1, 0.27, -0.04), w, Y, u, 0.14, 0.09, 0.12, [G[0] * 1.12, G[1] * 1.12, G[2] * 1.14])
@@ -164,9 +161,9 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
     // an old homestead's RUIN: its stone chimney (4.5 m, the fireplace's mouth) and the broken walls of a 6 × 5 m house
     reach: 700, size: 4.5, col: [2.2, 0.38, 2.2, 0.32],
     more: RUIN_WALLS.map(([x0, x1, z0, z1, h]) => [(x0 + x1) / 2, h / 2, (z0 + z1) / 2, Math.max(0.25, (x1 - x0) / 2), h / 2, Math.max(0.25, (z1 - z0) / 2)] as [number, number, number, number, number, number]),
-    build(b, desert) {
+    build(b) {
       b.setSurf(LOOK ? SURF.masonry : SURF.stone) // (the look, 2026-11-13: laid stone, mossed — Bridges.ts masonry)
-      const S1: RGB = sandOr(desert, [0.26, 0.25, 0.24]), S2: RGB = sandOr(desert, [0.21, 0.2, 0.19], 0.82)
+      const S1: RGB = [0.26, 0.25, 0.24], S2: RGB = [0.21, 0.2, 0.19]
       box(b, 0, 2.2, 0, 0.38, 2.2, 0.32, S1)
       box(b, 0, 4.45, 0, 0.3, 0.1, 0.26, S2)
       box(b, 0.39, 0.55, 0, 0.01, 0.4, 0.2, [0.03, 0.03, 0.03])
@@ -178,8 +175,8 @@ const KINDS: Record<PropKind, { build: (b: Builder, desert: boolean) => void; re
   well: {
     // a WELL (the desert): a ring of dressed stones 1.1 m round, 0.9 m high, a log frame over it, a rope and a bucket
     reach: 450, size: 2.6, col: [0.45, 1.25, 0.45, 1.25],
-    build(b, desert) {
-      const S: RGB = sandOr(desert, [0.3, 0.29, 0.28])
+    build(b) {
+      const S: RGB = [0.3, 0.29, 0.28]
       for (let k = 0; k < 12; k++) {
         const a = (k / 12) * Math.PI * 2, u = V(Math.cos(a), 0, Math.sin(a)), w = new GFX.Vector3().crossVectors(u, Y)
         for (const [y, h, s] of [[0.22, 0.22, 1], [0.66, 0.22, 0.96]] as const) {
@@ -310,19 +307,19 @@ export class Props {
   private pickT = 0
 
   constructor(readonly props: Prop[], landmarks: Landmark[], wild: [number, number, number][], atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, collected: number[],
-    footprint: GFX.DataTexture, private readonly grid: { n: number; step: number; origin: number }, desert = false) {
+    footprint: GFX.DataTexture, private readonly grid: { n: number; step: number; origin: number }) {
     // (2026-11-06: any place with a FIRE burns one — the camps but the abandoned, the tunnel's alcove, the grotto, the
     //  river shelters — and any with LIGHTS glows at its windows / lanterns from dusk: Landmarks.ts sets both)
     const camps = landmarks.filter((l) => l.fire), lit = landmarks.filter((l) => l.lights?.length)
     for (const id of collected) this.collected.add(id)
-    this.reachK = (tier.rockReach / 900) * (desert ? 1 : LOOK_REACH)
+    this.reachK = (tier.rockReach / 900) * LOOK_REACH
     const mat = woodMaterial(atmos, shadow, tier, farGrid)
     // the models, one InstancedMesh per kind
     for (const kind of PROP_KINDS) {
       const n = props.filter((p) => p.kind === kind).length
       if (!n) continue
       const b = new Builder(0x5eed + kind.length * 131)
-      KINDS[kind].build(b, desert)
+      KINDS[kind].build(b)
       const mesh = new GFX.InstancedMesh(b.geometry(), mat, n)
       mesh.count = 0
       mesh.frustumCulled = false // (culled per cell in update)

@@ -26,7 +26,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 for (const [name, x, z, h, yaw, pitch, hour] of V) {
   await p.evaluate(([x, z, h, yaw, pitch, hour]) => { window.__oth.setHour(hour); window.__oth.view(x, z, h, yaw, pitch) }, [x, z, h, yaw, pitch, hour])
   await sleep(2500)
-  const s = await p.evaluate(() => ({ ...window.__oth.stats(), mist: window.__oth.crossing.mist, state: window.__oth.crossing.state }))
+  const s = await p.evaluate(() => ({ ...window.__oth.stats(), mist: window.__oth.passMist.mist }))
   await p.screenshot({ path: `${dir}/${name}.png` })
   console.log(name.padEnd(12), `fps ${s.fps.toFixed(0)} cpu ${s.cpuMs?.toFixed(2)} draws ${s.draws} tris ${(s.tris / 1e3).toFixed(0)}k  mist ${s.mist?.toFixed?.(2)} ${s.state}  pos ${s.pos} ground ${s.ground}`)
 }

@@ -206,7 +206,7 @@ export class Autopilot {
     else if (down > 0.12) target = Math.min(target, 22 / 3.6)
     // (the end: down to a crawl by ~14 m out — the GPS calls it arrived inside 12 m, and it stops there; at 39 km/h it
     //  had run 15 m past the Stag Ridge Lookout)
-    if (!this.guide.viaGate) target = Math.min(target, Math.max(2.5, Math.sqrt(2 * DECEL * Math.max(0, r.remaining - 14))))
+    target = Math.min(target, Math.max(2.5, Math.sqrt(2 * DECEL * Math.max(0, r.remaining - 14))))
     // (what it can't get round: stop short of it — a crawl while there's room, so it noses round)
     if (room < reach) target = Math.min(target, Math.max(room > 4 ? 4 / 3.6 : 0, Math.sqrt(2 * DECEL * Math.max(0, room - 3))))
     this.target = target * 3.6

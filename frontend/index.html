@@ -264,9 +264,6 @@
       .oth-toast.on { opacity: 1; transform: translate(-50%, 0); }
       /* a rally stage's clock: its name, the time running, the best to beat */
       /* a crossing's arrival: the region's name, big, over the mist */
-      .oth-region { position: fixed; left: 0; right: 0; top: 26%; text-align: center; color: #f4efe6; font: 400 clamp(38px, 7vw, 86px)/1 'Anton', 'Barlow Condensed', system-ui; letter-spacing: .05em; text-transform: uppercase; -webkit-text-stroke: 1.5px rgba(8, 8, 10, .6); text-shadow: 0 3px 0 rgba(8, 8, 10, .35), 0 0 28px rgba(8, 8, 10, .5); opacity: 0; transform: translateY(10px); transition: opacity 1.2s, transform 1.2s; pointer-events: none; z-index: 6; }
-      .oth-region small { display: table; margin: 0 auto 12px; padding: 3px 12px 2px; background: rgba(8, 8, 10, .72); -webkit-text-stroke: 0; text-shadow: none; color: #f2a93b; font: 700 clamp(14px, 1.6vw, 20px) 'Barlow Condensed', system-ui; letter-spacing: .32em; }
-      .oth-region.on { opacity: 1; transform: none; }
       /* CO-OP (oth/Coop.ts, Remotes.ts): the chip under the coins — the world, its code, who's in, the ping; a name tag
          over each other player (their colour, the distance); their arrows on the minimap */
       .oth-coop { position: fixed; right: calc(14px + env(safe-area-inset-right)); top: calc(104px + env(safe-area-inset-top)); z-index: 4; display: flex; align-items: baseline; gap: 10px; padding: 4px 12px 3px 0; background: rgba(8, 8, 10, .6); color: #f4efe6; font: 700 14px 'Barlow Condensed', system-ui; letter-spacing: .1em; text-transform: uppercase; pointer-events: none; white-space: nowrap; }

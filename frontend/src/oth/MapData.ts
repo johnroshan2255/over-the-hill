@@ -62,8 +62,6 @@ export function deckY(b: Bridge, t: number): number {
 export interface MapMeta {
   id: string
   name: string
-  /** 'desert' (the second world: its own palette, plants and weather — every world material's OTH_DESERT) */
-  biome?: 'desert'
   /** The CROSSING's pass road (World / Crossing.ts): where the cloud is thickest, the way out of this world `heading`
    *  (0 = −z); its MIST thickens from height y0 to y1 within r m of it. */
   gate?: { x: number; z: number; y: number; heading: number; mist?: { y0: number; y1: number; r: number } }
@@ -233,10 +231,7 @@ export class MapData {
    *  draw only on it, the river and the streams only off it; G — the depth under it (128 + 64 / m): no grass there;
    *  B — how near it is (a ribbon takes its look as it comes to it); A — the river's own water (a stream fades into it). */
   readonly waterTex: GFX.DataTexture
-  /** The desert's world (meta.biome): the materials' OTH_DESERT. */
-  get desert(): boolean { return this.meta.biome === 'desert' }
   /** Its shader define (none for the valley). */
-  get biomeDefines(): Record<string, string> { return this.desert ? { OTH_DESERT: '' } : {} }
   /** The playable box's half size (m) and the world's. */
   readonly half: number
   readonly farHalf: number
@@ -279,7 +274,7 @@ export class MapData {
     // THE PLAYABLE LAND (2026-11-10, the user: "make it all playable, just restrict the last 2 km round the world"): the
     // 16 km world less a 2 km rim — ±6144 m, 12 km across. Inside the old 4 km box the ground is its 2 m grid; beyond
     // it the world's own grid (`height()` has always answered there). The valley only, for now.
-    this.play = meta.id === 'valley' ? Math.max(this.half, this.farHalf - 2048) : this.half      // (the desert keeps its box for now)
+    this.play = meta.id === 'valley' ? Math.max(this.half, this.farHalf - 2048) : this.half
     this.mask = mask
     const mn = meta.mask.n
     this.maskTex = new GFX.DataTexture(mask, mn, mn, GFX.RGBAFormat, GFX.UnsignedByteType)
@@ -340,7 +335,7 @@ export class MapData {
   readonly mires: { x: number; z: number; r: number }[]
   private findMires(): { x: number; z: number; r: number }[] {
     const O = this.meta.outland, lines = O?.trails?.lines
-    if (!O || !lines?.length || this.desert || this.play <= this.half + 100 || gameParams().get('mires') === '0') return []
+    if (!O || !lines?.length || this.play <= this.half + 100 || gameParams().get('mires') === '0') return []
     const keep: [number, number, number][] = [
       ...(this.meta.bridges ?? []).flatMap((b) => [[b.x0, b.z0, 130], [b.x1, b.z1, 130]] as [number, number, number][]),
       ...(O.places ?? []).filter((q) => q.kind !== 'lake').map((q) => [q.x, q.z, q.kind === 'worldtree' ? 260 : q.kind === 'canyon' || q.kind === 'crater' || q.kind === 'mesa' || q.kind === 'peak' ? 0 : q.r + 90] as [number, number, number]),

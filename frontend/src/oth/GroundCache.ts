@@ -164,10 +164,6 @@ void main() {
   o0 = vec4(sqrt(max(s.col, vec3(0.0))), s.rock);
   o1 = vec4(s.rough, s.aoB, s.grassy, s.under);
   o2 = vec4(clamp(groundRelief(xz) * 0.25 + 0.5, 0.0, 1.0), s.trail, s.bog, s.pudN / 1.2); // (the small shapes, ±2 m)
-#ifdef OTH_DESERT
-  o3 = vec4(clamp((N.xz - Ns.xz) * 0.5 + 0.5, 0.0, 1.0), s.dots, s.flower / 0.3);
-#else
   o3 = vec4(s.relief, 0.0, s.dots, s.flower / 0.3);
-#endif
 }
 `

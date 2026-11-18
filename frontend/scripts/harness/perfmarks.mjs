@@ -47,9 +47,6 @@ if (mode === 'drive') {
   const START = Number(process.env.START || 0)
   // (the car out, the chase camera zoomed out to ZOOM m — 3.5–40)
   const ready = async () => {
-    // (2026-11-18: the first SET=all drive went over the Great Cliff's gate on a way past it and drove the other 76
-    // marks' ways in the desert — the crossing held; the valley made sure of before every way)
-    await p.evaluate(() => { window.__oth.crossing.hold = true })
     await p.evaluate(() => { window.__oth.perfMarks().length = 0 })
     await p.evaluate(() => window.__oth.drive(true))
     for (let k = 0; k < 30; k++) await p.keyboard.press('Minus')
@@ -64,7 +61,6 @@ if (mode === 'drive') {
     if (ti < START) continue
     let r
     try {
-      if (await p.evaluate(() => window.__oth.world.id !== 'valley')) { await p.evaluate(() => window.__oth.swapTo('valley')); await ready() }
       const L = tracks[ti]
       r = await p.evaluate(async (L, speed) => {
         const o = window.__oth

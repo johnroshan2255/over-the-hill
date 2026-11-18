@@ -1,27 +1,25 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
 import { SECRET } from './Wardens'
-import { bakedChart, type Chart, type ClaimMark, claimTag, drawClaim, drawGate, drawOutPlace, drawPin, drawPaths, drawPlace, drawRoads, drawRoute, drawTracks, foundIn, ICON, label, onMap, ROUTE, wardenBig } from './Chart'
+import { type Chart, type ClaimMark, claimTag, drawClaim, drawOutPlace, drawPin, drawPaths, drawPlace, drawRoads, drawRoute, drawTracks, ICON, label, onMap, ROUTE, wardenBig } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { Landmark, MapMeta } from './MapData'
-import { fmtDist, fmtTime, type Guide, type Waypoint, worldMeta } from './Nav'
-import { WORLDS, type WorldId } from './World'
+import { fmtDist, fmtTime, type Guide, type Waypoint } from './Nav'
+import type { WorldId } from './World'
 
 /**
  * THE MAP and THE COMPASS (2026-10-27, the user: "add those" — OTH's map with its highlighted places; 2026-11-03, the
  * user: "like GTA 5 — mark a destination on the map and it shows the fastest route like Google Maps"):
  *
  * Tab (or the MAP button) opens the CHART (Chart.ts) with the tracks (rock-crawling routes dashed), the bridges, every
- * LANDMARK (its icon and name once discovered, a "?" until then), your camp, the car as an arrow, and the PASS to the
- * other world (the crossing's gate: double chevrons on an amber square). Two TABS — THE VALLEY · THE DESERT — show
- * either world (the other one's chart is baked: chart.webp), so a place over there can be picked from here.
- *   click / tap   set the WAYPOINT there (on a place or the pass: that place); on the waypoint: clear it
+ * LANDMARK (its icon and name once discovered, a "?" until then), your camp and the car as an arrow. (The pass to
+ * the desert and the desert's tab went with the desert, 2026-11-18.)
+ *   click / tap   set the WAYPOINT there (on a place: that place); on the waypoint: clear it
  *   drag          move the chart · wheel, + / −: zoom (about the pointer) · Z: the whole map ⇄ 800 m round the car
  *   right-click, Delete: clear the waypoint · Tab / Esc: close
  * The ROUTE (Nav.ts: the fastest way, along the tracks) is drawn violet, off-road legs dashed; the foot says how far and
- * how long. A waypoint in the other world routes to this world's pass, its leg over there drawn on its own tab.
  * The COMPASS (always on, top centre): the heading's letters and ticks, the landmarks ahead (within 2.5 km, ±80°) — a
- * "?" for the ones not found yet — the pass (⇑), the waypoint (violet ◆), and the waypoint's distance (else the
+ * "?" for the ones not found yet — the waypoint (violet ◆), and the waypoint's distance (else the
  * nearest place's). It redraws ten times a second (DOM, no canvas); the open map five times.
  */
 export interface MapViewOptions {
@@ -53,22 +51,16 @@ export class MapView {
   private readonly ctx: CanvasRenderingContext2D
   private readonly info: HTMLDivElement
   private readonly foot: HTMLDivElement
-  private readonly tabs = new Map<WorldId, HTMLButtonElement>()
-  private readonly goBtn: HTMLButtonElement
   private readonly clearBtn: HTMLButtonElement
   private open = false
-  /** The world shown, and each one's view (centre, half width — m). */
-  private tab: WorldId
+  /** The world shown, and its view (centre, half width — m). */
+  private readonly tab: WorldId
   private readonly views = new Map<WorldId, { cx: number; cz: number; v: number }>()
-  private readonly other: WorldId
-  private otherMeta: MapMeta | null = null
-  private otherChart: HTMLImageElement | null = null
   private readonly compass: HTMLDivElement
   private readonly strip: HTMLDivElement
   private readonly marks = new Map<number, HTMLDivElement>()
   private readonly ticks: HTMLDivElement[] = []
   private readonly wpMark: HTMLDivElement
-  private readonly gateMark: HTMLDivElement
   private readonly near: HTMLDivElement
   private compassT = 0
   private drawT = 0
@@ -85,23 +77,12 @@ export class MapView {
 
   constructor(private readonly o: MapViewOptions) {
     this.tab = o.world
-    this.other = o.world === 'valley' ? 'desert' : 'valley'
-    void worldMeta(this.other).then((m) => { this.otherMeta = m; if (this.open) this.draw() })
     const sig = { signal: this.off.signal }
     this.root = document.createElement('div')
     this.root.className = 'oth-map'
-    // the bar: the worlds' tabs, the places found, zoom
+    // the bar: the places found, zoom
     const bar = document.createElement('div')
     bar.className = 'oth-map-bar'
-    const tabs = document.createElement('div')
-    tabs.className = 'oth-map-tabs'
-    for (const id of ['valley', 'desert'] as WorldId[]) {
-      const b = document.createElement('button')
-      b.textContent = WORLDS[id].name
-      b.addEventListener('click', () => this.show(id), sig)
-      tabs.appendChild(b)
-      this.tabs.set(id, b)
-    }
     this.info = document.createElement('div')
     this.info.className = 'oth-map-info'
     const zoom = document.createElement('div')
@@ -112,21 +93,18 @@ export class MapView {
       b.addEventListener('click', () => this.zoomBy(k), sig)
       zoom.appendChild(b)
     }
-    bar.append(tabs, this.info, zoom)
+    bar.append(this.info, zoom)
     this.canvas = document.createElement('canvas')
     this.ctx = this.canvas.getContext('2d')!
-    // the foot: the route, ROUTE TO THE OTHER WORLD, CLEAR
+    // the foot: the route, CLEAR
     const foot = document.createElement('div')
     foot.className = 'oth-map-foot'
     this.foot = document.createElement('div')
     this.foot.className = 'oth-map-route'
-    this.goBtn = document.createElement('button')
-    this.goBtn.textContent = `Route to ${WORLDS[this.other].name}`
-    this.goBtn.addEventListener('click', () => this.routeToOther(), sig)
     this.clearBtn = document.createElement('button')
     this.clearBtn.textContent = 'Clear'
     this.clearBtn.addEventListener('click', () => this.setWaypoint(null), sig)
-    foot.append(this.foot, this.goBtn, this.clearBtn)
+    foot.append(this.foot, this.clearBtn)
     const hint = document.createElement('div')
     hint.className = 'oth-map-hint'
     hint.textContent = 'Click: set waypoint · drag: move · wheel / Z: zoom · right-click / Del: clear · Tab: close'
@@ -163,13 +141,10 @@ export class MapView {
       this.strip.appendChild(m)
       this.marks.set(l.id, m)
     }
-    this.gateMark = document.createElement('div')
-    this.gateMark.className = 'oth-mark oth-mark-gate'
-    this.gateMark.textContent = '⇑'
     this.wpMark = document.createElement('div')
     this.wpMark.className = 'oth-mark oth-mark-wp'
     this.wpMark.textContent = '◆'
-    this.strip.append(this.gateMark, this.wpMark)
+    this.strip.append(this.wpMark)
     this.near = document.createElement('div')
     this.near.className = 'oth-compass-near'
     this.compass.appendChild(this.near)
@@ -185,7 +160,7 @@ export class MapView {
     document.body.classList.toggle('oth-map-open', this.open)
     if (this.open) {
       this.o.chart.finish()
-      this.show(this.o.world)
+      this.draw()
     }
   }
 
@@ -224,39 +199,28 @@ export class MapView {
       if (m.textContent !== txt) { m.textContent = txt; m.classList.toggle('found', found) }
       if (!best || d < best.d) best = { l, d }
     }
-    const G = this.o.meta.gate
-    place(this.gateMark, G && Math.hypot(G.x - p.x, G.z - p.z) < 2500 ? at(bearing(G.x, G.z)) : null)
-    // the waypoint (or the pass on the way to it): its marker, and its distance in place of the nearest place's
-    const gd = this.o.guide, w = gd.waypoint, tgt = w ? (gd.viaGate ? G : w) : null
-    place(this.wpMark, tgt ? at(bearing(tgt.x, tgt.z)) : null)
-    if (w) this.near.innerHTML = `<b>◆</b> ${esc(w.name)}${gd.viaGate ? ' · via the pass' : ''} · ${fmtDist(gd.remaining)}`
+    // the waypoint: its marker, and its distance in place of the nearest place's
+    const gd = this.o.guide, w = gd.waypoint
+    place(this.wpMark, w ? at(bearing(w.x, w.z)) : null)
+    if (w) this.near.innerHTML = `<b>◆</b> ${esc(w.name)} · ${fmtDist(gd.remaining)}`
     else this.near.textContent = best ? `${lm.found.has(best.l.id) ? best.l.name : '? Unexplored'} · ${fmtDist(best.d)}` : ''
   }
 
   // ------------------------------------------------------------------------------------------------- the map
-  private half(id: WorldId): number {
-    if (id === this.o.world) return -this.o.meta.inner.origin
-    return this.otherMeta ? -this.otherMeta.inner.origin : 2048
+  private half(_id: WorldId): number {
+    return -this.o.meta.inner.origin
   }
 
   /** How far the map can be moved and zoomed out (m from the middle): the chart's own half — or, where a world has
    *  land beyond its box (the valley's outland, 2026-11-11), that land's. */
   private reach(id: WorldId): number {
-    const m = id === this.o.world ? this.o.meta : this.otherMeta
-    return Math.max(this.half(id), m?.outland?.play ?? 0)
+    return Math.max(this.half(id), this.o.meta.outland?.play ?? 0)
   }
 
   private view(id: WorldId): { cx: number; cz: number; v: number } {
     let v = this.views.get(id)
     if (!v) this.views.set(id, (v = { cx: 0, cz: 0, v: this.half(id) }))
     return v
-  }
-
-  private show(id: WorldId): void {
-    this.tab = id
-    for (const [k, b] of this.tabs) b.classList.toggle('sel', k === id)
-    if (id === this.other && !this.otherChart) void bakedChart(id).then((im) => { this.otherChart = im; if (this.open) this.draw() })
-    this.draw()
   }
 
   private clampView(id: WorldId): void {
@@ -278,13 +242,13 @@ export class MapView {
     this.draw()
   }
 
-  /** Z: the whole map ⇄ 800 m round the car (this world) / the centre (the other). */
+  /** Z: the whole map ⇄ 800 m round the car. */
   private zoomToggle(): void {
     const V = this.view(this.tab), H = this.reach(this.tab)
     if (V.v > 900) {
       const p = this.o.carPos()
       V.v = 800
-      if (this.tab === this.o.world) { V.cx = p.x; V.cz = p.z }
+      V.cx = p.x; V.cz = p.z
     } else { V.v = H; V.cx = V.cz = 0 }
     this.clampView(this.tab)
     this.draw()
@@ -334,39 +298,22 @@ export class MapView {
     c.addEventListener('contextmenu', (e) => { e.preventDefault(); this.setWaypoint(null) }, sig)
   }
 
-  /** The shown world's meta, places and their found set (null: the other world's meta not here yet). */
-  private shown(): { meta: MapMeta; places: Landmark[]; found: Set<number> } | null {
-    if (this.tab === this.o.world) return { meta: this.o.meta, places: this.o.lm.list, found: this.o.lm.found }
-    const m = this.otherMeta
-    return m ? { meta: m, places: m.landmarks ?? [], found: foundIn(m.id) } : null
+  /** The world's meta, places and their found set. */
+  private shown(): { meta: MapMeta; places: Landmark[]; found: Set<number> } {
+    return { meta: this.o.meta, places: this.o.lm.list, found: this.o.lm.found }
   }
 
-  /** A click on the chart: on the waypoint → clear it; on a place / the pass → that; anywhere else → a waypoint there. */
+  /** A click on the chart: on the waypoint → clear it; on a place → that; anywhere else → a waypoint there. */
   private clickAt(px: number, py: number): void {
     const s = this.shown()
-    if (!s) return
     const V = this.view(this.tab), S = this.canvas.width, k = S / 640
     const P = (x: number, z: number): [number, number] => [((x - V.cx + V.v) / (2 * V.v)) * S, ((z - V.cz + V.v) / (2 * V.v)) * S]
     const hit = (x: number, z: number, r = 14) => { const [a, b] = P(x, z); return Math.hypot(a - px, b - py) < r * k }
     const w = this.o.guide.waypoint
     if (w && w.world === this.tab && hit(w.x, w.z - 15 * k * ((2 * V.v) / S), 16)) { this.setWaypoint(null); return }
-    const G = s.meta.gate
-    if (G && hit(G.x, G.z)) {
-      // the pass: to the other world (from this tab's world) — the waypoint where you come out over there
-      if (this.tab === this.o.world) this.routeToOther()
-      else this.setWaypoint({ world: this.tab, x: G.x, z: G.z, name: WORLDS[this.tab].name })
-      return
-    }
     for (const l of s.places) if (onMap(l, s.found.has(l.id)) && hit(l.x, l.z)) { this.setWaypoint({ world: this.tab, x: l.x, z: l.z, name: s.found.has(l.id) ? l.name : 'Unexplored place' }); return }
     const [x, z] = this.unproject(px, py)
     this.setWaypoint({ world: this.tab, x, z, name: 'Waypoint' })
-  }
-
-  /** The waypoint where the other world's pass lets you out. */
-  private routeToOther(): void {
-    const m = this.otherMeta
-    if (!m?.gate) return
-    this.setWaypoint({ world: this.other, x: m.gate.x, z: m.gate.z, name: WORLDS[this.other].name })
   }
 
   private setWaypoint(w: Waypoint | null): void {
@@ -380,16 +327,16 @@ export class MapView {
     const css = Math.max(220, Math.round(Math.min(innerWidth * 0.94, innerHeight - (document.body.classList.contains('touch') ? 84 : 132))))
     const dpr = Math.min(devicePixelRatio, 2), S = Math.round(css * dpr)
     if (this.canvas.width !== S) { this.canvas.width = this.canvas.height = S; this.canvas.style.width = this.canvas.style.height = `${css}px` }
-    const g = this.ctx, k = S / 640, here = this.tab === this.o.world
+    const g = this.ctx, k = S / 640
     const V = this.view(this.tab), half = this.half(this.tab)
     this.clampView(this.tab)
     const P = (x: number, z: number): [number, number] => [((x - V.cx + V.v) / (2 * V.v)) * S, ((z - V.cz + V.v) / (2 * V.v)) * S]
-    // the ground: this world's chart, the other's baked one (plain paper until it's here)
+    // the ground: the world's chart
     g.fillStyle = '#e6d6b8'
     g.fillRect(0, 0, S, S)
-    const src: HTMLCanvasElement | HTMLImageElement | null = here ? this.o.chart.canvas : this.otherChart
-    // (the outland's chart under the box's: its relief and snow — this world's only; the other's outland is plain paper)
-    const far = here ? this.o.chart.far : null
+    const src: HTMLCanvasElement = this.o.chart.canvas
+    // (the outland's chart under the box's: its relief and snow)
+    const far = this.o.chart.far
     if (far && this.o.chart.ready) {
       const fh = this.o.chart.farHalf, fs = far.width
       g.imageSmoothingEnabled = true
@@ -409,9 +356,8 @@ export class MapView {
       drawTracks(g, s.meta, P, 1.6 * k * zoomK, { x0: V.cx - V.v, z0: V.cz - V.v, x1: V.cx + V.v, z1: V.cz + V.v })
       const ms = s.meta.mud?.marsh
       if (ms) { const [mx, my] = P(ms.x, ms.z); label(g, 'The Bog', mx, my, '#4a3423', Math.round(12 * k), true) }
-      // the route: this world's leg from the car on, or the other world's from its pass
-      if (here && gd.route) drawRoute(g, gd.route.pts, gd.route.off, P, 3.2 * k * zoomK, gd.route.seg, gd.route.pos())
-      if (!here && w?.world === this.tab && gd.otherLeg) drawRoute(g, gd.otherLeg.pts, gd.otherLeg.off, P, 3.2 * k * zoomK)
+      // the route: from the car on
+      if (gd.route) drawRoute(g, gd.route.pts, gd.route.off, P, 3.2 * k * zoomK, gd.route.seg, gd.route.pos())
       // the places
       for (const l of s.places) {
         const [x, y] = P(l.x, l.z), found = s.found.has(l.id)
@@ -432,19 +378,10 @@ export class MapView {
         const [x, y] = P(pk.x, pk.z)
         label(g, `▲ ${pk.name} ${Math.round(pk.h)} m`, x, y, '#4a4038', Math.round(10 * k), true)
       }
-      // the pass to the other world
-      const G = s.meta.gate
-      if (G) {
-        const [gx, gy] = P(G.x, G.z), to = WORLDS[this.tab === 'valley' ? 'desert' : 'valley'].name
-        drawGate(g, gx, gy, k, G.heading)
-        label(g, `Pass to ${to}`, gx, gy + 19 * k, '#16120d', Math.round(11.5 * k), false)
-      }
       // the camp (the spawn), your own
       const [sx, sy] = P(s.meta.spawn.x, s.meta.spawn.z)
-      // (the desert's camp is at its pass: the label above the pass's)
-      const byGate = G && Math.hypot(G.x - s.meta.spawn.x, G.z - s.meta.spawn.z) < 120
-      label(g, '⛺ Camp', sx, byGate ? sy - 20 * k : sy, '#3a2414', Math.round(10.5 * k), false)
-      const mine = here ? this.o.myCamp() : null
+      label(g, '⛺ Camp', sx, sy, '#3a2414', Math.round(10.5 * k), false)
+      const mine = this.o.myCamp()
       if (mine) { const [cx, cy] = P(mine.x, mine.z); label(g, '⛺ Your camp', cx, cy, '#5a2a14', Math.round(10.5 * k), false) }
     }
     // the FPS DROPS marked (PerfMarks.ts): a red ✕, its fps beside it (a stall: '!')
@@ -461,13 +398,13 @@ export class MapView {
       drawPin(g, wx, wy, k)
     }
     // (co-op) the land claimed: each circle in its owner's colour, its flag, whose it is
-    if (here) for (const c of this.o.claims?.() ?? []) {
+    for (const c of this.o.claims?.() ?? []) {
       const [cx, cy] = P(c.x, c.z), [ex] = P(c.x + c.r, c.z)
       drawClaim(g, cx, cy, Math.max(10 * k, ex - cx), c.colour, k * 1.35, c.mine)
       claimTag(g, c.name, cx, cy - 13 * k * 1.35 - 4 * k, c.colour, k)
     }
     // (co-op) the other players: an arrow in their colour, their name under it
-    if (here) for (const o of this.o.others?.() ?? []) {
+    for (const o of this.o.others?.() ?? []) {
       const [ox, oy] = P(o.x, o.z)
       g.save(); g.translate(ox, oy); g.rotate(-o.heading)
       g.fillStyle = o.colour; g.strokeStyle = '#fff'; g.lineWidth = 2 * k
@@ -476,7 +413,7 @@ export class MapView {
       label(g, o.name, ox, oy + 17 * k, '#16120d', Math.round(11 * k), false)
     }
     // the car
-    if (here) {
+    {
       const p = this.o.carPos(), [px, py] = P(p.x, p.z), h = this.o.carHeading()
       g.save(); g.translate(px, py); g.rotate(-h)
       g.fillStyle = '#e8492b'; g.strokeStyle = '#fff'; g.lineWidth = 2 * k
@@ -486,10 +423,9 @@ export class MapView {
     // the bar and the foot
     const found = s ? s.places.filter((l) => s.found.has(l.id)).length : 0
     this.info.textContent = s ? `${found} / ${s.places.length} places found` : ''
-    this.goBtn.style.display = this.o.meta.gate && !(w?.world === this.other && w.name === WORLDS[this.other].name) ? '' : 'none'
     this.clearBtn.style.display = w ? '' : 'none'
     this.foot.innerHTML = w
-      ? `<b style="color:${ROUTE}">◆</b> ${esc(w.name)}${w.world !== this.o.world ? ` <small>in ${WORLDS[w.world].name}</small>` : ''}<span>${gd.route ? `${fmtDist(gd.remaining)} · ${fmtTime(gd.remainingTime)}` : ''}${gd.viaGate ? ' · via the pass' : ''}</span>`
+      ? `<b style="color:${ROUTE}">◆</b> ${esc(w.name)}<span>${gd.route ? `${fmtDist(gd.remaining)} · ${fmtTime(gd.remainingTime)}` : ''}</span>`
       : '<small>No waypoint — click the map to set one</small>'
   }
 }

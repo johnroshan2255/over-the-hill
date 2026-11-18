@@ -47,8 +47,8 @@ frames ≥ 70 ms a minute.
 **76 of the 106 marks weren't the valley.** A way passing the Great Cliff's gate (1102, −1990) crossed into the desert
 world (Crossing.ts: the swap), and every way after it was driven in the desert at the valley's coordinates — that's
 "Lead 2" (no trees drawn, a 1.4 ms usual frame: the desert's) and three of the four "rim" hitches (the desert's box
-edge). The marks say so (`world: "desert"`). Now `Crossing.hold` (the harness sets it: the other world still built
-ahead and let go, never swapped into) and `perfmarks.mjs` swaps back to the valley before a way if it ever isn't.
+edge). The marks say so (`world: "desert"`). (Then `Crossing.hold` kept the drive in the valley — since 2d there is
+no desert to go to.)
 
 **The crossing's build: one frame of 687 ms**, 1 100 m from the gate (BUILD_AT — the valley's 113 ms mark at
 480, −1093 was it). `renderer.compileAsync` joins the new world to the scene HIDDEN for its shaders' warm-up, and
@@ -64,7 +64,7 @@ old max 60).
 them shows only 66–71 ms frames — headless Chrome's own GPU waits (`(program)`, `getCurrentTexture`, no game code),
 the same as on track 0 far from everything.
 
-**Then the build's own steps** (`crossbuild.mjs` — new: the car put near the gate, every frame timed until the desert
+**Then the build's own steps** (`crossbuild.mjs` — deleted with the desert, 2d: the car put near the gate, every frame timed until the desert
 is ready, the build's step timings, a CPU profile inside one function): the frame the map arrived in was 114–123 ms —
 the `rocks` step, 61–66 ms in ONE frame, 36 ms of it `stampRock` (the desert's 12 k big stones' footprint discs,
 millions of cells). The stamping is now `Rocks.stampFootprint()`, a generator World.build runs `sliced` (6 ms a
@@ -77,8 +77,7 @@ forest, omeadow, orocks, rockhill, lake ≤ 2; the desert's two views 0–1; spa
 a 50–80 ms frame now and then — one big shader's naga + createShaderModule), `placing trees`, `placing bushes`
 (already sliced).
 
-`hitchprof.mjs` now: `FROM` (start part-way along the way), each long frame's own top call chains (`ROWS`), the
-crossing's state per long frame, the crossing held.
+`hitchprof.mjs` now: `FROM` (start part-way along the way), each long frame's own top call chains (`ROWS`).
 
 ## 2c. 2026-11-18 — the drive again, every way, the valley held (`docs/perf/marks_2026-11-18.json`)
 
@@ -95,6 +94,44 @@ over 141 ways, 76 of them the desert's).
   second after arriving. `why` said 10.5 ms there — `why` was reading `gpuDone`'s constant (above).
 - **The page died once** (way 131, ~1 h 40 min in, the heap mid-drive ~920 MB); way 131 alone drives fine. A run
   that long is what kills it — see Lead 4 below.
+
+## 2d. 2026-11-18 — the memory, and THE DESERT DELETED
+
+**The leak the long drives died of: the crossing.** `leakprof.mjs` over all 69 outland roads (a forced GC after each),
+the process memory logged every 30 s: the heap after GC stepped +124 MB (road 3), −70 (road 4), +122 (road 7), −69
+(road 8), +53 (road 21), +54 (road 61) — 577 → 794 MB. Each step was the desert BUILT behind the play (a road within
+1 100 m of the gate) and let go (1 600 m away): ~52 MB of it never came back, every time. The full drive passes the
+gate again and again; the page died at ~1 h 40 min (way 131 — which alone drives fine). The renderer's and the GPU
+process's memory stayed flat (690–770 MB, 260–350 MB) — it was the JS heap.
+
+**Then the user: "delete the desert and the path to desert"** — chosen: the gate only (the Great Cliff and its ledge
+road kept, the valley's picture unchanged). Gone: the desert world (`public/oth/desert`, 23 MB; `scripts/oth/desert*.py`),
+`Crossing.ts` (→ `PassMist.ts`: only the cloud on the pass, the same), `Formations.ts`, world swapping
+(`swapTo`, `World.adopt` / `dispose` / background builds), the map's desert tab and route-via-the-pass, the sandstorm,
+the desert's grade, palms, slab stacks, sculpted stones, scrub, props and sounds, every `map.desert` branch and the
+`OTH_DESERT` / `OTH_STACK` / `SAND` shader branches; the harness's `crossbuild`, `crosstest`, `swaptest`,
+`desertshot`, `desertcost`, `oasisshot`. Every seeded placement draws as it did (each removed branch checked: no `rnd()`
+call the valley made is gone). **pixcmp vs the commit before, 10 views: within ±2 everywhere; the only change the
+compass's ⇑ for the gate.** A drive through where the gate was: the cloud as before (0.97 at the top), no errors.
+(The fixes above for the crossing's build — `HIDDEN_MS`, `Rocks.stampFootprint` — stay: they help any world joined
+hidden, and the load.)
+
+**What holds the memory now** (`memmap.mjs` — new: every object reachable from `window.__oth` walked, each
+ArrayBuffer charged to the path it was first met by): the heap after GC ~547 MB; ~360 MB of it in ArrayBuffers:
+- PlayCanvas's own CPU copy of every vertex / index buffer (`device.buffers[].storage`): **~64 MB** — the same data as
+  our geometries' arrays (`scene.inLayer` … `geometry.attributes`: ~70 MB). On WebGPU the copy is only read when a
+  buffer is written again (`Mesh.update`, `writeStreams`) — droppable after upload, re-made from the geometry before
+  any later write (a mesh that ever needs it: keep its copy). WebGL2 keeps them (context loss restores from them).
+  **DONE — LEAN BUFFERS** (`scene.ts`: `lean` / `unlean` / `refill`; `?lean=0` the A/B): the copies 63.6 MB → ~0,
+  **the heap after GC 545 → 478 MB**. pixcmp lean vs lean=0, 10 views: ±2 (the caves 0). `abq.mjs` spawn / forest /
+  oroad: ±0.1 ms (the noise). `leancheck.mjs` (new): a 20 s drive (the changing meshes re-made and kept) and a LOST
+  DEVICE (`renderer.loseDevice()` — PlayCanvas's own recovery) — the same pictures as lean=0, no errors.
+  FOUND THERE (not the lean buffers' — lean=0 the same): after a lost device the ground comes back BLACK, the grass and
+  most trees gone — the bakes (the ground cache's clipmap, the grass field, the impostor atlas …) aren't redone on
+  'devicerestored'. A phone's browser does lose its GPU (backgrounded, memory pressure): worth fixing.
+- PlayCanvas's uniform staging buffers: ~21 MB.
+- the map's grids: far 40 MB, roads 18 MB, trails 16 MB, inner heights 16 MB …; trees' data 12.7 MB, bushes' 7.8 MB.
+- ~187 MB of plain JS objects (rocks' `Inst` objects, ~56 k; the rest).
 
 ## 3. The drive's marks (2026-11-17 — see 2b: most of them the desert's)
 
@@ -141,7 +178,17 @@ drive). After the restart the browser's memory stayed flat (renderer ~700 MB, GP
 the second crash isn't explained yet. Watch the renderer / GPU process RSS over a 2 h drive
 (`ps axo rss,command | grep puppeteer_dev_chrome_profile`); check WebGPU device loss in the console.
 
-## 4. Next, in order
+## 4. Next, in order (2026-11-18)
+
+1. Memory, on (`memmap.mjs` before / after, pixcmp): the map grids' Float32 copies (far 40 MB, roads 18, trails 16,
+   inner heights 16 — which are read on the CPU at all?); the ~187 MB of plain objects (a heap snapshot: the rocks'
+   ~56 k `Inst` objects → typed arrays?); PlayCanvas's 21 MB uniform staging.
+1b. After a lost device the ground is black (2d): re-bake on 'devicerestored'.
+2. Re-run the long memory drive (`leakprof.mjs` over the roads, the RSS logged) — it must stay flat now the desert is
+   gone; and a full `perfmarks.mjs` drive: the page must live through all 252 ways.
+3. A phone: none of this has been on one.
+
+(Before 2026-11-18:)
 
 1. Re-run the full drive (or `START=` from where it stopped) and keep the file: `SET=all SPEED=28 node
    scripts/harness/perfmarks.mjs drive docs/perf/marks.json`.

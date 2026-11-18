@@ -223,10 +223,9 @@ export class OthPhysics {
         if ((r.x - x) ** 2 + (r.z - z) ** 2 > reach * reach) continue
         keep.add(i)
         if (this.rocks.has(i)) continue
-        // (a STACK: a hull per slab — the car drives on its tops and climbs its edges; a hull round the whole stack
-        //  was an invisible cone over every bench — 2026-11-04. A stone: the hull of its shape)
-        const stack = !!this.rockSet.slabs[r.v] || !!r.crag   // (a crag, a ledge: ground — the wheels climb onto it)
-        const parts = this.rockSet.slabs[r.v] ?? [this.rockSet.shapes[r.v]], cols: RAPIER.Collider[] = []
+        // (a stone: the hull of its shape)
+        const stack = !!r.crag   // (a crag, a ledge: ground — the wheels climb onto it)
+        const parts = [this.rockSet.shapes[r.v]], cols: RAPIER.Collider[] = []
         this.rockSet.matrixOf(r, this.m)
         for (const src of parts) {
           const pts = new Float32Array(src.length)
@@ -282,13 +281,10 @@ export class OthPhysics {
     }
   }
 
-  /** The SURFACE to set a car on at (x, z), from about y0 (the ground there, or where the car was): the top of whatever
-   *  is solid — the terrain, or a slab stack's slabs over it (Rocks.solidTop: from their outlines, so it holds before
-   *  their colliders reach Rapier's queries). 2026-11-04: a reset or a camp's spawn at the terrain's height put the car
-   *  INSIDE a slab where a stack stands on the slope — pinned in the rock. */
+  /** The SURFACE to set a car on at (x, z), from about y0 (the ground there, or where the car was): the terrain — or,
+   *  from a height, the first solid thing under it. */
   surface(x: number, z: number, y0: number, from?: number): number {
-    // (2.8 m: a gap under another slab lower than that fits no car — it was set into a 2 m one, wedged)
-    const s = this.rockSet.solidTop(x, z, Math.max(y0, this.map.height(x, z)), 2.8)
+    const s = Math.max(y0, this.map.height(x, z))
     // FROM a height (the car's, the bike's — where the rider was): the first solid thing under it, the static meshes
     //  too — the CAVE's floor stands over the land (2026-11-07, the user: "see, the human goes inside": got out in the
     //  cave, he was put at the land's height, under its floor, and stayed in it)

@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
 import type { Camp } from '../save'
-import { type Chart, drawGate, drawOutPlace, drawPaths, drawPin, drawPlace, drawRoads, drawRoute, drawTracks, type ClaimMark, drawClaim } from './Chart'
+import { type Chart, drawOutPlace, drawPaths, drawPin, drawPlace, drawRoads, drawRoute, drawTracks, type ClaimMark, drawClaim } from './Chart'
 import type { Landmarks } from './Landmarks'
 import type { MapMeta } from './MapData'
 import { fmtDist, fmtTime, type Guide, turnArrow } from './Nav'
@@ -211,8 +211,6 @@ export class Radar {
     const inView = (x: number, z: number) => x > view.x0 && x < view.x1 && z > view.z0 && z < view.z1
     for (const l of this.o.lm.list) if (inView(l.x, l.z)) { const [x, y] = P(l.x, l.z); up(x, y, () => drawPlace(g, l, this.o.lm.found.has(l.id), 0, 0, 0.62)) }
     for (const q of meta.outland?.places ?? []) if (inView(q.x, q.z)) { const [x, y] = P(q.x, q.z); up(x, y, () => drawOutPlace(g, q.kind, 0, 0, 0.62)) }
-    const G = meta.gate
-    if (G && inView(G.x, G.z)) { const [x, y] = P(G.x, G.z); drawGate(g, x, y, 0.62, G.heading, head) }
     // (co-op) the land claimed: its circle and its flag (upright)
     for (const c of this.o.claims?.() ?? []) {
       if (c.x + c.r < view.x0 || c.x - c.r > view.x1 || c.z + c.r < view.z0 || c.z - c.r > view.z1) continue
@@ -224,8 +222,8 @@ export class Radar {
       const [x, y] = P(mine.x, mine.z)
       up(x, y, () => { g.font = '13px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; g.fillText('⛺', 0, 0) })
     }
-    // the waypoint (or the pass on the way to it), held inside the box's edge when it's off the radar
-    const w = gd.waypoint, tgt = w ? (gd.viaGate ? G : w) : null
+    // the waypoint, held inside the box's edge when it's off the radar
+    const w = gd.waypoint, tgt = w
     if (tgt) {
       const c = Math.cos(head), s = Math.sin(head)
       const vx = (tgt.x - cx) / mpp, vz = (tgt.z - cz) / mpp
@@ -235,8 +233,7 @@ export class Radar {
       const f = Math.max(sx < 0 ? -sx / lx : sx / rx, sy < 0 ? -sy / ty : sy / by, 1)
       sx /= f; sy /= f
       const [x, y] = [C + sx * c - sy * s, C + sx * s + sy * c]
-      if (gd.viaGate && G) drawGate(g, x, y, 0.7, G.heading, head)
-      else up(x, y, () => drawPin(g, 0, 0, 0.75))
+      up(x, y, () => drawPin(g, 0, 0, 0.75))
     }
   }
 
@@ -248,7 +245,7 @@ export class Radar {
       // the next turn (its arrow, how far) — or, none left on this leg, where it ends; then how far / long in all
       const n = r.next()
       const what = r.roughAhead(150) ? 'rock crawl — slow' : n ? (n.m.kind === 'leave' ? 'leave the track' : n.m.kind === 'join' ? 'onto the track' : '') : ''
-      const lead = (n ? `<i>${turnArrow(n.m.turn)}</i><b>${fmtDist(n.dist)}</b>` : `<i>${gd.viaGate ? '⇑' : '◆'}</i><b>${gd.viaGate ? 'The pass' : esc(w.name)}</b>`) + (what ? `<small>${what}</small>` : '')
+      const lead = (n ? `<i>${turnArrow(n.m.turn)}</i><b>${fmtDist(n.dist)}</b>` : `<i>◆</i><b>${esc(w.name)}</b>`) + (what ? `<small>${what}</small>` : '')
       html = `${lead}<span>${fmtDist(gd.remaining)} · ${fmtTime(gd.remainingTime)}</span>`
     }
     if (html === this.plateKey) return

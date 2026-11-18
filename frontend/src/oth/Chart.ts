@@ -1,5 +1,4 @@
 import type { Landmark, MapData, MapMeta, OutPlace } from './MapData'
-import { WORLDS, type WorldId } from './World'
 
 /**
  * THE CHART: a world's ground painted top-down once — hillshade (light from the north-west), 40 m contours, the colour
@@ -126,19 +125,6 @@ function farTint(map: MapData, x: number, z: number, h: number, slope: number): 
   const sn = Math.max(0, Math.min(1, (h - line - 40) / 150)) * (1 - 0.6 * rk); r += (0.95 - r) * sn; gg += (0.96 - gg) * sn; b += (0.98 - b) * sn
   if (map.lakeAt(x, z) !== null) { r = 0.47; gg = 0.67; b = 0.79 }
   return [r, gg, b]
-}
-
-/** The other world's baked chart (null if it isn't there: the map draws its tracks on plain paper). */
-const baked = new Map<WorldId, Promise<HTMLImageElement | null>>()
-export function bakedChart(id: WorldId): Promise<HTMLImageElement | null> {
-  let p = baked.get(id)
-  if (!p) baked.set(id, (p = new Promise((resolve) => {
-    const im = new Image()
-    im.onload = () => resolve(im)
-    im.onerror = () => resolve(null)
-    im.src = `${WORLDS[id].path}/chart.webp`
-  })))
-  return p
 }
 
 // ------------------------------------------------------------------------------------------------- shared drawing
@@ -270,20 +256,6 @@ export function drawPin(g: CanvasRenderingContext2D, x: number, y: number, k: nu
   g.restore()
 }
 
-/** The PASS to the other world: a dark square with a double chevron (up = the way out). */
-export function drawGate(g: CanvasRenderingContext2D, x: number, y: number, k: number, heading: number, upright = 0): void {
-  g.save()
-  g.translate(x, y)
-  g.rotate(upright)
-  g.fillStyle = '#16120d'; g.strokeStyle = '#f2a93b'; g.lineWidth = 2 * k
-  g.fillRect(-9 * k, -9 * k, 18 * k, 18 * k); g.strokeRect(-9 * k, -9 * k, 18 * k, 18 * k)
-  // (the chevrons point the way out: heading 0 = −z = up the chart)
-  g.rotate(-heading - upright)
-  g.strokeStyle = '#f4efe6'; g.lineWidth = 2.2 * k; g.lineJoin = 'miter'
-  for (const o of [-2.5, 2.5]) { g.beginPath(); g.moveTo(-5 * k, (o + 3) * k); g.lineTo(0, (o - 2) * k); g.lineTo(5 * k, (o + 3) * k); g.stroke() }
-  g.restore()
-}
-
 /** A map label with a pale halo (legible on any ground). */
 /** (co-op) a claim on a map: its circle tinted and edged dashed in its owner's colour, a little flag at its middle. */
 export function drawClaim(g: CanvasRenderingContext2D, x: number, y: number, rPx: number, colour: string, k: number, mine: boolean): void {
@@ -342,7 +314,3 @@ export function drawPlace(g: CanvasRenderingContext2D, l: Landmark, found: boole
   g.fillText(found ? ICON[l.kind] : '?', x, y + 0.5 * k)
 }
 
-/** The places found in a world (Landmarks.ts keeps them per map id). */
-export function foundIn(id: string): Set<number> {
-  try { return new Set(JSON.parse(localStorage.getItem(`oth.found.${id}`) ?? '[]') as number[]) } catch { return new Set() }
-}

@@ -290,6 +290,8 @@ function prepare(mesh: Mesh): Gpu | null {
     if (layer) { mesh.layer = layer; layer.addMeshInstances([mi]) }
   }
   if (g.mi.material !== pcMat) g.mi.material = pcMat
+  // (LEAN: the mesh's buffers' CPU copy was let go after its upload — made again from the geometry before any write)
+  if (isLean(g.pcMesh)) for (let i = 0; i < pk.streams.length; i++) { const st = pk.streams[i]; if (g.uploaded.get(st.name) !== st.a.version) { unlean(g.pcMesh); break } }
   // re-upload what changed: the mesh's own streams, the instancing buffer
   let dirty = false, direct = 0
   // (a stream rewritten IN PLACE — the same count, the index as it was: written straight into the mesh's vertex buffer,
@@ -312,6 +314,7 @@ function prepare(mesh: Mesh): Gpu | null {
     if (geo.index) { g.pcMesh.setIndices(geo.index.array as Uint16Array); g.uploaded.set('#index', geo.index.version) } // (the index sent: as it is now)
     g.pcMesh.update(pc.PRIMITIVE_TRIANGLES)
   }
+  if (LEAN) lean(g.pcMesh, geo, pk.streams)
   // THE INSTANCING BUFFER, SIZED TO WHAT'S DRAWN (2026-11-07, docs/PERF.md "the hitches"): it holds the instances
   // drawn now — grown by half again when more are, never shrunk — and each stream's entries are copied from where it
   // was last copied to (all of them again when the attribute's version changes). Was: the attribute's whole capacity
@@ -350,6 +353,68 @@ function prepare(mesh: Mesh): Gpu | null {
     }
   }
   return g
+}
+
+// ------------------------------------------------------------------------------------------------- lean buffers
+/**
+ * LEAN BUFFERS (2026-11-18, the user: "reduce memory use" — memmap.mjs: PlayCanvas keeps a CPU copy of every vertex and
+ * index buffer it uploads (`storage`), ~64 MB of the valley, the same bytes as our geometries' own arrays). On WebGPU
+ * that copy is only read when the buffer is written again (Mesh.update, writeStreams: `lock()`) and when a lost device
+ * is restored (`restoreContext` re-uploads every buffer from it). So after a mesh's upload its copy goes (an empty
+ * ArrayBuffer in its place — a write that slipped past would throw, not draw garbage); before any later write it's
+ * made again from the geometry (`unlean`) and that mesh keeps it from then on (it's one that changes); on 'devicelost'
+ * every lean buffer is refilled before PlayCanvas restores them. The instancing buffers (written in ranges) keep
+ * theirs. WebGL2 keeps every copy (a lost context restores from them). `?lean=0`: off (the A/B).
+ */
+const EMPTY = new ArrayBuffer(0)
+const LEAN = (() => { try { return new URLSearchParams(location.search).get('lean') !== '0' } catch { return true } })()
+/** The meshes that are written again: their copies kept. */
+const keepCopy = new WeakSet<pc.Mesh>()
+type LeanVb = pc.VertexBuffer & { storage: ArrayBuffer; __src?: { geo: BufferGeometry; streams: Pick['streams'] } }
+type LeanIb = pc.IndexBuffer & { storage: ArrayBuffer; __src?: BufferGeometry }
+let leanHooked = false
+function isLean(m: pc.Mesh): boolean { return (m.vertexBuffer as LeanVb | null)?.storage === EMPTY }
+function lean(m: pc.Mesh, geo: BufferGeometry, streams: Pick['streams']): void {
+  const vb = m.vertexBuffer as LeanVb | null
+  if (!vb || vb.storage === EMPTY || keepCopy.has(m)) return
+  const dev = gfx().device as unknown as { wgpu?: unknown; on(e: string, f: () => void): void; buffers: Set<LeanVb | LeanIb> }
+  if (!dev.wgpu) return
+  if (!leanHooked) {
+    leanHooked = true
+    dev.on('devicelost', () => { for (const b of dev.buffers) if (b.storage === EMPTY && b.__src) refill(b) })
+  }
+  vb.__src = { geo, streams: streams.slice() }
+  vb.storage = EMPTY
+  const ib = m.indexBuffer[0] as LeanIb | undefined
+  if (ib && geo.index && ib.storage !== EMPTY) { ib.__src = geo; ib.storage = EMPTY }
+}
+function unlean(m: pc.Mesh): void {
+  keepCopy.add(m)
+  const vb = m.vertexBuffer as LeanVb | null, ib = m.indexBuffer[0] as LeanIb | undefined
+  if (vb?.storage === EMPTY) refill(vb)
+  if (ib?.storage === EMPTY) refill(ib)
+}
+/** The buffer's CPU copy made again: the geometry's streams (as they are now) into a vertex buffer, its index into an
+ *  index buffer — the bytes the upload sent. */
+function refill(b: LeanVb | LeanIb): void {
+  const buf = new ArrayBuffer(b.numBytes)
+  if (b instanceof pc.IndexBuffer) {
+    const geo = (b as LeanIb).__src, src = geo?.index?.array
+    if (src) { const dst = b.bytesPerIndex === 4 ? new Uint32Array(buf) : new Uint16Array(buf); dst.set(src.length > dst.length ? src.subarray(0, dst.length) : src) }
+    b.storage = buf
+    return
+  }
+  const vb = b as LeanVb, fmt = vb.format
+  for (const { name, a, sem } of vb.__src?.streams ?? []) {
+    const at = vb.__src!.geo.attributes[name] ?? a, src = at.array, k = at.itemSize, B = src.BYTES_PER_ELEMENT
+    const cnt = Math.min(at.count, vb.numVertices)
+    const el = fmt.elements.find((e) => e.name === sem)
+    if (!el) continue
+    const Ctor = src.constructor as new (b: ArrayBuffer, o?: number, l?: number) => TypedArray
+    if (el.stride === k * B && el.offset % B === 0) new Ctor(buf, el.offset, cnt * k).set(src.length === cnt * k ? src : src.subarray(0, cnt * k))
+    else { const dst = new Ctor(buf), st = el.stride / B, off = el.offset / B; for (let v = 0; v < cnt; v++) for (let c = 0; c < k; c++) dst[off + v * st + c] = src[v * k + c] }
+  }
+  vb.storage = buf
 }
 
 /** (prepare's streams written straight into a vertex buffer this frame) */

@@ -139,7 +139,7 @@ export class Grass {
       uPave: t.uPave, uPave0: t.uPave0, uPave1: t.uPave1, uPave2: t.uPave2, uPave3: t.uPave3,
     }
     const paved = (terrain.mesh.material as GFX.ShaderMaterial).defines?.OTH_PAVE !== undefined && !cave
-    this.field = new GrassField(renderer, R, uniforms, { ...map.biomeDefines, ...rimDefines(), ...caveDef, ...(paved ? { OTH_PAVE: '' } : {}) })
+    this.field = new GrassField(renderer, R, uniforms, { ...rimDefines(), ...caveDef, ...(paved ? { OTH_PAVE: '' } : {}) })
     Object.assign(uniforms, this.field.uniforms)
     // (2026-10-27, 400 fps at 1080p: each ring is built at its INNER edge's density and the rank cull thins it outward —
     //  the culled tufts still cost a vertex each; the near ring (to 0.25 R) split in two halves those: its outer half
@@ -159,7 +159,7 @@ export class Grass {
       const mat = new GFX.ShaderMaterial({
         glslVersion: GFX.GLSL3,
         uniforms: { ...uniforms, uBuild: { value: density }, uRin: { value: bounds[r] }, uRout: { value: bounds[r + 1] }, uFan: { value: blades[r] } },
-        defines: { ...map.biomeDefines, ...shapeDefines(), ...rimDefines(), ...caveDef, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}), ...gcut() }, // (no specular: on blades of roughness 0.85 it never showed)
+        defines: { ...shapeDefines(), ...rimDefines(), ...caveDef, ...(CARFLAT_OFF ? { NO_CARFLAT: '' } : {}), ...gcut() }, // (no specular: on blades of roughness 0.85 it never showed)
         vertexShader: VERT,
         fragmentShader: FRAG,
         side: GFX.DoubleSide,
@@ -745,11 +745,6 @@ void main() {
   //  metre or two from where this sharp bake puts it — the blades stop before the grey starts, wherever it's drawn;
   //  they were already shortened to a third there: approach)
   grow *= 1.0 - smoothstep(0.45, 0.75, g.screeNear);
-#ifdef OTH_DESERT
-  // THE DESERT: grass only in the oasis (its growth, the damp banks) — the open sand stays bare
-  float oasis = max(smoothstep(0.15, 0.5, m.a), smoothstep(0.45, 0.8, m.b / 0.85)) * smoothstep(0.15, 0.5, g.lawn); // (in its green patches only)
-  grow = (1.0 - smoothstep(0.02, 0.1, g.rock)) * (1.0 - smoothstep(0.855, 0.875, m.b)) * oasis * (1.0 - smoothstep(0.3, 0.6, onTrack));
-#endif
   vec2 mudB = trailT.ba;
   float mud = mudB.r;
   // WILDFLOWERS (mud.bin G): where the field blossoms, one blade in ~5 is a flower — a grass blade in bloom at its

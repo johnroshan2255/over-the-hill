@@ -905,7 +905,7 @@ export function planWardens(map: MapData, rocks: Rocks): WardenPlan {
   if (hit) return hit
   const plan: WardenPlan = { sites: [], pieces: [], cols: [], keep: [], texts: [], vaults: [], mapId: map.meta.id, floors: [], regions: [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], fires: [] }
   PLANS.set(map, plan)
-  if (map.desert || map.play <= map.half + 100 || gameParams().get('wardens') === '0') return plan
+  if (map.play <= map.half + 100 || gameParams().get('wardens') === '0') return plan
   const hb = map.half + 90, ho = map.play - 130
   // THE REGIONS' CHARACTER (docs/NEXT_outland.md §1 — "every region gets the same mix and the same stone"): four
   // countries round the outland, each its own stone (the material's tint) and its own leaning —

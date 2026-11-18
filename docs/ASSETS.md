@@ -43,8 +43,7 @@ Our shaders are GLSL; on WebGPU PlayCanvas needs WGSL, made at runtime (`src/oth
 | glslang (Khronos GLSL → SPIR-V) — the fallback path | `lib/glslang/glslang.js`, `glslang.wasm` | https://cdn.babylonjs.com/glslang/ (Khronos glslang, built by Babylon.js) — the build PlayCanvas's docs point to | BSD-3-Clause (glslang) | default wasm path set to `/lib/glslang/glslang.wasm`; `export default globalThis.glslang;` appended (the file is UMD) |
 | twgsl (Tint, SPIR-V → WGSL) — the fallback path | `lib/twgsl/twgsl.js`, `twgsl.wasm` | https://cdn.babylonjs.com/twgsl/ (Google Tint, built by Babylon.js) | Apache-2.0 | — |
 
-The desert's terrain, sandstone and palms are generated here (`scripts/oth/desert*.py`, `treeGeometry.ts`). Over the
-Hill's screenshots were only looked at for reference — none are in the repo.
+Over the Hill's screenshots were only looked at for reference — none are in the repo.
 
 ## Images — `frontend/src/assets/ui/`
 

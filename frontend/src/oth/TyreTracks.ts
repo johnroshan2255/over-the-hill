@@ -26,7 +26,6 @@ export class TyreTracks {
   /** When the newest mark was laid (s), and round the marks laid since they last all faded: `cull`. */
   private newest = -1e9
   private readonly box = new GFX.Box3()
-  private readonly mk: [number, number, number, number] = [0, 0, 0, 0]
 
   constructor(private readonly map: MapData, tier: Tier, atmos: Atmosphere) {
     this.n = tier.name === 'low' ? 1400 : tier.name === 'medium' ? 2400 : 3600
@@ -108,7 +107,7 @@ export class TyreTracks {
     const onGround = contact && c.y < ground + 0.35 && this.map.bridgeAt(c.x, c.z) === null && this.map.waterAt(c.x, c.z) === null
     const mud = this.map.mudAt(c.x, c.z), track = Math.max(0, Math.min(1, (hw + 0.3 - this.map.trailDist(c.x, c.z)) / 0.8))
     // (the desert's LOOSE SAND — its mask's G, not on the rock: deep ruts, darker, lasting longer)
-    const sand = this.map.desert ? this.map.maskAt(c.x, c.z, this.mk)[1] * (1 - Math.min(1, this.mk[0] * 2)) * (1 - track) : 0
+    const sand = 0
     const dark = onGround ? Math.max(mud * 0.6, track * 0.32, sand * 0.44) : 0
     const prev = this.last[k]
     if (dark < 0.05) { this.last[k] = null; return false }

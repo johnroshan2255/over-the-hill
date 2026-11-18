@@ -5,7 +5,6 @@ import { Bridges } from './Bridges'
 import { Bushes, placeBushes } from './Bushes'
 import { Falls } from './Falls'
 import { CaveWorld, loadCaveMeta } from './CaveWorld'
-import { Formations } from './Formations'
 import { Glow } from './Glow'
 import { Grass } from './Grass'
 import { Horizon } from './Horizon'
@@ -37,10 +36,9 @@ import { Mist } from './Mist'
  * and the physics (OthPhysics.setWorld swaps the colliders), the sound, the HUD, the terrain shadow (its worker gets the
  * new ground: TerrainShadow.setMap). They see the current world's map through liveMap().
  */
-export type WorldId = 'valley' | 'desert'
+export type WorldId = 'valley'
 export const WORLDS: Record<WorldId, { path: string; name: string }> = {
   valley: { path: '/oth/valley', name: 'the valley' },
-  desert: { path: '/oth/desert', name: 'the desert' },
 }
 
 export interface WorldEnv {
@@ -94,18 +92,14 @@ export class World {
     readonly landmarks: Landmarks,
     readonly props: Props,
     readonly birds: Birds | null,
-    /** The desert's sandstone (Blender's slabs — Formations.ts); none in the valley. */
-    readonly formations: Formations | null,
     /** Every landmark and camp (the signposts, the map, the journal count them). */
     readonly places: Landmark[],
     /** The valley's cave world (Blender's — CaveWorld.ts; its physics a triangle mesh: main.ts). */
     readonly cave: CaveWorld | null = null,
   ) {}
 
-  /** Build world `id` (its files fetched first); `pace` runs between the steps (a frame, when built while playing).
-   *  BACKGROUND (the crossing: built while another world plays): what lasts across worlds is left alone — the terrain
-   *  shadow keeps the playing world's ground and trees, the far grid its values — until `adopt` at the swap. */
-  static async build(id: WorldId, env: WorldEnv, pace: () => Promise<void> = async () => {}, onProgress?: (f: number) => void, loaded?: MapData, background = false): Promise<World> {
+  /** Build world `id` (its files fetched first); `pace` runs between the steps. */
+  static async build(id: WorldId, env: WorldEnv, pace: () => Promise<void> = async () => {}, onProgress?: (f: number) => void, loaded?: MapData): Promise<World> {
     const timings: Record<string, number> = {}
     const t0 = performance.now()
     // (the progress: the map's files and preparing, then each step as it ends — one bar that only goes forward; a map
@@ -134,24 +128,18 @@ export class World {
       stepDone(label)
     }
     const { atmos, tier, shadow } = env
-    await step('shadow', () => (background ? shadow.prepare(map) : shadow.setMap(map)))
+    await step('shadow', () => shadow.setMap(map))
     let farGrid = new GFX.Vector4()
     const terrain = await step('terrain', () => {
       const t = new Terrain(map, atmos, tier, shadow, env.renderer)
       // (the far grid the car's material holds: this world's values in the same Vector4 — at once, or at the swap)
       farGrid = t.uniforms.uFarGrid.value.clone()
-      if (!background) env.farGrid.copy(farGrid)
+      env.farGrid.copy(farGrid)
       t.uniforms.uFarGrid.value = env.farGrid
       return t
     })
-    // (the desert's sculpted stones — Blender, desert_stones.py — fetched first: tiny, 30 kB)
-    const stones = map.desert ? await Rocks.loadStones(`${WORLDS[id].path}/stones.glb`) : null
-    // (and its STACKED ROCK — desert_stacks.py: the slab stacks the rocky hills are built of)
-    const stacks = map.desert ? await Rocks.loadStacks(`${WORLDS[id].path}/stacks.json`) : null
-    const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid, stones, stacks))
+    const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid))
     await sliced('rock footprint', rocks.stampFootprint())
-    // (the stacks cast shade: their slabs stamped into the shadow worker's copy of this world's heights)
-    if (stacks) await step('stack shade', () => shadow.setOccluders(map, rocks.occluders()))
     const grass = await step('grass', () => new Grass(map, atmos, terrain, tier, rocks.footprint, env.renderer))
     const water = await step('water', () => new Water(map, atmos, terrain, tier, rocks.footprint))
     const falls = await step('falls', () => new Falls(map, atmos))
@@ -166,7 +154,7 @@ export class World {
     const placed = await step('places', () => placeThings(map, rocks, { data: treeAll, count: treeAll.length / TREE_STRIDE } as unknown as Trees))
     // (?sites=0: without the new places — the cost A/B)
     // (the cave world's shape: its hill's top, its apron — fetched before the places are chosen: it takes the most room)
-    const caveMeta = map.desert || gameParams().get('cave') === '0' ? null : await loadCaveMeta(WORLDS[id].path)
+    const caveMeta = gameParams().get('cave') === '0' ? null : await loadCaveMeta(WORLDS[id].path)
     const plan = gameParams().get('sites') === '0' ? { sites: [], keep: [] } : await step('sites', () => planSites(map, rocks, placed.props, [...(map.meta.landmarks ?? []), ...placed.camps], 1000, caveMeta))
     // THE WARDENS' COUNTRY (Wardens.ts): its ruins planned now, so the trees, bushes and stones keep off them
     const wplan = await step('wardens plan', () => planWardens(map, rocks))
@@ -195,7 +183,7 @@ export class World {
     if (LOOK) placed.props = placed.props.filter((p) => p.kind !== 'ruin')
     // (the tunnel's hill: the trees and bushes where it stands lifted onto it, a few more on its crest — Sites.dressHills)
     const dressed = dressHills(map, plan.sites, keepEvery(treeAll, TREE_STRIDE), TREE_STRIDE, keepEvery(bushData, 7), 7, caveMeta)
-    const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks, !background, dressed.trees))
+    const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks, true, dressed.trees))
     await step('impostors', () => trees.bakeImpostors(env.renderer))
     const bushes = await step('bushes', () => new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture, dressed.bushes))
     // OCCLUSION CULLING: what the hills hide (trees, rocks, bushes behind them are skipped)
@@ -224,7 +212,7 @@ export class World {
     }
     rocks.footprint.needsUpdate = map.trailTex.needsUpdate = true
     terrain.setPaved(landmarks.paved) // (the places' flagstones laid square to each)
-    const props = await step('props', () => new Props(placed.props, [...places, ...wplan.fires], placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner, map.desert))
+    const props = await step('props', () => new Props(placed.props, [...places, ...wplan.fires], placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner))
     landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
     // the outland's wonders (the World Tree, the stone arch): drawn, and run into, as the landmarks are
     const wonders = await step('wonders', () => new Wonders(map, atmos, shadow, tier, env.farGrid))
@@ -242,14 +230,9 @@ export class World {
     wardens.restoreVaults()          // (the vaults opened before stand open)
     // THE GROUND'S CLUTTER (the look): clear of the places (their reach), the ruins, the cleared spots; ?clutter=0: none
     const placeKeep = places.map((l) => [l.x, l.z, (l.r ?? 18) + 6] as [number, number, number])
-    const clutter = map.desert || !LOOK || gameParams().get('clutter') === '0' ? null : await step('clutter', () => new Clutter(map, atmos, shadow, tier, env.farGrid, { data: trees.data, count: trees.count, stride: TREE_STRIDE },
+    const clutter = !LOOK || gameParams().get('clutter') === '0' ? null : await step('clutter', () => new Clutter(map, atmos, shadow, tier, env.farGrid, { data: trees.data, count: trees.count, stride: TREE_STRIDE },
       (x, z) => open(x, z) && placeKeep.every(([kx, kz, r]) => (x - kx) ** 2 + (z - kz) ** 2 > r * r)))
     const birds = env.birds ? await step('birds', () => new Birds(atmos, terrain)) : null
-    // (the desert's sandstone slabs: fetched, Draco-decoded in the loader's workers)
-    const tf = performance.now()
-    const formations = map.desert ? await Formations.load(`${WORLDS[id].path}/formations.glb`, atmos, shadow, tier, env.farGrid) : null
-    timings.formations = performance.now() - tf
-    if (formations) formations.horizon = horizon
     // THE CAVE WORLD (cave.glb, Draco): laid on the land where Sites put it
     const caveSite = places.find((l) => l.kind === 'cave')
     const tCave = performance.now()
@@ -261,7 +244,7 @@ export class World {
     const caveGrass = floor ? await step('cave grass', () => { const g = new Grass(map, atmos, terrain, tier, floor.foot, env.renderer, true); g.setHill(floor.lift, floor.x0, floor.z0, 2, floor.n, true, floor.cpu); return g }) : null
     if (cave && glow) glow.lift = (x, z) => cave.liftAt(x, z) // (no sun's glare through the hill)
     timings.cave = performance.now() - tCave
-    const w = new World(id, map, terrain, rocks, grass, water, falls, trees, bushes, horizon, bridges, glow, landmarks, props, birds, formations, places, cave)
+    const w = new World(id, map, terrain, rocks, grass, water, falls, trees, bushes, horizon, bridges, glow, landmarks, props, birds, places, cave)
     w.farGrid.copy(farGrid)
     Object.assign(w.timings, timings)
     w.caveGrass = caveGrass
@@ -269,7 +252,7 @@ export class World {
     w.group.add(wonders.group)
     w.wardens = wardens
     w.clutter = clutter
-    const mist = map.desert || !LOOK || gameParams().get('mist') === '0' ? null : new Mist(map, atmos, tier)
+    const mist = !LOOK || gameParams().get('mist') === '0' ? null : new Mist(map, atmos, tier)
     w.mist = mist
     if (mist) w.group.add(mist.mesh)
     if (clutter) w.group.add(clutter.group)
@@ -278,7 +261,6 @@ export class World {
     w.group.add(props.group, landmarks.group, terrain.mesh, grass.group, rocks.group, trees.group, bushes.group, water.group, falls.group, bridges.group)
     if (glow) w.group.add(glow.group)
     if (birds) w.group.add(birds.mesh)
-    if (formations) w.group.add(formations.group)
     if (cave) w.group.add(cave.group)
     // WARM: its textures on the GPU (one a frame — ~35 MB went up in the first frame after a swap) and its shaders
     // compiled (in parallel where the browser can) before it's ever drawn
@@ -301,14 +283,6 @@ export class World {
   /** This world's far grid values (the shared Vector4 takes them when it's entered). */
   private readonly farGrid = new GFX.Vector4()
 
-  /** What lasts across worlds set to this one (entering it — main.ts): the terrain shadow to its ground and trees,
-   *  the shared far grid to its values. */
-  adopt(env: WorldEnv): void {
-    env.shadow.setMap(this.map)
-    this.trees.reshade(env.shadow)
-    env.farGrid.copy(this.farGrid)
-  }
-
   /** What's drawn this frame: each system's own culling and lists (the camera has moved). */
   update(camera: GFX.PerspectiveCamera, dt: number, t: number, lamps: number, fire: GFX.Vector4, carX: number, carZ: number): void {
     this.props.fireLight(camera.position, t, lamps, fire)
@@ -325,7 +299,6 @@ export class World {
     this.wardens?.update(camera, dt)
     this.clutter?.update(camera)
     if (this.mist) { this.mist.update(camera); if (this.cave?.cameraInside) this.mist.mesh.visible = false }
-    this.formations?.update(camera)
     this.cave?.update(camera.position)
     if (this.caveGrass) { const on = !!this.cave?.insideShown; this.caveGrass.group.visible = on; if (on) this.caveGrass.update(camera) }
     if (this.glow) this.glow.group.visible = !this.cave?.cameraInside // (no sun's glare through the hill)
@@ -333,33 +306,6 @@ export class World {
     this.wonders?.cull(camera.position)
     this.bridges.cull()
     this.falls.cull()
-  }
-
-  /** Everything this world made goes back: geometries, materials, the textures they read (but not `keep` — the
-   *  sky's noise, the terrain shadow's: they last), the impostor atlas, the glow's page overlay. The group leaves the
-   *  scene; the JS objects go with the last reference. */
-  dispose(keep: Set<GFX.Texture>): void {
-    this.group.removeFromParent()
-    const textures = new Set<GFX.Texture>()
-    const take = (v: unknown) => { if (v instanceof GFX.Texture && !keep.has(v) && !v.userData.shared) textures.add(v) }
-    this.group.traverse((o) => {
-      const m = o as GFX.Mesh
-      m.geometry?.dispose()
-      for (const mat of m.material ? (Array.isArray(m.material) ? m.material : [m.material]) : []) {
-        for (const v of Object.values(mat as unknown as Record<string, unknown>)) take(v)
-        const u = (mat as GFX.ShaderMaterial).uniforms
-        if (u) for (const k in u) take(u[k]?.value)
-        mat.dispose()
-      }
-    })
-    const M = this.map
-    for (const t of [M.inner.tex, M.far.tex, M.inner.normalTex, M.far.normalTex, M.maskTex, M.trailTex, M.waterTex, this.rocks.footprint]) take(t)
-    for (const t of textures) t.dispose()
-    this.trees.atlas?.dispose()
-    this.grass.dispose()
-    this.caveGrass?.dispose()
-    this.terrain.dispose()
-    this.glow?.dispose()
   }
 }
 

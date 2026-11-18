@@ -16,7 +16,6 @@ await p.goto(`http://localhost:${process.env.PORT || 5200}/?tier=${TIER}&hour=12
 await p.waitForFunction(() => window.__oth?.ready && window.__oth.car?.sim, { timeout: 180000, polling: 250 })
 await p.evaluate(() => window.__oth.drive(true))
 for (let k = 0; k < 30; k++) await p.keyboard.press('Minus')
-await p.evaluate(() => { window.__oth.crossing.hold = true }) // (no swap into the other world: perfmarks.mjs)
 const L = (await p.evaluate((SET, way) => { const m = window.__oth.world.map.meta; return ({ tracks: m.trails.lines, roads: m.outland.trails.lines, paths: m.paths.lines })[SET][way] }, SET, way)).slice(Number(process.env.FROM || 0))
 // place at the start, settle
 await p.evaluate((L) => { const o = window.__oth, [a, q] = [L[0], L[Math.min(3, L.length - 1)]]; o.car.placeAt(a[0], a[1], Math.atan2(-(q[0] - a[0]), -(q[1] - a[1]))) }, L)
@@ -31,12 +30,11 @@ const run = await p.evaluate(async (L, speed, secs) => {
   const at = (d) => pts[Math.min(pts.length - 1, Math.floor(d))], head = (d) => { const a = at(d), q = at(d + 8); return Math.atan2(-(q[0] - a[0]), -(q[1] - a[1])) }
   const T = Math.min(secs * 1000, (pts.length - 10) / speed * 1000), t0 = performance.now(), ts = [], info = []
   const gc = o.world.terrain.cache
-  await new Promise((r) => { const f = () => { const now = performance.now(); ts.push(now); info.push([gc?.baked ?? 0, Math.round((performance.memory?.usedJSHeapSize ?? 0) / 1e5) / 10, o.crossing.state]); const d = ((now - t0) / 1000) * speed, q = at(d); o.car.placeAt(q[0], q[1], head(d)); if (now - t0 < T) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
+  await new Promise((r) => { const f = () => { const now = performance.now(); ts.push(now); info.push([gc?.baked ?? 0, Math.round((performance.memory?.usedJSHeapSize ?? 0) / 1e5) / 10]); const d = ((now - t0) / 1000) * speed, q = at(d); o.car.placeAt(q[0], q[1], head(d)); if (now - t0 < T) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) })
   return { ts, info }
 }, L, SPEED, secs)
 const { profile } = await cdp.send('Profiler.stop')
 const frames = run.ts, info = run.info
-{ let was = ''; info.forEach((x, i) => { if (x[2] !== was) { console.log(`crossing ${x[2]} at ${((frames[i] - frames[0]) / 1000).toFixed(2)} s`); was = x[2] } }) }
 // long frames (page time) → windows
 const wins = []
 for (let i = 1; i < frames.length; i++) if (frames[i] - frames[i - 1] >= LONG) wins.push([frames[i - 1], frames[i]])
@@ -44,7 +42,7 @@ const med = [...frames.slice(1).map((t, i) => t - frames[i])].sort((a, b) => a -
 // (each long frame: the texels the ground cache baked in the frame before it, and the heap then → after: a drop is a GC)
 const bakedAll = info.map((x) => x[0]).sort((a, c) => a - c)
 console.log(`cache texels a frame: median ${bakedAll[Math.floor(bakedAll.length / 2)]}, p95 ${bakedAll[Math.floor(bakedAll.length * 0.95)]}, max ${bakedAll.at(-1)}`)
-for (let i = 1; i < frames.length; i++) if (frames[i] - frames[i - 1] >= LONG) console.log(`  long ${Math.round(frames[i] - frames[i - 1])} ms: baked ${info[i - 1][0]} / ${info[i][0]} texels, heap ${info[i - 1][1]} → ${info[i][1]} MB, crossing ${info[i - 1][2]} → ${info[i][2]}`)
+for (let i = 1; i < frames.length; i++) if (frames[i] - frames[i - 1] >= LONG) console.log(`  long ${Math.round(frames[i] - frames[i - 1])} ms: baked ${info[i - 1][0]} / ${info[i][0]} texels, heap ${info[i - 1][1]} → ${info[i][1]} MB`)
 console.log(`${frames.length} frames over ${((frames.at(-1) - frames[0]) / 1000).toFixed(1)} s, median ${med.toFixed(2)} ms; ${wins.length} frames ≥ ${LONG} ms: ${wins.map(([a, c]) => Math.round(c - a)).join(' ')}`)
 // samples → page time (the profile's clock offset taken at its start)
 const nodes = new Map(profile.nodes.map((n) => [n.id, n])), parent = new Map()

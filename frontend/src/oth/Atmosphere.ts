@@ -80,7 +80,7 @@ export class Atmosphere {
     uNoise: { value: null as GFX.Texture | null },
     /** 0 day … 1 full night (stars, the moon's disc, headlights). */
     uNight: { value: 0 },
-    /** The rock's extra sky fill (rockFill), × this: 1 in the valley; the desert's less — most at dusk and night. */
+    /** The rock's extra sky fill (rockFill), × this (the look's: a fifth off). */
     uRockFill: { value: 1 },
     /** How much of the wrapped light's wrap is cut (shade): 0 as painted; the valley by day a share (VALLEY_LIGHT). */
     uWrapCut: { value: 0 },
@@ -102,20 +102,15 @@ export class Atmosphere {
     uWind: { value: new GFX.Vector2(2.2, 0.9) },
     /** 1 without the post pass (Glow.ts): the sky paints the bloom's halo round the sun, the haze glows toward it. */
     uGlow: { value: 0 },
-    /** THE CROSSING's MIST (Crossing.ts): 0 clear … 1 inside the cloud (~10 m to see) — a fog round the camera on top
+    /** THE CLOUD ON THE PASS (PassMist.ts): 0 clear … 1 inside the cloud (~10 m to see) — a fog round the camera on top
      *  of the haze, the sky gone to it; its colour the horizon's brightness as a grey-white (dark at night). */
     uMist: { value: 0 },
     uMistColor: { value: new GFX.Color() },
-    /** The desert's SANDSTORM (`weather`): 0 … 1, and the dust's colour (the sand lit by what light gets through). */
-    uDust: { value: 0 },
-    uDustColor: { value: new GFX.Color() },
   }
   /** WEATHER (2026-10-27, OTH has it): spells of CLEAR, CLOUDY and RAIN a few real minutes each, easing into one another
    *  (the clouds over a minute, the rain over ~25 s once the sky is heavy); the land gets wet in the rain over ~40 s and
-   *  dries over ~3 min. In the DESERT the third is a SANDSTORM (2026-11-02, the user: "we will have a sand storm at
-   *  some time, use a filter for that"): the dust blows up over ~20 s and settles over ~30. `?weather=clear|cloudy|
-   *  rain|sandstorm` pins it, K / Shift+G step through them. */
-  weather: 'auto' | 'clear' | 'cloudy' | 'rain' | 'sandstorm' = 'auto'
+   *  dries over ~3 min. `?weather=clear|cloudy|rain` pins it, K / Shift+G step through them. */
+  weather: 'auto' | 'clear' | 'cloudy' | 'rain' = 'auto'
   private spell: 'clear' | 'cloudy' | 'rain' = 'clear'
   private spellLeft = 240
   private wseed = (Date.now() & 0xffff) | 1
@@ -152,16 +147,11 @@ export class Atmosphere {
       this.spell = kind = r < 0.45 ? 'clear' : r < 0.75 ? 'cloudy' : 'rain'
       this.spellLeft = 180 + ((this.wseed >>> 4) % 240)
     }
-    // (each world's own wet spell: rain in the valley, a sandstorm in the desert — never rain on the sand)
-    if (this.desert && kind === 'rain') kind = 'sandstorm'
-    if (!this.desert && kind === 'sandstorm') kind = 'rain'
-    // (the desert's clear sky nearly cloudless — 2026-11-04, the stylised warm look)
-    const cloudT = kind === 'rain' ? 0.95 : kind === 'cloudy' ? 0.62 : kind === 'sandstorm' ? 0.3 : this.desert ? 0.04 : 0.22
+    const cloudT = kind === 'rain' ? 0.95 : kind === 'cloudy' ? 0.62 : 0.22
     const rainT = kind === 'rain' && u.uCloud.value > 0.75 ? 1 : 0
     const ease = (v: number, t: number, rate: number) => (v < t ? Math.min(t, v + dt * rate) : Math.max(t, v - dt * rate))
     u.uCloud.value = ease(u.uCloud.value, cloudT, 1 / 60)
     u.uRain.value = ease(u.uRain.value, rainT, 1 / 25)
-    u.uDust.value = ease(u.uDust.value, kind === 'sandstorm' ? 1 : 0, kind === 'sandstorm' ? 1 / 20 : 1 / 30)
     u.uWet.value = ease(u.uWet.value, u.uRain.value > 0.3 ? 1 : 0, u.uRain.value > 0.3 ? 1 / 40 : 1 / 180)
   }
 
@@ -178,9 +168,9 @@ export class Atmosphere {
     for (let i = 0; i < 400; i++) this.tickWeather(1)
   }
 
-  /** K: clear → cloudy → rain (the desert: a sandstorm) → auto. */
+  /** K: clear → cloudy → rain → auto. */
   stepWeather(): string {
-    const order = ['auto', 'clear', 'cloudy', this.desert ? 'sandstorm' : 'rain'] as const
+    const order = ['auto', 'clear', 'cloudy', 'rain'] as const
     const i = order.indexOf(this.weather as (typeof order)[number])
     this.weather = order[(i + 1) % order.length]
     return this.weather
@@ -192,23 +182,11 @@ export class Atmosphere {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
   }
 
-  /** The world's air (World / main.ts: set on entering one): the DESERT's grade — Over the Hill's Algeria measured
-   *  (2026-11-02): a pale cyan-white sky by day (their ≈ sRGB 229 244 251), a warm cream horizon, sand-coloured haze,
-   *  clearer air; hot pink sunsets, a purple night; the sand's warm bounce light. */
-  desert = false
-  /** How far the air has gone to the desert's grade (0 … 1): it follows `desert` over a few seconds, so a crossing's
-   *  swap (in the mist) never snaps the sky's colours. */
-  private dk = -1
-  private lastT = 0
 
   update(cam: GFX.Vector3, t: number): void {
     const u = this.uniforms
     u.uCamPos.value.copy(cam)
     u.uTime.value = t
-    const dt = Math.min(Math.max(t - this.lastT, 0), 0.1)
-    this.lastT = t
-    this.dk = this.dk < 0 ? (this.desert ? 1 : 0) : this.dk + GFX.MathUtils.clamp((this.desert ? 1 : 0) - this.dk, -dt / 4, dt / 4)
-    const dk = this.dk
     // the sun's path: east at 6, south (+z) at noon, west at 18, under the ground at night; 62° at its highest
     const az = ((this.hour - 6) / 12) * Math.PI
     const el = Math.sin(az) * GFX.MathUtils.degToRad(62)
@@ -220,56 +198,26 @@ export class Atmosphere {
     const f = GFX.MathUtils.clamp((s - a.s) / (b.s - a.s), 0, 1)
     // (under a heavy sky the sun dims and the sky goes a soft grey, its brightness kept)
     const overcast = GFX.MathUtils.smoothstep(u.uCloud.value, 0.45, 1.0)
-    // (in a sandstorm the sun is a pale disc through the dust)
-    const dust = u.uDust.value
-    const sunI = (a.sunI + (b.sunI - a.sunI) * f) * (1 - 0.72 * overcast) * (1 - 0.68 * dust)
+    const sunI = (a.sunI + (b.sunI - a.sunI) * f) * (1 - 0.72 * overcast)
     u.uSkyZenith.value.copy(a.zen).lerp(b.zen, f)
     u.uSkyHorizon.value.copy(a.hor).lerp(b.hor, f)
     u.uSunGlow.value.copy(a.glow).lerp(b.glow, f).multiplyScalar(1 - 0.8 * overcast)
-    if (dk > 0) {
-      const day = GFX.MathUtils.smoothstep(s, 0.12, 0.35) * dk, low = GFX.MathUtils.smoothstep(s, -0.04, 0.06) * (1 - day) * dk
-      const zl = 0.2126 * u.uSkyZenith.value.r + 0.7152 * u.uSkyZenith.value.g + 0.0722 * u.uSkyZenith.value.b
-      const hl = 0.2126 * u.uSkyHorizon.value.r + 0.7152 * u.uSkyHorizon.value.g + 0.0722 * u.uSkyHorizon.value.b
-      // (2026-11-03, DESERT_MATCH round 1 — measured on real Saharan skies (Tassili n'Ajjer, Wadi Rum): a deep blue
-      //  overhead paling to a light blue at the horizon, ≈ sRGB 125 181 254 some 25° up; ours was a pale cyan-white,
-      //  214 224 233 — the zenith to the deep blue, the horizon to a pale blue, both at the keyframe's brightness)
-      // (2026-11-04 — the desert's own STYLISED, WARM look, replacing round 1's deep photographic blue: a pale cyan
-      //  overhead going to a warm near-white at the horizon by day; a hot pink sky at sunset, top to bottom; a purple
-      //  night)
-      u.uSkyZenith.value.lerp(D_BLUE.clone().multiplyScalar(zl * 1.05), 0.85 * day).lerp(D_PINK.clone().multiplyScalar(Math.max(zl, 0.01) * 1.4), 0.7 * low)
-      u.uSkyHorizon.value.lerp(D_PALEBLUE.clone().multiplyScalar(hl * 0.95), 0.85 * day).lerp(D_PINK.clone().multiplyScalar(hl * 1.25), 0.85 * low)
-      const nightK = dk * (1 - GFX.MathUtils.smoothstep(s, -0.25, 0.0))
-      u.uSkyZenith.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(zl, 0.004) * 3.2), 0.9 * nightK)
-      u.uSkyHorizon.value.lerp(D_PURPLE.clone().multiplyScalar(Math.max(hl, 0.006) * 2.6).lerp(D_PINK.clone().multiplyScalar(Math.max(hl, 0.006) * 2.0), 0.35), 0.8 * nightK)
-    }
     for (const c of [u.uSkyZenith.value, u.uSkyHorizon.value]) {
       const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
       c.lerp(new GFX.Color(l * 0.95, l, l * 1.04), 0.75 * overcast)
     }
-    // THE DUST: the sand's own warm orange, as bright as the horizon is (darker overhead, dim at night) — the sky goes
-    // to it; the haze, the light and the bounce follow below
-    const hlum = 0.2126 * u.uSkyHorizon.value.r + 0.7152 * u.uSkyHorizon.value.g + 0.0722 * u.uSkyHorizon.value.b
-    u.uDustColor.value.copy(DUST).multiplyScalar(hlum * 0.82)
-    if (dust > 0) {
-      u.uSkyHorizon.value.lerp(u.uDustColor.value, 0.85 * dust)
-      u.uSkyZenith.value.lerp(DUST.clone().multiplyScalar(hlum * 0.6), 0.75 * dust)
-      u.uSunGlow.value.multiplyScalar(1 - 0.5 * dust)
-    }
-    // (the desert's air clearer still: its aerial views were pale and washed out — frame 221 196 170 vs their 213 175 158)
-    // (2026-11-04: the desert's air THICK and warm — far layers fading to a peach-white, one behind another; it was
-    //  clearer than the valley's)
     // (2026-11-06, the user: "the valley feels empty": its middle distance went pale — the valley's air a third longer
     //  and clear for its first 260 m, not 130; VALLEY_LIGHT below. ?light=0: as before)
-    const vk = (1 - dk) * VALLEY_LIGHT
-    u.uFogRange.value.y = this.hazeLen * (1 - 0.1 * dk + 0.3 * vk) * (1 - 0.45 * u.uRain.value)
+    const vk = VALLEY_LIGHT
+    u.uFogRange.value.y = this.hazeLen * (1 + 0.3 * vk) * (1 - 0.45 * u.uRain.value)
     // (…and the first 400 m clear: near and middle ground keep their colour, only the far layers melt into the haze)
-    u.uFogRange.value.x = 130 + 270 * dk + 130 * vk
+    u.uFogRange.value.x = 130 + 130 * vk
     // THE VALLEY'S FOG (2026-11-08, the user: "we lack fog — put a simple fog, like a filter, no volumetric"): the air
     // clear only ~35 m round you, then a soft distance fog — ~20 % at 300 m, half at 1 km, the far ranges pale layers
-    // (the haze's length × 0.33 here; `?fog=` scales its density: 0 the old clear air). The desert keeps its own.
+    // (the haze's length × 0.33 here; `?fog=` scales its density: 0 the old clear air)
     if (FOG_K > 0) {
-      u.uFogRange.value.y = GFX.MathUtils.lerp(u.uFogRange.value.y, this.hazeLen * 0.33 / FOG_K * (1 - 0.45 * u.uRain.value), 1 - dk)
-      u.uFogRange.value.x = GFX.MathUtils.lerp(u.uFogRange.value.x, 35, 1 - dk)
+      u.uFogRange.value.y = this.hazeLen * 0.33 / FOG_K * (1 - 0.45 * u.uRain.value)
+      u.uFogRange.value.x = 35
     }
     const amb = a.amb + (b.amb - a.amb) * f
     const night = GFX.MathUtils.smoothstep(-s, 0.06, 0.2)
@@ -289,7 +237,7 @@ export class Atmosphere {
     // sky fill: the sky's average (bluer than its horizon); ground bounce: warm by day, cool and dim by night
     u.uAmbSky.value.copy(u.uSkyZenith.value).lerp(u.uSkyHorizon.value, 0.4).multiplyScalar(0.62 * amb)
     u.uAmbSky.value.lerp(MOON.clone().multiplyScalar(0.07), night * 0.8)
-    u.uAmbGround.value.setRGB(0.42 + 0.18 * dk, 0.34 + 0.06 * dk, 0.22 + 0.03 * dk).multiplyScalar((0.55 * amb + 0.12 * sunI) * (1 + 0.2 * dk)).lerp(MOON.clone().multiplyScalar(0.025), night)
+    u.uAmbGround.value.setRGB(0.42, 0.34, 0.22).multiplyScalar(0.55 * amb + 0.12 * sunI).lerp(MOON.clone().multiplyScalar(0.025), night)
     // the LIGHT ON THE LAND keeps every colour true at every hour (the user: "when the time changes to evening, night,
     // morning, the terrain, grass and trees all change colour with it"): the sun's, the sky's and the bounce's light
     // lose most of their tint — a warm / cool hint is left, the brightness still follows the day; the SKY itself (its
@@ -302,54 +250,31 @@ export class Atmosphere {
     // cold light is left, the land a dark silhouette against the sky, what the headlights paint is what you see
     floorLum(u.uAmbSky.value, GFX.MathUtils.lerp(0.22, 0.022, night))
     floorLum(u.uAmbGround.value, GFX.MathUtils.lerp(0.09, 0.006, night))
-    // (DESERT_MATCH round 12 — the desert by day: a hard sun, deep shade; photographed, its scenes have half again our
-    //  contrast — the sky's fill and the sand's bounce (and their floors) a third less)
-    // (2026-11-04: the desert's shade BRIGHT and WARM — a soft, stylised light, its shadows a rosy brown, never dark;
-    //  rounds 12–13's deeper shade was for the photographs)
-    const fill = 1 + 0.15 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)
-    u.uAmbSky.value.multiplyScalar(fill)
-    u.uAmbGround.value.multiplyScalar(fill)
     // THE VALLEY'S SHADE (2026-11-06, the user: "the valley feels empty"): a hill's sunny and shaded sides were nearly
     // one value — the land read flat. By day the sky's fill and the bounce 16 % less, the sun 6 % more: the lit faces
     // keep their brightness (and the calibrated colours), the faces turned away fall a step darker
-    const vday = (1 - dk) * VALLEY_LIGHT * GFX.MathUtils.smoothstep(s, 0.05, 0.3)
+    const vday = VALLEY_LIGHT * GFX.MathUtils.smoothstep(s, 0.05, 0.3)
     // (the fill alone moved the frame ~1 %: the WRAP is what lights a slope turned away — 0.62 on the ground, so a face
     //  at right angles to the sun took 38 % of it. A third of the wrap cut: the hills' far sides a clear step darker)
     u.uAmbSky.value.multiplyScalar(1 - 0.22 * vday)
     u.uAmbGround.value.multiplyScalar(1 - 0.22 * vday)
     u.uSunColor.value.multiplyScalar(1 + 0.08 * vday)
     u.uWrapCut.value = 0.6 * vday
-    // (2026-11-04 — the user: "at evening and night the rocks' reddish colour is bright, even in the shadows": the
-    //  coral rock is twice the old albedo, so the desert's shade DIMS as the sun goes down — the fill and the bounce
-    //  ×0.55 at dusk, the rock's extra fill (rockFill) half by day and a quarter from dusk on; the night's purple fill
-    //  a third of what it was)
-    const dayK = GFX.MathUtils.smoothstep(s, 0.12, 0.35)
-    u.uRockFill.value = 1 - dk * (0.5 + 0.25 * (1 - dayK))
+    u.uRockFill.value = 1
     // (the look, round 3 — the user's Over the Hill frames: the rock a dark slate in its shade, never pale: its extra sky
     //  fill less — the light only, the rock's paint as it was)
     // (round 4 — the user: "the colour change on the rock, the pattern": two thirds off went near black in the shade, and
     //  the terrain shadow's 4 m bake drew its edge across the rock as a scalloped line — a fifth off only)
-    u.uRockFill.value *= 1 - 0.2 * LOOK * (1 - dk)
-    if (dk > 0) {
-      const al = 0.2126 * u.uAmbSky.value.r + 0.7152 * u.uAmbSky.value.g + 0.0722 * u.uAmbSky.value.b
-      u.uAmbSky.value.lerp(D_WARMFILL.clone().multiplyScalar(al), 0.55 * dk * dayK)
-      const dim = 1 - 0.45 * dk * (1 - dayK)
-      u.uAmbSky.value.multiplyScalar(dim)
-      u.uAmbGround.value.multiplyScalar(dim)
-      // (by night a faint purple fill: the rocks a dark magenta against the sky, never a black hole — nor a glow)
-      u.uAmbSky.value.lerp(D_PURPLE.clone().multiplyScalar(0.016), 0.6 * night * dk)
-    }
+    u.uRockFill.value *= 1 - 0.2 * LOOK
     // the HAZE's colour: the horizon leaning to the zenith, much of its tint kept — far ridges go blue-grey in layers
     keepTint(u.uFogColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.42), 0.75)
-    // (the desert's haze: the sand's own warm colour in it)
-    if (dk > 0) { const fl = 0.2126 * u.uFogColor.value.r + 0.7152 * u.uFogColor.value.g + 0.0722 * u.uFogColor.value.b; u.uFogColor.value.lerp(D_SANDHAZE.clone().multiplyScalar(fl * 1.05), 0.55 * dk).lerp(u.uSkyHorizon.value, 0.2 * dk * GFX.MathUtils.smoothstep(s, 0.12, 0.35)) } // (the far land melts into a warm peach-white)
     // the MIST's colour: the horizon's brightness as a cool grey-white (dark at night, rosy-grey at dusk)
     keepTint(u.uMistColor.value.copy(u.uSkyHorizon.value).lerp(u.uSkyZenith.value, 0.2), 0.18).multiplyScalar(0.92)
     // THE LOOK'S HAZE (2026-11-13, the user's painted frames: "no fog, so we see far and it's empty — hide it with a
     // realistic fog filter"): the valley's air a HEIGHT FOG — clear round you, then a warm haze swallowing the middle
     // distance (half gone at ~300 m on the low ground, ~90 % by 1 km), thicker in the hollows, thinner up on the
-    // ridges; lit GOLD toward a low sun, a peach-lilac away from it and far off. The desert keeps its own air.
-    const lk = LOOK * (1 - dk)
+    // ridges; lit GOLD toward a low sun, a peach-lilac away from it and far off.
+    const lk = LOOK
     // (2026-11-13, the day checked hour by hour: looking toward a low sun the sky's and the haze's glow ran a tenth of the
     //  frame up to white — 11 % of the pixels at 252+, measured, this commit and the one before. The glow 45 % less
     //  while the sun is low: the disc and its halo still burn, the sky round them keeps its colour.)
@@ -381,7 +306,7 @@ export const LOOK = QS.get('look') === '0' ? 0 : 1
 /** DRAW DISTANCES UNDER THE HAZE (PERF, 2026-11-13 — the user: "shorter draw distance hidden behind the fog"): in the
  *  valley with the look the far land is ~65 % haze by 650 m and ~80 % by 1 km, so the trees', the rocks', the props' and
  *  the Wardens' reaches come in to this share of the tier's (the terrain and the peaks are drawn as far as ever).
- *  1 without the look, in the desert (its own clear air), and with `?lreach=1` (the A/B). */
+ *  1 without the look, and with `?lreach=1` (the A/B). */
 export const LOOK_REACH = LOOK && QS.get('lreach') !== '1' ? 0.75 : 1
 /** The haze's drifting banks (hazeAmount): `?fogbanks=0` an even veil (?banks=0 is the roads' banks — mapPrep) — the A/B. */
 const NO_BANKS = QS.get('fogbanks') === '0'
@@ -392,17 +317,6 @@ const HAZE_SIGMA = Number(QS.get('hzs') ?? 0.0015), HAZE_BASE = Number(QS.get('h
 const MIST_SIGMA = 0.008 * Number(QS.get('gm') ?? 1), MIST_H = Number(QS.get('gmh') ?? 11)
 /** The far haze's tint (unit-ish luminance): a peach-lilac. */
 const HAZE_FAR = new GFX.Color(0.95, 0.93, 1.12)
-
-/** The desert's grade (Atmosphere.desert): colours of unit luminance-ish, scaled to the keyframe's brightness. */
-// (2026-11-04: the stylised warm grade — was round 1's deep photographic blue)
-const D_BLUE = new GFX.Color(0.62, 0.95, 1.32) // (the zenith: a pale cyan)
-const D_PALEBLUE = new GFX.Color(1.06, 1.0, 0.96) // (the horizon: a warm near-white)
-const D_PINK = new GFX.Color(2.1, 0.5, 0.78) // (sunset: hot pink)
-const D_PURPLE = new GFX.Color(1.05, 0.42, 1.35) // (night: purple)
-const D_SANDHAZE = new GFX.Color(1.16, 0.93, 0.86) // (the haze: peach-white)
-const D_WARMFILL = new GFX.Color(1.32, 0.86, 0.8) // (the shade's fill: rosy)
-/** The sandstorm's dust (unit-ish luminance): Over the Hill's orange-brown haze. */
-const DUST = new GFX.Color(1.42, 0.86, 0.5)
 
 /** First line of every world fragment shader (GLSL3: three's tone-map / colour-space chunks write gl_FragColor). */
 export const FRAG_OUT = /* glsl */ `
@@ -484,8 +398,6 @@ uniform vec2 uWind;
 uniform float uGlow;
 uniform float uMist;
 uniform vec3 uMistColor;
-uniform float uDust;
-uniform vec3 uDustColor;
 uniform vec4 uHaze;
 uniform vec3 uHazeLow; // the ground mist: density at its floor, height scale, its floor's height
 uniform vec3 uHazeSun;
@@ -561,7 +473,6 @@ vec3 fogColorK(vec3 d, float far) {
   }
   // (without the post pass the bloom's spread over the hazy ridges toward the sun is painted here: wider, warmer)
   c += uSunGlow * (0.18 * pow(s, 6.0) + uGlow * (0.22 * pow(s, 3.0) + 0.35 * pow(s, 24.0))) * (1.0 - uNight);
-  if (uDust > 0.001) c = mix(c, uDustColor * (1.0 + 0.25 * pow(s, 4.0)), smoothstep(0.05, 0.6, uDust));
   return uMist > 0.001 ? mix(c, uMistColor + uSunGlow * 0.05 * pow(s, 3.0) * (1.0 - uNight), mistK()) : c;
 }
 
@@ -589,9 +500,7 @@ vec3 skyColor(vec3 d) {
   // (the look's haze: the far haze's own colour — fogColorK at the horizon — and its band a little deeper)
   vec3 low = uHaze.x > 0.0 ? mix(uFogColor, uHazeSun, (0.32 + 0.68 * s * s) * 0.45) : uFogColor;
   c = mix(c, low + uSunGlow * (0.18 * pow(s, 6.0)) * (1.0 - uNight), 1.0 - smoothstep(-0.02, uHaze.x > 0.0 ? 0.26 : 0.2, y));
-  // (in the crossing's cloud the sky is the mist, a touch brighter overhead where the sun comes through)
-  // (a sandstorm: the sky is the blowing dust, a little brighter toward the sun)
-  if (uDust > 0.001) c = mix(c, uDustColor * (1.0 + 0.25 * pow(s, 4.0)), smoothstep(0.05, 0.7, uDust) * 0.92);
+  // (in the pass's cloud the sky is the mist, a touch brighter overhead where the sun comes through)
   // (no brighter overhead once it's thick: the far ridges, fogged to the mist's own colour, must not show against it)
   if (uMist > 0.001) c = mix(c, uMistColor * (1.0 + 0.12 * up * (1.0 - uMist)) + uSunGlow * 0.05 * pow(s, 3.0) * (1.0 - uNight), mistK());
   return c;
@@ -657,8 +566,6 @@ float fogAmountL(vec3 wpos, out float low) {
   // (2026-11-04 — the user: "the fog on the hill is okay but it hides the path": at its thickest 85 % gone at ~40 m, not
   //  10 — the road readable 30–40 m ahead, ~3 s at the pass's pace; the sky behind still all mist)
   if (uMist > 0.001) f = max(f, 1.0 - exp(-length(wpos - uCamPos) * 0.048 * MIST_K * uMist * uMist * uMist));
-  // THE SANDSTORM: the dust round the camera — ~110 m to see at its height (never quite solid: shapes in it)
-  if (uDust > 0.001) f = max(f, (1.0 - exp(-length(wpos - uCamPos) * 0.028 * MIST_K * uDust * uDust)) * 0.97);
   return f;
 }
 float fogAmount(vec3 wpos) { float low; return fogAmountL(wpos, low); }

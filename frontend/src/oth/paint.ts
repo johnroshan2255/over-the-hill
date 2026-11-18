@@ -134,129 +134,6 @@ struct Ground { vec3 col; float rock; float forest; float snow; float bed; float
 // trail = distance (m) to the nearest dirt track's centre line, hw its half width
 // far = 0 within the grass's reach … 1 beyond it: the shrub dots are a far-hillside breakup only (near, a bush is a
 // real bush, not a disc painted on the ground)
-#ifdef OTH_DESERT
-// THE DESERT (Over the Hill's Algeria, their Steam shots measured, 2026-11-02): pale orange SAND (sunlit ≈ sRGB 213 173
-// 128), red-orange SANDSTONE in BEDS 9 m thick (≈ 213 140 111 in the sun, 181 116 99 in shade) — each bed its own tone,
-// a darker undercut at its foot, sand dusting the flat tops; damp sand by the water, olive ground under the oasis's
-// growth, light compacted sand on the tracks. Mask: R rock, G loose sand, B wet / water, A the oasis's growth.
-// (2026-11-03, DESERT_MATCH round 2 — real Saharan / Wadi Rum sand, photographed: an orange-red ≈ 25° hue (sRGB 248 157
-//  97 open, 243 189 150 compacted); ours read 32° (233 189 140, 244 211 173), a pale yellow-beige: redder and a
-//  little darker)
-// (2026-11-04 — the desert's own STYLISED, WARM look, replacing rounds 2–3's photographed browns: peach SAND, salmon
-//  SANDSTONE, a little deeper in its beds; the shade's rosy fill is Atmosphere.ts's. Formations.ts, Rocks.ts and
-//  Water.ts keep the same stone)
-const vec3 SAND        = vec3(0.5, 0.28, 0.155);
-const vec3 SAND_DEEP   = vec3(0.45, 0.24, 0.13);
-const vec3 SAND_PALE   = vec3(0.55, 0.315, 0.18);
-// (coral: redder than the sand, so rock and sand read apart — 2026-11-04)
-// (2026-11-04, round 2: the sand's own family, as the stacks' (Rocks.ts STACK_A / B) — the reference frames' rock reads
-//  by its light and shade, not a redder paint)
-const vec3 STONE       = vec3(0.44, 0.19, 0.11);
-const vec3 STONE_PALE  = vec3(0.5, 0.23, 0.135);
-const vec3 STONE_DEEP  = vec3(0.37, 0.155, 0.09);
-const vec3 DAMP        = vec3(0.3, 0.17, 0.1);
-const vec3 OASIS_FLOOR = vec3(0.1, 0.16, 0.045);
-const vec3 TRACK_SAND  = vec3(0.53, 0.3, 0.17);
-// (the gravel plains: only a deeper, redder sand now — the clean look has no pebbles)
-const vec3 GRAVEL      = vec3(0.46, 0.235, 0.13);
-const vec3 GRAVEL_PALE = vec3(0.52, 0.27, 0.15);
-// a value noise from hashes (no texture fetch), 0..1, smooth: the sand's speckle — and, unlike the paint texture (it
-// repeats every 0.85 / 3.7 / 13 m: on bare sand a visible pattern), it never repeats
-float sandHash(vec2 c) { return fract(sin(dot(c, vec2(127.1, 311.7))) * 43758.5453); }
-float sandNoise(vec2 q) {
-  vec2 i = floor(q), f = q - i, u = f * f * (3.0 - 2.0 * f);
-  return mix(mix(sandHash(i), sandHash(i + vec2(1.0, 0.0)), u.x), mix(sandHash(i + vec2(0.0, 1.0)), sandHash(i + vec2(1.0, 1.0)), u.x), u.y);
-}
-// NO-REPEAT BLOTCHES, cheaply (2026-11-04: from hashes they cost the terrain +70 %): the paint texture read TURNED and
-// at scales sharing no period with its axis-aligned octaves — each read alone repeats every tile, the blend of a turned
-// 47.3 m and an axis-aligned 71 m one (or 11.9 m and 13 m) doesn't. A: broad (≈ 12 m blotches), B: ≈ 3 m
-vec4 desertNoiseA(vec2 xz) { return PAINT_TEX(mat2(0.8, -0.6, 0.6, 0.8) * xz * (1.0 / 47.3) + vec2(0.31, 0.77)); }
-vec4 desertNoiseB(vec2 xz) { return PAINT_TEX(mat2(0.28, 0.96, -0.96, 0.28) * xz * (1.0 / 11.9) + vec2(0.53, 0.19)); }
-// the sandstone's beds by height: tones of UNEVEN thickness (two smooth 1D noises — desert.py's strata are uneven too;
-// 2026-11-04: an even 9 m band, each with a dark foot, painted every wall "like a trenched hill")
-float bedHash(float i) { return fract(sin(i * 12.9898 + 4.1) * 43758.5453); }
-float bedNoise(float x) { float i = floor(x), f = x - i; return mix(bedHash(i), bedHash(i + 1.0), f * f * (3.0 - 2.0 * f)); }
-float bedTone(float h, Paint p) { float q = h + (p.big.g - 0.5) * 6.0; return clamp(0.72 * bedNoise(q / 19.0) + 0.28 * bedNoise(q / 5.5 + 7.3), 0.0, 1.0); }
-Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
-  Ground g;
-  g.snow = 0.0; g.scree = 0.0; g.screeNear = 0.0; g.dots = 0.0;
-  bool frag = foot > 0.0; // (the grass's vertex shader passes 0: it only needs the colour, no marks)
-  float near = frag ? 1.0 - smoothstep(0.35, 1.2, foot) : 0.0;
-  // broad blotches (≈ 12 m) and small ones (≈ 3 m), with no period (the small gone where they'd be under a pixel or two)
-  vec4 nA = desertNoiseA(xz);
-  float d25 = clamp(0.62 * nA.r + 0.38 * p.mid.g, 0.0, 1.0);
-  // (LOW — the phones: the small blotches from the axis-aligned octave alone; one read less on every near pixel)
-#ifdef OTH_SPEC
-  float d6 = foot < 3.0 ? clamp(0.62 * desertNoiseB(xz).r + 0.38 * p.fine.g, 0.0, 1.0) : 0.5;
-#else
-  float d6 = p.fine.g;
-#endif
-  g.ripK = nA.g;
-  // LOOSE SAND or GRAVEL: the mask's G (sheets, tails behind the rocks, drifts at the walls' feet — no repeat), its
-  // edge ragged
-  float gs = smoothstep(0.34, 0.56, m.g + (d25 - 0.5) * 0.22 + (d6 - 0.5) * 0.12);
-  g.loose = gs;
-  vec3 sandC = mix(SAND_DEEP, mix(SAND, SAND_PALE, smoothstep(0.25, 0.85, d25 * 0.6 + p.big.r * 0.4)), 0.35 + 0.65 * smoothstep(0.4, 0.9, m.g));
-  sandC *= 0.97 + 0.05 * d6 + (p.big.r - 0.5) * 0.08;
-  vec3 grav = mix(GRAVEL, GRAVEL_PALE, clamp(d25 * 0.75 + (p.big.b - 0.5) * 0.5, 0.0, 1.0)) * (0.97 + 0.05 * d6);
-  // (2026-11-04, the CLEAN stylised look: no pebbles, no grit — broad soft tone only)
-  vec3 col = mix(grav, sandC, gs);
-  // damp sand toward the water, the oasis's olive floor under its palms and scrub
-  float wet = min(m.b / 0.85, 1.0);
-  col = mix(col, DAMP * (0.9 + 0.2 * d6), smoothstep(0.3, 0.85, wet) * 0.35); // (round 2: pale beaches — the reference frames' lagoon shore is sand)
-  g.forest = smoothstep(0.25, 0.75, m.a + (p.mid.b - 0.5) * 0.3);
-  // THE OASIS FLOOR GREEN (2026-11-04 — the user: "in the oasis we grow grass but the terrain colour is red; it must be
-  //  green like in the valley, with a proper transition"): the valley's own green field (grassPaint) where the growth
-  //  is, greenest on the damp banks, through a band of dry olive and khaki — the grass thinning — to the sand, its edge
-  //  wide and ragged (the no-repeat blotches push it about). The grass blades take this colour (Grass.ts), as the
-  //  valley's take theirs
-  float bank = smoothstep(0.45, 0.8, m.b / 0.85);
-  float green = clamp(max(smoothstep(0.03, 0.5, m.a + (d25 - 0.5) * 0.14 * (1.0 - smoothstep(0.3, 0.6, m.a)) + (d6 - 0.5) * 0.08), bank * 0.95), 0.0, 1.0);
-  // (2026-11-04, round 2 — the user's reference frames: the oasis is SAND with green in PATCHES — clumps of grass and
-  //  bushes under the palms, sand beaches to the water — not a lawn: the green only where a slow blotchy noise says,
-  //  a little more of it right by the water)
-  float clump = smoothstep(0.5, 0.64, 0.55 * nA.b + 0.45 * p.mid.r + 0.12 * bank + (d6 - 0.5) * 0.1);
-  green *= clump;
-  g.lawn = green;
-  vec3 lawn = grassPaint(mix(0.3, 0.05, bank), p);
-  vec3 dryEdge = mix(vec3(0.3, 0.22, 0.1), vec3(0.2, 0.19, 0.08), smoothstep(0.2, 0.5, green));
-  col = mix(col, mix(dryEdge, lawn, smoothstep(0.3, 0.8, green)), smoothstep(0.0, 0.45, green));
-  // SANDSTONE: the beds' tones (uneven), sand on the flat tops; the faces' streaks are the terrain's (Terrain.ts)
-  // (2026-11-04 — the user: "the reddish sudden rise of rocks … it must be gradual, the colour blending": the rock's
-  //  edge a WIDE soft blend with a ragged line (the broad blotches push it about), and the rock near its foot goes
-  //  sandy — dusted, half buried — before it's sand)
-  float rv = m.r + (p.mid.b - 0.5) * 0.3 + (d25 - 0.5) * 0.25 + (d6 - 0.5) * 0.12;
-  g.rock = smoothstep(0.28, 0.78, rv);
-  g.rockNear = smoothstep(0.18, 0.5, rv);
-  float bt = bedTone(h, p);
-  // (the bare rock's own breakup — soft tone patches a few metres across, from the no-repeat reads; no seam lines: they
-  //  read as a crackle of cracks, not smooth rock — 2026-11-04)
-  vec3 stone = mix(STONE, STONE_PALE, bt * 0.7) * (0.93 + 0.1 * d25) * (0.94 + 0.1 * d6);
-  // (a slab's SIDE darker than its top — the stacked layers read from afar: lit tops, deeper rims — 2026-11-04)
-  stone *= mix(1.0, 0.8, smoothstep(0.2, 0.6, steep));
-  stone = mix(stone, SAND, (1.0 - smoothstep(0.03, 0.12, steep)) * 0.22); // (a dusting of sand on the tops)
-  stone = mix(stone, mix(SAND_DEEP, stone, 0.45), (1.0 - smoothstep(0.35, 0.85, rv)) * 0.8); // (the foot: sandy)
-  col = mix(col, stone, g.rock);
-  // the water's bed: wet gravel and sand
-  g.bed = smoothstep(0.9, 0.97, m.b);
-  col = mix(col, DAMP * (0.75 + 0.3 * d6) * mix(vec3(1.0), vec3(0.92, 0.97, 0.95), p.mid.g), g.bed);
-  // THE TRACKS (2026-11-04 — they read as a flat pale strip): compacted sand taking a little of the ground it crosses,
-  // its edge ragged (from the no-repeat noise), two pairs of darker wheel ruts, a paler crown with a few pebbles, loose
-  // sand and pebbles thrown up along its edges
-  g.trail = 0.0;
-  if (trail < hw + 1.6) {
-    float te = trail + (d6 - 0.5) * 1.5 + (frag ? (sandNoise(xz / 0.9 + 3.3) - 0.5) * 0.5 : 0.0);
-    g.trail = (1.0 - smoothstep(hw - 0.4, hw + 0.2, te)) * (1.0 - g.bed);
-    // (2026-11-04, the clean look: only a faint trace — a little paler, two soft wheel lines — no pebbles)
-    float rut = max(1.0 - smoothstep(0.15, 0.45, abs(trail - 0.95)), 0.6 * (1.0 - smoothstep(0.12, 0.4, abs(trail - 2.05)))) * near;
-    vec3 track = mix(TRACK_SAND, col, 0.55) * (1.0 - 0.06 * rut);
-    col = mix(col, track, g.trail);
-  }
-  g.loose *= (1.0 - g.rock) * (1.0 - g.trail);
-  g.col = col;
-  return g;
-}
-#else
 Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, float trail, float hw, float far) {
   Ground g;
   g.loose = 0.0; g.ripK = 0.5; g.lawn = 1.0;
@@ -400,7 +277,6 @@ Ground groundPaint(vec2 xz, vec4 m, float h, float steep, Paint p, float foot, f
   return g;
 }
 
-#endif
 
 // WILDFLOWERS (mud.bin G): a drift's colour — one kind per patch (a slow noise picks it), a few of the next kind mixed
 // in (pick: a per-plant random). White daisies, buttercups, lilac lupines, pink campion, poppies, cornflowers; linear

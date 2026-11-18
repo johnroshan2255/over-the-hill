@@ -281,6 +281,15 @@ export class Renderer {
     return { frame: pr.frameTime, passes: Object.fromEntries(pr.passTimings ?? []) }
   }
 
+  /** (the harness) a LOST DEVICE, as the browser would report one: PlayCanvas's own recovery runs — every buffer and
+   *  texture restored (the lean buffers refilled first: scene.ts). WebGPU only. */
+  async loseDevice(): Promise<boolean> {
+    const d = gfx().device as unknown as { wgpu?: unknown; handleDeviceLost?: (i: { reason: string }) => Promise<void> }
+    if (!d.wgpu || !d.handleDeviceLost) return false
+    await d.handleDeviceLost({ reason: 'unknown' })
+    return true
+  }
+
   /** Resolve when the GPU has finished all the work submitted so far (the harness's honest frame time). */
   async gpuDone(): Promise<void> {
     const d = gfx().device as unknown as { wgpu?: GPUDevice; gl?: WebGL2RenderingContext }

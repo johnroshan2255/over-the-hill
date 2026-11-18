@@ -28,7 +28,7 @@ export function grovesOf(map: MapData, rocks: Rocks): Grove[] {
   if (hit) return hit
   const out: Grove[] = []
   cache.set(map, out)
-  if (map.desert || gameParams().get('groves') === '0') return out
+  if (gameParams().get('groves') === '0') return out
   const mk: [number, number, number, number] = [0, 0, 0, 0]
   const hw = map.meta.trails.hw, fp = rocks.footprint.image.data as Uint8Array, g = map.inner, sp = map.meta.spawn
   const half = map.half - 80

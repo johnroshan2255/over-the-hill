@@ -1,6 +1,5 @@
 // navtest.mjs [outDir] — THE GPS (Nav.ts, MapView, Radar): routes from the spawn to every place in the valley (time to
-// plan, length, ETA, turns), a waypoint in the desert (the valley's leg ends at the pass; after a swap the desert's leg
-// starts at the car), and pictures: the radar while driving with a route, the map with it, the desert's tab.
+// plan, length, ETA, turns), and pictures: the radar while driving with a route, the map with it.
 // The dev server on :5200 (npm run dev). ?save=0: never writes the player's journey.
 import puppeteer from 'puppeteer-core'
 import fs from 'node:fs'
@@ -57,37 +56,5 @@ await p.screenshot({ path: `${out}/map_valley_zoom.png` })
 await p.keyboard.press('KeyZ')
 
 // the desert's tab: click on Red Erg there → the route to the pass
-await p.evaluate(() => [...document.querySelectorAll('.oth-map-tabs button')].find((b) => /desert/i.test(b.textContent)).click())
-await sleep(1200)
-await p.screenshot({ path: `${out}/map_desert_tab.png` })
-const cross = await p.evaluate(async () => {
-  const o = window.__oth, g = o.guide
-  const meta = await (await fetch('/oth/desert/meta.json')).json()
-  const l = meta.landmarks.find((q) => q.name === 'Red Erg') ?? meta.landmarks[0]
-  g.set({ world: 'desert', x: l.x, z: l.z, name: l.name }, o.car.pos)
-  await new Promise((r) => setTimeout(r, 400))
-  const [ex, ez] = g.route.end, G = o.world.map.meta.gate
-  return { dest: l.name, viaGate: g.viaGate, endToGate: +Math.hypot(ex - G.x, ez - G.z).toFixed(1), valleyKm: +(g.route.length / 1000).toFixed(2), desertLegKm: g.otherLeg ? +(g.otherLeg.length / 1000).toFixed(2) : null, totalKm: +(g.remaining / 1000).toFixed(2), min: +(g.remainingTime / 60).toFixed(1) }
-})
-console.log('cross-world:', cross)
-await sleep(400)
-await p.screenshot({ path: `${out}/map_desert_route.png` })
-await p.evaluate(() => [...document.querySelectorAll('.oth-map-tabs button')].find((b) => /valley/i.test(b.textContent)).click())
-await sleep(400)
-await p.screenshot({ path: `${out}/map_valley_to_pass.png` })
-await p.keyboard.press('Tab')
-
-// the swap (the harness's: the car at the desert's spawn by its gate) → the desert's leg from the car
-await p.evaluate(() => window.__oth.swapTo('desert'))
-await sleep(3000)
-const after = await p.evaluate(() => {
-  const o = window.__oth, g = o.guide, r = g.route, w = g.waypoint
-  return { world: o.world.id, waypoint: w?.name, viaGate: g.viaGate, km: r ? +(r.length / 1000).toFixed(2) : null, endToWaypoint: r ? +Math.hypot(r.end[0] - w.x, r.end[1] - w.z).toFixed(1) : null }
-})
-console.log('after the swap:', after)
-await p.screenshot({ path: `${out}/desert_radar_full.png` })
-await p.keyboard.press('Tab')
-await sleep(800)
-await p.screenshot({ path: `${out}/desert_map.png` })
 console.log('errors:', errs.length ? errs : 'none')
 await b.close()

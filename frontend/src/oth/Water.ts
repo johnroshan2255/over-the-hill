@@ -47,7 +47,7 @@ export class Water {
     const material = (rapids: boolean) => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}), ...map.biomeDefines, ...wcut(), ...(gameParams().get('water') === 'oth' ? { OTH_WATER: '' } : {}) },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(rapids ? { RAPIDS: '' } : {}), ...wcut(), ...(gameParams().get('water') === 'oth' ? { OTH_WATER: '' } : {}) },
       vertexShader: VERT,
       fragmentShader: FRAG,
       transparent: true,
@@ -61,7 +61,7 @@ export class Water {
     //  cave's dark on it
     this.poolMaterial = () => new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3, uniforms,
-      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), ...map.biomeDefines, CAVE_POOL: '' },
+      defines: { ...(tier.spec ? { OTH_SPEC: '' } : {}), CAVE_POOL: '' },
       vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, side: GFX.DoubleSide,
     })
     // the lake: a disc round its ellipse (the shore clips it); the PONDS and small lakes: a disc each, at its level —
@@ -349,13 +349,7 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
   vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
   // body colour: see-through shallows → deep teal
   float k = 1.0 - exp(-depth * 0.55);
-#ifdef OTH_DESERT
-  // (DESERT_MATCH round 4 — a GUELTA, as photographed in the Tassili's canyons: olive-green over its sand, dark where
-  //  deep — never turquoise)
-  vec3 body = mix(G_SHALLOW, G_DEEP, k) * (ambient(vec3(0.0, 1.0, 0.0)) + uSunColor * 0.35 * sun);
-#else
   vec3 body = mix(SHALLOW, DEEP, k) * (ambient(vec3(0.0, 1.0, 0.0)) + uSunColor * 0.35 * sun);
-#endif
   // the sky by Fresnel
   // (art-directed: the reflection never quite whites out the water, and takes its colour)
   float F = 0.02 + 0.42 * pow(1.0 - max(dot(N, V), 0.0), 4.0);
@@ -365,25 +359,12 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
 #else
   vec3 refl = skyColor(normalize(vec3(R.x, max(R.y, 0.02), R.z))) * vec3(0.72, 0.9, 0.95);
 #endif
-#ifdef OTH_DESERT
-  // (in a canyon the low half of the reflection is its walls — warm sandstone in the light — not the sky)
-  refl = mix(G_WALL * (ambient(vec3(0.0, 1.0, 0.0)) * 0.7 + uSunColor * 0.45), refl, smoothstep(0.04, 0.28, R.y));
-#endif
   vec3 c = mix(body, refl, F);
   // sun glints
   vec3 H = normalize(uSunDir + V);
   // (2026-11-13, round 5: under a LOW sun, looked at down its path, the lobe lay over half the river — and the ripples'
   //  noise, magnified, cut it into white blocks. The glint capped, and weaker the lower the sun: a glitter, not a sheet)
   c += uSunDisc * sun * min(pow(max(dot(N, H), 0.0), 220.0) * 2.5, 0.55) * mix(0.3, 1.0, smoothstep(0.08, 0.45, uSunDir.y)); // (the sun's own colour: its reflection)
-#ifdef OTH_DESERT
-  // the shore line: a soft bright edge where it's a few cm deep
-  // (a band in METRES from the waterline — shoreM — and a few cm deep at most: by depth alone a wide flat shallow was a
-  //  white pane metres across — the lagoon over the ford in the user's screenshot)
-  float foam = (1.0 - smoothstep(0.02, 0.14, depth)) * (1.0 - smoothstep(0.4, 1.6, shoreM));
-  if (foam > 0.0) foam *= 0.55 + 0.45 * texture(uNoise, xz / 1.7 + uTime * 0.05).b; // (its read only on the band)
-  c = mix(c, vec3(0.9, 0.93, 0.95) * (ambient(vec3(0.0, 1.0, 0.0)) * 1.4 + uSunColor * 0.5 * sun), foam * 0.75);
-  float alpha = clamp(smoothstep(0.0, 0.08, depth) * mix(0.55, 0.97, k) + F * 0.5 + foam * 0.5, 0.0, 1.0);
-#else
   // THE SHORE (2026-11-08, the user's screenshot — a milky pale band along the beach: "the sides of the water must be
   // properly shaded and look real good"): the water ABSORBS — clear at the edge, the bed showing through darkened and
   // tinted green-teal, deepening to the dark teal (its opacity 1 − e^(−1.4 d): 13 % at 10 cm, 57 % at 60 cm, 94 % at
@@ -395,7 +376,6 @@ vec4 stillLook(vec2 xz, float depth, vec3 V, float sun, float dcam, float flowK,
   if (foam > 0.0) foam *= (0.35 + 0.65 * smoothstep(0.25, 0.7, texture(uNoise, xz / 7.0 + vec2(uTime * 0.01, 0.0)).r)) * (1.0 - smoothstep(60.0, 140.0, dcam)); // (a soft line, thicker and thinner along the shore — never dashes)
   c = mix(c, vec3(0.86, 0.9, 0.92) * (ambient(vec3(0.0, 1.0, 0.0)) * 1.3 + uSunColor * 0.5 * sun), foam * 0.8);
   float alpha = clamp((1.0 - exp(-max(dl, 0.0) * 1.4)) * 0.97 + F * 0.45 * smoothstep(0.0, 0.05, dl) + foam * 0.6, 0.0, 1.0);
-#endif
   return vec4(c, alpha);
 }
 
@@ -454,11 +434,7 @@ void main() {
   // streaks). No noise read on still water, no sky function, no reflection vector, no shadow read: the depth (the
   // height grid) and the owner mask are all it fetches. A fast stream keeps ONE streak read. (?water=oth)
   float kd = 1.0 - exp(-depth * 1.1);
-#ifdef OTH_DESERT
-  vec3 body = mix(G_SHALLOW, G_DEEP, kd) * light;
-#else
   vec3 body = mix(vec3(0.34, 0.58, 0.64), vec3(0.11, 0.38, 0.5), kd) * light;
-#endif
   float fr = 1.0 - max(V.y, 0.0);
   fr *= fr * fr;
   vec3 c = mix(body, uSkyHorizon * 0.92, 0.06 + 0.5 * fr);
@@ -495,11 +471,7 @@ void main() {
   foam = mix(foam, mix(0.3, 0.08, calm), smoothstep(60.0, 260.0, dcam));
   // (and build up over the whole way out of a lake — waterOwner B, ~32 m: a rapid out of it began at a crisp line)
   foam *= 1.0 - smoothstep(0.05, 0.85, ow.b);
-#ifdef OTH_DESERT
-  vec3 still = mix(G_SHALLOW, G_DEEP, k * 0.75); // (the desert's river: the gueltas' olive where it's calm)
-#else
   vec3 still = mix(TEAL, TEAL_DEEP, k * 0.75);
-#endif
   vec3 body = mix(mix(RUN, RUN_DEEP, k * 0.6), still, calm) * (0.9 + 0.2 * s1);
   // a little sky on the blue, none on the foam
   vec3 N = normalize(vec3((s1 - 0.5) * 0.25, 1.0, (s2 - 0.5) * 0.25));

@@ -874,35 +874,22 @@ spiral (a clump, never a ring or a row), the tallest at the middle; mostly spruc
 birch and aspen; 4–8 bushes about their feet. Each cell its own seed: added after `placeTrees` / `placeBushes`, nothing
 of theirs moves. `?groves=0`: none (A/B: no measurable cost — ~1 070 trees on ~43 000).
 
-## Worlds, the desert (2026-11-02 — the to-do list: docs/NEXT.md)
+## The world, the Great Cliff (the desert REMOVED 2026-11-18 — the user: "delete the desert and the path to desert")
 
-- **World.ts**: everything built from one map under one group, built a step a frame while playing, disposed whole
-  (verified: GPU memory back to the same counts after every swap). What lasts — renderer, camera, Atmosphere, car,
-  physics (`setWorld`), sound (`setWorld`), HUD, terrain shadow (`setMap`) — reads the current map via `liveMap()`.
+- **World.ts**: everything built from one map under one group, a step at a time. What lasts — renderer, camera,
+  Atmosphere, car, physics, sound, HUD, terrain shadow — reads the current map via `liveMap()`.
 - **Workers**: `mapLoad.worker.ts` + `mapPrep.ts` (fetch + heights, normals, distance fields, the terrain's pyramid);
-  Draco in DRACOLoader's workers; textures uploaded and shaders compiled a step at a time before a world is entered.
-- **The desert** (`public/oth/desert`, `?world=desert`): `scripts/oth/desert.py` (terrain, beds terraced, ledge roads,
-  masks, meta with `biome` + `gate`), `scripts/oth/desert_rocks.py` (Blender: the sandstone slabs' low-poly skins →
-  `formations.glb`, drawn by `Formations.ts`); `OTH_DESERT` in every world material (sand / sandstone palette, wind
-  ripples, oasis-only grass, date palms, Over the Hill's bushes, the desert sky grade).
-- **The crossing** (`Crossing.ts`, round 2 — NEXT.md has the numbers): each world's `meta.gate` (where, how high, the
-  way out, its `mist`) at the top of a long climb — the valley's GREAT CLIFF (`scripts/oth/valley_cliff.py` over the
-  baked valley: a ~490 m plateau, a 7-leg LEDGE ROAD up its west face — `scripts/oth/ledgeroad.py`), the desert's
-  escarpment (the same `LedgeRoad`, 4 legs). The MIST (`uMist`: a fog round the camera in `ATMOS_GLSL`, the sky gone
-  to it) thickens with the climb; the other world is BUILT IN THE BACKGROUND within 1100 m of the gate (`World.build`
-  `background`: the terrain shadow `prepare`d, the shade and the far grid left alone until `World.adopt`; tree / bush
-  placement sliced over frames) and kept (not drawn) until the car is 1600 m away; the SWAP at the gate line, at the
-  start of a frame: `enter`, the car / dust / free camera moved by the gates' offset (a pure translation: the gates
-  face opposite ways), the old world kept for a way back, then disposed whole.
-- **The desert's weather and sand**: a SANDSTORM spell (`uDust`: dust fog, dust sky, a dimmed sun, `Rain.ts` 'sand'
-  streaks, headlights on, the wind loud) instead of rain; ruts in loose sand (TyreTracks), sand spray by the ground
-  (Dust), the car's SAND COAT (`uCoat`, Vehicle.weather).
-- **The desert's structures** (`desert_rocks.py` → `formations.glb` + `structures.json` colliders, `Formations.ts`):
-  the natural arch (its deck the road — a ground collider), the Roman aqueduct, the ksar, the gorge's blocks; the
-  gorge's ROPE BRIDGE (`Bridge.kind 'rope'`, `sag`, `deckY` — Bridges.ts draws it, Physics follows the sag in pieces).
-- **The desert's things** (`Places.ts` `desert` branches: oasis camps, wells, Bedouin tents, sandstone ruins; crate ids
-  from 100000) and sound (`Audio.ts`: open-sand wind, oasis-only birds and crickets, no owls). Per world: the journal's
-  `totals`, the player's camp (`Progress.camps`). `?save=0`: a test session that never saves.
+  Draco in DRACOLoader's workers; textures uploaded and shaders compiled a step at a time.
+- **The Great Cliff** (`scripts/oth/valley_cliff.py` over the baked valley: a ~490 m plateau, a 7-leg LEDGE ROAD up its
+  west face — `scripts/oth/ledgeroad.py`; the pass on over the top to the box's edge). Its top is `meta.gate` (where,
+  how high, its `mist`): the CLOUD ON THE PASS (`PassMist.ts` → `uMist`, a fog round the camera in `ATMOS_GLSL`, the
+  sky gone to it) thickens with the climb. Was the crossing to a second world, the desert (its own map, palette,
+  plants, sandstorm, slab stacks and formations; `Crossing.ts` built it behind the mist and swapped at the gate) — all
+  of it deleted with the world: `public/oth/desert`, `scripts/oth/desert*.py`, `Crossing.ts`, `Formations.ts`, the
+  `OTH_DESERT` / `OTH_STACK` / `SAND` shader branches, `MapData.desert` and every branch on it, the map's desert tab
+  and route-via-the-pass, the sandstorm (`uDust`). The cliff and its road stay; the valley's picture is unchanged
+  (pixcmp vs the commit before: within ±2 at every view; only the compass's ⇑ for the gate gone). Old saves: a journey
+  saved in the desert starts in the valley; crates with ids ≥ 100 000 (the desert's) are not counted.
 
 ## The GPS: waypoint, route, radar (2026-11-03 — the user: "like GTA 5: mark a destination on the map and it shows the fastest route like Google Maps"; "I don't know how to get to the other map")
 

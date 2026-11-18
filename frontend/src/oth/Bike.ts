@@ -145,7 +145,7 @@ export function surfaceOf(map: MapData, wet: number, x: number, z: number, out: 
   const track = Math.max(0, Math.min(1, (0.3 - map.wayEdge(x, z)) / 0.6))
   const water = m[2] > 0.9 ? 1 : 0
   const rock = Math.min(1, m[0] * 1.5) * (1 - track)
-  const loose = map.desert ? Math.max(0, m[1] - 0.4) / 0.6 * (1 - track) * (1 - rock) : 0 // (the desert's loose sand: mask G)
+  const loose = 0
   const rest = Math.max(0, 1 - track - water - rock - loose)
   w[Surf.Dirt] = track * (1 - 0.5 * wet) + rock * 0.4
   w[Surf.Mud] = track * 0.5 * wet

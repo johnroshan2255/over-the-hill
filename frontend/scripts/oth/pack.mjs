@@ -6,13 +6,13 @@
 //   Uint8 grids (mask, trail, mud: 1–4 channels): each channel's left-neighbour delta (8-bit, wrapped), one channel
 //     after another — gzip.
 // A .pk: gzip( 'OHPK' · u8 version 1 · u8 kind (1 u16, 2 u8) · u8 channels · u8 0 · u32 width · u32 height · payload ).
-// Run after any bake that writes a .bin (terrain.py, outland.py, desert.py, wilds.py, walls.mjs):
-//   node scripts/oth/pack.mjs [public/oth/valley public/oth/desert]      (checks each by decoding it back)
+// Run after any bake that writes a .bin (terrain.py, outland.py, wilds.py, walls.mjs):
+//   node scripts/oth/pack.mjs [public/oth/valley]      (checks each by decoding it back)
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 
-const dirs = process.argv.slice(2).length ? process.argv.slice(2) : ['public/oth/valley', 'public/oth/desert']
+const dirs = process.argv.slice(2).length ? process.argv.slice(2) : ['public/oth/valley']
 
 function header(kind, ch, w, h) {
   const b = Buffer.alloc(16)

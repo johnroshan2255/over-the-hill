@@ -148,13 +148,13 @@ export class Terrain {
       uShore0: { value: new GFX.Vector4(0, 0, 0, 0) }, uShore1: { value: new GFX.Vector4(0, 0, 0, 0) },
       uShore2: { value: new GFX.Vector4(0, 0, 0, 0) }, uShore3: { value: new GFX.Vector4(0, 0, 0, 0) },
     }
-    const defines: Record<string, string> = { ...(gameParams().get('paths') === '0' ? { OTH_NO_PATH: '' } : {}), ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...map.biomeDefines, ...shapeDefines(), ...rimDefines() }
+    const defines: Record<string, string> = { ...(gameParams().get('paths') === '0' ? { OTH_NO_PATH: '' } : {}), ...(tier.spec ? { OTH_SPEC: '' } : {}), ...(tier.rockRelief ? { OTH_ROCK_RELIEF: '' } : {}), ...shapeDefines(), ...rimDefines() }
     if (tier.groundCache > 0 && gameParams().get('gcache') !== '0') {
       this.cache = new GroundCache(renderer, tier.groundCache, 2 * map.farHalf, this.uniforms, defines, HEIGHT_GLSL, SURF_GLSL)
       Object.assign(this.uniforms, this.cache.uniforms)
     }
     // (the places' paving — PAVE_GLSL: the valley's only; the full look on PCs, the texture alone on phones)
-    const pave: Record<string, string> = map.desert || gameParams().get('pave') === '0' ? {} : { OTH_PAVE: '', ...(tier.paveHi ? { OTH_PAVE_HI: '' } : {}) }
+    const pave: Record<string, string> = gameParams().get('pave') === '0' ? {} : { OTH_PAVE: '', ...(tier.paveHi ? { OTH_PAVE_HI: '' } : {}) }
     const mat = new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
       uniforms: this.uniforms,
@@ -792,14 +792,8 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   if (box) m = texture(uMask, gridUv(uMaskGrid, xz));
   if (rim > 0.0) {
     vec4 mo;
-#ifdef OTH_DESERT
-    // (the far desert: sandstone where it's steep, sand everywhere else — loose in broad drifts; nothing grows)
-    float rock = smoothstep(0.12, 0.26, steep + (p.big.b - 0.5) * 0.12);
-    mo = vec4(rock, 0.55 + (p.big.g - 0.5) * 0.7, 0.0, 0.0);
-#else
     mo = outlandMask(xz, steep, h, p.big, p.mid);
     { float st = stonyAt(xz, p.mid.g); mo.r = max(mo.r, st); mo.a *= 1.0 - st; }
-#endif
     m = mix(m, mo, rim);
   }
 #ifdef OTH_SKIN
@@ -851,10 +845,6 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   // (2026-11-04 — the user: "I can see lots of triangles instead of a smooth surface": no low-poly facets — the smooth
   //  normal everywhere, no per-triangle tone; the light rolls over the land in soft gradients)
   // HIGH / ULTRA on PCs: the rock's (and the scree's) crumpled 3D relief — the light only (the terrain applies it)
-#ifdef OTH_DESERT
-  // (round 2: the desert's walls clean planes like its slabs — the relief crumpled them into melted wax)
-  s.relief = g.rock * (1.0 - g.trail) * (1.0 - 0.75 * smoothstep(0.25, 0.55, steep));
-#else
   s.relief = max(g.rock, g.scree * 0.6) * (1.0 - g.trail); // (never on a track)
 #ifdef OTH_LOOK
   // (the look, 2026-11-13 — the user: "the rock 3D shader on the ruins, the ground and all": the TRACKS' earth takes
@@ -863,43 +853,12 @@ Surf surfaceAt(vec2 xz, float h, vec3 Ns, float nfY, float foot, bool farG, bool
   //  the relief's reads ran down every track to the horizon)
   s.relief = max(s.relief, g.trail * 0.55 * (1.0 - smoothstep(0.03, 0.09, foot)));
 #endif
-#endif
   s.rip = vec2(0.0);
-#ifdef OTH_DESERT
-  // WIND RIPPLES in the loose sand: fine ridges across the wind (~0.35 m), the light only — on the LOOSE sand only
-  // (2026-11-04: not the gravel, rock, tracks or the damp), in PATCHES (a slow no-repeat noise: some sand lies smooth),
-  // at two angles of the wind crossfading (one direction everywhere read as a repeated pattern), gone wherever a
-  // ripple would be smaller than a pixel or two
-  // (2026-11-04, the clean look: only on the dunes and the deep sheets, and gentler)
-  float loose = g.loose * smoothstep(0.75, 0.95, m.g) * (1.0 - smoothstep(0.3, 0.7, m.b)) * (1.0 - smoothstep(0.05, 0.12, foot));
-  if (loose > 0.01) {
-    float patchK = smoothstep(0.38, 0.62, g.ripK);
-    loose *= 0.25 + 0.75 * patchK;
-    vec2 wd1 = vec2(0.83, 0.56), wd2 = vec2(0.47, 0.88);
-    float warp = (p.mid.g - 0.5) * 9.0 + (p.fine.b - 0.5) * 2.2 + (p.grain.r - 0.5) * 1.2;
-    float wk = smoothstep(0.38, 0.62, p.big.r);
-#ifdef OTH_SPEC
-    float ph1 = dot(xz, wd1) * 17.0 + warp, ph2 = dot(xz, wd2) * 13.5 + warp * 0.8;
-    float rip = mix(cos(ph1) * 0.5 + 0.5 * cos(ph1 * 2.03 + 1.1) * 0.35, cos(ph2) * 0.5 + 0.5 * cos(ph2 * 2.03 + 0.4) * 0.35, wk);
-    vec2 wd = normalize(mix(wd1, wd2, wk));
-#else
-    // (LOW: one angle or the other, never both)
-    vec2 wd = wk > 0.5 ? wd2 : wd1;
-    float ph = dot(xz, wd) * (wk > 0.5 ? 13.5 : 17.0) + warp;
-    float rip = cos(ph) * 0.5 + 0.5 * cos(ph * 2.03 + 1.1) * 0.35;
-#endif
-    s.rip = wd * rip * 0.1 * loose;
-  }
-#endif
   // CLIFF FACES (2026-10-27, "cliffs … the colour is the key"): a steep rock face reads as LAYERED stone — beds of
   // UNEVEN thickness (two smooth 1D noises sharing no period), soft tones, no seams; darker streaks running down from
   // the ledges at two scales with no common period; moss and grass on the ledges (the facets that face up). The small
   // beds and the streaks fade into the plain colour as they shrink toward a pixel. Rock only.
-#ifdef OTH_DESERT
-  float cliffK = 0.0; // (the desert's beds are its own paint: groundPaint)
-#else
   float cliffK = g.rock * smoothstep(0.22, 0.5, steep) * (1.0 - g.trail);
-#endif
   if (cliffK > 0.01) {
     float nearK = 1.0 - smoothstep(0.8, 3.5, foot);
     // (no beds by height — 2026-11-11, night, the user: "fix all repeated line like this": the 13 m / 4 m bands were
@@ -1043,11 +1002,7 @@ Surf gcSurface(vec2 xz, float Lf) {
   s.rough = b.r; s.aoB = b.g; s.grassy = b.b; s.under = b.a;
   s.shape = (c.r - 0.5) * 4.0; s.trail = c.g; s.bog = c.b; s.pudN = c.a * 1.2;
   s.dots = d.b; s.flower = d.a * 0.3;
-#ifdef OTH_DESERT
-  s.relief = 0.0; s.rip = (d.rg - 0.5) * 2.0; // (the ripples' bend; the relief's strength: the terrain, from the slope)
-#else
   s.relief = d.r; s.rip = vec2(0.0); // (the relief's strength — drawn live: GroundCache's bake)
-#endif
   return s;
 }
 #endif
@@ -1288,14 +1243,6 @@ void main() {
   col = mix(col, SHRUB, s.dots);
   if (s.flower > 0.002) col = mix(col, flowerColor(xz, 0.5), s.flower);
   float cav = 1.0;
-#ifdef OTH_DESERT
-  if (cached) {
-    // (the cache's normal map: the ripples, baked — their bend added to this pixel's smooth normal)
-    vec2 nxz = Ns.xz + s.rip;
-    N = vec3(nxz.x, sqrt(max(1.0 - dot(nxz, nxz), 0.0)), nxz.y);
-    s.relief = s.rock * (1.0 - s.trail) * (1.0 - 0.75 * smoothstep(0.25, 0.55, steep)); // (surfaceAt's, desert)
-  } else N = normalize(N + vec3(s.rip.x, 0.0, s.rip.y));
-#endif
   // THE ROCK'S RELIEF, LIVE on every rock pixel — cached ground or not, as before the ground cache (2026-11-06, the
   // user: "all should have the same … the same as 2 days before"; GroundCache's bake says why)
 #if defined(OTH_ROCK_RELIEF) && !defined(TC_RELIEF)
@@ -1319,11 +1266,6 @@ void main() {
   float sun = sunVisibility(xz) * (1.0 - ckS);
 #else
   float sun = sunVisibility(xz + outward * 6.0 * wallK);
-#endif
-#ifdef OTH_DESERT
-  // (2026-11-04, round 2: the desert's bare walls — a road's cut, a cliff no slab covers — went to a stair of dark
-  //  4 m texels where the bake's outward read flipped cell by cell: a steep face lit by its facing alone)
-  sun = mix(sun, 1.0, wallK * 0.85);
 #endif
   // under the grass the ground lies in the blades' shade (it shows between them); the shade lifts toward the
   // grass's edge, where the ground alone must look like the field from afar

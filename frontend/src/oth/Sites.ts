@@ -54,7 +54,6 @@ const NAME: Partial<Record<Landmark['kind'], string[]>> = {
  *  (props) and of each other. ids from `idBase`. */
 export function planSites(map: MapData, rocks: Rocks, props: Prop[], taken: Landmark[], idBase = 1000, cave: CaveMeta | null = null): SitePlan {
   const sites: Landmark[] = [], keep: [number, number, number][] = []
-  if (map.desert) return { sites, keep }
   const half = map.half - 140
   const H = (x: number, z: number) => map.height(x, z)
   const mk: [number, number, number, number] = [0, 0, 0, 0]
@@ -240,7 +239,6 @@ export function planSites(map: MapData, rocks: Rocks, props: Prop[], taken: Land
  *  afresh), a worn YARD before the door and a PATH from it to the nearest track; the rest grows grass. Into the trail
  *  texture (MapData.trailTex) after everything is placed (nothing moves). */
 export function regrowPads(map: MapData, landmarks: Landmark[]): void {
-  if (map.desert) return
   const g = map.inner, tex = map.trailTex.image.data as Uint8Array, hw = map.meta.trails.hw
   const lines = map.meta.trails.lines
   const KINDS = new Set(['cabin', 'shack', 'sawmill', 'mine', 'tower', 'view', 'meteorite'])

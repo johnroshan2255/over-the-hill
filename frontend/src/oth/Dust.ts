@@ -200,25 +200,20 @@ export class Dust {
     const track = Math.max(0, Math.min(1, (0.8 - this.map.wayEdge(c.x, c.z)) / 1.2))
     const bank = m[2] > 0.75 ? 1 - track : 0
     const rock = Math.min(1, m[0] * 1.6) * (1 - track) * (1 - bank)
-    // (the desert: what isn't track, rock or bank is SAND — loose (its mask's G) throws big pale plumes; the valley's
-    //  is grass)
-    const rest = Math.max(0, 1 - track - bank - rock)
-    const desert = this.map.desert
-    const sand = desert ? rest : 0, grass = desert ? 0 : rest, loose = desert ? m[1] : 0
+    // (what isn't track, rock or bank is grass)
+    const grass = Math.max(0, 1 - track - bank - rock)
     // MUD (mud.bin; and the tracks in the rain): dark wet clods, low and short — the wet lays the dust
     const wet = this.wet
     const mud = Math.max(this.map.mudAt(c.x, c.z), track * wet * 0.7)
-    const amt = (track * 1.0 + bank * 0.55 + rock * 0.3 + grass * 0.16 + sand * (0.45 + 0.85 * loose)) * (1 - 0.75 * wet) * (1 - mud) + mud * 1.3
+    const amt = (track * 1.0 + bank * 0.55 + rock * 0.3 + grass * 0.16) * (1 - 0.75 * wet) * (1 - mud) + mud * 1.3
     this.acc[k] += amt * (go * 20 + slip * 42) * dt * size
     if (this.acc[k] < 1) return
-    // the colour: track dust (the dirt's orange-brown, paler), gravel, rock grey (the desert's: sandstone), dry
-    // grass-earth, the desert's pale orange sand — or the mud's
+    // the colour: track dust (the dirt's orange-brown, paler), gravel, rock grey, dry grass-earth — or the mud's
     const dry = 1 - mud
-    const rr = desert ? 0.72 : 0.56, rg = desert ? 0.5 : 0.54, rb = desert ? 0.38 : 0.5
-    const r = (track * 0.68 + bank * 0.72 + rock * rr + grass * 0.5 + sand * 0.82) * dry + 0.2 * mud
-    const g = (track * 0.47 + bank * 0.67 + rock * rg + grass * 0.45 + sand * 0.63) * dry + 0.14 * mud
-    const b = (track * 0.32 + bank * 0.58 + rock * rb + grass * 0.32 + sand * 0.45) * dry + 0.09 * mud
-    const big = (0.7 + 0.6 * go + 0.5 * slip) * (1 - 0.5 * mud) * (1 + 0.35 * sand * loose) * (0.35 + 0.65 * size)
+    const r = (track * 0.68 + bank * 0.72 + rock * 0.56 + grass * 0.5) * dry + 0.2 * mud
+    const g = (track * 0.47 + bank * 0.67 + rock * 0.54 + grass * 0.45) * dry + 0.14 * mud
+    const b = (track * 0.32 + bank * 0.58 + rock * 0.5 + grass * 0.32) * dry + 0.09 * mud
+    const big = (0.7 + 0.6 * go + 0.5 * slip) * (1 - 0.5 * mud) * (0.35 + 0.65 * size)
     while (this.acc[k] >= 1) {
       this.acc[k] -= 1
       const jx = (this.rnd() - 0.5) * 0.5, jz = (this.rnd() - 0.5) * 0.5
