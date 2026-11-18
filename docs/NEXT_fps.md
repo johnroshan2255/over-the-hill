@@ -169,7 +169,28 @@ pixcmp vs the commit before, 9 views (the caves too): ±2, the caves 0.
   arrays read, no errors; the device lost → reloaded, the car 0 m from where it was (twice); the third loss → the
   message, no reload.
 
-**What holds the rest (production, 404 MB):**
+**Then the remaining safe steps (the user: "do the remaining safe steps") — the heap 356.0 → 319.6 MB:**
+
+- **The WORLD's heights 16-bit** (`MapData.HeightGrid`: `far.h` is null; `at(k)` and `sample` decode the height
+  texture's own Uint16 — `Math.fround(raw × kq + min)`, the very float `mapPrep.heightsOf` stored): −16 MB. The BOX
+  keeps its Float32 `h` (`BoxGrid`): the cave and the claims write heights finer than 16 bits into it.
+- **The box's 16-bit copy let go once on the GPU** (`inner.dropRaw()`, with the pool's trim; `Texture.releaseData` —
+  WebGPU): −8 MB. `rawData()` makes it again for whoever writes it (the claims' edits, the cave): `h` rounded as they
+  round it — and NOT where the drawn ground isn't the heights' own: **the cave's hill, 9 539 cells up to 77 m apart**
+  (the hill is a mesh; the land under it is drawn as it was) — `dropRaw` keeps those cells' numbers (13 ms, once).
+  Checked in the page: made again = the old array at all 4 198 401 cells.
+- **The Wardens' pieces let go** (`Wardens.pieces`: a Map of the vaults' doors and keystones — the only ones that move
+  after the build; the plan's list emptied): 87 595 objects of ten numbers, −12 MB. A vault opened in the old build
+  and the new, four sides: the same picture (8 px of the HUD's GPU badge apart).
+- NOT done — the rocks (56 708 `Inst`) and the props (47 866) as typed arrays: measured, they're ~13 MB as objects and
+  would be ~7 MB packed as Float64 (Float32 would move them by rounding) — ~6 MB for a rewrite of everything that
+  reads a rock. The earlier "−35 MB" guess for this row was wrong: most of it was the Wardens' pieces, now gone.
+- pixcmp vs the commit before, 20 views (the box, the outland's roads / meadows / rocks / snow / canyon / gorge /
+  tarn, the towns, the fort, the court, the ring, the giants, the caves, the box's edge): ±2, the caves and the edge 0.
+  `leancheck.mjs`: as before (0 released reads, the reload lands 0 m away). An outland road driven: 1 frame ≥ 70 ms
+  in 40 s.
+
+**What holds the rest (production, 404 MB before the two steps above — 320 MB now):**
 
 | what | MB | can it go? |
 |---|---|---|
@@ -181,8 +202,9 @@ pixcmp vs the commit before, 9 views (the caves too): ±2, the caves 0.
 | strings: shader sources ~13 (PlayCanvas keeps each shader's GLSL three times), Rapier's base64 4, the rest 5 | ~22 | the sources: maybe (PlayCanvas's insides) |
 | the scripts' source, compiled code, WebAssembly modules | ~28 | no |
 
-**So: ~250–290 MB is reachable with the picture untouched** (static meshes −50: done, 356 now; height copies −16,
-16-bit heights −16, pieces and rocks as typed arrays −35 → ~290). **Under 200 needs the map's CPU grids coarser or the world smaller on a phone;
+**So: 320 MB with the picture untouched — the safe steps are done** (434 this morning; 545 before the desert went).
+What's left is the map's grids the game reads (roads 18, trails 16, the box's heights 16, the world's 8, normals 24,
+…), Rapier (29), the trees' and bushes' data (20), the code (28). **Under 200 needs the map's CPU grids coarser or the world smaller on a phone;
 100 isn't reachable for this world.** And the GPU's side is as big: 387 MB of textures on ULTRA (`device._vram.tex`) —
 on a phone that's the same RAM; the low tier's share is not measured yet.
 
@@ -233,8 +255,9 @@ the second crash isn't explained yet. Watch the renderer / GPU process RSS over 
 
 ## 4. Next, in order (2026-11-18)
 
-1. Memory, on (2e's table, in this order; 356 MB now): the height textures' copies (−16); 16-bit heights (−16); the
-   Wardens' pieces and the rocks as typed arrays (−35). Then the GPU's textures on the phone's tier (387 MB on ULTRA).
+1. Memory: the safe steps are done (320 MB). Next is the GPU's side — 387 MB of textures on ULTRA, the phone's
+   tier not measured — and a real phone. Below 300 on the CPU needs coarser grids (roads 3072² → 2048², the trails'
+   RGBA) — a change to what the game reads, the user's say.
 1b. (A lost device: answered — the page reloads and continues, 2e.)
 2. Re-run the long memory drive (`leakprof.mjs` over the roads, the RSS logged) — it must stay flat now the desert is
    gone; and a full `perfmarks.mjs` drive: the page must live through all 252 ways.

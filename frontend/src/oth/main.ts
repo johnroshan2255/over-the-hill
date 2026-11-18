@@ -1179,7 +1179,7 @@ async function boot() {
     last = now
     const dt = Math.min(clock.getDelta(), 0.1)
     // (PlayCanvas's idle uniform buffers let go — renderer.trimPools: a few seconds in, then now and then)
-    if ((poolT -= dt) <= 0) { poolT = 20; if (q.get('trim') !== '0') renderer.trimPools() }
+    if ((poolT -= dt) <= 0) { poolT = 20; if (q.get('trim') !== '0') { renderer.trimPools(); world.map.inner.dropRaw() } }
     car.wet = dust.wet = atmos.uniforms.uWet.value
     moto.wet = car.wet
     cut?.(dt)

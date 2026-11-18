@@ -124,7 +124,7 @@ export class GroundEdits {
   private flush(map: MapData): void {
     const b = this.box
     if (b[0] > b[2]) return
-    const g = map.inner, n = g.n, h = g.h, raw = g.tex.image.data as Uint16Array, nb = g.normalTex.image.data as Uint8Array
+    const g = map.inner, n = g.n, h = g.h, raw = g.rawData(), nb = g.normalTex.image.data as Uint8Array
     const meta = map.meta.inner, k16 = 65535 / meta.range, s2 = 2 * g.step
     const i0 = Math.max(0, b[0] - 1), j0 = Math.max(0, b[1] - 1), i1 = Math.min(n - 1, b[2] + 1), j1 = Math.min(n - 1, b[3] + 1)
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {

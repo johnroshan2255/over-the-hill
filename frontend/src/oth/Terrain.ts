@@ -95,8 +95,8 @@ export class Terrain {
     this.geo.setAttribute('aNode', this.nodes)
     this.geo.instanceCount = 0
 
-    const g = (h: MapData['inner']) => new GFX.Vector4(h.n, h.step, h.origin, 0)
-    const sc = (h: MapData['inner']) => new GFX.Vector2(h.g.min, h.g.range / 65535)
+    const g = (h: MapData['far']) => new GFX.Vector4(h.n, h.step, h.origin, 0)
+    const sc = (h: MapData['far']) => new GFX.Vector2(h.g.min, h.g.range / 65535)
     const mg = map.meta.mask
     this.uniforms = {
       ...atmos.uniforms,

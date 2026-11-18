@@ -149,6 +149,26 @@ export class Texture {
     this.pc?.destroy()
     this.pc = null
   }
+
+  /** A DATA texture's CPU COPY LET GO once it's on the GPU (2026-11-18, the memory — the box's 16-bit heights, 8 MB):
+   *  `image.data` (and PlayCanvas's level, the same array) → null. WebGPU only (it uploads at once and never reads the
+   *  copy again; WebGL2's row updates and context restore do). True: it's gone. Whoever needs the numbers again sets
+   *  `image.data` to a new array and `needsUpdate` (MapData.rawData). */
+  releaseData(): boolean {
+    const img = this.image as { data?: ArrayBufferView | null } | null
+    if (!img || !('data' in img)) return false
+    if (!img.data) return true
+    if (!this.canRelease()) return false
+    img.data = null
+    const t = this.pc as unknown as { _levels: unknown[] }
+    if (t._levels) t._levels[0] = null
+    return true
+  }
+  /** Its data is on the GPU as it is now, and nothing will read the CPU copy again (WebGPU). */
+  canRelease(): boolean {
+    const t = this.pc as unknown as { _needsUpload: boolean; _needsMipmapsUpload: boolean } | null
+    return !!t && this.uploaded === this.version && !t._needsUpload && !t._needsMipmapsUpload && !!(gfx().device as unknown as { wgpu?: unknown }).wgpu
+  }
 }
 
 export class DataTexture extends Texture {

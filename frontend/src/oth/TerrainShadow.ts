@@ -89,11 +89,13 @@ export class TerrainShadow {
     const key = ++this.nextKey
     this.keys.set(map, key)
     const g = (h: MapData['inner']) => ({ h: h.h.slice(), n: h.n, step: h.step, origin: h.origin })
+    const all = (F: MapData['far']) => { const h = new Float32Array(F.n * F.n); for (let q = 0; q < h.length; q++) h[q] = F.at(q); return { h, n: F.n, step: F.step, origin: F.origin } }
     // (the world's shade is baked on SH_WORLD_N² whatever the world's own grid — the valley's is 8 m, 2049², since
     //  2026-11-10: every k-th height goes to the worker)
     const k = (map.far.n - 1) / (SH_WORLD_N - 1), F = map.far
-    let far = g(F)
-    if (k > 1) { const h = new Float32Array(SH_WORLD_N * SH_WORLD_N); for (let j = 0; j < SH_WORLD_N; j++) for (let i = 0; i < SH_WORLD_N; i++) h[j * SH_WORLD_N + i] = F.h[j * k * F.n + i * k]; far = { h, n: SH_WORLD_N, step: F.step * k, origin: F.origin } }
+    let far: { h: Float32Array; n: number; step: number; origin: number }
+    if (k <= 1) far = all(F)
+    else { const h = new Float32Array(SH_WORLD_N * SH_WORLD_N); for (let j = 0; j < SH_WORLD_N; j++) for (let i = 0; i < SH_WORLD_N; i++) h[j * SH_WORLD_N + i] = F.at(j * k * F.n + i * k); far = { h, n: SH_WORLD_N, step: F.step * k, origin: F.origin } }
     this.worker.postMessage({ type: 'init', key, inner: g(map.inner), far })
   }
 

@@ -528,7 +528,7 @@ export class CaveWorld {
         //  things placed after, map.height). One surface the car drives from the field into the cave.
         const C = this.cutTex, Hd = this.hold
         if (C && Hd && q.k === 'floor') {
-          const g = map.inner, n = g.n, raw = g.tex.image.data as Uint16Array, nb = g.normalTex.image.data as Uint8Array
+          const g = map.inner, n = g.n, raw = g.rawData(), nb = g.normalTex.image.data as Uint8Array
           const gi0 = Math.round((C.x0 - g.origin) / 2), gj0 = Math.round((C.z0 - g.origin) / 2), W = C.W, Hh = C.Hh
           const fy = new Float32Array(W * Hh).fill(NaN), LPf = meshes.floor.geometry.getAttribute('position').array as Float32Array
           const surfs: [Float32Array, Uint32Array, Float32Array | null][] = [[q.pos, q.idx, LPf]]
@@ -987,7 +987,7 @@ export class CaveWorld {
    *  (the mouth, the skylights) the ground would stretch from its top down to the land: those 2 m cells are CUT
    *  (Terrain.setHoles: over the land nothing drawn) and the cave's own turf fills them (build keeps it only there). */
   intoTerrain(map: MapData, terrain: Terrain): void {
-    const g = map.inner, n = g.n, st = g.step, raw = g.tex.image.data as Uint16Array, nb = g.normalTex.image.data as Uint8Array
+    const g = map.inner, n = g.n, st = g.step, raw = g.rawData(), nb = g.normalTex.image.data as Uint8Array
     const t = this.meta.top, { wx, wz, local } = this.frame
     const ex = t.x0 + (t.nx - 1) * t.step, ez = t.z0 + (t.nz - 1) * t.step
     const cs = [[t.x0, t.z0], [ex, t.z0], [t.x0, ez], [ex, ez]].map(([a, b]) => [wx(a, b), wz(a, b)])
@@ -1155,7 +1155,7 @@ export class CaveWorld {
     }
     const before = Float32Array.from(hr)
     spreadGrade(hr, before, W, Hh, cw.gradeMask(local, g.origin + i0 * st, g.origin + j0 * st, W, Hh, (i, j) => g.h[(j0 + j) * n + i0 + i], on.map((v) => (v ? 2 : 0))))
-    const raw = g.tex.image.data as Uint16Array, nb = g.normalTex.image.data as Uint8Array, sc = 65535 / g.g.range
+    const raw = g.rawData(), nb = g.normalTex.image.data as Uint8Array, sc = 65535 / g.g.range
     let moved = 0
     for (let j = 0; j < Hh; j++) for (let i = 0; i < W; i++) {
       const q = j * W + i

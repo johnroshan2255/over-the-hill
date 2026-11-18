@@ -2017,7 +2017,10 @@ export class Wardens {
   private readonly kDark = KINDS.indexOf('crystalDark')
   /** THE SEALED VAULTS: each one's pieces and boxes (the plan's), open or not, its door falling (seconds in; −1: still) */
   private readonly vaults: (Vault & { open: boolean; t: number })[]
-  private readonly pieces: Piece[]
+  /** The pieces that MOVE after the build — the sealed vaults' doors and keystones — by their index. The other ~87 000
+   *  are let go once their matrices, sizes and kinds are in the arrays (2026-11-18, the memory: every piece an object
+   *  of ten numbers, ~12 MB, kept for nothing — and the plan's own list emptied: the build's scope lives on). */
+  private readonly pieces = new Map<number, Piece>()
   private readonly mapId: string
   /** A vault's boxes changed (World: the physics re-streams the props'). */
   onColliders: (() => void) | null = null
@@ -2026,7 +2029,7 @@ export class Wardens {
 
   constructor(plan: WardenPlan, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     const P = plan.pieces
-    this.pieces = P
+    for (const v of plan.vaults) { this.pieces.set(v.door, P[v.door]); this.pieces.set(v.key, P[v.key]) }
     this.mapId = plan.mapId
     this.vaults = plan.vaults.map((v) => ({ ...v, open: false, t: -1 }))
     this.texts = plan.texts
@@ -2049,7 +2052,7 @@ export class Wardens {
     this.kindOf = new Uint8Array(P.length)
     this.siteOf = new Int32Array(P.length).fill(-1)
     P.forEach((p, i) => {
-      this.place(i)
+      this.place(i, p)
       this.size[i] = p.far ?? Math.max(p.sx, p.sy, p.sz)
       // (the DRESSING thinned on the weaker tiers — the user: "in PC good details, in phones reduce it": ULTRA / HIGH all of
       //  it, MEDIUM ~60 %, LOW and the phones ~35 %; a dropped piece is never drawn (size 0: under the small-feature cut))
@@ -2064,6 +2067,7 @@ export class Wardens {
       c.y0 = Math.min(c.y0, p.y - 2)
       c.y1 = Math.max(c.y1, p.y + Math.max(p.sy, p.sx) + 2)
     })
+    plan.pieces.length = 0   // (the plan's list: nothing reads it after this — the moving ones are in `pieces`)
   }
 
   private key(i: number, j: number): number { return (i + 4096) * 8192 + (j + 4096) }
@@ -2072,8 +2076,7 @@ export class Wardens {
   private readonly q4 = new GFX.Quaternion()
   private readonly e4 = new GFX.Euler()
   /** Piece i's matrix from its plan entry (as built; a vault's door as it falls). */
-  private place(i: number): void {
-    const p = this.pieces[i]
+  private place(i: number, p: Piece = this.pieces.get(i)!): void {
     this.q4.setFromEuler(this.e4.set(p.tx ?? 0, p.rot, p.tz ?? 0, 'YXZ'))
     this.m4.compose(V(p.x, p.y, p.z), this.q4, V(p.sx, p.sy, p.sz)).toArray(this.mats, i * 16)
   }
@@ -2098,9 +2101,9 @@ export class Wardens {
     v.open = true
     v.t = instant ? 1e9 : 0
     v.standing.off = true
-    this.pieces[v.key].y -= 1e4   // (the keystone: gone — on the winch's hook)
+    this.pieces.get(v.key)!.y -= 1e4   // (the keystone: gone — on the winch's hook)
     this.place(v.key)
-    if (instant) { this.pieces[v.door].tx = v.fallTx; this.pieces[v.door].y -= v.sink; this.place(v.door); v.fallen.off = false; v.t = -1 }
+    if (instant) { const d = this.pieces.get(v.door)!; d.tx = v.fallTx; d.y -= v.sink; this.place(v.door); v.fallen.off = false; v.t = -1 }
     else try { localStorage.setItem(`oth.wvaults.${this.mapId}`, JSON.stringify(this.vaults.filter((q) => q.open).map((q) => q.site))) } catch { /* (not kept) */ }
     this.onColliders?.()
     this.lastPos.x = Number.NaN
@@ -2112,7 +2115,7 @@ export class Wardens {
       if (v.t < 0) continue
       v.t += dt
       const k = Math.min(1, v.t / 1.1), e = k * k * k, bounce = k >= 1 ? 0 : Math.max(0, Math.sin((k - 0.86) * 22)) * 0.04 * (k > 0.86 ? 1 : 0)
-      const p = this.pieces[v.door], was = p.tx ?? 0
+      const p = this.pieces.get(v.door)!, was = p.tx ?? 0
       p.tx = v.fallTx * Math.min(1, e / 0.64) - bounce
       p.y -= v.sink * (Math.min(1, p.tx / v.fallTx) - Math.min(1, was / v.fallTx))
       this.place(v.door)

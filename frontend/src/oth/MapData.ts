@@ -160,20 +160,63 @@ class HeightGrid {
     const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, a = (j * n + i) * 4 + 2, b = a + n * 4, N = this.nb
     return ((N[a] * (1 - u) + N[a + 4] * u) * (1 - v) + (N[b] * (1 - u) + N[b + 4] * u) * v) / 255
   }
-  readonly h: Float32Array
+  /** The heights (m). The BOX's grid holds them (the cave and the claims write heights finer than 16 bits into it);
+   *  the WORLD's grid doesn't (null — 2026-11-18, the memory: 16 MB): its heights are its 16-bit texture's own numbers,
+   *  decoded as they're read (`at`, `sample`) — to the very float the Float32 array held (mapPrep.heightsOf). */
+  readonly h: Float32Array | null
   readonly n: number
   readonly step: number
   readonly origin: number
   readonly tex: GFX.DataTexture
+  /** (a 16-bit height → m: m = raw × kq + min, as mapPrep.heightsOf) */
+  private readonly kq: number
+  private readonly min: number
+  /** The height (m) at grid index k. */
+  at(k: number): number {
+    const h = this.h
+    return h ? h[k] : Math.fround((this.tex.image.data as Uint16Array)[k] * this.kq + this.min)
+  }
+  /** The 16-bit heights (the height texture's own data: what's DRAWN). The BOX's are let go once on the GPU
+   *  (`dropRaw`) and made again here, the very same numbers: `h` rounded as the cave and the claims round it, and
+   *  where the drawn ground is NOT the heights' (the cave's hill: its mesh stands there, the land under it drawn as it
+   *  was — ~9 500 cells, up to 77 m apart) the numbers `dropRaw` kept. Whoever writes into them says
+   *  `tex.needsUpdate` / `tex.updateRows` after, as ever. */
+  rawData(): Uint16Array {
+    const img = this.tex.image as { data: Uint16Array | null }
+    if (!img.data) {
+      const h = this.h!, raw = new Uint16Array(h.length), min = this.g.min, k16 = 65535 / this.g.range
+      for (let k = 0; k < h.length; k++) raw[k] = Math.max(0, Math.min(65535, Math.round((h[k] - min) * k16)))
+      const o = this.rawOwn
+      if (o) for (let q = 0; q < o.k.length; q++) raw[o.k[q]] = o.v[q]
+      this.rawOwn = null
+      img.data = raw
+    }
+    return img.data
+  }
+  /** (dropRaw: the cells whose drawn height isn't their height's rounding — index, 16-bit value) */
+  private rawOwn: { k: Uint32Array; v: Uint16Array } | null = null
+  /** The box's 16-bit copy let go (8 MB) once it's on the GPU — WebGPU only (gfx Texture.canRelease); true: gone. */
+  dropRaw(): boolean {
+    const img = this.tex.image as { data: Uint16Array | null }, h = this.h
+    if (!h) return false
+    if (!img.data) return true
+    if (!this.tex.canRelease()) return false
+    const raw = img.data, min = this.g.min, k16 = 65535 / this.g.range, ks: number[] = [], vs: number[] = []
+    for (let k = 0; k < h.length; k++) if (Math.max(0, Math.min(65535, Math.round((h[k] - min) * k16))) !== raw[k]) { ks.push(k); vs.push(raw[k]) }
+    this.rawOwn = { k: Uint32Array.from(ks), v: Uint16Array.from(vs) }
+    return this.tex.releaseData()
+  }
   readonly normalTex: GFX.DataTexture
   /** channels a normal (2: RG; 4: RGBA — the world grid's, B the outland's rock) */
   readonly ch: number
 
-  constructor(readonly g: Grid, raw: Uint16Array, h: Float32Array, readonly nb: Uint8Array) {
+  constructor(readonly g: Grid, raw: Uint16Array, h: Float32Array | null, readonly nb: Uint8Array) {
     this.n = g.n
     this.step = g.step
     this.origin = g.origin
     this.h = h
+    this.kq = g.range / 65535
+    this.min = g.min
     this.tex = new GFX.DataTexture(raw, g.n, g.n, GFX.RedIntegerFormat, GFX.UnsignedShortType)
     this.tex.internalFormat = 'R16UI'
     this.tex.minFilter = this.tex.magFilter = GFX.NearestFilter
@@ -200,14 +243,24 @@ class HeightGrid {
     fx = fx < 0 ? 0 : fx > n - 1.0001 ? n - 1.0001 : fx
     fz = fz < 0 ? 0 : fz > n - 1.0001 ? n - 1.0001 : fz
     const i = fx | 0, j = fz | 0, tx = fx - i, tz = fz - j, k = j * n + i, h = this.h
+    if (!h) {
+      // (the world's grid: its four corners decoded — the floats the Float32 array held)
+      const r = this.tex.image.data as Uint16Array, q = this.kq, m = this.min
+      const h0 = Math.fround(r[k] * q + m), h1 = Math.fround(r[k + 1] * q + m), h2 = Math.fround(r[k + n] * q + m), h3 = Math.fround(r[k + n + 1] * q + m)
+      const a = h0 + (h1 - h0) * tx
+      const b = h2 + (h3 - h2) * tx
+      return a + (b - a) * tz
+    }
     const a = h[k] + (h[k + 1] - h[k]) * tx
     const b = h[k + n] + (h[k + n + 1] - h[k + n]) * tx
     return a + (b - a) * tz
   }
 }
+/** The box's grid: it holds its heights. */
+export type BoxGrid = HeightGrid & { readonly h: Float32Array }
 
 export class MapData {
-  readonly inner: HeightGrid
+  readonly inner: BoxGrid
   readonly far: HeightGrid
   readonly mask: Uint8Array
   readonly maskTex: GFX.DataTexture
@@ -247,8 +300,8 @@ export class MapData {
 
   private constructor(p: PreparedMap) {
     const meta = (this.meta = p.meta), mask = p.mask, trail = p.trail, mud = p.mud
-    this.inner = new HeightGrid(meta.inner, p.innerRaw, p.innerH, p.innerNormals)
-    this.far = new HeightGrid(meta.far, p.farRaw, p.farH, p.farNormals)
+    this.inner = new HeightGrid(meta.inner, p.innerRaw, p.innerH, p.innerNormals) as BoxGrid
+    this.far = new HeightGrid(meta.far, p.farRaw, null, p.farNormals)   // (p.farH: the worker's own, not kept — `at` decodes the same floats)
     this.prepMs = p.ms ?? {}
     this.pyramid = p.pyramid
     this.courts = p.courts ?? []
