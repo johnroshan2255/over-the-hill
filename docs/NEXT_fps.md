@@ -133,6 +133,59 @@ ArrayBuffer charged to the path it was first met by): the heap after GC ~547 MB;
 - the map's grids: far 40 MB, roads 18 MB, trails 16 MB, inner heights 16 MB …; trees' data 12.7 MB, bushes' 7.8 MB.
 - ~187 MB of plain JS objects (rocks' `Inst` objects, ~56 k; the rest).
 
+## 2e. 2026-11-18 — the memory mapped whole (the user: "check where we can cut memory and make it like 100–200")
+
+Tools (new): `heapsnap.mjs` (a heap snapshot after a GC → a file), `heapsum.mjs` (it summed by kind, the biggest
+objects), `heapwho.mjs` (WHO HOLDS IT: a breadth-first walk from the roots, one kind's bytes summed by the names on
+the way — `KIND="string "`, `"heap number"`, default the ArrayBuffers). Measure the PRODUCTION build (`vite build`,
+`vite preview --port 4173`, `PORT=4173`): the dev server's source maps and unminified sources are ~40 MB of its own.
+
+**Cut today (production, the heap after GC 434.5 → 404.3 MB; the snapshot's total 537 → 452 MB):**
+
+| what | MB |
+|---|---|
+| glslang + twgsl (the fallback GLSL → WGSL pair) were loaded once the game played, for shaders naga has never failed on (checked: cave, town, cliff, outland, lake, night, rain — none). Now loaded only if naga isn't there, or once it has failed (`localStorage oth.wgslFallback` → from the start of every session after), or `?fallback=1` | ~39 |
+| the cave's mesh builders (`Bridges.Builder`: ~0.55 M vertices as plain number arrays) lived on in `CaveWorld`'s scope (`wallAt` closes over it) → `Builder.free()` | ~17 (+ their boxed numbers) |
+| `World.build`'s `treeAll` (every tree's 8 numbers, a second time) lived on in the build's scope → let go after `dressHills` | 12.9 |
+| PlayCanvas's uniform staging pool: the load's bakes leave ~215 idle 100 kB buffers, mapped (not in `usedJSHeapSize`; as much again on the GPU) → `renderer.trimPools()` every 20 s, from the frame's start (`?trim=0` the A/B): 215 → 16. No more long frames with it than without (hitchprof, 50 s each: 8 vs 10 ≥ 60 ms) | ~20 + ~20 GPU |
+
+pixcmp vs the commit before, 9 views (the caves too): ±2, the caves 0.
+
+**Then the static meshes (the user: "yes do it") — the heap 404.3 → 356.0 MB:**
+
+- **RELEASED GEOMETRIES** (`gfx/scene.ts`, `gfx/geometry.ts`; `?release=0` the A/B): a geometry marked `releasable`
+  lets go of its own arrays once its mesh is lean — the GPU then has the only copy. Marked: what `splitMeshes` builds
+  (the landmarks', the bridges', the wonders' parts), `Buildings.buildPlaces`' merged models, the cave's meshes (at the
+  end of `CaveWorld.load`). The scene's geometry arrays 70 → 19 MB. Counts and bounds are kept; a later mesh of the
+  same geometry (or another material's with the same vertex slots) draws from the same PlayCanvas mesh; a read of a
+  released array gets an empty one, a console error with the stack, and `window.__othReleasedReads` counts it.
+  Also fixed there: a second mesh sharing a lean geometry had its copy made again for nothing.
+- **A LOST DEVICE RELOADS THE PAGE** (`main.ts`, `renderer.onDeviceLost`): the journey saved, CONTINUE asked, the
+  page reloaded — at once, or when a hidden tab is shown again; three losses in two minutes: no more reloads, a
+  message stays. (Nothing on the GPU could be put back: the released arrays, the lean copies — and before any of
+  this a restored device drew a black ground.)
+- pixcmp release vs `release=0`, 13 views (towns, paved places, the fort, the giants, the caves, a bridge): ±2, the
+  caves 0. `leancheck.mjs` (rewritten): a drive, the cave, a town, the fort, a bridge, night and rain — 0 released
+  arrays read, no errors; the device lost → reloaded, the car 0 m from where it was (twice); the third loss → the
+  message, no reload.
+
+**What holds the rest (production, 404 MB):**
+
+| what | MB | can it go? |
+|---|---|---|
+| the map's grids, each READ BY THE GAME'S CPU CODE at run time: roads 18 (3072² RG), trails 16 (RGBA), heights 16 + 16 (Float32, box + world), the world's normals 16, the box's 8, the two height textures' own copies 8 + 8 (R16UI), mask 4, far track / river distances 4 + 4, water 4, mud 2 | ~125 | the height textures' copies (16): yes — made again from the heights when a claim edits the ground. Heights as the 16-bit they came as, not Float32 (16): yes, bit-identical, ~30 call sites. The rest: only at a coarser CPU grid (a placement / physics change) |
+| the static meshes' vertex data — landmarks 30, the cave 14, bridges 7 | ~~51~~ | DONE (above). Left: the car 4, the rest ~15 (shared / changing geometries) |
+| Rapier's WebAssembly memory | 29 | no |
+| trees' data 12.7, bushes' 7.8, the Wardens' and rocks' instance matrices 9, footprints 8, the shadow's textures 6, other textures' copies 9 | ~55 | some: the Wardens' matrices and the footprint's base are derivable |
+| the Wardens' 87 k pieces and the 57 k rocks as JS objects (boxed numbers 19, objects 10, arrays 17) | ~46 | yes → typed arrays; a refactor of Wardens.ts / Rocks.ts |
+| strings: shader sources ~13 (PlayCanvas keeps each shader's GLSL three times), Rapier's base64 4, the rest 5 | ~22 | the sources: maybe (PlayCanvas's insides) |
+| the scripts' source, compiled code, WebAssembly modules | ~28 | no |
+
+**So: ~250–290 MB is reachable with the picture untouched** (static meshes −50: done, 356 now; height copies −16,
+16-bit heights −16, pieces and rocks as typed arrays −35 → ~290). **Under 200 needs the map's CPU grids coarser or the world smaller on a phone;
+100 isn't reachable for this world.** And the GPU's side is as big: 387 MB of textures on ULTRA (`device._vram.tex`) —
+on a phone that's the same RAM; the low tier's share is not measured yet.
+
 ## 3. The drive's marks (2026-11-17 — see 2b: most of them the desert's)
 
 `docs/perf/marks_2026-11-17.json`: the post-fix drive at 28 m/s, SET=all, ways 0–141 of 252 (the valley's 68
@@ -180,10 +233,9 @@ the second crash isn't explained yet. Watch the renderer / GPU process RSS over 
 
 ## 4. Next, in order (2026-11-18)
 
-1. Memory, on (`memmap.mjs` before / after, pixcmp): the map grids' Float32 copies (far 40 MB, roads 18, trails 16,
-   inner heights 16 — which are read on the CPU at all?); the ~187 MB of plain objects (a heap snapshot: the rocks'
-   ~56 k `Inst` objects → typed arrays?); PlayCanvas's 21 MB uniform staging.
-1b. After a lost device the ground is black (2d): re-bake on 'devicerestored'.
+1. Memory, on (2e's table, in this order; 356 MB now): the height textures' copies (−16); 16-bit heights (−16); the
+   Wardens' pieces and the rocks as typed arrays (−35). Then the GPU's textures on the phone's tier (387 MB on ULTRA).
+1b. (A lost device: answered — the page reloads and continues, 2e.)
 2. Re-run the long memory drive (`leakprof.mjs` over the roads, the RSS logged) — it must stay flat now the desert is
    gone; and a full `perfmarks.mjs` drive: the page must live through all 252 ways.
 3. A phone: none of this has been on one.

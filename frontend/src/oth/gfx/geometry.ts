@@ -21,7 +21,19 @@ export class BufferAttribute {
   /** (three's partial-upload hints: accepted; the whole buffer is re-sent) */
   readonly updateRanges: { start: number; count: number }[] = []
   constructor(public array: TypedArray, public itemSize: number, public normalized = false) {}
-  get count(): number { return this.array.length / this.itemSize }
+  /** (release) how many it held when its array was let go; −1: it holds it */
+  private kept = -1
+  get count(): number { return this.kept >= 0 ? this.kept : this.array.length / this.itemSize }
+  /** Its array was let go (`release`): on the GPU only. */
+  get released(): boolean { return this.kept >= 0 }
+  /** THE ARRAY LET GO (2026-11-18, the memory — scene.ts "released geometries"): the count kept, the numbers gone —
+   *  they're on the GPU. Anything that reads `array` after is a bug: it gets an empty array and says so once. */
+  release(): void {
+    if (this.kept >= 0) return
+    this.kept = this.count
+    const empty = new (this.array.constructor as new (n: number) => TypedArray)(0)
+    Object.defineProperty(this, 'array', { configurable: true, get: () => { releasedRead(); return empty }, set: () => { releasedRead() } })
+  }
   set needsUpdate(v: boolean) { if (v) this.version++ }
   setUsage(u: number): this { this.usage = u; return this }
   // (not kept — 2026-11-17, scripts/harness/leakprof.mjs: nothing reads them (the whole buffer is re-sent), and a caller
@@ -71,6 +83,12 @@ export class BufferAttribute {
     return this
   }
 }
+let releasedReads = 0
+/** A released attribute's array asked for: said once (with where from), counted (the harness reads the count). */
+function releasedRead(): void {
+  if (releasedReads++ === 0) console.error('gfx: a RELEASED geometry\'s array was read — its numbers are on the GPU only (BufferGeometry.releasable)', new Error().stack)
+  ;(globalThis as { __othReleasedReads?: number }).__othReleasedReads = releasedReads
+}
 export class Float32BufferAttribute extends BufferAttribute {
   constructor(a: ArrayLike<number> | number, itemSize: number, normalized = false) { super(typeof a === 'number' ? new Float32Array(a) : new Float32Array(a), itemSize, normalized) }
 }
@@ -101,6 +119,11 @@ export class BufferGeometry {
   /** (scene.ts: the PlayCanvas meshes made from this, by material layout — destroyed with it) */
   readonly gpu = new Map<string, unknown>()
   disposed = false
+  /** STATIC: built once, never read or written again by the game — once it's on the GPU its arrays may be let go
+   *  (scene.ts "released geometries": WebGPU only). Set by what builds it, after its last read of it. */
+  releasable = false
+  /** Its arrays were let go (scene.ts). */
+  released = false
 
   setAttribute(name: string, a: BufferAttribute): this { this.attributes[name] = a; this.layoutVersion++; return this }
   getAttribute(name: string): BufferAttribute { return this.attributes[name] }
@@ -197,7 +220,7 @@ export class BufferGeometry {
   /** (scene.ts frees the GPU side; the arrays go with the last reference) */
   dispose(): void {
     this.disposed = true
-    for (const v of this.gpu.values()) (v as { destroy(): void }).destroy()
+    for (const v of new Set(this.gpu.values())) (v as { destroy(): void }).destroy()   // (a released geometry's one mesh may stand under two layouts' keys)
     this.gpu.clear()
   }
 }

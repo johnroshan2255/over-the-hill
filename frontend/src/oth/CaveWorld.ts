@@ -226,6 +226,9 @@ export class CaveWorld {
       cw.build(gltf.scene, map, mat, tier)
       cw.fireflies(map, atmos, tier)
       cw.clearGrass(map, footprint)
+      // (its meshes are built, welded and read for the last time: their arrays go once they're on the GPU — 14 MB;
+      //  the physics has its own copy — `collider`)
+      cw.group.traverse((o) => { const m = o as GFX.Mesh; if (m.isMesh && !(m as unknown as { isInstancedMesh?: boolean }).isInstancedMesh && !(m.geometry as GFX.InstancedBufferGeometry).isInstancedBufferGeometry) m.geometry.releasable = true })
       return cw
     } catch (e) {
       console.warn('cave.glb: not loaded', e)
@@ -903,6 +906,8 @@ export class CaveWorld {
     //  always, 0.37 ms seen from the air)
     const props = new GFX.Mesh(g, mat); this.group.add(props); this.inside.push(props)
     const og = ob.geometry(); og.computeBoundingBox(); this.group.add(new GFX.Mesh(og, mat))
+    // (the builders' number arrays let go: this scope lives on — `wallAt` and the rest close over it)
+    b.free(); ob.free(); tp.length = tn.length = tc.length = ti.length = 0
     // THE SEAMS WELDED (2026-11-07, the user: "cracks inside, like lines"): the parts were cut apart in Blender and each
     //  packed on its own grid (Draco), so a shared edge came back a hair apart on each side — the land showed through.
     //  Every vertex within ~2.5 cm of another (any part) moved to their middle: two passes on offset 2 cm grids.

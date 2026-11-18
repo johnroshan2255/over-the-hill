@@ -884,7 +884,7 @@ async function boot() {
   })
 
   // STATS: PlayCanvas's own panel (MiniStats — FPS, frame time, draw calls, CPU / GPU timings, VRAM): F3 or ?stats=1
-  let cpuMs = 0, frameMs = 16.7, last = performance.now()
+  let cpuMs = 0, frameMs = 16.7, last = performance.now(), poolT = 5
   renderer.offscreen = q.get('bench') === 'offscreen'
   let showStats = q.get('stats') === '1'
   renderer.showStats(showStats)
@@ -910,6 +910,24 @@ async function boot() {
     saveProgress({ v: 1, map: map.meta.id, car: car.id, x: safe.x, z: safe.z, heading: safe.heading, hour: atmos.hour, travelled, playSeconds, savedAt: Date.now(), camp: myCamp, camps: { ...camps, [world.id]: myCamp } })
   }
   addEventListener('pagehide', save)
+  // A LOST GRAPHICS DEVICE (2026-11-18, the user: "yes do it"): the page is RELOADED and the journey continued from
+  // where it was saved just now — nothing on the GPU can be put back as it was (the ground's bakes; the buffers whose
+  // CPU copies were let go to save memory: gfx/scene.ts), and a restored device drew a black ground. A hidden tab
+  // waits until it's shown again (a phone takes the GPU from a backgrounded page). Three losses in two minutes: no
+  // more reloads — the message stays.
+  renderer.onDeviceLost(() => {
+    save()
+    const now = Date.now()
+    let lost: number[] = []
+    try { lost = (JSON.parse(sessionStorage.getItem('overhill.lost') ?? '[]') as number[]).filter((t) => now - t < 120000) } catch { /* (none kept) */ }
+    lost.push(now)
+    try { sessionStorage.setItem('overhill.lost', JSON.stringify(lost)) } catch { /* (not kept) */ }
+    if (lost.length >= 3) { toast('The graphics device keeps failing — close other tabs and reload the page', 3600000); return }
+    toast('The graphics device was lost — reloading…', 60000)
+    const go = () => { requestContinue(true); location.reload() }
+    if (document.hidden) document.addEventListener('visibilitychange', () => { if (!document.hidden) go() })
+    else go()
+  })
   document.addEventListener('visibilitychange', () => { if (document.hidden) save() })
 
   // PAUSE (Esc, or the ❚❚ button): the frame stops entirely — no physics, no clock, no drawing (the last picture stays
@@ -1160,6 +1178,8 @@ async function boot() {
     }
     last = now
     const dt = Math.min(clock.getDelta(), 0.1)
+    // (PlayCanvas's idle uniform buffers let go — renderer.trimPools: a few seconds in, then now and then)
+    if ((poolT -= dt) <= 0) { poolT = 20; if (q.get('trim') !== '0') renderer.trimPools() }
     car.wet = dust.wet = atmos.uniforms.uWet.value
     moto.wet = car.wet
     cut?.(dt)

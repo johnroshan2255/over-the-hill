@@ -274,6 +274,7 @@ function prepare(mesh: Mesh): Gpu | null {
   if (g && (g.layout !== layout || g.geo !== geo || g.geoLayout !== geo.layoutVersion)) { mesh.dispose(); g = null }
   if (!g) {
     const pcMesh = meshFor(geo, layout)
+    if (!pcMesh) return null
     const node = new pc.GraphNode(mesh.name || 'oth')
     const mi = new pc.MeshInstance(pcMesh, pcMat, node)
     g = mesh.gpu = { mi, pcMesh, geo, layout, matVersion: mat.version, geoLayout: geo.layoutVersion, uploaded: new Map(), vb: null, fmt: null, inst: [], node, world: new Float32Array(16).fill(NaN), box: [NaN, NaN, NaN, NaN] }
@@ -290,8 +291,10 @@ function prepare(mesh: Mesh): Gpu | null {
     if (layer) { mesh.layer = layer; layer.addMeshInstances([mi]) }
   }
   if (g.mi.material !== pcMat) g.mi.material = pcMat
-  // (LEAN: the mesh's buffers' CPU copy was let go after its upload — made again from the geometry before any write)
-  if (isLean(g.pcMesh)) for (let i = 0; i < pk.streams.length; i++) { const st = pk.streams[i]; if (g.uploaded.get(st.name) !== st.a.version) { unlean(g.pcMesh); break } }
+  // (LEAN: the mesh's buffers' CPU copy was let go after its upload — made again from the geometry before any write.
+  //  Only a stream that WILL be written — as the loop below decides it: a second mesh sharing the geometry, nothing of
+  //  its own uploaded yet, sent nothing and still had the copy made again and kept)
+  if (isLean(g.pcMesh) && !geo.released) for (let i = 0; i < pk.streams.length; i++) { const st = pk.streams[i]; if (st.a.version > 0 && g.uploaded.get(st.name) !== st.a.version) { unlean(g.pcMesh); break } }
   // re-upload what changed: the mesh's own streams, the instancing buffer
   let dirty = false, direct = 0
   // (a stream rewritten IN PLACE — the same count, the index as it was: written straight into the mesh's vertex buffer,
@@ -304,7 +307,7 @@ function prepare(mesh: Mesh): Gpu | null {
     const was = g.uploaded.get(name)
     if (was === a.version) continue
     g.uploaded.set(name, a.version)
-    if (a.version <= 0) continue
+    if (a.version <= 0 || a.released) continue   // (released: what's on the GPU is all there is)
     if (was !== undefined && idxSame && canWrite(g.pcMesh, sem, a)) { _direct[direct++] = pk.streams[i]; continue }
     g.pcMesh.setVertexStream(sem, a.array, a.itemSize, a.count, DTYPE(a.array), a.normalized); dirty = true
   }
@@ -314,7 +317,7 @@ function prepare(mesh: Mesh): Gpu | null {
     if (geo.index) { g.pcMesh.setIndices(geo.index.array as Uint16Array); g.uploaded.set('#index', geo.index.version) } // (the index sent: as it is now)
     g.pcMesh.update(pc.PRIMITIVE_TRIANGLES)
   }
-  if (LEAN) lean(g.pcMesh, geo, pk.streams)
+  if (LEAN) { lean(g.pcMesh, geo, pk.streams); if (geo.releasable && !geo.released && isLean(g.pcMesh)) release(geo) }
   // THE INSTANCING BUFFER, SIZED TO WHAT'S DRAWN (2026-11-07, docs/PERF.md "the hitches"): it holds the instances
   // drawn now — grown by half again when more are, never shrunk — and each stream's entries are copied from where it
   // was last copied to (all of them again when the attribute's version changes). Was: the attribute's whole capacity
@@ -362,27 +365,41 @@ function prepare(mesh: Mesh): Gpu | null {
  * that copy is only read when the buffer is written again (Mesh.update, writeStreams: `lock()`) and when a lost device
  * is restored (`restoreContext` re-uploads every buffer from it). So after a mesh's upload its copy goes (an empty
  * ArrayBuffer in its place — a write that slipped past would throw, not draw garbage); before any later write it's
- * made again from the geometry (`unlean`) and that mesh keeps it from then on (it's one that changes); on 'devicelost'
- * every lean buffer is refilled before PlayCanvas restores them. The instancing buffers (written in ranges) keep
- * theirs. WebGL2 keeps every copy (a lost context restores from them). `?lean=0`: off (the A/B).
+ * made again from the geometry (`unlean`) and that mesh keeps it from then on (it's one that changes). The instancing
+ * buffers (written in ranges) keep theirs. WebGL2 keeps every copy. `?lean=0`: off (the A/B).
+ *
+ * RELEASED GEOMETRIES (the same day, the user's say: "yes do it"): a geometry marked `releasable` (built once, never
+ * read again: the landmarks', the bridges', the wonders', the cave's — 51 MB) lets go of its OWN arrays too once its
+ * mesh is lean — then the GPU has the only copy. Its counts and bounds are kept; a later mesh of it (or another
+ * material's with the same slots) draws from the same PlayCanvas mesh; anything that reads its arrays gets an empty
+ * one and an error in the console (geometry.ts). `?release=0`: off (the A/B).
+ *
+ * A LOST DEVICE can restore neither (PlayCanvas re-uploads every buffer from its copy): main.ts RELOADS the page on
+ * 'devicelost' and continues from the last save — which is also the only right answer to it today (the ground's
+ * bakes aren't redone on a restore: a black ground, no grass).
  */
 const EMPTY = new ArrayBuffer(0)
 const LEAN = (() => { try { return new URLSearchParams(location.search).get('lean') !== '0' } catch { return true } })()
+const RELEASE = (() => { try { return new URLSearchParams(location.search).get('release') !== '0' } catch { return true } })()
+const releasedMiss = new WeakSet<BufferGeometry>()
+/** A releasable geometry's own arrays let go (its mesh is lean: the GPU has the data). Its bounds made first. */
+function release(geo: BufferGeometry): void {
+  if (!RELEASE) { geo.releasable = false; return }
+  if (!geo.boundingSphere) geo.computeBoundingSphere()
+  if (!geo.boundingBox) geo.computeBoundingBox()
+  for (const a of Object.values(geo.attributes)) if (!a.isInstancedBufferAttribute) a.release()
+  geo.index?.release()
+  geo.released = true
+}
 /** The meshes that are written again: their copies kept. */
 const keepCopy = new WeakSet<pc.Mesh>()
 type LeanVb = pc.VertexBuffer & { storage: ArrayBuffer; __src?: { geo: BufferGeometry; streams: Pick['streams'] } }
 type LeanIb = pc.IndexBuffer & { storage: ArrayBuffer; __src?: BufferGeometry }
-let leanHooked = false
 function isLean(m: pc.Mesh): boolean { return (m.vertexBuffer as LeanVb | null)?.storage === EMPTY }
 function lean(m: pc.Mesh, geo: BufferGeometry, streams: Pick['streams']): void {
   const vb = m.vertexBuffer as LeanVb | null
   if (!vb || vb.storage === EMPTY || keepCopy.has(m)) return
-  const dev = gfx().device as unknown as { wgpu?: unknown; on(e: string, f: () => void): void; buffers: Set<LeanVb | LeanIb> }
-  if (!dev.wgpu) return
-  if (!leanHooked) {
-    leanHooked = true
-    dev.on('devicelost', () => { for (const b of dev.buffers) if (b.storage === EMPTY && b.__src) refill(b) })
-  }
+  if (!(gfx().device as unknown as { wgpu?: unknown }).wgpu) return
   vb.__src = { geo, streams: streams.slice() }
   vb.storage = EMPTY
   const ib = m.indexBuffer[0] as LeanIb | undefined
@@ -443,13 +460,25 @@ function writeStreams(m: pc.Mesh, n: number): void {
 }
 
 /** The PlayCanvas mesh for a geometry under a material's attribute slots (shared by the meshes drawing it so). */
-function meshFor(geo: BufferGeometry, layout: Layout): pc.Mesh {
+function meshFor(geo: BufferGeometry, layout: Layout): pc.Mesh | null {
   const key = layout.key + ':' + geo.layoutVersion
-  let m = geo.gpu.get(key) as pc.Mesh | undefined
+  let m = geo.gpu.get(key) as (pc.Mesh & { __sem?: Record<string, string> }) | undefined
   if (m) return m
+  if (geo.released) {
+    // (its arrays are gone: a mesh made for another material's layout serves if every stream this one reads sits in
+    //  the same slot there — else it can't be drawn: said once)
+    for (const o of new Set(geo.gpu.values()) as Set<pc.Mesh & { __sem?: Record<string, string> }>) {
+      const sem = o.__sem
+      if (sem && Object.entries(geo.attributes).every(([name, a]) => a.isInstancedBufferAttribute || !layout.semantics[name] || sem[name] === layout.semantics[name])) { geo.gpu.set(key, o); return o }
+    }
+    if (!releasedMiss.has(geo)) { releasedMiss.add(geo); console.error(`gfx: a RELEASED geometry (${geo.name || geo.id}) is asked for under a new material layout — its arrays are gone, it can't be drawn`) }
+    return null
+  }
   m = new pc.Mesh(gfx().device)
+  m.__sem = {}
   for (const [name, a] of Object.entries(geo.attributes)) {
     if (a.isInstancedBufferAttribute || !layout.semantics[name]) continue
+    m.__sem[name] = layout.semantics[name]
     m.setVertexStream(layout.semantics[name], a.array, a.itemSize, a.count, DTYPE(a.array), a.normalized)
   }
   if (geo.index) m.setIndices(geo.index.array as Uint16Array)

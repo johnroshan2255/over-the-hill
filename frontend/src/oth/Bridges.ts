@@ -286,6 +286,10 @@ export class Builder {
   }
 
   /** The geometry of vertices [from, to) — everything by default; a range is one bridge / landmark (its own mesh). */
+  /** What was gathered let go (its geometries made): a builder that a long-lived closure's scope still holds — the cave's,
+   *  ~0.55 M vertices as plain number arrays, ~30 MB — keeps nothing (2026-11-18, the memory). */
+  free(): void { this.pos.length = this.nor.length = this.col.length = this.glw.length = this.idx.length = 0 }
+
   geometry(from = 0, to = this.count): GFX.BufferGeometry {
     this.setSurf(0)
     this.setGlow(0)
@@ -314,6 +318,8 @@ export interface CullPart { obj: GFX.Object3D; box: GFX.Box3; hid?: boolean; hid
 export function splitMeshes(b: Builder, ranges: [number, number][], mat: GFX.Material, group: GFX.Group): CullPart[] {
   return ranges.map(([from, to]) => {
     const g = b.geometry(from, to)
+    // (built once, its box taken here, never read again: its arrays go once it's on the GPU — gfx/scene.ts)
+    g.releasable = true
     const mesh = new GFX.Mesh(g, mat)
     group.add(mesh)
     return { obj: mesh, box: g.boundingBox! }

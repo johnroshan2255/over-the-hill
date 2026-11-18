@@ -80,6 +80,8 @@ export async function initGfx(canvas: HTMLCanvasElement, o: { api?: 'webgl2' | '
  */
 type Glslang = { compileGLSL(src: string, type: string): unknown }
 type Twgsl = { convertSpirV2WGSL(code: unknown): string }
+/** localStorage: '1' once naga has failed on a shader here — glslang + twgsl are then loaded at the start. */
+const FALLBACK_KEY = 'oth.wgslFallback'
 /** glslang + twgsl, as PlayCanvas would have loaded them (their scripts from /lib, each its WebAssembly). */
 let fallback: Promise<{ glslang: Glslang; twgsl: Twgsl }> | null = null
 function loadFallback(): Promise<{ glslang: Glslang; twgsl: Twgsl }> {
@@ -97,13 +99,13 @@ async function fastWgsl(device: pc.GraphicsDevice): Promise<void> {
   const head = 'diagnostic(off, derivative_uniformity);\n'
   let naga: typeof import('naga-wasm') | null = null
   try { naga = await import('naga-wasm'); await naga.init({ module_or_path: nagaWasm }) } catch (e) { console.warn('naga unavailable — glslang + twgsl for every shader', e); naga = null }
-  // (the fallback: needed before the first shader if naga isn't there; else fetched once the game is playing)
+  // (the fallback: needed before the first shader if naga isn't there. With naga it is NOT loaded — 2026-11-18, the
+  //  memory: glslang's and twgsl's WebAssembly heaps were ~39 MB held for shaders naga has never failed on (it was
+  //  fetched once the game was playing). If naga ever does fail on one: FALLBACK_KEY is set and the pair loaded at
+  //  once — and from the start of every session after, before the first shader. `?fallback=1`: loaded at the start.)
   let real: { glslang: Glslang; twgsl: Twgsl } | null = null
-  if (!naga) real = await loadFallback()
-  else {
-    const later = () => void loadFallback().then((r) => (real = r)).catch((e) => console.warn('glslang + twgsl unavailable', e))
-    addEventListener('overhill:started', later, { once: true })
-  }
+  const stored = (() => { try { return localStorage.getItem(FALLBACK_KEY) === '1' } catch { return false } })()
+  if (!naga || stored || new URLSearchParams(location.search).get('fallback') === '1') real = await loadFallback()
   const compile = (src: string, type: string) => real!.glslang.compileGLSL(src, type), convert = (code: unknown) => real!.twgsl.convertSpirV2WGSL(code)
   const glslang: Glslang = { compileGLSL: () => null }, tw: Twgsl = { convertSpirV2WGSL: () => '' }
   d.glslang = glslang; d.twgsl = tw
@@ -128,7 +130,11 @@ async function fastWgsl(device: pc.GraphicsDevice): Promise<void> {
       try { return head + naga.translate({ from: 'glsl', source: clean(c.src), parse: { stage: c.type as 'vertex' | 'fragment' }, to: 'wgsl' }) }
       catch (e) { console.warn('naga: falling back to glslang + twgsl for a shader —', (e as { formatted?: string }).formatted ?? e) }
     }
-    if (!real) { void loadFallback().then((r) => (real = r)); throw new Error('naga could not translate a shader and glslang + twgsl are still loading') }
+    if (!real) {
+      try { localStorage.setItem(FALLBACK_KEY, '1') } catch { /* (private mode: loaded now, asked again next time) */ }
+      void loadFallback().then((r) => (real = r))
+      throw new Error('naga could not translate a shader and glslang + twgsl are still loading')
+    }
     return head + convert(compile(c.src, c.type))
   }
 }

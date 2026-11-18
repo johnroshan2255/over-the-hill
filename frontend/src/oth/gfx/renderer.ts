@@ -281,8 +281,28 @@ export class Renderer {
     return { frame: pr.frameTime, passes: Object.fromEntries(pr.passTimings ?? []) }
   }
 
-  /** (the harness) a LOST DEVICE, as the browser would report one: PlayCanvas's own recovery runs — every buffer and
-   *  texture restored (the lean buffers refilled first: scene.ts). WebGPU only. */
+  /** The graphics device LOST (the browser took the GPU away: memory pressure, a backgrounded tab, a driver reset) —
+   *  `f` once, as it happens (main.ts reloads the page: scene.ts "a lost device"). */
+  onDeviceLost(f: () => void): void {
+    let told = false
+    ;(gfx().device as unknown as { on(e: string, f: () => void): void }).on('devicelost', () => { if (!told) { told = true; f() } })
+  }
+
+  /** PLAYCANVAS'S UNIFORM POOL TRIMMED (2026-11-18, the memory): every frame's uniforms go through 100 kB staging
+   *  buffers it keeps for good once made — the load's bakes left 214 of them idle (21 MB mapped in the page, as much
+   *  again on the GPU). The idle ones beyond `keep` are destroyed; it makes more if a frame ever needs them. To be
+   *  called at the START of a frame (main.ts): the last frame's commands are submitted, none of this one's made. */
+  trimPools(keep = 16): number {
+    type Buf = { destroy(d: unknown): void }
+    const d = gfx().device as unknown as { wgpu?: unknown; dynamicBuffers?: { stagingBuffers?: Buf[]; gpuBuffers?: Buf[] } }, db = d.dynamicBuffers
+    if (!d.wgpu || !db?.stagingBuffers || !db.gpuBuffers) return 0
+    let n = 0
+    for (const list of [db.stagingBuffers, db.gpuBuffers]) while (list.length > keep) { list.pop()!.destroy(d); n++ }
+    return n
+  }
+
+  /** (the harness) a LOST DEVICE, as the browser would report one: PlayCanvas's own handling runs ('devicelost' fired —
+   *  main.ts reloads the page). WebGPU only. */
   async loseDevice(): Promise<boolean> {
     const d = gfx().device as unknown as { wgpu?: unknown; handleDeviceLost?: (i: { reason: string }) => Promise<void> }
     if (!d.wgpu || !d.handleDeviceLost) return false

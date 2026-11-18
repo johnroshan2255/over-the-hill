@@ -150,7 +150,7 @@ export class World {
     // THE SMALL THINGS (Places.ts picks where, seeded) — from the trees' places alone (the same as ever: every crate's id
     // kept), then THE NEW PLACES (Sites.ts — 2026-11-06) clear of all of it; the trees, bushes and stones on the new
     // places' ground taken out before the trees and bushes are built
-    const treeAll = new Float32Array(treeData)
+    let treeAll = new Float32Array(treeData)
     const placed = await step('places', () => placeThings(map, rocks, { data: treeAll, count: treeAll.length / TREE_STRIDE } as unknown as Trees))
     // (?sites=0: without the new places — the cost A/B)
     // (the cave world's shape: its hill's top, its apron — fetched before the places are chosen: it takes the most room)
@@ -183,6 +183,9 @@ export class World {
     if (LOOK) placed.props = placed.props.filter((p) => p.kind !== 'ruin')
     // (the tunnel's hill: the trees and bushes where it stands lifted onto it, a few more on its crest — Sites.dressHills)
     const dressed = dressHills(map, plan.sites, keepEvery(treeAll, TREE_STRIDE), TREE_STRIDE, keepEvery(bushData, 7), 7, caveMeta)
+    // (the placement's own lists let go — 2026-11-18, the memory: this scope lives on (closures made below are kept), and
+    //  with it every tree's eight numbers a second time, 12.9 MB)
+    treeAll = new Float32Array(0); treeData.length = 0; bushData.length = 0
     const trees = await step('trees', () => new Trees(map, atmos, shadow, tier, rocks, true, dressed.trees))
     await step('impostors', () => trees.bakeImpostors(env.renderer))
     const bushes = await step('bushes', () => new Bushes(map, atmos, shadow, tier, rocks, trees.leafTexture, dressed.bushes))

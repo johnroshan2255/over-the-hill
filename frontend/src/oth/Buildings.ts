@@ -104,6 +104,7 @@ export function buildPlaces(p: Places, list: PlaceInstance[], parent: GFX.Group)
         if (!geo || !material) continue
         geo.computeBoundingSphere()
         if (!suffix) { geo.computeBoundingBox(); box.union(geo.boundingBox!) }
+        geo.releasable = true   // (merged here, its bounds taken, never read again: its arrays go once it's on the GPU — gfx/scene.ts)
         lod.add(new GFX.Mesh(geo, material))
       }
       lod.visible = !suffix
