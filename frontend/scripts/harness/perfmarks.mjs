@@ -10,6 +10,7 @@
 //            HITCHMS (70: headless Chrome uncapped has its own ~46 ms frames twice a second, standing still)
 //   node scripts/harness/perfmarks.mjs why marks.json     env: TOP (12: the worst marks)
 import puppeteer from 'puppeteer-core'
+import { PACE_FN } from './pace.mjs'
 import fs from 'node:fs'
 const mode = process.argv[2] || 'drive', file = process.argv[3] || 'perfmarks.json'
 const TIER = process.env.TIER || 'ultra', SPEED = Number(process.env.SPEED || 22), ZOOM = Number(process.env.ZOOM || 40)
@@ -46,6 +47,9 @@ if (mode === 'drive') {
   const START = Number(process.env.START || 0)
   // (the car out, the chase camera zoomed out to ZOOM m — 3.5–40)
   const ready = async () => {
+    // (2026-11-18: the first SET=all drive went over the Great Cliff's gate on a way past it and drove the other 76
+    // marks' ways in the desert — the crossing held; the valley made sure of before every way)
+    await p.evaluate(() => { window.__oth.crossing.hold = true })
     await p.evaluate(() => { window.__oth.perfMarks().length = 0 })
     await p.evaluate(() => window.__oth.drive(true))
     for (let k = 0; k < 30; k++) await p.keyboard.press('Minus')
@@ -60,6 +64,7 @@ if (mode === 'drive') {
     if (ti < START) continue
     let r
     try {
+      if (await p.evaluate(() => window.__oth.world.id !== 'valley')) { await p.evaluate(() => window.__oth.swapTo('valley')); await ready() }
       const L = tracks[ti]
       r = await p.evaluate(async (L, speed) => {
         const o = window.__oth
@@ -103,15 +108,15 @@ if (mode === 'drive') {
   for (const m of [...marks].sort((a, b) => b.ms - a.ms).slice(0, 25)) console.log(`  ${m.kind.padEnd(5)} ${String(m.fps).padStart(4)} fps (usual ${m.baseFps}) ×${m.count}  cam ${m.cx},${m.cy},${m.cz} yaw ${m.yaw} pitch ${m.pitch}  cpu ${m.cpuMs}  ${m.drawn.draws}d ${Math.round(m.drawn.tris / 1000)}k blades ${m.drawn.blades}`)
 } else {
   const marks = JSON.parse(fs.readFileSync(file, 'utf8')).filter((m) => m.world === 'valley').sort((a, b) => b.ms - a.ms).slice(0, Number(process.env.TOP || 12))
-  const ft = () => p.evaluate(async () => {
-    const o = window.__oth, runs = []
-    for (let k = 0; k < 3; k++) { await o.gpuDone(); const t0 = performance.now(); await new Promise((r) => { let n = 0; const f = () => { if (++n < 100) requestAnimationFrame(f); else r() }; requestAnimationFrame(f) }); await o.gpuDone(); runs.push((performance.now() - t0) / 100) }
-    runs.sort((a, b) => a - b); return runs[1]
-  })
+  // (pace.mjs, 2026-11-18: the slope between two drained windows — was 3 × 100 frames each drained, `gpuDone`'s constant
+  //  ~0.6 s late answer charged to 100 frames: +6 ms on every "here now"; the parts' with / without differences were right)
+  const ft = () => p.evaluate(PACE_FN(100, 400))
   for (const m of marks) {
+    process.stdout.write(`${m.kind} at ${m.cx},${m.cz}: flying there… `)
     await p.evaluate((m) => window.__oth.view(m.cx, m.cz, m.agl, m.yaw, m.pitch), m)
     await sleep(2500)
     const all = await ft()
+    process.stdout.write(`${all.toFixed(2)} ms; each part… `)
     const names = await p.evaluate(() => Object.keys(window.__oth.parts()))
     const rows = []
     for (const n of names) {

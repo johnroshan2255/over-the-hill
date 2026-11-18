@@ -33,6 +33,9 @@ export class Crossing {
   private armed = false
   /** The mist now (eased toward its target). */
   mist = 0
+  /** No swap (the harness's drives — perfmarks.mjs: carried along every way, a way past the gate mustn't take the
+   *  rest of the drive into the other world). The other world is still built ahead and let go as in play. */
+  hold = false
   /** After a swap (main.ts: the region's title). */
   onSwap?: (from: World, to: World) => void
 
@@ -96,7 +99,7 @@ export class Crossing {
     const side = rx * ox + rz * oz, lateral = Math.abs(rx * oz - rz * ox)
     if (side < -8 && side > -300 && lateral < 30) this.armed = true
     const next = this.spare, D = next?.map.meta.gate
-    if (!this.armed || side <= 0 || lateral > 30 || !next || !D) return
+    if (this.hold || !this.armed || side <= 0 || lateral > 30 || !next || !D) return
     // (the gates' offset; the height from the ground under the car in each world, so it lands on its wheels)
     const dx = D.x - G.x, dz = D.z - G.z
     const dy = next.map.height(car.x + dx, car.z + dz) - w.map.height(car.x, car.z)

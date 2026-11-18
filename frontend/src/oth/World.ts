@@ -61,7 +61,7 @@ export interface WorldEnv {
 }
 
 /** About how many steps a world's build reports (World.build's progress: distinct step labels). */
-const BUILD_STEPS = 28
+const BUILD_STEPS = 29
 
 export class World {
   readonly group = new GFX.Group()
@@ -149,6 +149,7 @@ export class World {
     // (and its STACKED ROCK — desert_stacks.py: the slab stacks the rocky hills are built of)
     const stacks = map.desert ? await Rocks.loadStacks(`${WORLDS[id].path}/stacks.json`) : null
     const rocks = await step('rocks', () => new Rocks(map, atmos, shadow, tier, env.farGrid, stones, stacks))
+    await sliced('rock footprint', rocks.stampFootprint())
     // (the stacks cast shade: their slabs stamped into the shadow worker's copy of this world's heights)
     if (stacks) await step('stack shade', () => shadow.setOccluders(map, rocks.occluders()))
     const grass = await step('grass', () => new Grass(map, atmos, terrain, tier, rocks.footprint, env.renderer))

@@ -106,7 +106,7 @@ export class Renderer {
     const t0 = performance.now()
     await new Promise<void>((res) => {
       let n = 0
-      const tick = () => { n++; if ((n > 3 && warm.pending === 0 && warm.count === 0) || performance.now() - t0 > 15000) res(); else requestAnimationFrame(tick) }
+      const tick = () => { n++; if ((n > 3 && warm.pending === 0 && warm.hidden === 0 && warm.count === 0) || performance.now() - t0 > 15000) res(); else requestAnimationFrame(tick) }
       requestAnimationFrame(tick)
     })
     scene.remove(group)

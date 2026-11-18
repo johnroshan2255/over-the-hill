@@ -25,6 +25,7 @@ is stopped.
   `pgrep -f puppeteer_dev_chrome_profile` must print nothing before a measure.
 - **Headless Chrome's own frames.** Uncapped, it gives a ~46 ms frame about twice a second STANDING STILL — not the
   game. A hitch below ~60 ms there means nothing; the harness runs at `hitchms=70`.
+- **`why` read ~6 ms high** until 2026-11-18 (`gpuDone`'s constant late answer — docs/PERF.md 2026-11-10; now `pace.mjs`).
 - **GPU timing.** `renderer.gpuTime()` switches PlayCanvas's GPU profiler on for good: timestamps on every pass of
   every frame → 66 stalls of 70–94 ms a minute. The marks no longer turn it on (`?perfgpu=1` to have it).
 - **The heap figure mid-drive** (900–1500 MB) is garbage not yet collected — `leakprof.mjs` forces the GC; trust it.
@@ -41,7 +42,61 @@ is stopped.
 The clean baseline after them, track 0 driven at 28 m/s, ULTRA 1080p uncapped: median 2.4 ms (~415 fps), 1–2
 frames ≥ 70 ms a minute.
 
-## 3. The drive's marks — what's left to fix
+## 2b. 2026-11-18 — the first drive's marks were mostly the DESERT; the crossing's build stall fixed
+
+**76 of the 106 marks weren't the valley.** A way passing the Great Cliff's gate (1102, −1990) crossed into the desert
+world (Crossing.ts: the swap), and every way after it was driven in the desert at the valley's coordinates — that's
+"Lead 2" (no trees drawn, a 1.4 ms usual frame: the desert's) and three of the four "rim" hitches (the desert's box
+edge). The marks say so (`world: "desert"`). Now `Crossing.hold` (the harness sets it: the other world still built
+ahead and let go, never swapped into) and `perfmarks.mjs` swaps back to the valley before a way if it ever isn't.
+
+**The crossing's build: one frame of 687 ms**, 1 100 m from the gate (BUILD_AT — the valley's 113 ms mark at
+480, −1093 was it). `renderer.compileAsync` joins the new world to the scene HIDDEN for its shaders' warm-up, and
+`Scene.sync` made every one of its meshes in that first frame: `prepare` (PlayCanvas meshes, every vertex buffer
+written) for each hidden mesh never made — both in `walk` and in the warm-up's `tryWarm` (that one had no budget at
+all). Now a hidden mesh never made is made within `HIDDEN_MS` (2 ms) a frame, the rest next frame (`warm.hidden` —
+`compileAsync` waits for it); a mesh SHOWN is made at once, as ever. `hitchprof.mjs` FROM=60 on track 66: 687 →
+233 → **78 ms** (what's left: one 681 KB mesh alone ~30 ms, a warm-up's createShaderModule). pixcmp against the
+commit before: forest, cliff, oroad, town, boxedge, caveFront ≤ 2 of 255 (the noise); spawn noisy in itself (old vs
+old max 60).
+
+**The outland's big hitches (road 57 at 4058, 3026 ×3; road 55 at 5683, 1983) don't come back**: hitchprof over
+them shows only 66–71 ms frames — headless Chrome's own GPU waits (`(program)`, `getCurrentTexture`, no game code),
+the same as on track 0 far from everything.
+
+**Then the build's own steps** (`crossbuild.mjs` — new: the car put near the gate, every frame timed until the desert
+is ready, the build's step timings, a CPU profile inside one function): the frame the map arrived in was 114–123 ms —
+the `rocks` step, 61–66 ms in ONE frame, 36 ms of it `stampRock` (the desert's 12 k big stones' footprint discs,
+millions of cells). The stamping is now `Rocks.stampFootprint()`, a generator World.build runs `sliced` (6 ms a
+frame) right after `rocks` — the same bytes (a max over the rocks; `Math.sqrt` vs `Math.hypot` checked too: identical,
+but no faster there). That frame 123 → **84 ms**; `rocks` itself 27 ms. The other frames of the build (40–57 ms) are
+at headless Chrome's own floor (the same 52 ms frame comes BEFORE the build starts). pixcmp vs the commit before:
+forest, omeadow, orocks, rockhill, lake ≤ 2; the desert's two views 0–1; spawns noisy in themselves (old vs old 37).
+
+**The crossing's build, in all: 687 → ~84 ms worst frame.** Left: `compile` (the warm-up, ~0.9 s spread over frames:
+a 50–80 ms frame now and then — one big shader's naga + createShaderModule), `placing trees`, `placing bushes`
+(already sliced).
+
+`hitchprof.mjs` now: `FROM` (start part-way along the way), each long frame's own top call chains (`ROWS`), the
+crossing's state per long frame, the crossing held.
+
+## 2c. 2026-11-18 — the drive again, every way, the valley held (`docs/perf/marks_2026-11-18.json`)
+
+All 252 ways in 2 h 18 min, every mark in the valley world: **83 marks — 45 hitches, 38 slow** (the first drive: 106
+over 141 ways, 76 of them the desert's).
+
+- **The hitches are at headless Chrome's floor**: 36 of the 45 are 70–80 ms. Headless Chrome on this Mac gives 1–2
+  frames ≥ 70 ms a minute anywhere (track 0, far from everything) — over 138 min that's more frames than the marks.
+  A game stall would come back at its place: re-driven with hitchprof, road 13 (138 ms), road 7 (105), road 9 (95),
+  road 57, road 55 — none did (0–1 frames ≥ 80 ms, `getCurrentTexture` / `(program)`: GPU waits, no game code).
+  The one that does come back is 480, −1093 ×2 (110 ms) — the crossing's build, fixed above after this drive.
+- **The slow marks are mild**: 36 of 38 at 3.5–5 ms against a usual 2.3 (still 200–280 fps). The two big ones
+  (−2097, 1107: 9.2 ms; −918, 3391: 8.7 ms — narrow paths) are NOT slow standing there: 2.4 ms from the first half
+  second after arriving. `why` said 10.5 ms there — `why` was reading `gpuDone`'s constant (above).
+- **The page died once** (way 131, ~1 h 40 min in, the heap mid-drive ~920 MB); way 131 alone drives fine. A run
+  that long is what kills it — see Lead 4 below.
+
+## 3. The drive's marks (2026-11-17 — see 2b: most of them the desert's)
 
 `docs/perf/marks_2026-11-17.json`: the post-fix drive at 28 m/s, SET=all, ways 0–141 of 252 (the valley's 68
 tracks, the outland's 69 roads, the first narrow ways) — the rest of the paths were still being driven when this

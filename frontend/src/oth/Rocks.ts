@@ -194,8 +194,8 @@ export class Rocks {
         this.group.add(mesh)
       }
     }
+    // (the rocks' stamps go on in `stampFootprint`, a slice a frame — World.build)
     const g = map.inner, fp = new Uint8Array(g.n * g.n)
-    for (const r of all) this.stampRock(fp, r)
     this.footprint = new GFX.DataTexture(fp, g.n, g.n, GFX.RedFormat, GFX.UnsignedByteType)
     // (mipmapped: the grass reads it blurred too, shortening round a boulder — Grass.ts)
     this.footprint.minFilter = GFX.LinearMipmapLinearFilter
@@ -278,6 +278,16 @@ export class Rocks {
     }
     if (old) redo(old[0], old[1], old[2] + 2)
     if (r > 0) redo(x, z, r + 2)
+    this.footprint.needsUpdate = true
+  }
+
+  /** THE FOOTPRINT STAMPED — every rock's disc, a slice at a time (World.build's `sliced`, 2026-11-18): done in the
+   *  constructor it was the desert's 12 k big stones' millions of cells in one frame — 31 ms of the crossing's build's
+   *  123 ms frame (hitchprof.mjs). The same bytes (a max over the rocks: the order is nothing to it). Before the grass,
+   *  the trees and the bushes read it. */
+  *stampFootprint(): Generator<void, void, void> {
+    const fp = this.footprint.image.data as Uint8Array, all = this.all
+    for (let i = 0; i < all.length; i++) { this.stampRock(fp, all[i]); if ((i & 63) === 63) yield }
     this.footprint.needsUpdate = true
   }
 

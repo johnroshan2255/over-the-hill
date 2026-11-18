@@ -463,7 +463,8 @@ const warmNode = new pc.GraphNode('oth-warm')
 let warmLayer: pc.Layer | null = null
 let warmMis: pc.MeshInstance[] = []
 /** How many material layouts a frame warms; and how many wait (the harness / compileAsync). */
-export const warm = { perFrame: 2, pending: 0, total: 0, get layer(): pc.Layer { return warmLayerOf() }, get count(): number { return warmMis.length } }
+/** hidden: the hidden meshes not yet made (the sync's HIDDEN_MS a frame — compileAsync waits for them too). */
+export const warm = { perFrame: 2, pending: 0, hidden: 0, total: 0, get layer(): pc.Layer { return warmLayerOf() }, get count(): number { return warmMis.length } }
 function warmLayerOf(): pc.Layer {
   if (!warmLayer) {
     warmLayer = new pc.Layer({ name: 'oth-warm', opaqueSortMode: pc.SORTMODE_NONE, transparentSortMode: pc.SORTMODE_NONE })
@@ -557,13 +558,21 @@ export class Scene extends Object3D {
     let calls = 0, tris = 0
     // (the warm-up: the main scene only — the bakes' scenes draw at load)
     const main = this.layer === gfx().world
-    let left = main ? warm.perFrame : 0, pending = 0
+    let left = main ? warm.perFrame : 0, pending = 0, hidSpent = 0, hidWait = 0
     if (main) warmBegin()
-    const tryWarm = (o: Mesh) => {
+    const tryWarm = (o: Mesh, v: boolean) => {
       const pk = o.pick
       if (pk && warmed.has(pk.entry)) return
       if (left <= 0) { pending++; return }
-      const g = o.gpu ?? prepare(o)
+      // (a hidden mesh never made: made here within the same HIDDEN_MS a frame as below — unbudgeted, every mesh of a
+      //  world joined hidden whose material was warmed already was made here in its first frame)
+      let g = o.gpu
+      if (!g && !v) {
+        if (hidSpent >= HIDDEN_MS) { hidWait++; return }
+        const t = performance.now()
+        g = prepare(o)
+        hidSpent += performance.now() - t
+      } else g ??= prepare(o)
       if (!g || !o.pick || warmed.has(o.pick.entry)) return
       warmed.add(o.pick.entry)
       warm.total++
@@ -578,7 +587,7 @@ export class Scene extends Object3D {
     const walk = (o: Object3D, vis: boolean) => {
       const v = vis && o.visible
       if (o instanceof Mesh) {
-        if (main) tryWarm(o)
+        if (main) tryWarm(o, v)
         // (hidden, already made, nothing disposed: only kept hidden — made ready again the frame it shows)
         if (!v && o.gpu && o.layer === this.layer && this.inLayer.has(o) && !o.geometry.disposed && !(o.material as ShaderMaterial).disposed) {
           o.seen = id
@@ -587,7 +596,20 @@ export class Scene extends Object3D {
           for (let i = 0; i < ch.length; i++) walk(ch[i], v)
           return
         }
+        // (HIDDEN AND NEVER MADE — a world built behind the play joins the scene hidden for its warm-up
+        //  (renderer.compileAsync): its meshes made HIDDEN_MS' worth a frame, not all in its first one — that was the
+        //  crossing's build's 690 ms frame, the desert's every vertex buffer written at once (2026-11-18, hitchprof.mjs).
+        //  A mesh shown is made at once, as ever: nothing drawn changes.)
+        const fresh = !v && !o.gpu
+        if (fresh && hidSpent >= HIDDEN_MS) {
+          hidWait++
+          const ch = o.children
+          for (let i = 0; i < ch.length; i++) walk(ch[i], v)
+          return
+        }
+        const t = fresh ? performance.now() : 0
         const g = prepare(o)
+        if (fresh) hidSpent += performance.now() - t
         if (g) {
           o.seen = id
           if (!this.inLayer.has(o) || o.layer !== this.layer) { this.inLayer.add(o); o.layer = this.layer; add.push(g.mi) }
@@ -641,7 +663,7 @@ export class Scene extends Object3D {
       for (let i = 0; i < ch.length; i++) walk(ch[i], v)
     }
     walk(this, true)
-    if (main) { warm.pending = pending; if (warmMis.length) warmLayerOf().addMeshInstances(warmMis) }
+    if (main) { warm.pending = pending; warm.hidden = hidWait; if (warmMis.length) warmLayerOf().addMeshInstances(warmMis) }
     if (add.length) this.layer.addMeshInstances(add)
     const gone: pc.MeshInstance[] = []
     for (const m of this.inLayer) if (m.seen !== id) { this.inLayer.delete(m); if (m.gpu) gone.push(m.gpu.mi); m.layer = null }
@@ -651,6 +673,8 @@ export class Scene extends Object3D {
   }
 }
 const scenes: Scene[] = []
+/** The hidden meshes' making a frame, ms (each sync): a world joined hidden is made over frames. */
+const HIDDEN_MS = 2
 /** every sync, numbered (any scene): what it met and what it pushed carry its number — no sets made a frame */
 let syncs = 0
 
