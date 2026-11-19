@@ -1,0 +1,233 @@
+{
+  "tickHz": 20,
+  "health": 100,
+  "zones": {
+    "head": 1.52,
+    "limb": 0.9
+  },
+  "order": [
+    "pistol",
+    "ak47",
+    "sniper",
+    "katana"
+  ],
+  "weapons": {
+    "ak47": {
+      "id": "ak47",
+      "name": "AK-47",
+      "kind": "gun",
+      "hold": "rifle",
+      "cartridge": "7.62x39",
+      "bulletMass": 0.0079,
+      "muzzleVelocity": 715,
+      "drag": 0.00136,
+      "range": 400,
+      "zero": 100,
+      "auto": true,
+      "fireTicks": 2,
+      "reloadTicks": 50,
+      "drawTicks": 12,
+      "magazine": 30,
+      "reserve": 90,
+      "damage": 34,
+      "head": 3,
+      "limb": 0.75,
+      "floor": 0.5,
+      "spread": {
+        "still": 0.35,
+        "walk": 1.6,
+        "run": 4,
+        "perShot": 0.22,
+        "settleTicks": 8
+      },
+      "recoil": {
+        "up": 0.9,
+        "side": 0.4,
+        "returnTicks": 6,
+        "grow": 1.8,
+        "growShots": 8
+      },
+      "mass": 4.3,
+      "length": 0.88,
+      "tracerEvery": 5,
+      "spec": "docs/weapons/AK47.md"
+    },
+    "katana": {
+      "id": "katana",
+      "name": "Katana",
+      "kind": "blade",
+      "hold": "katana",
+      "mass": 1.15,
+      "length": 1.03,
+      "blade": 0.72,
+      "drawTicks": 10,
+      "comboTicks": 3,
+      "head": 1.5,
+      "cuts": [
+        {
+          "id": "cut1",
+          "windup": 2,
+          "edge": 2,
+          "recover": 4,
+          "arc": 110,
+          "reach": 1.9,
+          "damage": 34
+        },
+        {
+          "id": "cut2",
+          "windup": 2,
+          "edge": 2,
+          "recover": 4,
+          "arc": 120,
+          "reach": 1.9,
+          "damage": 34
+        },
+        {
+          "id": "cut3",
+          "windup": 3,
+          "edge": 2,
+          "recover": 6,
+          "arc": 50,
+          "reach": 2.1,
+          "damage": 48,
+          "head": true
+        },
+        {
+          "id": "heavy",
+          "windup": 5,
+          "edge": 3,
+          "recover": 8,
+          "arc": 200,
+          "reach": 2.3,
+          "damage": 60
+        }
+      ],
+      "types": {
+        "fire": {
+          "name": "Homura — the fire blade",
+          "awakeTicks": 160,
+          "restTicks": 400,
+          "glow": "#ff7a1a",
+          "burn": {
+            "damage": 6,
+            "everyTicks": 10,
+            "forTicks": 80
+          },
+          "wave": {
+            "length": 12,
+            "width": 2.4,
+            "speed": 20,
+            "damage": 40
+          }
+        },
+        "thunder": {
+          "name": "Raiden — the thunder blade",
+          "awakeTicks": 160,
+          "restTicks": 400,
+          "glow": "#9fd0ff",
+          "arc": {
+            "radius": 6,
+            "rainRadius": 9,
+            "damage": 18,
+            "stunTicks": 12
+          },
+          "bolt": {
+            "ahead": 6,
+            "radius": 3.5,
+            "damage": 55,
+            "stunTicks": 16,
+            "delayTicks": 6
+          }
+        }
+      },
+      "spec": "docs/weapons/KATANA.md"
+    },
+    "pistol": {
+      "id": "pistol",
+      "name": "Pistol",
+      "kind": "gun",
+      "hold": "pistol",
+      "cartridge": "9x19",
+      "bulletMass": 0.008,
+      "muzzleVelocity": 375,
+      "drag": 0.0019,
+      "range": 100,
+      "zero": 25,
+      "auto": false,
+      "fireTicks": 3,
+      "reloadTicks": 32,
+      "drawTicks": 8,
+      "magazine": 17,
+      "reserve": 68,
+      "damage": 26,
+      "head": 2,
+      "limb": 0.75,
+      "floor": 0.6,
+      "spread": {
+        "still": 0.5,
+        "walk": 1.4,
+        "run": 3,
+        "perShot": 0.5,
+        "settleTicks": 6
+      },
+      "recoil": {
+        "up": 1.6,
+        "side": 0.5,
+        "returnTicks": 4
+      },
+      "mass": 0.91,
+      "length": 0.186,
+      "tracerEvery": 0,
+      "spec": "docs/weapons/PISTOL.md"
+    },
+    "sniper": {
+      "id": "sniper",
+      "name": "Sniper rifle",
+      "kind": "gun",
+      "hold": "rifle",
+      "cartridge": ".338",
+      "bulletMass": 0.0162,
+      "muzzleVelocity": 936,
+      "drag": 0.0007,
+      "range": 1000,
+      "zero": 200,
+      "auto": false,
+      "fireTicks": 30,
+      "reloadTicks": 70,
+      "drawTicks": 16,
+      "magazine": 5,
+      "reserve": 20,
+      "damage": 115,
+      "head": 2.5,
+      "limb": 0.75,
+      "floor": 0.7,
+      "spread": {
+        "still": 4,
+        "walk": 7,
+        "run": 9,
+        "perShot": 0,
+        "settleTicks": 0,
+        "scopedStill": 0.02,
+        "scopedWalk": 1.2
+      },
+      "recoil": {
+        "up": 4.5,
+        "side": 0.6,
+        "returnTicks": 14
+      },
+      "scope": {
+        "fov": [
+          40,
+          10
+        ],
+        "settleTicks": 4,
+        "pace": 0.4
+      },
+      "pace": 0.85,
+      "mass": 6.9,
+      "length": 1.23,
+      "tracerEvery": 1,
+      "spec": "docs/weapons/SNIPER.md"
+    }
+  }
+}

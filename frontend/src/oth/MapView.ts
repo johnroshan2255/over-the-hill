@@ -408,7 +408,9 @@ export class MapView {
       const [ox, oy] = P(o.x, o.z)
       g.save(); g.translate(ox, oy); g.rotate(-o.heading)
       g.fillStyle = o.colour; g.strokeStyle = '#fff'; g.lineWidth = 2 * k
-      g.beginPath(); g.moveTo(0, -10 * k); g.lineTo(6.5 * k, 7 * k); g.lineTo(0, 3.5 * k); g.lineTo(-6.5 * k, 7 * k); g.closePath(); g.fill(); g.stroke()
+      // (a weapon lying in a ruin — Weapons.ts Pickups.marks: a diamond; a player: an arrow)
+      if ((o as { site?: boolean }).site) { g.beginPath(); g.moveTo(0, -8 * k); g.lineTo(7 * k, 0); g.lineTo(0, 8 * k); g.lineTo(-7 * k, 0); g.closePath(); g.fill(); g.stroke() }
+      else { g.beginPath(); g.moveTo(0, -10 * k); g.lineTo(6.5 * k, 7 * k); g.lineTo(0, 3.5 * k); g.lineTo(-6.5 * k, 7 * k); g.closePath(); g.fill(); g.stroke() }
       g.restore()
       label(g, o.name, ox, oy + 17 * k, '#16120d', Math.round(11 * k), false)
     }

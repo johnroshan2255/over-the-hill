@@ -117,6 +117,19 @@ export class ChaseCam {
   snap(): void {
     if (this.car.sim) this.yaw = this.car.sim.heading
   }
+  /** OVER THE SHOULDER (a gun in the hands — Weapons.ts): the look point this far to the right of what's followed (m). */
+  side = 0
+  /** (aiming on foot) the view kept where it looks while what it follows turns to face it: its own yaw taken to the
+   *  target's heading, the difference left in the orbit; no ease back behind. */
+  aimHold(): void {
+    if (!this.car.sim) return
+    const c = this.yaw + this.orbit, h = this.car.sim.heading
+    this.yaw = h
+    this.orbit = Math.atan2(Math.sin(c - h), Math.cos(c - h))
+    this.idle = 0
+  }
+  /** The view kicked up (rad) and aside by a shot. */
+  kick(up: number, side: number): void { this.pitch = GFX.MathUtils.clamp(this.pitch - up, PITCH_MIN, 1.2); this.orbit += side }
 
   update(dt: number): void {
     if (!this.car.sim) return
@@ -138,7 +151,7 @@ export class ChaseCam {
     const dist0 = this.dist * (1 + Math.min(speed, 30) / 90)
     const dist = dist0 + (Math.max(dist0, 34) - dist0) * ak
     const p = this.car.pos
-    this.look.set(p.x, p.y + this.lookH, p.z)
+    this.look.set(p.x + Math.cos(a) * this.side, p.y + this.lookH, p.z - Math.sin(a) * this.side)
     // (rock close behind — the car backed against a wall: the camera rises over the car instead of coming in to it)
     const po = Math.max(this.pitch, PITCH_LOW), tilt = PITCH_LOW - Math.min(this.pitch, PITCH_LOW)
     const pe0 = po + Math.max(0, 1.15 - po) * this.lift

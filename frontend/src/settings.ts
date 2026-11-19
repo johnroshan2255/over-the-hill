@@ -32,6 +32,9 @@ export interface Settings {
   /** THE HELPER BOT (oth/Bot.ts): in a co-op world in the valley, a second player run from this tab who gathers,
    *  builds and moves on. */
   bot: boolean
+  /** THE COMPANION (oth/Companion.ts), solo play: an NPC who walks and rides with you ('friend'), or comes after you —
+   *  punches and kicks on foot, rams your car with his ('enemy'). */
+  companion: 'off' | 'friend' | 'enemy'
 }
 
 export const DEFAULTS: Settings = {
@@ -48,6 +51,7 @@ export const DEFAULTS: Settings = {
   fpsOverlay: false,
   sound: true,
   bot: false,
+  companion: 'off',
 }
 
 const KEY = 'overhill.settings.v1'
@@ -62,6 +66,7 @@ export function loadSettings(): Settings {
     // (the one paint for every car — before 2026-11-16 — is dropped: each car back in its factory colour)
     delete (s as unknown as { paint?: unknown }).paint
     if (!s.paints || typeof s.paints !== 'object') s.paints = {}
+    if (s.companion !== 'friend' && s.companion !== 'enemy') s.companion = 'off'
     return s
   } catch {
     return { ...DEFAULTS } // (private window / blocked storage: the defaults)
@@ -92,6 +97,7 @@ export function gameParams(): URLSearchParams {
   p.set('offroad', s.offroadAssist ? '1' : '0')
   if (!s.sound) p.set('sound', '0')
   if (s.bot) p.set('bot', '1')
+  if (s.companion !== 'off') p.set('companion', s.companion)
   for (const [k, v] of new URLSearchParams(location.search)) p.set(k, v)
   return p
 }

@@ -976,6 +976,16 @@ export class RemoteCar {
   private readonly v = new GFX.Vector3()
   /** The body's box in car space (centre, half size) — null until its model is in. */
   box: { c: GFX.Vector3; h: GFX.Vector3 } | null = null
+  /** Its half width and half length (m). */
+  get half(): { x: number; z: number } { return this.model ? { x: this.model.half.x, z: this.model.half.z } : { x: 1, z: 2.2 } }
+  /** (the companion — Companion.ts) the driver's seat (where the hips sit) and the spot outside the driver's door, car
+   *  space — as Vehicle.driverDoor; null until the model is in. */
+  get driverSeat(): { hips: GFX.Vector3; door: GFX.Vector3 } | null {
+    const d = this.model ? driverDoor(this.model) : null
+    if (!d) return null
+    const [hx, hy, hz] = d.hinge
+    return { hips: new GFX.Vector3(hx + 0.42, hy + d.bottom + 0.42, hz + d.length * 0.62), door: new GFX.Vector3(hx - 0.5, hy, hz + d.length * 0.5) }
+  }
 
   constructor(private readonly map: MapData, private readonly atmos: Atmosphere, shadow: TerrainShadow, farGrid: GFX.Vector4) {
     this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 },

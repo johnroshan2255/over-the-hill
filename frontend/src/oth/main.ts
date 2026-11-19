@@ -13,6 +13,7 @@ import riderUrl from '../assets/models/human/rider.glb?url'
 import { MotoSim } from '../gameplay/vehicle/MotoSim'
 import { Character, type ClipName } from './Character'
 import charUrl from '../assets/models/human/character.glb?url'
+import fightUrl from '../assets/models/human/fight.glb?url'
 import { OthAudio } from './Audio'
 import { Dust } from './Dust'
 import { ChaseCam } from './ChaseCam'
@@ -50,6 +51,8 @@ import { Bot } from './Bot'
 import { coopRequested, loadAccount, requestCoop } from '../net/api'
 import { Kind } from '../net/pose'
 import { Session } from '../net/Session'
+import { Companion, type CompanionKind } from './Companion'
+import { Arsenal, Pickups, type WeaponId } from './Weapons'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -265,7 +268,8 @@ async function boot() {
     // (the mouse: just moving it — mouseLook.ts; a finger drags)
     onMouseLook((dx, dy) => {
       if (!fpp) return
-      const k = 0.0035
+      // (in the scope: slower by the lens's share — a hand's move covers the same of the glass)
+      const k = 0.0035 * (arsenal.scopeFov ?? 55) / 55
       if (onFoot) look.footYaw -= dx * k; else look.yaw = Math.atan2(Math.sin(look.yaw - dx * k), Math.cos(look.yaw - dx * k))
       look.pitch = Math.max(-1.2, Math.min(1.5, look.pitch - dy * k))
       look.idle = 0
@@ -394,6 +398,12 @@ async function boot() {
   addEventListener('keydown', (e: KeyboardEvent) => { if (e.code === 'KeyB' && !e.repeat && !coop && !pause && !document.querySelector('.oh-front')) toast('Building needs a co-op world — CO-OP on the title screen', 3500) })
   // CO-OP: the session (null: playing alone), and what we are this frame for it — Coop.ts
   let coop: Coop | null = null
+  /** THE COMPANION (Companion.ts — SETTINGS › PLAY, off by default; `?companion=friend|enemy`): an NPC, solo play
+   *  only — a FRIEND who walks with you, rides with you or follows in his own car, or an ENEMY who fights you on foot
+   *  and rams your car. Made below, once getting in and out is. */
+  let companion: Companion | null = null
+  /** THE WEAPONS lying in the ruins (Weapons.ts — made below, with what's in your hands). */
+  let pickups: Pickups | null = null
   /** Gathering on foot (Gather.ts) — a co-op world's. */
   let gather: Gather | null = null
   let ground: GroundEdits | null = null
@@ -485,7 +495,7 @@ async function boot() {
   const chartSize = isMobileDevice() ? 768 : 1024
   const charts = (w: World) => {
     const chart = new Chart(w.map, chartSize)
-    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp, perfMarks: () => (perf.on ? perf.marks : []), others: () => coop?.remotes.list ?? [], claims: () => coop?.claims.list ?? [] }
+    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp, perfMarks: () => (perf.on ? perf.marks : []), others: () => [...(coop?.remotes.list ?? companion?.list ?? []), ...(pickups?.marks() ?? [])], claims: () => coop?.claims.list ?? [] }
     const mapView = new MapView(o)
     return { chart, mapView, radar: q.get('radar') === '0' ? null : new Radar({ ...o, openMap: () => mapView.toggle() }) }
   }
@@ -815,7 +825,86 @@ async function boot() {
     // (F — GTA's: out of / into what's nearest. Which vehicle you have is chosen in the GARAGE — 2026-11-05, the user)
     if (e.code === 'KeyF') { if (onFoot) getIn(); else getOut() }
     if (e.code === 'KeyR' && riding) two.reset()
+    // (H: call the companion — to you on foot, into your car when you're stopped; J / U: a punch / a kick — the enemy's game)
+    if (e.code === 'KeyH') companion?.call()
+    if (e.code === 'KeyJ' && onFoot && !cut && !arsenal.current) companion?.attack('punch')
+    if (e.code === 'KeyU' && onFoot && !cut && !arsenal.current) companion?.attack('kick')
   })
+  /** Your car's PASSENGER seat (the companion's): the driver's mirrored across the car — his hips (car space) and the
+   *  spot outside its door (world). */
+  const passengerSeat = () => {
+    if (!car.sim || riding) return null
+    const rim = car.wheelRim, d = car.driverDoor
+    const hipY = vehicleDef(car.id).seatHip ?? (rim ? rim.hub.y - 0.36 : 0)
+    const hips = rim ? new GFX.Vector3(-rim.hub.x, Math.min(hipY, car.roofY - 0.92), rim.hub.z + 0.5) : d ? d.seat.clone().setX(-d.seat.x) : null
+    if (!hips) return null
+    const door = toWorld(d ? new GFX.Vector3(-(d.hinge.x - 0.5), d.hinge.y, d.hinge.z + d.length * 0.5) : new GFX.Vector3(car.half.x + 0.8, 0, 0))
+    return { root: car.root as GFX.Object3D, hips, door, key: car.id, heading: car.sim.heading }
+  }
+  const companionKind = (v: string | null | undefined): CompanionKind | null => (v === 'enemy' ? 'enemy' : v === 'friend' || v === '1' ? 'friend' : null)
+  /** The companion as the setting says: made, changed (friend ↔ enemy) or sent away. Never in a co-op world. */
+  const setCompanion = (kind: CompanionKind | null) => {
+    if (!kind || coop || coopWorld) { companion?.dispose(); companion = null; return }
+    if (companion) { companion.setKind(kind); return }
+    companion = new Companion({
+      onFoot: () => onFoot,
+      riding: () => riding,
+      playing: () => driving && !pause,
+      pos: () => ride.pos,
+      heading: () => ride.heading,
+      speed: () => Math.abs(ride.speedKmh) / 3.6,
+      car: () => (car.sim ? { id: car.id, root: car.root } : null),
+      passenger: passengerSeat,
+      toast: (m) => toast(m),
+      you: () => hero,
+      size: () => (riding ? { x: 0.4, z: 1.0 } : car.half),
+      // (rammed: the body shoved on and a little up, spun about its height — by its own mass)
+      shove: (dx, dz, dv, spin) => {
+        const b = onFoot ? null : (ride.body as { mass(): number; applyImpulse(v: { x: number; y: number; z: number }, wake: boolean): void; applyTorqueImpulse(v: { x: number; y: number; z: number }, wake: boolean): void } | undefined)
+        if (!b) return
+        const m = b.mass()
+        b.applyImpulse({ x: dx * dv * m, y: 0.12 * dv * m, z: dz * dv * m }, true)
+        b.applyTorqueImpulse({ x: 0, y: spin * m * 1.5, z: 0 }, true)
+      },
+    }, scene, map, physics, atmos, shadow, env.farGrid, charUrl, fightUrl, kind)
+  }
+  setCompanion(companionKind(q.get('companion')))
+  // THE WEAPONS (Weapons.ts — docs/WEAPONS.md): what you've found, the one in your hands; `?weapons=all` (with
+  // `?katana=fire|thunder`) has them all for a test — nothing of it kept
+  const arsenal = new Arsenal({
+    onFoot: () => onFoot && !cut,
+    playing: () => driving && !pause,
+    targets: () => companion?.targets() ?? [],
+    kick: (up, side) => { if (fpp) { look.pitch = Math.min(1.5, look.pitch + up); look.footYaw += side } else chase.kick(up, side) },
+    toast: (m) => toast(m),
+    // (nothing in the hands: the phone's FIRE / AIM are a punch and a kick — the enemy's game)
+    fists: (what) => { if (onFoot && !cut) companion?.attack(what === 'fire' ? 'punch' : 'kick') },
+    fistsOn: () => companion?.kind === 'enemy',
+  }, hero, camera, scene, map, physics, atmos, shadow, env.farGrid, fightUrl, saving && q.get('weapons') !== 'all')
+  if (q.get('weaponsites') !== '0') pickups = new Pickups(arsenal, {
+    onFoot: () => onFoot && !cut,
+    pos: () => ride.pos,
+    toast: (m, ms) => toast(m, ms),
+    surface: (x, z) => physics.surface(x, z, map.height(x, z), map.height(x, z) + 8),
+  }, world.landmarks.list, map.meta.spawn, map.half, world.id, scene, atmos, shadow, env.farGrid, saving && q.get('weapons') !== 'all')
+  if (q.get('weapons') === 'all') {
+    for (const id of ['pistol', 'ak47', 'sniper'] as WeaponId[]) arsenal.give(id)
+    arsenal.give('katana', q.get('katana') === 'thunder' ? 'thunder' : 'fire')
+  }
+  /** The view for what's in the hands: over the shoulder with a gun (third person), through the glass in the scope. */
+  let gunView = false, scopedWas = false, fppBefore = false
+  const weaponView = () => {
+    const gun = onFoot && !cut && !!arsenal.current && arsenal.current !== 'katana'
+    if (gun !== gunView) { gunView = gun; chase.side = gun ? 0.55 : 0; if (onFoot) chase.frame(gun ? 3.0 : 4.2, gun ? 1.6 : 1.45) }
+    const sc = arsenal.scoped
+    if (sc !== scopedWas) {
+      scopedWas = sc
+      const cd = camera.getWorldDirection(new GFX.Vector3())
+      if (sc) { fppBefore = fpp; fpp = true; look.footYaw = Math.atan2(-cd.x, -cd.z); look.pitch = Math.asin(Math.max(-1, Math.min(1, cd.y))) }
+      else { fpp = fppBefore; if (!fpp) chase.snap() }
+    }
+    if (gun && !fpp) chase.aimHold()
+  }
   // (?ride=moto | foot with ?save=0: start on it / out of the car — the harnesses; ?bikedraw=0: the two-wheelers not drawn — the cost A/B)
   moto.hidden = q.get('bikedraw') === '0'
   // (… once the car has stood on the ground for a moment: at this point it has no physics yet, and on its first frames
@@ -977,6 +1066,9 @@ async function boot() {
       if (k >= 0.99) { fsr?.dispose(); fsr = null }
       else if (fsr) fsr.scale = k
       else fsr = new Fsr(renderer, k)
+    } else if (key === 'companion') {
+      if (st.companion !== 'off' && (coop || coopWorld)) toast('The companion is for solo play — not in a co-op world', 3500)
+      else if (!url.has('companion')) setCompanion(companionKind(st.companion))
     } else if (key === 'bot') { if (st.bot) { if (coop) startBot(); else toast('The bot joins in a co-op world — CO-OP on the title screen', 3500) } else stopBot() }
     else if (key === 'quality' || key === 'antialias') restartPending = true
   }
@@ -995,7 +1087,7 @@ async function boot() {
       window.dispatchEvent(new KeyboardEvent('keyup', { code, shiftKey }))
     }
     const keyboard = !document.body.classList.contains('touch')
-    new ActionWheel([
+    const wheel = new ActionWheel([
       { id: 'pause', label: 'Pause', icon: ICONS.pause, key: 'Esc', run: () => setPaused(true) },
       { id: 'map', label: 'Map', icon: ICONS.map, key: 'Tab', run: () => mapView.toggle() },
       ...(radar ? [{ id: 'radar', label: 'Minimap', icon: ICONS.radar, key: 'N', run: toggleRadar, on: () => radarOn }] : []),
@@ -1012,6 +1104,9 @@ async function boot() {
       { id: 'view', label: () => (fpp ? 'Third person' : 'First person'), icon: () => (fpp ? ICONS.tpp : ICONS.eye), key: 'V', run: press('KeyV'), show: () => driving },
       { id: 'freecam', label: () => (driving ? 'Free camera' : 'Back to play'), icon: ICONS.camera, key: 'Shift V', run: press('KeyV', true), on: () => !driving },
     ], keyboard)
+    // (its second mode — the small button under the ring: the weapons you've found; a sector puts that one in your hands)
+    const WICON: Record<string, string> = { pistol: ICONS.pistol, ak47: ICONS.rifle, sniper: ICONS.scope, katana: ICONS.katana }
+    wheel.weapons = () => arsenal.list().map((w) => ({ id: `w:${w.id}`, label: w.name.split(' — ')[0], icon: w.id ? WICON[w.id] : ICONS.fist, on: () => w.on, run: () => { if (!onFoot) toast('Weapons are for when you are on foot'); arsenal.equip(w.id) } }))
   }  // THE API BADGE (2026-11-05, the user: "a small icon in the top-right corner for WebGPU or WebGL"): a tag on the
   // menu button's corner — amber GPU, grey GL2
   {
@@ -1191,10 +1286,17 @@ async function boot() {
       const cd = camera.getWorldDirection(new GFX.Vector3())
       hero.camYaw = Math.atan2(-cd.x, -cd.z)
     }
-    physics.pw.advance(dt, (fdt) => { car.fixed(fdt); moto.fixed(fdt); hero.fixed(fdt); winch.fixed(fdt); trailer?.fixed(fdt) })
+    // (the companion: solo play only — gone once a co-op world is joined)
+    if (coop && companion) { companion.dispose(); companion = null }
+    companion?.update(dt)
+    physics.pw.advance(dt, (fdt) => { car.fixed(fdt); moto.fixed(fdt); hero.fixed(fdt); companion?.fixed(fdt); winch.fixed(fdt); trailer?.fixed(fdt) })
     car.update(physics.pw.alpha)
     moto.update(physics.pw.alpha, dt)
     hero.update(dt)
+    arsenal.update(dt)
+    pickups?.update(dt)
+    weaponView()
+    companion?.animate(dt)
     coop?.frame(dt, localNow())
     trailer?.update(dt)
     // (towing: the chase camera further back and higher — the trailer in view behind the car, not filling it)
@@ -1267,7 +1369,7 @@ async function boot() {
     { const dc = camera.position.distanceTo(car.pos); car.near = car.inside || dc < 14; car.close = car.inside || dc < 6 }
     const nearWant = inFpp ? 0.05 : 0.3
     // (on a bike in first person, a wider lens — 70° — as games give it: the bars and the hands in the bottom of the view)
-    const fovWant = inFpp && riding ? 70 : inFpp && !onFoot ? FPP_FOV : 55
+    const fovWant = arsenal.scopeFov ?? (inFpp && riding ? 70 : inFpp && !onFoot ? FPP_FOV : 55)
     if (camera.near !== nearWant || camera.fov !== fovWant) { camera.near = nearWant; camera.fov = fovWant; camera.updateProjectionMatrix() }
     ui.update(driving, atmos.clock)
     audio.update(dt, camera)
@@ -1323,6 +1425,7 @@ async function boot() {
     hero.cull(view, world.horizon)
     if (charHidden) hero.root.visible = hero.shadowMesh.visible = false
     coop?.cull(view, world.horizon, camera)
+    companion?.cull(view, world.horizon, camera, innerWidth, innerHeight)
     dust.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
     fsr?.begin()
@@ -1424,11 +1527,22 @@ async function boot() {
     /** the foot camera snapped behind him (a harness's walk: W then goes the way he faces) */
     footCam,
     get onFoot() { return onFoot },
+    youPos: () => ({ x: ride.pos.x, y: ride.pos.y, z: ride.pos.z }),
+    youHeading: () => ride.heading,
     get riding() { return riding },
     /** (co-op) the session and the others as drawn (scripts/harness/coop.mjs) */
     get coop() { return coop },
     /** (the helper bot — scripts/harness/bottest.mjs) */
     get bot() { return bot },
+    /** (the companion — scripts/harness/companion.mjs) */
+    get companion() { return companion },
+    /** (the weapons — scripts/harness/weapons.mjs) */
+    get arsenal() { return arsenal },
+    get pickups() { return pickups },
+    /** (a harness's aim) first person, looking this way (rad: the heading, the pitch up) */
+    aim: (yaw: number, pitch: number) => { fpp = true; look.footYaw = yaw; look.pitch = pitch },
+    thirdPerson: () => { fpp = false; chase.snap() },
+    get camDir() { const d = camera.getWorldDirection(new GFX.Vector3()); return [d.x, d.y, d.z] },
     startBot,
     stopBot,
     /** (co-op) gathering on foot (scripts/harness/gathertest.mjs) */

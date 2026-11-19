@@ -35,7 +35,11 @@ const RIDE_LEAN = 0
  *  bars, and a screen's lens is narrower than an eye: the bars would be under the view. */
 const FPP_SIT_UP = -0.4
 
-export type ClipName = 'idle' | 'walk' | 'run' | 'sprint' | 'jump' | 'jump_run' | 'fall' | 'land' | 'pickup' | 'grab_ledge' | 'climb_ledge' | 'open_door' | 'car_enter' | 'car_exit' | 'sit_drive' | 'turn_left' | 'turn_right' | 'getup_back' | 'getup_front' | 'chop' | 'mine' | 'carry'
+export type HandPose = 'open' | 'relaxed' | 'grip' | 'fist'
+export type ClipName = 'idle' | 'walk' | 'run' | 'sprint' | 'jump' | 'jump_run' | 'fall' | 'land' | 'pickup' | 'grab_ledge' | 'climb_ledge' | 'open_door' | 'car_enter' | 'car_exit' | 'sit_drive' | 'turn_left' | 'turn_right' | 'getup_back' | 'getup_front' | 'chop' | 'mine' | 'carry' | FightClip
+/** THE FIGHT's clips (fight.glb — scripts/oth/fight.py, made in Blender; Character.loadClips). */
+export type FightClip = 'guard' | 'jab' | 'cross' | 'hook' | 'uppercut' | 'kick_front' | 'kick_round' | 'block' | 'dodge' | 'hit_head' | 'hit_body' | 'knockdown' | 'taunt'
+  | 'katana_idle' | 'katana_draw' | 'cut1' | 'cut2' | 'cut3' | 'cut_heavy' | 'katana_wake'
 
 interface Channel { bone: number; path: 'translation' | 'rotation'; times: Float32Array; values: Float32Array }
 interface Clip { name: string; dur: number; loop: boolean; speed: number; channels: Channel[] }
@@ -51,7 +55,6 @@ const NB_MAX = 56
  *  toward the pose of what he's doing: OPEN (falling, getting up), RELAXED (standing, moving: the natural cascade, the
  *  little finger the most curled), GRIP (the wheel, the bars, the axe, the pick, a load, a ledge — the thumb wrapped
  *  over the fingers: checked on a 3 cm bar in hero_fit.py's preview), FIST. Degrees, the knuckle (MCP) → the tip. */
-type HandPose = 'open' | 'relaxed' | 'grip' | 'fist'
 const DIGITS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'] as const
 const HAND_POSES: Record<HandPose, number[][]> = {
   open: [[0, 0, 0], [3, 4, 2], [3, 4, 2], [3, 4, 2], [3, 4, 2]],
@@ -72,6 +75,7 @@ out vec3 vN;
 out vec2 vUv;
 out vec3 vCol;
 out float vPaint;
+uniform vec4 uTintBox;
 vec3 bonePos(int j, vec3 p) { int k = j * 3; return vec3(dot(uBones[k].xyz, p) + uBones[k].w, dot(uBones[k + 1].xyz, p) + uBones[k + 1].w, dot(uBones[k + 2].xyz, p) + uBones[k + 2].w); }
 vec3 boneDir(int j, vec3 n) { int k = j * 3; return vec3(dot(uBones[k].xyz, n), dot(uBones[k + 1].xyz, n), dot(uBones[k + 2].xyz, n)); }
 void main() {
@@ -88,7 +92,8 @@ void main() {
 #else
   vCol = vec3(1.0);
 #endif
-  vPaint = 0.0;
+  // (his JACKET in another colour — Character.tint: the bind pose's torso and arms, hem to collar, cuff to cuff)
+  vPaint = uTintBox.w * step(uTintBox.x, position.y) * step(position.y, uTintBox.y) * step(abs(position.x), uTintBox.z);
   gl_Position = projectionMatrix * viewMatrix * w;
 }
 `
@@ -195,6 +200,8 @@ function floats(json: any, bin: ArrayBuffer, i: number): Float32Array {
 }
 
 type State = 'move' | 'jump' | 'air' | 'land' | 'action' | 'hidden' | 'seated'
+/** A file of clips, fetched once for everyone who plays them. */
+const clipFiles = new Map<string, Promise<ArrayBuffer>>()
 
 export class Character {
   readonly root = new GFX.Group()
@@ -207,6 +214,34 @@ export class Character {
   camYaw = 0
   /** Free to move (false: the game holds it — getting in or out, a cut). */
   control = true
+  /** STEERED by the game, not the keys (the companion — Companion.ts): the way to go (world x, z — any length) and the
+   *  pace (m/s: 0 stand, 1.7 walk, 4.6 run, 7.2 sprint); null: the keys (with `control`). */
+  steer: { x: number; z: number; pace: number } | null = null
+  /** The physics' terrain streamed round him (the player); false for anyone else walking (the companion). */
+  leads = true
+  /** What he stands in when still (the fight's `guard`); null: the idle. */
+  stance: ClipName | null = null
+  // A WEAPON IN HIS HANDS (Weapons.ts):
+  /** where his wrists must be (world; left, right; null: as the clip has them) — the arms bent to them after the clip. */
+  handIK: (() => [GFX.Vector3 | null, GFX.Vector3 | null]) | null = null
+  /** his chest and arms tipped up (+) or down to where he aims (rad). */
+  aimPitch = 0
+  /** he FACES this way (rad) whatever way he walks — aiming: the keys strafe; null: he faces where he goes. */
+  aimYaw: number | null = null
+  /** what his hands hold (their fingers); null: as the clip says. */
+  holdPose: HandPose | null = null
+  /** his pace with it (a heavy rifle, the scope: < 1). */
+  paceK = 1
+  /** STUNNED (the thunder blade): no moving, no striking, till this time (s, performance.now() / 1000). */
+  stunUntil = 0
+  /** The hands' bones in the bind pose (model space): where a thing held is fixed to them (Weapons.ts). */
+  readonly handBind = [new GFX.Matrix4(), new GFX.Matrix4()]
+  /** ROOTED: a strike or a reaction is playing — his feet still till it ends. */
+  private rooted = false
+  /** Each fight clip's blow (s into it). */
+  private readonly hitAt = new Map<string, number>()
+  /** DOWN (the fight): knocked off his feet — 0 falling, 1 lying (t s more), 2 getting up (till the clip's `endP`). */
+  private down: { phase: 0 | 1 | 2; t: number; endP: number; then?: () => void } | null = null
   state: State = 'hidden'
   /** Ground speed (m/s) and vertical (m/s). */
   speed = 0
@@ -293,7 +328,7 @@ export class Character {
     this.uniforms = {
       ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uNormalMap: { value: null }, uPaintMask: { value: null },
       uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 }, uCoat: { value: 0 }, uCoatColor: { value: new GFX.Color(0.8, 0.6, 0.42) }, uCarBase: { value: 0 },
-      'uBones[0]': { value: this.bonesU },
+      'uBones[0]': { value: this.bonesU }, uTintBox: { value: new GFX.Vector4(0, 0, 0, 0) },
     }
     const sg = new GFX.PlaneGeometry(1, 1, 4, 4).rotateX(-Math.PI / 2)
     this.shadow = new GFX.Mesh(sg, new GFX.ShaderMaterial({
@@ -384,6 +419,9 @@ export class Character {
     // × the palm's normal, into the bone's own frame (its bind turn's columns)
     for (let b = 0; b < this.bones.length; b++) { this.lt2.set(this.bones[b].t, b * 3); this.lr2.set(this.bones[b].r, b * 4) }
     this.fk(this.lt2, this.lr2)
+    if (this.bi.LeftHand !== undefined && this.bi.RightHand !== undefined) { this.handBind[0].fromArray(this.world[this.bi.LeftHand]); this.handBind[1].fromArray(this.world[this.bi.RightHand]) }
+    // (the jacket's bounds in the bind pose — tint: the hips to the neck, wrist to wrist)
+    if (this.bi.Neck !== undefined && this.bi.LeftHand !== undefined) (this.uniforms.uTintBox.value as GFX.Vector4).set(this.wpos(this.hipsIndex)[1] - 0.03, this.wpos(this.bi.Neck)[1] - 0.005, Math.abs(this.wpos(this.bi.LeftHand)[0]) - 0.035, (this.uniforms.uTintBox.value as GFX.Vector4).w)
     for (let hand = 0; hand < 2; hand++) {
       DIGITS.forEach((dg, d) => {
         const pre = (hand ? 'RightHand' : 'LeftHand') + dg
@@ -455,6 +493,103 @@ export class Character {
     this.root.add(this.mesh)
     this.play('idle')
     this.pose(0)
+  }
+
+  /** MORE CLIPS from a file of animations only (fight.glb — scripts/oth/fight.py), matched to his bones by name; after
+   *  load(). Fetched once however many characters play them. */
+  async loadClips(url: string): Promise<void> {
+    let file = clipFiles.get(url)
+    if (!file) clipFiles.set(url, (file = fetch(url).then((r) => r.arrayBuffer()).then(GFX.unpacked)))
+    const { json, bin } = readGlb(await file)
+    const boneOf = new Map<number, number>()
+    json.nodes.forEach((n: any, i: number) => { const b = this.bones.findIndex((q) => q.name === n.name); if (b >= 0) boneOf.set(i, b) })
+    const skel = json.nodes.find((n: any) => n.extras?.clips)
+    const info: Record<string, { loop: boolean; speed: number; hit?: number }> = skel ? JSON.parse(skel.extras.clips) : {}
+    for (const a of json.animations ?? []) {
+      const channels: Channel[] = []
+      let dur = 0
+      for (const c of a.channels) {
+        const b = boneOf.get(c.target.node)
+        if (b === undefined || (c.target.path !== 'rotation' && c.target.path !== 'translation')) continue
+        if (c.target.path === 'translation' && b !== this.hipsIndex) continue
+        const s = a.samplers[c.sampler], times = floats(json, bin, s.input), values = floats(json, bin, s.output)
+        dur = Math.max(dur, times[times.length - 1])
+        channels.push({ bone: b, path: c.target.path, times, values })
+      }
+      this.clips.set(a.name, { name: a.name, dur, loop: info[a.name]?.loop ?? false, speed: 0, channels })
+      if (info[a.name]?.hit) this.hitAt.set(a.name, info[a.name].hit!)
+    }
+  }
+  /** His JACKET in colour `hex` (someone else than you: the companion, the enemy); null: his own. */
+  tint(hex: string | null): void {
+    ;(this.uniforms.uTintBox.value as GFX.Vector4).w = hex ? 1 : 0
+    ;(this.uniforms.uPaint.value as GFX.Color).set(hex ?? '#ffffff')
+  }
+  /** When clip `name`'s blow lands (s into it at rate 1; 0: it has none). */
+  hitTime(name: ClipName): number { return this.hitAt.get(name) ?? 0 }
+
+  // ============================================================================================ the fight
+  /** A STRIKE or a REACTION: the clip played where he stands, his feet still; `then` at its end. `force`: over a strike
+   *  or a reaction already playing (a blow lands mid-punch). False: he isn't free to (in the air, down, seated…). */
+  strike(name: ClipName, opts: { rate?: number; force?: boolean; then?: () => void } = {}): boolean {
+    if (!this.clips.has(name) || !this.body || this.down) return false
+    if (!opts.force && performance.now() / 1000 < this.stunUntil) return false
+    if (this.state !== 'move' && !(opts.force && this.state === 'land' && this.rooted)) return false
+    this.state = 'land'
+    this.rooted = true
+    this.speed = 0
+    this.play(name, { fade: 0.1, rate: opts.rate ?? 1, restart: true, then: () => { this.rooted = false; this.state = 'move'; opts.then?.() } })
+    return true
+  }
+  get striking(): boolean { return this.rooted }
+  get isDown(): boolean { return !!this.down }
+  /** KNOCKED DOWN: he reels and falls on his back (the knockdown clip), lies `lie` s, gets up (getup_back, laid where
+   *  he fell) — then free again, `then` called. His place follows the fall and the get-up. */
+  knockdown(lie = 1, then?: () => void): boolean {
+    if (!this.clips.has('knockdown') || !this.body || this.down || (this.state !== 'move' && this.state !== 'land')) return false
+    this.state = 'action'
+    this.rooted = false
+    this.speed = 0
+    const d = (this.down = { phase: 0 as 0 | 1 | 2, t: lie, endP: 1, then })
+    this.play('knockdown', { fade: 0.08, restart: true, then: () => { if (this.down === d) d.phase = 1 } })
+    return true
+  }
+  /** (each frame, while he's down) the lying timed, the get-up laid where he fell, his feet handed back at its end. */
+  private downStep(dt: number): void {
+    const d = this.down
+    if (!d) return
+    const rot = (x: number, z: number, h: number): [number, number] => [x * Math.cos(h) + z * Math.sin(h), -x * Math.sin(h) + z * Math.cos(h)]
+    if (d.phase === 1 && (d.t -= dt) <= 0) {
+      const UP: ClipName = 'getup_back', T0 = 1.9, T1 = 6.3
+      if (!this.clips.has(UP)) { this.rise(); return }
+      // (where he lies: the fall's last frame; the get-up's lying start put on it, its head where his is)
+      const k = this.lieOf('knockdown', this.clipLength('knockdown')), l = this.lieOf(UP, T0)
+      const [hx, hz] = rot(k.hips[0], k.hips[2], this.heading)
+      const h2 = this.heading + k.headYaw - l.headYaw
+      const [lx, lz] = rot(l.hips[0], l.hips[2], h2)
+      const x = this.pos.x + hx - lx, z = this.pos.z + hz - lz
+      this.pos.set(x, this.ground ? this.ground(x, z, this.pos.y + 1.2) : this.map.height(x, z), z)
+      this.heading = h2
+      d.phase = 2
+      d.endP = Math.min(1, T1 / Math.max(1e-3, this.clipLength(UP)))
+      this.play(UP, { fade: 0.15, at: T0, rate: 1.8, restart: true })
+    } else if (d.phase === 2 && this.progress >= d.endP) {
+      const tr = this.travel(), [tx, tz] = rot(tr.dx, tr.dz, this.heading)
+      const x = this.pos.x + tx, z = this.pos.z + tz
+      this.pos.set(x, this.ground ? this.ground(x, z, this.pos.y + 1.2) : this.map.height(x, z), z)
+      this.heading += tr.yaw
+      this.rise()
+    }
+  }
+  private rise(): void {
+    const d = this.down
+    this.down = null
+    if (this.body) this.body.setTranslation({ x: this.pos.x, y: this.pos.y + 0.9, z: this.pos.z }, true)
+    this.vy = 0
+    this.grounded = true
+    this.state = 'move'
+    this.play('loco' as ClipName, { fade: 0.25 })
+    d?.then?.()
   }
 
   // ============================================================================================ the clips
@@ -638,6 +773,8 @@ export class Character {
     const lean = qmul(qaxis(0, 0, 1, this.leanR), qaxis(1, 0, 0, this.leanP))
     this.post[h] = lean
     if (Math.abs(this.look) > 0.01) { this.post[B.Neck] = qaxis(0, 1, 0, this.look * 0.35); this.post[B.Head] = qaxis(0, 1, 0, this.look * 0.45) }
+    // (aiming: the chest tipped to it — half in each of the two upper spine bones)
+    if (Math.abs(this.aimPitch) > 0.005 && free && B.Spine1 !== undefined && B.Spine2 !== undefined) { this.post[B.Spine1] = qaxis(1, 0, 0, this.aimPitch * 0.5); this.post[B.Spine2] = qaxis(1, 0, 0, this.aimPitch * 0.5) }
     this.fk(this.lt, this.lr, true)
     // (the lean turned the hips about their own origin: put the body back over the feet — the root's floor)
     if (Math.abs(this.leanR) + Math.abs(this.leanP) > 1e-4) {
@@ -660,12 +797,14 @@ export class Character {
   /** What each hand does now (left, right): a grip on whatever he holds or drives, open to break a fall or push up. */
   private handTarget(): [HandPose, HandPose] {
     if (this.seat || (this.ride && !this.ride.bail())) return ['grip', 'grip']
+    if (this.holdPose && !this.down) return [this.holdPose, this.holdPose]
     const p = this.progress
     switch (this.cur?.clip.name) {
       case 'chop': case 'mine': case 'carry': case 'grab_ledge': case 'climb_ledge': return ['grip', 'grip']
       case 'pickup': return p > 0.35 ? ['grip', 'grip'] : ['open', 'open']
       case 'open_door': return p > 0.2 && p < 0.75 ? ['grip', 'grip'] : ['relaxed', 'relaxed']
-      case 'fall': case 'getup_back': case 'getup_front': return ['open', 'open']
+      case 'fall': case 'getup_back': case 'getup_front': case 'knockdown': case 'taunt': return ['open', 'open']
+      case 'guard': case 'jab': case 'cross': case 'hook': case 'uppercut': case 'kick_front': case 'kick_round': case 'block': case 'dodge': case 'hit_head': case 'hit_body': return ['fist', 'fist']
     }
     if (this.holding || this.upper?.clip.name === 'carry') return ['grip', 'grip']
     return ['relaxed', 'relaxed']
@@ -768,6 +907,19 @@ export class Character {
       })
       this.fk(this.lt, this.lr, true)
     }
+    // A WEAPON HELD (handIK): each wrist bent to where the weapon's grip is — the world's place into his own space
+    const hk = !this.seat && !this.ride && !this.down && this.handIK ? this.handIK() : null
+    if (hk && (hk[0] || hk[1])) {
+      const c = Math.cos(this.heading), sn = Math.sin(this.heading)
+      const arms = [['LeftArm', 'LeftForeArm', 'LeftHand'], ['RightArm', 'RightForeArm', 'RightHand']].map((l) => l.map((n) => B[n]))
+      arms.forEach(([u, l, f], i) => {
+        const w = hk[i]
+        if (!w) return
+        const dx = w.x - this.pos.x, dz = w.z - this.pos.z
+        this.twoBone(u, l, f, [dx * c - dz * sn, w.y - this.pos.y, dx * sn + dz * c], false)
+      })
+      this.fk(this.lt, this.lr, true)
+    }
     for (let b = 0; b < this.bones.length; b++) {
       mul4(this.world[b], this.bones[b].ibm, s)
       // (first person: the head shrunk to its neck — the camera is inside it)
@@ -785,6 +937,8 @@ export class Character {
   appear(x: number, z: number, heading: number, y?: number, from?: number): void {
     this.ride = null
     this.seat = null
+    this.down = null
+    this.rooted = false
     const R = this.physics.pw.R, world = this.physics.pw.world
     this.physics.follow(x, z)
     const gy = y ?? this.physics.surface(x, z, this.map.height(x, z), from)
@@ -880,6 +1034,8 @@ export class Character {
   hide(): void {
     this.seat = null
     this.ride = null
+    this.down = null
+    this.rooted = false
     this.state = 'hidden'
     this.root.visible = this.shadow.visible = false
     if (this.body) { this.physics.pw.world.removeRigidBody(this.body); this.body = null; this.col = null }
@@ -929,24 +1085,34 @@ export class Character {
   /** Fixed step (60 Hz): the keys, the controller, gravity, the jump. */
   fixed(dt: number): void {
     if (this.state === 'hidden' || this.state === 'action' || !this.body) return
-    this.physics.follow(this.pos.x, this.pos.z)
+    if (this.leads) this.physics.follow(this.pos.x, this.pos.z)
     const k = this.keys, T = this.touch
     let ix = 0, iz = 0
     if (this.control) {
       iz = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) + T.my
       ix = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) + T.mx
     }
-    const mag = Math.min(1, Math.hypot(ix, iz))
+    const st = this.steer
+    const mag = st ? (st.pace > 0.05 ? 1 : 0) : Math.min(1, Math.hypot(ix, iz))
     const stick = Math.hypot(T.mx, T.my)
     const sprint = k.has('ShiftLeft') || k.has('ShiftRight') || T.sprint > 0 || stick > 0.96, walk = k.has('ControlLeft') || k.has('ControlRight') || (stick > 0.05 && stick < 0.5)
     // (the stick: a little = walk, most of the way = run, pushed to its edge = sprint)
-    const target = mag < 0.05 ? 0 : walk ? 1.7 : sprint ? 7.2 : 4.6
+    const stunned = performance.now() / 1000 < this.stunUntil
+    const target = this.rooted || stunned ? 0 : (st ? st.pace : mag < 0.05 ? 0 : walk ? 1.7 : sprint ? 7.2 : 4.6) * this.paceK
     // the way the keys point, from the camera's view; the body turns toward it
     // WEIGHT (GTA's): the body turns toward the way the keys point — quickly standing, slower the faster it goes (a
     // sprint swings wide) — and gets up to speed / stops with momentum, slower uphill
     const h0 = this.heading
-    if (mag > 0.05) {
-      const want = this.camYaw + Math.atan2(-ix, iz)
+    // (AIMING: he faces where he aims and the keys STRAFE — the way he goes kept apart from the way he faces)
+    let goYaw = NaN
+    if (this.aimYaw !== null && !st) {
+      const d = Math.atan2(Math.sin(this.aimYaw - this.heading), Math.cos(this.aimYaw - this.heading))
+      this.heading += Math.max(-dt * 14, Math.min(dt * 14, d))
+      if (mag > 0.05) goYaw = this.camYaw + Math.atan2(-ix, iz)
+    } else
+    // (steered: he turns to face the way given even standing — pace 0)
+    if (mag > 0.05 || (st && st.x * st.x + st.z * st.z > 1e-4)) {
+      const want = st ? Math.atan2(-st.x, -st.z) : this.camYaw + Math.atan2(-ix, iz)
       let d = want - this.heading
       d = Math.atan2(Math.sin(d), Math.cos(d))
       const rate = 11 - 6 * Math.min(1, Math.max(0, (this.speed - 2) / 5))
@@ -963,7 +1129,8 @@ export class Character {
     const sp0 = this.speed
     this.speed += Math.max(-acc * dt, Math.min(acc * dt, goal - this.speed))
     this.accel += ((this.speed - sp0) / dt - this.accel) * Math.min(1, dt * 8)
-    const fx = -Math.sin(this.heading), fz = -Math.cos(this.heading)
+    const moveYaw = Number.isNaN(goYaw) ? this.heading : goYaw
+    const fx = -Math.sin(moveYaw), fz = -Math.cos(moveYaw)
     // JUMP (Space / JUMP): ~0.65 m, in step with its clip — standing, the crouch first (the clip from its knees bending
     // at 0.25 s, the feet leaving at its 0.5 s); running, at once (its feet off at 0.05 s). The clip's air time
     // played over the physics' (2·v₀/g = 0.53 s).
@@ -1021,7 +1188,8 @@ export class Character {
       else if (this.upper) this.layer(null)
     }
     // LOCOMOTION: the one blend (idle / walk / run / sprint by the speed, on one stride phase — Character.sampleLoco)
-    if (this.state === 'move') this.play('loco' as ClipName, { fade: 0.25 })
+    // (standing in a fight: the guard instead of the idle)
+    if (this.state === 'move') this.play(this.stance && this.speed < 0.3 && this.clips.has(this.stance) ? this.stance : ('loco' as ClipName), { fade: 0.25 })
   }
 
   /** The upper-body layer on (a clip, its weight) or off. */
@@ -1062,6 +1230,7 @@ export class Character {
   update(dt: number): void {
     if (this.state === 'hidden' || !this.mesh) return
     this.pose(dt)
+    if (this.down) this.downStep(dt)
     if (this.ride) {
       const bl = this.ride.bail()
       if (bl) {

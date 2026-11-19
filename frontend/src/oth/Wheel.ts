@@ -48,6 +48,14 @@ export const ICONS = {
   eye: 'M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z M12 9a3 3 0 1 0 0.01 0z',
   tpp: 'M12 3a2.2 2.2 0 1 0 0.01 0z M9 21l1.5-7-2-1 1-5h5l1 5-2 1 1.5 7 M4 21h16',
   walk: 'M13 4a1.6 1.6 0 1 0 0.01 0z M10 21l2.5-6 2.5 2v4 M8 11l3-3 3 2 2.5 2.5 M11 8l1 5-3 3',
+  /** the wheel's two modes: the actions (a cog), the weapons (crossed blades) */
+  gear: 'M12 8.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7z M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1',
+  swords: 'M4 4l12.5 12.5 M20 4 7.5 16.5 M14 19l5-5 M5 14l5 5 M17.5 17.5 21 21 M6.5 17.5 3 21',
+  fist: 'M7 11V7.5a1.5 1.5 0 0 1 3 0V11 M10 10V6.5a1.5 1.5 0 0 1 3 0V10 M13 10V7.5a1.5 1.5 0 0 1 3 0V11 M16 11V9.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-3l-2-4a1.5 1.5 0 0 1 2.5-1.5',
+  pistol: 'M3 7h17v4h-9l-1 2H7l-1 7H3z M11 11v2',
+  rifle: 'M2 10h14l1-2h4v3l-3 1h-5l-1 2H9l-1 6H5l1-6-4-1z M12 12l2 5',
+  scope: 'M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16z M12 2v6M12 16v6M2 12h6M16 12h6',
+  katana: 'M4 20 17 7c2-2 3-4 3-4s-2 1-4 3L3 19z M5.5 15.5l3 3 M3 21l2-2',
 }
 
 export function iconSvg(d: string, size = 20): string {
@@ -61,6 +69,13 @@ export class ActionWheel {
   private shown: WheelItem[] = []
   private sel = -1
   private openedAt = 0
+
+  /** THE WHEEL'S TWO MODES (2026-11-19, the user: "two small buttons under the wheel — one is settings, the second is
+   *  weapon: click weapon and it shows the collected weapons to choose in the wheel"): the actions, or the weapons you've
+   *  found (`weapons` gives them; a sector puts that one in your hands). Keys 1 / 2 while it's open. */
+  mode: 'actions' | 'weapons' = 'actions'
+  weapons: (() => WheelItem[]) | null = null
+  private readonly modeBar = document.createElement('div')
 
   constructor(private readonly items: WheelItem[], private readonly keyboard: boolean) {
     this.button.className = 'oth-menubtn'
@@ -83,14 +98,25 @@ export class ActionWheel {
       if (e.ctrlKey || e.metaKey || e.altKey) return
       if (e.code === 'KeyQ' && !e.repeat && !document.querySelector('.oh-front, .oth-map.on')) { this.isOpen ? this.close() : this.open(); e.preventDefault() }
       else if (this.isOpen && e.code === 'Escape') { e.stopImmediatePropagation(); e.preventDefault(); this.close() }
+      else if (this.isOpen && (e.code === 'Digit1' || e.code === 'Digit2') && this.weapons) { this.setMode(e.code === 'Digit1' ? 'actions' : 'weapons'); e.preventDefault() }
     }, true)
     document.body.append(this.button, this.root)
   }
 
   get isOpen(): boolean { return this.root.classList.contains('on') }
 
+  /** The ring's other set of sectors (the two buttons under it). */
+  setMode(m: 'actions' | 'weapons'): void {
+    this.mode = m
+    if (!this.isOpen) return
+    this.shown = this.list()
+    this.sel = -1
+    this.build()
+  }
+  private list(): WheelItem[] { return (this.mode === 'weapons' && this.weapons ? this.weapons() : this.items).filter((it) => it.show?.() ?? true) }
+
   open(): void {
-    this.shown = this.items.filter((it) => it.show?.() ?? true)
+    this.shown = this.list()
     this.sel = -1
     this.build()
     this.openedAt = performance.now()
@@ -137,7 +163,24 @@ export class ActionWheel {
     sub.setAttribute('class', 'hub-s'); sub.setAttribute('y', '15')
     svg.append(hub, title, sub)
     this.svg = svg
-    this.root.replaceChildren(svg)
+    // the two small buttons under the ring: the actions, the weapons
+    this.modeBar.replaceChildren()
+    if (this.weapons) {
+      this.modeBar.style.cssText = 'position:absolute;left:50%;top:calc(50% + min(42vmin, 250px));transform:translateX(-50%);display:flex;gap:14px'
+      for (const [m, icon, label] of [['actions', ICONS.gear, 'Actions (1)'], ['weapons', ICONS.swords, 'Weapons (2)']] as const) {
+        const b = document.createElement('button')
+        const lit = this.mode === m
+        b.title = label
+        b.setAttribute('aria-label', label)
+        b.innerHTML = iconSvg(icon, 22)
+        // (the ring's own rule sizes every svg in the wheel: this one kept its own)
+        ;(b.firstElementChild as SVGElement).style.cssText = 'width:22px;height:22px;flex:none;position:static;transform:none'
+        b.style.cssText = `width:48px;height:48px;border-radius:50%;display:grid;place-items:center;cursor:pointer;border:2px solid ${lit ? '#e0a040' : 'rgba(255,255,255,.35)'};background:${lit ? '#e0a040' : 'rgba(8,8,8,.7)'};color:${lit ? '#111' : '#fff'}`
+        for (const t of ['pointerdown', 'pointerup'] as const) b.addEventListener(t, (e) => { e.preventDefault(); e.stopPropagation(); if (t === 'pointerdown') this.setMode(m) })
+        this.modeBar.appendChild(b)
+      }
+    }
+    this.root.replaceChildren(svg, this.modeBar)
     this.mark()
   }
 
@@ -176,7 +219,7 @@ export class ActionWheel {
     this.svg.querySelectorAll('.sec').forEach((g, i) => g.classList.toggle('sel', i === this.sel))
     const it = this.shown[this.sel]
     const [t, s] = this.svg.querySelectorAll('.hub-t, .hub-s')
-    t.textContent = it ? this.label(it) : 'MENU'
+    t.textContent = it ? this.label(it) : this.mode === 'weapons' ? 'WEAPONS' : 'MENU'
     s.textContent = it ? (this.keyboard && it.key ? `KEY ${it.key.toUpperCase()}` : '') : this.keyboard ? 'Q · ESC CLOSE' : 'TAP TO CLOSE'
   }
 }
