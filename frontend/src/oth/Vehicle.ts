@@ -7,11 +7,18 @@ import { blendRoughness, Surf, type SurfaceMix } from '../gameplay/vehicle/drive
 import { TruckSim } from '../gameplay/vehicle/VehicleSim'
 import { ATMOS_GLSL, FRAG_OUT, LOOK, type Atmosphere } from './Atmosphere'
 import { CockpitAnim, dialMaterial, dialTexture, type CockpitState } from './Cockpit'
+import DAMAGE from '../../../proto/damage.json'
+import { CarDamage, crackU, DAMAGE_ON } from './Damage'
 import type { Horizon } from './Horizon'
 import type { MapData } from './MapData'
 import type { OthPhysics } from './Physics'
 import type { Tier } from './quality'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
+import type RAPIER from '@dimforge/rapier3d-compat'
+
+/** A CRASH your car has just had (Vehicle.onCrash): the change of its velocity where it was hit (m/s), that point and
+ *  the way the blow pushed (the world's), the other body (null: the ground, a rock, a tree). */
+export interface Crash { dv: number; x: number; y: number; z: number; dx: number; dy: number; dz: number; other: RAPIER.RigidBody | null }
 
 /**
  * THE 4×4 — the game's vehicles on this map: the same models (assets/loadModels `loadVehicle`) and the same physics
@@ -57,7 +64,7 @@ export class Vehicle {
 
   constructor(private readonly map: MapData, private readonly physics: OthPhysics, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 },
-      uCoat: this.coatU, uCoatColor: { value: this.coatColor }, uCarBase: this.baseU }
+      uCoat: this.coatU, uCoatColor: { value: this.coatColor }, uCarBase: this.baseU, uChar: this.charU, uCrack: crackU }
     // PHONES AND WEAK GPUS: the cars' phone files and smaller textures (loadModels carDetail) — a phone-class chip, or
     // the LOW / MEDIUM tiers: the 1024² file; LOW: drawn at 512²
     carDetailFor(tier)
@@ -155,20 +162,49 @@ export class Vehicle {
     if (!this.sim || this.parked) return
     this.parked = true
     this.keys.clear()
+    // (2026-11-21, the user: "I get out of the car and it got stuck in the air" — just reset, set down from a metre up,
+    //  knocked up by a ram: it was held the instant its driver left it, wherever it was. It is HELD only once it STANDS:
+    //  till then it stays live — no gas, the brakes locked — for 4 s at the most, the driver climbing out as it lands.
+    //  Never held on the spot: what its wheels touched and how it moved are the LAST step's — set down from a height
+    //  a moment ago it still reads as standing; a third of a second of standing, stepped, is what holds it)
+    this.settling = 4
+    this.restT = 0
+  }
+  /** Parked but not yet standing (s left of it): the body live, braked (fixed). */
+  private settling = 0
+  private restT = 0
+  /** On its wheels and still. */
+  private atRest(): boolean {
+    if (!this.sim) return true
+    let n = 0
+    for (const w of this.sim.wheels) if (w.contact) n++
+    const v = this.sim.body.linvel(), a = this.sim.body.angvel()
+    return n >= 3 && v.x * v.x + v.y * v.y + v.z * v.z < 0.12 && a.x * a.x + a.y * a.y + a.z * a.z < 0.12
+  }
+  /** Held where it stands: a fixed thing (the ground under it may unload once its driver walks off). */
+  private holdStill(): void {
+    this.settling = 0
+    if (!this.sim) return
     const b = this.sim.body
     b.setLinvel({ x: 0, y: 0, z: 0 }, true); b.setAngvel({ x: 0, y: 0, z: 0 }, true)
     b.setBodyType(this.physics.pw.R.RigidBodyType.KinematicPositionBased, true)
+    this.w0.on = false
   }
+  /** (the harness) parked and still coming to rest. */
+  get landing(): boolean { return this.parked && this.settling > 0 }
   /** Back in: the body live again (placed at (x, z, heading) first, when given — the car brought to the rider). */
   unpark(at?: { x: number; z: number; heading: number }): void {
     if (!this.sim || !this.parked) return
     this.parked = false
+    this.settling = 0
     this.sim.body.setBodyType(this.physics.pw.R.RigidBodyType.Dynamic, true)
+    this.w0.on = false
     if (at) this.placeAt(at.x, at.z, at.heading)
   }
   /** Stood at (x, z), facing heading, on what's under it (parked or not). */
   placeAt(x: number, z: number, heading: number): void {
     if (!this.sim) return
+    this.w0.on = false
     this.physics.follow(x, z)
     this.sim.place(x, this.physics.surface(x, z, this.map.height(x, z)) + 0.6, z, heading)
     this.readPose(this.curP, this.curQ)
@@ -176,6 +212,18 @@ export class Vehicle {
   }
   /** Its half width and half length (m): where a bike can stand beside it. */
   get half(): { x: number; z: number } { return this.model ? { x: this.model.half.x, z: this.model.half.z } : { x: 1, z: 2.2 } }
+  /** ITS BODY'S OWN BOX in plan (car space: the middle's x and z from its root, the half width and length) — what
+   *  another car's bumper meets (Companion.ts: the ram). The model's `half` about the root is not it: the body sits
+   *  a little off its root, and a few centimetres there is a bumper that hit without touching. */
+  get bodyBox(): { cx: number; cz: number; hx: number; hz: number } {
+    const g = this.model?.body
+    if (!g) return this.bodyBoxOut
+    if (!g.boundingBox) g.computeBoundingBox()
+    const bb = g.boundingBox!, o = this.bodyBoxOut
+    o.cx = (bb.min.x + bb.max.x) / 2; o.cz = (bb.min.z + bb.max.z) / 2; o.hx = (bb.max.x - bb.min.x) / 2; o.hz = (bb.max.z - bb.min.z) / 2
+    return o
+  }
+  private readonly bodyBoxOut = { cx: 0, cz: 0, hx: 1, hz: 2.2 }
 
   /** Called when a car replaces the one driving (not the first): the sound stops one engine, starts the next. */
   onCarChange?: () => void
@@ -213,6 +261,8 @@ export class Vehicle {
     if (D) { D.aids = this.driving.aids === 'standard' ? 'std' : this.driving.aids; D.manual = this.driving.manual }
     this.sim.surface = (x, z, out) => this.surfaceAt(x, z, out)
     this.buildMeshes(truck, this.paint ?? OTH_PAINT[def.id] ?? def.stock.paint)
+    this.sim.damage = this.damage ? this.damage.sim : null
+    this.w0.on = false
     this.physics.follow(at.x, at.z)
     this.sim.place(at.x, this.physics.surface(at.x, at.z, this.map.height(at.x, at.z)) + 0.6, at.z, at.heading)
     this.readPose(this.curP, this.curQ)
@@ -234,6 +284,7 @@ export class Vehicle {
   reset(): void {
     if (!this.sim) return
     const t = this.sim.body.translation()
+    this.w0.on = false
     this.physics.follow(t.x, t.z)
     // (on what's under it — a slab's top it rolled on, else the ground; never inside the rock)
     this.sim.place(t.x, this.physics.surface(t.x, t.z, Math.max(this.map.height(t.x, t.z), t.y - 1.5)) + 0.8, t.z, this.sim.heading)
@@ -290,6 +341,10 @@ export class Vehicle {
     if (truck.map) defines.USE_MAP_OTH = ''
     if (truck.paintMap) defines.USE_PAINTMAP = ''
     const vc = (g: GFX.BufferGeometry) => !!g.attributes.color
+    // DAMAGE (Damage.ts): this car's shell is its own to crumple — the body's and the glass's shaders read its `dmg`
+    const dm = (this.damage = DAMAGE_ON ? new CarDamage(truck, this.charU) : null)
+    const dmgDef: Record<string, string> = dm ? { DAMAGE: '' } : {}
+    this.lampRev = -1
     // THREE DRAWS for the whole car (2026-11-02: it was 11 — body, cabin, two door skins, four wheels, three glass
     // pieces): the body with the CABIN (dash, seats, console — seen through the windows) and the DOORS (cut out of
     // the body in the model — two on the E30, four on the off-roader — set at their hinges: they never open here) as one mesh, the windows as one, the four
@@ -301,8 +356,9 @@ export class Vehicle {
     const fixed = truck.doors.filter((d) => d !== driver)
     const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...fixed.map((d) => atHinge(d.body, d.hinge))])
     const glassGeo = mergeParts([truck.glass, ...fixed.flatMap((d) => (d.glass ? [atHinge(d.glass, d.hinge)] : []))])
-    const body = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
-    const glass = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false })
+    const body = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, ...dmgDef }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
+    const glass = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef, ...dmgDef }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false })
+    if (dm) { dm.attach(bodyGeo, false); dm.attach(glassGeo, true) }
     // (no depth written: the water — drawn after the glass, transparent too — showed nowhere through a window from
     //  inside; 2026-11-05)
     const b = new GFX.Mesh(bodyGeo, body)
@@ -315,7 +371,10 @@ export class Vehicle {
     if (driver) {
       const pv = (this.doorPivot = new GFX.Group())
       pv.position.set(...driver.hinge)
-      const db = new GFX.Mesh(driver.body, body), dg = driver.glass ? new GFX.Mesh(driver.glass, glass) : null
+      // (damage: the door's skin and pane this car's own copies — the model's are every car's)
+      const dbGeo = dm ? driver.body.clone() : driver.body, dgGeo = driver.glass ? (dm ? driver.glass.clone() : driver.glass) : null
+      if (dm) { dm.attach(dbGeo, false, driver.hinge); if (dgGeo) dm.attach(dgGeo, true, driver.hinge) }
+      const db = new GFX.Mesh(dbGeo, body), dg = dgGeo ? new GFX.Mesh(dgGeo, glass) : null
       db.frustumCulled = false
       pv.add(db)
       if (dg) { dg.frustumCulled = false; dg.renderOrder = 3; pv.add(dg) }
@@ -392,10 +451,26 @@ export class Vehicle {
 
   /** Fixed step (60 Hz), before world.step(). */
   fixed(dt: number): void {
-    if (!this.sim || this.loading || this.parked) return
+    if (!this.sim || this.loading) return
+    if (this.parked) {
+      // LEFT BEFORE IT STOOD (park): live till it stands on its wheels — nobody at the controls, the brakes locked —
+      // then held; whatever it is doing after 4 s, held (the ground under it goes with its driver)
+      if (this.settling <= 0) return
+      const c = this.sim.controls, t0 = this.sim.body.translation()
+      c.throttle = 0; c.steer = 0; c.brake = true; c.handbrake = true; c.boost = false; c.footBrake = 0; c.lift = 0; c.parked = true
+      this.crashWatch(dt)
+      this.readPose(this.prevP, this.prevQ)
+      this.sim.step(dt)
+      this.sim.keepAbove(this.map.height(t0.x, t0.z))
+      this.watchEnd()
+      this.restT = this.atRest() ? this.restT + dt : 0
+      if ((this.settling -= dt) <= 0 || this.restT > 0.3) this.holdStill()
+      return
+    }
     const k = this.keys
     const t = this.sim.body.translation()
     this.physics.follow(t.x, t.z)
+    this.crashWatch(dt)
     const up = k.has('KeyW') || k.has('ArrowUp'), down = k.has('KeyS') || k.has('ArrowDown')
     const w = (up ? 1 : 0) - (down ? 1 : 0) + this.touch.gas - this.touch.brake
     const ad = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) + this.touch.right - this.touch.left
@@ -427,6 +502,14 @@ export class Vehicle {
       c.lift = 0
       c.parked = false
     }
+    // (a worn engine MISFIRES: it cuts out for a tenth of a second or two — the worse it is, the more often)
+    const dm = this.damage
+    if (dm) {
+      if (!dm.misfires) this.misT = 0
+      else if (this.misT > 0) this.misT -= dt
+      else if (Math.random() < dt * (0.5 + 3.5 * (1 - dm.engine / DAMAGE.engine.misfireAt))) this.misT = 0.07 + Math.random() * 0.16
+      this.sim.cut = this.misT > 0 ? 0.1 : 1
+    }
     this.readPose(this.prevP, this.prevQ)
     this.sim.step(dt)
     this.sim.keepAbove(this.map.height(t.x, t.z))
@@ -440,7 +523,151 @@ export class Vehicle {
         b.applyImpulse({ x: -v.x * m * k * dt, y: m * 3 * Math.max(0, Math.min(1, depth - 0.6)) * dt, z: -v.z * m * k * dt }, true)
       }
     }
+    this.watchEnd()
   }
+
+  // ------------------------------------------------------------------------------------------- damage (Damage.ts)
+  /** This car's damage (null: the setting is off). */
+  damage: CarDamage | null = null
+  /** A crash it has just had — after its own damage is done (main.ts: the view's jolt, the other car's share). */
+  onCrash: ((c: Crash) => void) | null = null
+  private readonly charU = { value: 0 }
+  private misT = 0
+  private lampRev = -1
+  /** The body as the last step left it, with the forces it had put on itself: the next step's change beyond those
+   *  (and gravity) is a BLOW. */
+  private readonly w0 = { on: false, vx: 0, vy: 0, vz: 0, fx: 0, fy: 0, fz: 0, wx: 0, wy: 0, wz: 0, px: 0, py: 0, pz: 0 }
+  private readonly crash: Crash = { dv: 0, x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0, other: null }
+  /** WHERE A SHOVE IS ABOUT TO LAND (the companion's car rams: an impulse, no contact for the watch to find): the
+   *  point (the world's) and whose body did it — the next blow found touching nothing is put there. */
+  hitHint(x: number, y: number, z: number, other: RAPIER.RigidBody | null): void {
+    const h = this.hint
+    h.x = x; h.y = y; h.z = z; h.other = other; h.t = performance.now()
+  }
+  private readonly hint: { x: number; y: number; z: number; other: RAPIER.RigidBody | null; t: number } = { x: 0, y: 0, z: 0, other: null, t: -1e9 }
+  /** (the harness) the biggest change of velocity a step has made that was not the car's own doing (m/s); the hardest
+   *  a wheel has come down on its stops (m/s). */
+  peakDv = 0
+  peakLand = 0
+  private readonly landPeak = [0, 0, 0, 0]
+  private watchEnd(): void {
+    if (!this.damage) return
+    const b = this.sim.body, v = b.linvel(), f = b.userForce(), w = b.angvel(), s = this.w0
+    const t = b.translation()
+    s.vx = v.x; s.vy = v.y; s.vz = v.z; s.fx = f.x; s.fy = f.y; s.fz = f.z; s.wx = w.x; s.wy = w.y; s.wz = w.z; s.px = t.x; s.py = t.y; s.pz = t.z
+    s.on = true
+  }
+  /** Before a step's own forces: what the LAST world step did to the body beyond its own forces and gravity — what
+   *  it ran into did that. From `crash.minDv` m/s: a blow, where the contacts say it landed. And the wheels that came
+   *  down on their stops. */
+  private crashWatch(dt: number): void {
+    const dm = this.damage, s = this.w0
+    if (!dm || !s.on) return
+    s.on = false
+    // (a LANDING: a wheel down on its stops — one blow to its axle, of the hardest it came down in those steps)
+    const hh = this.sim.hardHit, lp = this.landPeak
+    for (let k = 0; k < 4; k++) {
+      if (hh[k] > 0) { if (hh[k] > lp[k]) lp[k] = hh[k]; hh[k] = 0 }
+      else if (lp[k] > 0) { if (lp[k] > this.peakLand) this.peakLand = lp[k]; dm.landing(k, lp[k]); lp[k] = 0 }
+    }
+    const b = this.sim.body, v = b.linvel(), m = b.mass()
+    // (PUT somewhere else since — brought to the rider, set down at a camp, through the crossing: not where a step
+    //  could have taken it. No blow in that)
+    const at = b.translation()
+    if (Math.hypot(at.x - s.px - s.vx * dt, at.y - s.py - s.vy * dt, at.z - s.pz - s.vz * dt) > 0.5) return
+    const g = this.physics.pw.world.gravity.y * b.gravityScale()
+    const dx = v.x - s.vx - (s.fx / m) * dt, dy = v.y - s.vy - (s.fy / m + g) * dt, dz = v.z - s.vz - (s.fz / m) * dt
+    const d = Math.hypot(dx, dy, dz)
+    if (d > this.peakDv) this.peakDv = d
+    if (d < DAMAGE.crash.minDv * 0.8) return
+    this.blow(dx, dy, dz)
+  }
+  private blowT = -1e9
+  private blowDv = 0
+  private readonly bq = new GFX.Quaternion()
+  private readonly bp = new GFX.Vector3()
+  private readonly bd = new GFX.Vector3()
+  /** A BLOW that changed the body's velocity by (dx, dy, dz): where — what the body touches (nothing: the face of it
+   *  the push came through) —, against whom, how hard there (the turn it gave the body counted), and what it did. */
+  private blow(dx: number, dy: number, dz: number): void {
+    const dm = this.damage!, pw = this.physics.pw, body = this.sim.body
+    // WHERE: what the body TOUCHES now — every contact point of the narrow phase within a hand of touching, in the
+    // body's own space, the deeper the heavier — and AGAINST WHOM: the nearest's body. (Not the solver's contacts and
+    // their impulses: the body's CCD runs a hard step in pieces, and by its end those are of the last piece — all
+    // zero, measured 2026-11-21: 2 127 manifolds against a wall, 607 with points, none with an impulse.)
+    let sum = 0, lx = 0, ly = 0, lz = 0, near = 0.08, other: RAPIER.RigidBody | null = null
+    for (let i = 0, n = body.numColliders(); i < n; i++) {
+      const c1 = body.collider(i)
+      // (the tyre guards — capsules set off from the body: their points are not in its space; they meet slabs only)
+      if (c1.shapeType() === pw.R.ShapeType.Capsule) continue
+      pw.world.contactPairsWith(c1, (c2) => {
+        pw.world.contactPair(c1, c2, (mf, flipped) => {
+          for (let k = 0, nc = mf.numContacts(); k < nc; k++) {
+            const d = mf.contactDist(k)
+            if (d > 0.08) continue
+            const p = flipped ? mf.localContactPoint2(k) : mf.localContactPoint1(k)
+            if (!p) continue
+            const w = 0.1 - Math.max(-0.1, d)
+            lx += p.x * w; ly += p.y * w; lz += p.z * w; sum += w
+            if (d < near) { near = d; other = c2.parent() }
+          }
+        })
+      })
+    }
+    const t = body.translation(), r = body.rotation(), q = this.bq.set(r.x, r.y, r.z, r.w), P = this.bp, D = this.bd
+    if (sum === 0 && performance.now() - this.hint.t < 300) {
+      // (nothing touching, and a ram has just been given: there, where his car met this one — and his is the other)
+      const h = this.hint
+      h.t = -1e9
+      other = h.other
+      D.set(dx, dy, dz).normalize().applyQuaternion(q.invert())
+      P.set(h.x - t.x, h.y - t.y, h.z - t.z).applyQuaternion(q)
+      q.invert()
+    } else if (sum === 0) {
+      // (nothing touched — a blast: the point of the body's box the push came through, from its middle, against the push)
+      const bb = this.bodyBox, hy = this.model.half.y
+      D.set(dx, dy, dz).normalize().applyQuaternion(q.invert())
+      const k = Math.min(bb.hx / Math.max(1e-6, Math.abs(D.x)), hy / Math.max(1e-6, Math.abs(D.y)), bb.hz / Math.max(1e-6, Math.abs(D.z)))
+      P.set(bb.cx - D.x * k, this.model.bottom + hy - D.y * k, bb.cz - D.z * k)
+      q.invert()
+    } else {
+      // (the change of velocity AT the point: the body's turn counted — a corner clipped spins it more than it stops it)
+      P.set(lx / sum, ly / sum, lz / sum)
+      const w = body.angvel(), s = this.w0, com = body.worldCom(), W = this.bd.copy(P).applyQuaternion(q)
+      const ax = w.x - s.wx, ay = w.y - s.wy, az = w.z - s.wz, rx = W.x + t.x - com.x, ry = W.y + t.y - com.y, rz = W.z + t.z - com.z
+      dx += ay * rz - az * ry; dy += az * rx - ax * rz; dz += ax * ry - ay * rx
+      D.set(dx, dy, dz).normalize().applyQuaternion(q.invert())
+      q.invert()
+    }
+    const dv = Math.hypot(dx, dy, dz)
+    if (dv < DAMAGE.crash.minDv) return
+    // (ONE CRASH, ONE BLOW: for a third of a second the physics may still be settling it — the body pressed on, ground
+    //  between two things, every step another change of velocity. Those are the same crash: only a HARDER one counts)
+    const now = performance.now()
+    if (now - this.blowT < 330 && dv <= this.blowDv) return
+    this.blowT = now; this.blowDv = dv
+    dm.doorShut = this.doorOpen < 0.05
+    dm.hit(P.x, P.y, P.z, D.x, D.y, D.z, dv)
+    if (!this.onCrash) return
+    const c = this.crash
+    c.dv = dv; c.other = other
+    P.applyQuaternion(q)
+    c.x = P.x + t.x; c.y = P.y + t.y; c.z = P.z + t.z
+    c.dx = dx / dv; c.dy = dy / dv; c.dz = dz / dv
+    this.onCrash(c)
+  }
+  /** A BULLET stops on the car at (x, y, z), flying along (dx, dy, dz) — the world's. */
+  shot(x: number, y: number, z: number, dx: number, dy: number, dz: number): void {
+    const dm = this.damage
+    if (!dm) return
+    const q = this.bq.copy(this.root.quaternion).invert()
+    const P = this.bp.set(x, y, z).sub(this.root.position).applyQuaternion(q), D = this.bd.set(dx, dy, dz).applyQuaternion(q)
+    dm.doorShut = this.doorOpen < 0.05
+    dm.hit(P.x, P.y, P.z, D.x, D.y, D.z, 0, 'shot')
+  }
+  /** Its wheel's mesh (a torn-off one rolls away — DamageFx), its paint. */
+  get wheelPart(): { geo: GFX.BufferGeometry; mat: GFX.Material; r: number } | null { return this.wheelMesh && this.model ? { geo: this.model.wheel, mat: this.wheelMesh.material as GFX.Material, r: this.model.wheelRadius } : null }
+  get paintColor(): GFX.Color { return this.uniforms.uPaint.value as GFX.Color }
 
   private readPose(p: GFX.Vector3, q: GFX.Quaternion): void {
     const t = this.sim.body.translation(), r = this.sim.body.rotation()
@@ -449,6 +676,7 @@ export class Vehicle {
   }
 
   private readonly e = new GFX.Euler()
+  private frameDt = 0
   /** Render frame: the interpolated pose, the wheels, the contact shadow. */
   update(alpha: number): void {
     if (!this.sim || this.loading) return
@@ -462,6 +690,7 @@ export class Vehicle {
     // the cockpit: the steering wheel at 14 : 1 to the front wheels, the pedals pressed, the wipers sweeping (P)
     {
       const now = performance.now() / 1000, dt = Math.min(0.1, now - (this.lastT || now)); this.lastT = now
+      this.frameDt = dt
       const c = this.sim.controls, steer = (w[0].steer + (w[1]?.steer ?? w[0].steer)) / 2
       this.steerWheel = Math.max(-2.6, Math.min(2.6, steer * 14))
       if (this.wheelPivot) this.wheelPivot.quaternion.setFromAxisAngle(new GFX.Vector3(...tr.steeringAxis).normalize(), this.steerWheel)
@@ -491,13 +720,18 @@ export class Vehicle {
         this.anim.update(dt, st)
       }
     }
+    const dmg = this.damage
+    if (dmg) { dmg.doorShut = this.doorOpen < 0.05; dmg.update(Math.min(0.1, this.frameDt)) }
     tr.wheelPos.forEach(([x, y, z], k) => {
       const right = k === 1 || k === 3
       const spin = -w[k].spin
-      this.e.set(right ? -spin : spin, (right ? Math.PI : 0) - w[k].steer, 0, 'YXZ')
+      // (a BENT AXLE: the wheel leans, its top in toward the body; torn off: not there)
+      const wd = dmg ? dmg.wheels[k] : null
+      this.e.set(right ? -spin : spin, (right ? Math.PI : 0) - w[k].steer, wd ? -wd.bend : 0, 'YZX')
       const m = this.wheels[k]
       m.position.set(x, y + w[k].lift, z)
       m.quaternion.setFromEuler(this.e)
+      m.scale.setScalar(wd && wd.off ? 1e-5 : 1)
       m.updateMatrix()
       this.wheelMesh!.setMatrixAt(k, m.matrix)
     })
@@ -571,14 +805,20 @@ export class Vehicle {
     const h = head ? head.c : [hz.x * 0.7, 0.9, -hz.z], t = tail ? tail.c : [hz.x * 0.75, 0.9, hz.z]
     this.lampL.set(-Math.abs(h[0]), h[1], h[2] - 0.05).applyQuaternion(q).add(this.root.position)
     this.lampR.set(Math.abs(h[0]), h[1], h[2] - 0.05).applyQuaternion(q).add(this.root.position)
-    u.uHeadL.value.set(this.lampL.x, this.lampL.y, this.lampL.z, on ? 1 : 0)
+    // (a BROKEN lamp — Damage.ts: no beam from it — its place put far under the ground —, no glow; both: dark)
+    const out = this.damage ? this.damage.lamps : NO_LAMPS
+    if (out[0]) this.lampL.y -= 1e4
+    if (out[1]) this.lampR.y -= 1e4
+    const beamOn = on && !(out[0] && out[1])
+    u.uHeadL.value.set(this.lampL.x, this.lampL.y, this.lampL.z, beamOn ? 1 : 0)
     u.uHeadR.value.copy(this.lampR)
     u.uHeadDir.value.set(0, 0, -1).applyQuaternion(q)
     u.uHeadUp.value.set(0, 1, 0).applyQuaternion(q)
     const c = this.sim.controls, braking = (c.brake && this.sim.speed > 0.4) || c.handbrake
     this.brakeK = braking ? Math.min(1, this.brakeK + dt / 0.06) : Math.max(0, this.brakeK - dt / 0.12)
     const tc = new GFX.Vector3(0, t[1], t[2] + 0.1).applyQuaternion(q).add(this.root.position)
-    u.uTail.value.set(tc.x, tc.y, tc.z, Math.max(this.brakeK, on && LOOK ? 0.4 : 0))   // (the look: the lit tail lamps' own dim pool)
+    const tailsLeft = (out[2] ? 0 : 0.5) + (out[3] ? 0 : 0.5)
+    u.uTail.value.set(tc.x, tc.y, tc.z, Math.max(this.brakeK, on && LOOK ? 0.4 : 0) * tailsLeft)   // (the look: the lit tail lamps' own dim pool)
     if (!this.lampMesh) {
       const g = new GFX.PlaneGeometry(2, 2)
       this.lampMesh = new GFX.InstancedMesh(g, this.lampMat, 2)
@@ -589,24 +829,32 @@ export class Vehicle {
       this.beams.frustumCulled = false
       this.beams.renderOrder = 3
       this.root.add(this.lampMesh, this.tailMesh, this.beams)
+      this.lampRev = -1
+    }
+    // (the glows' places — set again when a lamp breaks or is mended: a broken one has no size)
+    const rev = this.damage ? this.damage.sim.rev : 0
+    if (rev !== this.lampRev) {
+      this.lampRev = rev
       const m = new GFX.Matrix4(), back = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), Math.PI)
       for (let k = 0; k < 2; k++) {
         const sx = k ? 1 : -1
         // (each glow 3× its lens: the lens a bright core, round it a soft halo)
-        const hr = (head ? Math.max(0.06, Math.min(head.w, head.h)) : 0.1) * 3
+        const hr = out[k] ? 0 : (head ? Math.max(0.06, Math.min(head.w, head.h)) : 0.1) * 3
         m.compose(new GFX.Vector3(Math.abs(h[0]) * sx, h[1], h[2] - 0.03), back, new GFX.Vector3(hr, hr, 1))
         this.lampMesh.setMatrixAt(k, m)
-        const tr = (tail ? Math.max(0.05, Math.min(tail.w, tail.h)) : 0.08) * 3
+        const tr = out[2 + k] ? 0 : (tail ? Math.max(0.05, Math.min(tail.w, tail.h)) : 0.08) * 3
         m.compose(new GFX.Vector3(Math.abs(t[0]) * sx, t[1], t[2] + 0.03), new GFX.Quaternion(), new GFX.Vector3(tr, tr, 1))
         this.tailMesh!.setMatrixAt(k, m)
       }
+      this.lampMesh.instanceMatrix.needsUpdate = true
+      this.tailMesh!.instanceMatrix.needsUpdate = true
     }
-    this.lampMesh.visible = on
+    this.lampMesh.visible = beamOn
     this.lampMat.uniforms.uK.value = 5.5
-    const tailK = Math.max(on ? 0.3 : 0, this.brakeK)
+    const tailK = Math.max(on ? 0.3 : 0, this.brakeK) * (tailsLeft > 0 ? 1 : 0)
     this.tailMesh!.visible = tailK > 0.01
     this.tailMat.uniforms.uK.value = 5.0 * tailK
-    this.beams!.visible = on && (u.uNight.value > 0.05 || dusk)
+    this.beams!.visible = on && !out[0] && !out[1] && (u.uNight.value > 0.05 || dusk)
     this.beamMat.uniforms.uK.value = Math.max(u.uNight.value, dusk ? 0.35 : 0)
   }
 
@@ -628,6 +876,8 @@ export class Vehicle {
     if (D) { D.aids = d.aids === 'standard' ? 'std' : d.aids; D.manual = d.manual }
   }
 }
+
+const NO_LAMPS: readonly boolean[] = [false, false, false, false]
 
 /** Parts merged into one geometry: each given the attributes the others have, as floats (a missing colour → white,
  *  paint mask / uv → 0: what the shader read for it before — no USE_COLOR / an attribute's default), all indexed or
@@ -665,6 +915,10 @@ const OTH_PAINT: Record<string, string> = { g500: '#b8452e', e30: '#efe4cc' }
 
 const VERT = /* glsl */ `
 in float paintMask;
+#ifdef DAMAGE
+in float dmg;
+out float vDmg;
+#endif
 out vec3 vWorld;
 out vec3 vLocal;
 out vec3 vN;
@@ -687,6 +941,9 @@ void main() {
   vCol = vec3(1.0);
 #endif
   vPaint = paintMask;
+#ifdef DAMAGE
+  vDmg = dmg;
+#endif
   gl_Position = projectionMatrix * viewMatrix * w;
 }
 `
@@ -707,6 +964,13 @@ uniform vec3 uPaint;
 uniform float uCoat;
 uniform vec3 uCoatColor;
 uniform float uCarBase;
+#ifdef DAMAGE
+// (Damage.ts) per vertex: 1 on a cracked pane of glass (the body's is not read). uChar: a burnt-out car's soot;
+// uCrack: the cracks' pattern (scripts/oth/damage.py)
+in float vDmg;
+uniform float uChar;
+uniform sampler2D uCrack;
+#endif
 in vec3 vWorld;
 in vec3 vLocal;
 in vec3 vN;
@@ -758,7 +1022,19 @@ void main() {
   vec3 sky = skyColor(normalize(vec3(R.x, abs(R.y) + 0.05, R.z)));
   vec3 c = mix(vec3(0.05, 0.065, 0.075) * (ambient(N) + uSunColor * 0.25), sky * 0.85, F);
   c += uSunColor * sun * pow(max(dot(R, uSunDir), 0.0), 220.0) * 2.5;
-  gl_FragColor = vec4(applyAtmos(c, vWorld), mix(gl_FrontFacing ? GLASS_A : 0.42, 0.95, F)); // (a darker tint — GLASS_A — from OUTSIDE only: looking out through it, the pane's back, the view stays clear)
+  float ga = mix(gl_FrontFacing ? GLASS_A : 0.42, 0.95, F); // (a darker tint — GLASS_A — from OUTSIDE only: looking out through it, the pane's back, the view stays clear)
+#ifdef DAMAGE
+  if (vDmg > 0.5) {
+    // A CRACKED PANE: the cracks' white lines over it — laid along the pane's own face —, the glass a little milky
+    vec3 nl = abs(normalize(cross(dFdx(vLocal), dFdy(vLocal)) + 1e-7));
+    vec2 cuv = nl.x > max(nl.y, nl.z) ? vLocal.zy : nl.z > nl.y ? vLocal.xy : vLocal.xz;
+    float cr = texture(uCrack, cuv * 1.15 + 0.37).r;
+    vec3 lit = ambient(N) + uSunColor * sun * 0.9;
+    c = mix(mix(c, vec3(0.55, 0.6, 0.6) * lit, 0.12), vec3(0.86, 0.9, 0.89) * lit, cr * 0.9);
+    ga = max(ga + 0.08, cr * 0.95);
+  }
+#endif
+  gl_FragColor = vec4(applyAtmos(c, vWorld), ga);
 #else
   vec3 albedo = vCol;
 #ifdef USE_MAP_OTH
@@ -783,6 +1059,17 @@ void main() {
   float lum = dot(albedo, vec3(0.3, 0.59, 0.11));
   float isWhite = step(2.95, uPaint.r + uPaint.g + uPaint.b);
   albedo = mix(albedo, uPaint * (lum * 1.3 + 0.08), m * (1.0 - isWhite));
+#ifdef DAMAGE
+  // A BURNT-OUT car (Damage.ts) is soot all over. A DENT is the car's own colour — the light falls on it another way,
+  // nothing more (the first cut scraped the paint to steel there; the user, 2026-11-21: "the crashed and broken thing
+  // will have the same colour, the dent and all")
+  if (uChar > 0.001) {
+    float st = texture(uNoise, vec2(dot(vLocal, vec3(0.5, 0.12, 0.33)), dot(vLocal, vec3(0.2, 2.4, 0.6)))).g;
+    float bl = texture(uNoise, vLocal.xz * 0.31 + vLocal.y * 0.23).r;
+    albedo = mix(albedo, vec3(0.035, 0.032, 0.03) * (0.5 + bl), uChar * (0.82 + 0.18 * st));
+    m *= 1.0 - uChar;
+  }
+#endif
 #ifndef NO_GRAIN
   // GRAIN — RELIEF, not colour (2026-11-05, the user — after Over the Hill's cars: "ours are shiny, glossy"; then: "by
   // grains I mean the 3D grains, not the colour"; "tiny 3D dots — on red, small red dots; the dots take the colour of
@@ -976,6 +1263,23 @@ export class RemoteCar {
   private readonly v = new GFX.Vector3()
   /** The body's box in car space (centre, half size) — null until its model is in. */
   box: { c: GFX.Vector3; h: GFX.Vector3 } | null = null
+  /** DAMAGE (Damage.ts): set `damageOn` before its car is given — the companion's car takes blows; another player's
+   *  (co-op) does not yet. */
+  damageOn = false
+  damage: CarDamage | null = null
+  private readonly charU = { value: 0 }
+  private lampRev = -1
+  private lampR = 0.3
+  private readonly lampAt = [0, 0, 0]
+  /** Its wheel's mesh (a torn-off one rolls away — DamageFx), its paint. */
+  get wheelPart(): { geo: GFX.BufferGeometry; mat: GFX.Material; r: number } | null { return this.wheelMesh && this.model ? { geo: this.model.wheel, mat: this.wheelMesh.material as GFX.Material, r: this.model.wheelRadius } : null }
+  get paintColor(): GFX.Color { return this.uniforms.uPaint.value as GFX.Color }
+  /** ITS OWN SHAPE for the physics (the companion's car — Companion.ts): the body as a triangle soup, its inner
+   *  convex pieces, its nose and tail (z, car space); null until its model is in. */
+  get shape(): { mesh: Float32Array; hulls: Float32Array[]; front: number; rear: number } | null {
+    const m = this.model
+    return m ? { mesh: m.mesh, hulls: m.hulls, front: m.front, rear: m.rear } : null
+  }
   /** Its half width and half length (m). */
   get half(): { x: number; z: number } { return this.model ? { x: this.model.half.x, z: this.model.half.z } : { x: 1, z: 2.2 } }
   /** (the companion — Companion.ts) the driver's seat (where the hips sit) and the spot outside the driver's door, car
@@ -989,7 +1293,7 @@ export class RemoteCar {
 
   constructor(private readonly map: MapData, private readonly atmos: Atmosphere, shadow: TerrainShadow, farGrid: GFX.Vector4) {
     this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 },
-      uCoat: { value: 0 }, uCoatColor: { value: new GFX.Color(0.55, 0.45, 0.33) }, uCarBase: { value: 0 } }
+      uCoat: { value: 0 }, uCoatColor: { value: new GFX.Color(0.55, 0.45, 0.33) }, uCarBase: { value: 0 }, uChar: this.charU, uCrack: crackU }
     const sg = new GFX.PlaneGeometry(1, 1, 8, 8).rotateX(-Math.PI / 2)
     this.shadow = new GFX.Mesh(sg, new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
@@ -1028,8 +1332,12 @@ export class RemoteCar {
     const at = (geo: GFX.BufferGeometry, h: [number, number, number]) => geo.clone().translate(...h)
     const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...truck.doors.map((d) => at(d.body, d.hinge))])
     const glassGeo = mergeParts([truck.glass, ...truck.doors.flatMap((d) => (d.glass ? [at(d.glass, d.hinge)] : []))])
-    const body = new GFX.Mesh(bodyGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) }))
-    const glass = new GFX.Mesh(glassGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false }))
+    const dm = (this.damage = this.damageOn ? new CarDamage(truck, this.charU) : null)
+    const dmgDef: Record<string, string> = dm ? { DAMAGE: '' } : {}
+    if (dm) { dm.attach(bodyGeo, false); dm.attach(glassGeo, true) }
+    this.lampRev = -1
+    const body = new GFX.Mesh(bodyGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, ...dmgDef }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) }))
+    const glass = new GFX.Mesh(glassGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef, ...dmgDef }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false }))
     body.frustumCulled = glass.frustumCulled = false
     glass.renderOrder = 3
     this.wheelMesh = new GFX.InstancedMesh(truck.wheel, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) }), 4)
@@ -1041,8 +1349,9 @@ export class RemoteCar {
     this.lamps = new GFX.InstancedMesh(new GFX.PlaneGeometry(2, 2), this.lampMat, 2)
     this.lamps.frustumCulled = false
     this.lamps.renderOrder = 2
-    const m = new GFX.Matrix4(), back = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), Math.PI), hr = (head ? Math.max(0.06, Math.min(head.w, head.h)) : 0.1) * 3
-    for (let k = 0; k < 2; k++) { m.compose(new GFX.Vector3(Math.abs(h[0]) * (k ? 1 : -1), h[1], h[2] - 0.03), back, new GFX.Vector3(hr, hr, 1)); this.lamps.setMatrixAt(k, m) }
+    this.lampR = (head ? Math.max(0.06, Math.min(head.w, head.h)) : 0.1) * 3
+    this.lampAt[0] = Math.abs(h[0]); this.lampAt[1] = h[1]; this.lampAt[2] = h[2] - 0.03
+    this.placeLamps()
     this.root.add(body, glass, this.wheelMesh, this.lamps)
     this.shadowSize.set(truck.half.x * 2 + 1.0, 1, truck.half.z * 2 + 1.2)
     this.viewSphere.radius = Math.hypot(truck.half.x, truck.half.z) + 1.5
@@ -1050,6 +1359,18 @@ export class RemoteCar {
     bodyGeo.computeBoundingBox()
     const bb = bodyGeo.boundingBox!
     this.box = { c: bb.getCenter(new GFX.Vector3()), h: bb.getSize(new GFX.Vector3()).multiplyScalar(0.5) }
+  }
+
+  /** The headlamps' glows at their lenses (a broken one — Damage.ts — has no size). */
+  private placeLamps(): void {
+    if (!this.lamps) return
+    const m = new GFX.Matrix4(), back = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), Math.PI), L = this.lampAt
+    for (let k = 0; k < 2; k++) {
+      const hr = this.damage && this.damage.lamps[k] ? 0 : this.lampR
+      m.compose(new GFX.Vector3(L[0] * (k ? 1 : -1), L[1], L[2]), back, new GFX.Vector3(hr, hr, 1))
+      this.lamps.setMatrixAt(k, m)
+    }
+    this.lamps.instanceMatrix.needsUpdate = true
   }
 
   /** Posed at p, turned q (y up), moving at `speed` m/s; dt this frame. */
@@ -1069,11 +1390,21 @@ export class RemoteCar {
     this.steer += (want - this.steer) * Math.min(1, dt * 6)
     const r = Math.max(0.25, tr.wheelPos[0][1])
     this.spin += (speed * dt) / r
+    const dm = this.damage
+    if (dm) {
+      dm.update(Math.min(0.1, dt))
+      if (dm.sim.rev !== this.lampRev) { this.lampRev = dm.sim.rev; this.placeLamps() }
+    }
     tr.wheelPos.forEach(([x, y, z], k) => {
       const right = k === 1 || k === 3, front = k < 2
-      this.e.set(right ? this.spin : -this.spin, (right ? Math.PI : 0) - (front ? this.steer : 0), 0, 'YXZ')
-      this.wheel.position.set(x, y, z)
+      // (damage: a bent axle's wheel leans and points out of line, a jammed one doesn't turn, a flat one sits on its
+      //  rim, one torn off isn't there)
+      const wd = dm ? dm.wheels[k] : null
+      const spin = wd && (wd.jam || wd.off) ? 0 : this.spin
+      this.e.set(right ? spin : -spin, (right ? Math.PI : 0) - (front ? this.steer : 0) - (dm ? dm.sim.toe[k] : 0), wd ? -wd.bend : 0, 'YZX')
+      this.wheel.position.set(x, y - (wd && wd.flat ? r * 0.18 : 0), z)
       this.wheel.quaternion.setFromEuler(this.e)
+      this.wheel.scale.setScalar(wd && wd.off ? 1e-5 : 1)
       this.wheel.updateMatrix()
       this.wheelMesh!.setMatrixAt(k, this.wheel.matrix)
     })

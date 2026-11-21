@@ -117,6 +117,56 @@ export class OthAudio {
     })
   }
 
+  private noise: AudioBuffer | null = null
+  /** A CRASH's sounds (Damage.ts), made here — nothing loaded: 'crash' the thud and crunch of metal (k: 0 … 1, how
+   *  hard), 'glass' a pane falling out, 'boom' a car going up. Noise through a filter that closes, over a low thump. */
+  impact(kind: 'crash' | 'glass' | 'boom', k = 1): void {
+    const ctx = this.ctx
+    if (!ctx || this.muted) return
+    if (!this.noise) {
+      const n = (this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate)), d = n.getChannelData(0)
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1
+    }
+    const t = ctx.currentTime, K = Math.max(0.15, Math.min(1, k))
+    const burst = (type: BiquadFilterType, f0: number, f1: number, gain: number, len: number, at = 0) => {
+      const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(), t0 = t + at
+      s.buffer = this.noise
+      s.loop = true
+      f.type = type
+      f.frequency.setValueAtTime(f0, t0)
+      f.frequency.exponentialRampToValueAtTime(f1, t0 + len)
+      g.gain.setValueAtTime(0, t0)
+      g.gain.linearRampToValueAtTime(gain, t0 + 0.006)
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + len)
+      s.connect(f).connect(g).connect(this.master)
+      s.start(t0, Math.random() * 0.8)
+      s.stop(t0 + len + 0.02)
+    }
+    const thump = (f0: number, f1: number, gain: number, len: number) => {
+      const o = ctx.createOscillator(), g = ctx.createGain()
+      o.type = 'sine'
+      o.frequency.setValueAtTime(f0, t)
+      o.frequency.exponentialRampToValueAtTime(f1, t + len)
+      g.gain.setValueAtTime(gain, t)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + len)
+      o.connect(g).connect(this.master)
+      o.start(t)
+      o.stop(t + len + 0.02)
+    }
+    if (kind === 'crash') {
+      thump(95, 38, 0.5 * K, 0.22)
+      burst('lowpass', 2600, 240, 0.42 * K, 0.16 + 0.22 * K)
+      // (the crunch: the metal giving — a second, higher burst a moment after)
+      if (K > 0.4) burst('bandpass', 1800, 700, 0.2 * K, 0.18, 0.05)
+    } else if (kind === 'glass') {
+      for (let i = 0; i < 5; i++) burst('highpass', 3200 + Math.random() * 2600, 5200, 0.1 + 0.08 * K, 0.07 + Math.random() * 0.12, i * 0.045 + Math.random() * 0.03)
+    } else {
+      thump(70, 24, 0.9, 0.9)
+      burst('lowpass', 1400, 90, 0.8, 1.3)
+      burst('lowpass', 500, 70, 0.4, 2.2, 0.15)
+    }
+  }
+
   /** Off (the Sound setting, M): set before the first key / tap starts the sound, or any time after. */
   muted = false
   private beds: Record<'forest' | 'wind' | 'night' | 'stream' | 'fall' | 'fire' | 'pond', Bed> | null = null
@@ -328,7 +378,9 @@ export class OthAudio {
       } else glide(this.motoBus.gain, 0, ctx.currentTime, 0.6)
     }
     // (the car parked — the rider on the bike: its engine runs down; back in, it starts again)
-    if (this.engine && this.car.parked !== this.parkedWas) { this.parkedWas = this.car.parked; this.engine.port.postMessage({ event: this.car.parked ? 'stop' : 'start' }) }
+    // (… and a dead engine — Damage.ts — is silent till the car is mended)
+    const off = this.car.parked || !!this.car.damage?.dead
+    if (this.engine && off !== this.parkedWas) { this.parkedWas = off; this.engine.port.postMessage({ event: off ? 'stop' : 'start' }) }
     const speed = bk ? Math.abs(bk.speed) : sim ? Math.abs(sim.speed) : 0
     // the car from the camera: the further, the quieter
     const dCar = camera.position.distanceTo(bk && tw ? tw.pos : this.car.pos), near = Math.min(1, Math.max(0.15, 9 / Math.max(dCar, 1)))

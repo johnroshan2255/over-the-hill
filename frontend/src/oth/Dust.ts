@@ -81,6 +81,12 @@ export class Dust {
     st[o + 10] = r; st[o + 11] = g; st[o + 12] = b; st[o + 13] = a
   }
 
+  /** One puff of SMOKE or steam (Damage.ts: an engine's, a fire's, a blast's): at (x, y, z) going (vx, vy, vz), living
+   *  `life` s, growing from s0 to s1 m, of colour (r, g, b) and opacity a. */
+  smoke(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, s0: number, s1: number, r: number, g: number, b: number, a: number): void {
+    this.spawn(x, y, z, vx, vy, vz, life, s0, s1, r, g, b, a)
+  }
+
   /** A BURST (the builder's — GroundEdits / Pieces: the ground dug or heaped, a piece set down): n puffs thrown out
    *  round (x, y, z) across a ring of radius r, low and rolling, earth-coloured (or `col`), settling in ~1.5 s. */
   puff(x: number, y: number, z: number, r: number, n: number, col: [number, number, number] = [0.36, 0.29, 0.21]): void {
@@ -162,7 +168,9 @@ export class Dust {
       this.tyre(dt, k, c, lv, speed, go, sim.wheelSlip[k] ?? 0, 1)
     }
     // EXHAUST: a thin haze at idle, a grey puff on the gas, from every tip
+    // (a dead engine — Damage.ts — breathes nothing out)
     const thr = Math.min(1, Math.abs(sim.controls.throttle))
+    if (car.damage?.dead) return
     this.acc[4] += (6 + 30 * thr) * dt
     while (this.acc[4] >= 1) {
       this.acc[4] -= 1

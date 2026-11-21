@@ -7,8 +7,10 @@ import type { OthPhysics } from './Physics'
 import type { TerrainShadow } from './TerrainShadow'
 import type { Target, Zone } from './Weapons'
 import { RemoteCar } from './Vehicle'
-import { group, Groups } from '../physics/PhysicsWorld'
+import { group, Groups, STATIC_MESH_FILTER } from '../physics/PhysicsWorld'
 import type RAPIER from '@dimforge/rapier3d-compat'
+import DAMAGE from '../../../proto/damage.json'
+import { DAMAGE_ON } from './Damage'
 
 /**
  * THE COMPANION (2026-11-19, the user: "a companion in no-coop mode … a human body, cars, all like us … when I walk he
@@ -48,9 +50,18 @@ export interface CompanionHost {
   /** Your own walker (the fight: your blows, your falls). */
   you(): Character
   /** Your vehicle's half width / half length (m). */
-  size(): { x: number; z: number }
-  /** Your vehicle SHOVED (his car rams it): along (dx, dz) by `dv` m/s, spun by `spin` rad/s. */
-  shove(dx: number, dz: number, dv: number, spin: number): void
+  /** YOUR vehicle's own box in plan: its middle (the world's x, z), its half width and length, the way it points —
+   *  what his bumper has to reach to ram it. */
+  box(): { x: number; z: number; hx: number; hz: number; yaw: number }
+  /** Your vehicle SHOVED (his car rams it, pushes it): along (dx, dz) by `dv` m/s, spun by `spin` rad/s; `at`: where
+   *  his car met it (the world's), `by`: his car's body — a ram's (the damage is put there: Vehicle.hitHint). */
+  shove(dx: number, dz: number, dv: number, spin: number, at?: GFX.Vector3, by?: RAPIER.RigidBody | null): void
+  /** How your vehicle moves (the world's, m/s; nothing on foot) and its body in the physics (null on foot). */
+  vel(): { x: number; y: number; z: number }
+  body(): RAPIER.RigidBody | null
+  /** A JOLT felt (a ram, a blow that lands on you or that you land): the view shaken by k (0 … 1), the dust knocked
+   *  up at (x, y, z). */
+  jolt?(k: number, x: number, y: number, z: number): void
 }
 
 type Mode = 'foot' | 'boarding' | 'passenger' | 'toCar' | 'car'
@@ -63,11 +74,37 @@ const LOOK: Record<CompanionKind, { name: string; colour: string; paint: string;
 }
 /** THE FIGHT: how close he stands to strike (m), what each blow takes (of 100). */
 const REACH = 1.05
-const DMG: Record<string, number> = { jab: 8, cross: 14, hook: 14, uppercut: 18, kick_front: 16, kick_round: 24 }
+const DMG: Record<string, number> = { jab: 8, cross: 14, hook: 14, uppercut: 18, body_hook: 15, knee: 20, kick_front: 16, kick_round: 24, kick_low: 10 }
+/** WHAT A BLOW DOES to whoever takes it (2026-11-21, the user: "the action must feel real"): how it is taken — the
+ *  clip: the head back, whipped to one side, folded over the belly, the leg knocked from under him —, how hard he's
+ *  thrown back (m/s, dying away), how long the two of them hold on the frame it lands (s — the hit-stop), how the
+ *  view jolts (0 … 1); a `heavy` one may stagger him. */
+const BLOW: Record<string, { react: FightClip; push: number; stop: number; jolt: number; heavy?: boolean; head?: boolean; kick?: boolean }> = {
+  jab: { react: 'hit_head', push: 1.0, stop: 0.045, jolt: 0.3, head: true },
+  cross: { react: 'hit_head', push: 2.1, stop: 0.07, jolt: 0.5, heavy: true, head: true },
+  hook: { react: 'hit_head_r', push: 1.6, stop: 0.07, jolt: 0.5, heavy: true, head: true },
+  uppercut: { react: 'hit_head', push: 1.4, stop: 0.085, jolt: 0.6, heavy: true, head: true },
+  body_hook: { react: 'hit_body', push: 1.2, stop: 0.07, jolt: 0.45 },
+  knee: { react: 'hit_body', push: 1.6, stop: 0.085, jolt: 0.6, heavy: true, kick: true },
+  kick_front: { react: 'hit_body', push: 3.4, stop: 0.075, jolt: 0.55, heavy: true, kick: true },
+  kick_round: { react: 'hit_head_l', push: 2.8, stop: 0.09, jolt: 0.7, heavy: true, kick: true },
+  kick_low: { react: 'hit_leg', push: 0.6, stop: 0.05, jolt: 0.3, kick: true },
+}
+/** YOUR runs (J pressed again as each lands; U the same): the punches, the kicks. */
+const PUNCHES: FightClip[] = ['jab', 'cross', 'hook', 'uppercut', 'body_hook'], KICKS: FightClip[] = ['kick_low', 'kick_front', 'kick_round']
+/** HIS runs: what he throws one into the next. */
+const RUNS: FightClip[][] = [['jab'], ['jab', 'cross'], ['jab', 'jab', 'cross'], ['jab', 'cross', 'hook'], ['cross', 'body_hook'], ['hook', 'cross'], ['kick_low'], ['kick_front'],
+  ['jab', 'kick_round'], ['uppercut'], ['jab', 'cross', 'kick_low'], ['body_hook', 'hook'], ['kick_low', 'cross']]
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v))
 const RANGE = 100
+const UP = new GFX.Vector3(0, 1, 0)
+/** How near his car's nose comes to your car's body before it is stopped (m): touching, to the eye. */
+const SKIN = 0.012
+/** How far inside your car's panels its inner solid pieces stand (m, about): what his nose is stopped short of them by. */
+const INSET = 0.03
 const TAG_FAR = 900
 
+const NONE: readonly { x: number; z: number; heading: number; colour: string; name: string }[] = []
 export class Companion {
   readonly hero: Character
   readonly car: RemoteCar
@@ -81,7 +118,8 @@ export class Companion {
   yours = 100
   private fightReady = false
   private fightLoading = false
-  private readonly blows: { by: 'him' | 'you'; t: number; clip: FightClip }[] = []
+  /** The blows in the air: whose, the time till each lands (s), which; `seen`: he has made up his mind about it. */
+  private readonly blows: { by: 'him' | 'you'; t: number; clip: FightClip; seen: boolean }[] = []
   private cool = 1
   private grace = 0
   private sinceHit = 9
@@ -126,7 +164,7 @@ export class Companion {
   private readonly v = new GFX.Vector3()
   private readonly e = new GFX.Euler()
   // (nothing made each frame — a phone's collector stalls on it: the steer, the spots, the car's working vectors)
-  private readonly st = { x: 0, z: 0, pace: 0 }
+  private readonly st: { x: number; z: number; pace: number; face: number | null } = { x: 0, z: 0, pace: 0, face: null }
   private readonly spot = { x: 0, z: 0 }
   private readonly qt = new GFX.Quaternion()
   private readonly va = new GFX.Vector3()
@@ -138,7 +176,7 @@ export class Companion {
   private inView = true
   private animDt = 0
   private animN = 0
-  private go(x: number, z: number, pace: number): void { const s = this.st; s.x = x; s.z = z; s.pace = pace; this.hero.steer = s }
+  private go(x: number, z: number, pace: number, face: number | null = null): void { const s = this.st; s.x = x; s.z = z; s.pace = pace; s.face = face; this.hero.steer = s }
 
   constructor(
     private readonly host: CompanionHost,
@@ -157,6 +195,8 @@ export class Companion {
     this.hero.control = false
     this.hero.ground = (x, z, y0) => physics.surface(x, z, map.height(x, z), y0)
     this.car = new RemoteCar(map, atmos, shadow, farGrid)
+    // (his car takes blows as yours does — Damage.ts)
+    this.car.damageOn = DAMAGE_ON
     scene.add(this.car.root, this.car.shadow)
     this.layer = document.createElement('div')
     this.layer.className = 'oth-tags'
@@ -179,11 +219,14 @@ export class Companion {
   }
 
   /** Where he is (the map, the radar). */
-  get list(): { x: number; z: number; heading: number; colour: string; name: string }[] {
-    if (!this.placed) return []
-    const p = this.where()
-    return [{ x: p.x, z: p.z, heading: this.mode === 'car' ? this.carYaw : this.hero.heading, colour: this.look.colour, name: this.name }]
+  get list(): readonly { x: number; z: number; heading: number; colour: string; name: string }[] {
+    if (!this.placed) return NONE
+    // (one entry, kept: the minimap asks every frame)
+    const p = this.where(), o = this.listOut[0]
+    o.x = p.x; o.z = p.z; o.heading = this.mode === 'car' ? this.carYaw : this.hero.heading; o.colour = this.look.colour; o.name = this.name
+    return this.listOut
   }
+  private readonly listOut = [{ x: 0, z: 0, heading: 0, colour: '', name: '' }]
   private where(): GFX.Vector3 {
     if (this.mode === 'car') return this.carP
     if (this.mode === 'passenger') return this.host.pos()
@@ -306,6 +349,9 @@ export class Companion {
   private bringCar(): void {
     const c = this.host.car()
     void this.car.setCar(c?.id || 'offroader', this.look.paint)
+    // (another one: whole)
+    this.car.damage?.repair()
+    this.wreckT = 0
     const p = this.hero.pos, you = this.host.pos()
     const yaw = Math.atan2(-(you.x - p.x), -(you.z - p.z))
     // (3.5 m to his right, facing the way he faces: its driver's door — its left — toward him)
@@ -439,6 +485,13 @@ export class Companion {
         if (H.onFoot()) { this.mode = 'foot'; break }
         const seat = H.car() && !H.riding() ? H.passenger() : null
         if (!hostile && seat && H.speed() < 1 && this.hero.pos.distanceTo(seat.door) < 12) { this.board(); break }
+        // (HIS CAR IS DEAD — its engine gone, or burnt out: he comes after you on foot; once you are well away from
+        //  the wreck, or 12 s on, another is brought him)
+        if (this.carOn && this.car.damage?.dead) {
+          this.wreckT += dt
+          if (you.distanceTo(this.carP) < 55 && this.wreckT < 12) { this.steerTo(you.x, you.z, 4.6, dt, 2.5); break }
+          this.bringCar()
+        }
         if (!this.carOn || this.carP.distanceTo(this.hero.pos) > 30) this.bringCar()
         const s = this.car.driverSeat
         if (!s) break
@@ -449,7 +502,9 @@ export class Companion {
         break
       }
       case 'car': {
-        this.drive(dt)
+        // (his car's way is made in the physics' own steps — `fixed`)
+        // (his engine has died under him: out he gets)
+        if (this.car.damage?.dead && this.carSpeed < 0.5) { this.leaveCar(); break }
         // (you got out and he's pulled up: he gets out)
         if (H.onFoot() && this.carSpeed < 0.5 && this.joinK >= 1) this.leaveCar()
         break
@@ -495,53 +550,182 @@ export class Companion {
     if (!n) return
     const you = H.pos(), yours = H.speed(), hostile = this.kind === 'enemy'
     // (the enemy, you on foot: he drives AT you)
-    if (hostile && H.onFoot()) { this.runDown(dt); return }
+    if (hostile && H.onFoot()) { this.runDown(dt); this.offWay = true; return }
+    // (back onto your way from wherever that took him: from where his car IS — eased across to the way's nearest
+    //  point, as when he first got in. He was put back where he had left the way: a jump of as far as he had strayed)
+    if (this.offWay) {
+      this.offWay = false
+      let best = Infinity, bi = 0
+      for (let i = 0; i < n; i++) { const d = Math.hypot(this.xs[i] - this.carP.x, this.zs[i] - this.carP.z); if (d < best) { best = d; bi = i } }
+      this.arc = this.ss[bi]
+      this.joinFrom.copy(this.carP); this.joinYaw = this.carYaw; this.joinK = 0
+    }
     // (your way's end: its last point and on to where you are now — up to a metre past it)
     const end = this.ss[n - 1] + Math.hypot(you.x - this.xs[n - 1], you.z - this.zs[n - 1])
-    // (the enemy RAMS: right up your way to your bumper, then drops back 16 m for the next run)
+    // (HIS PLACE ALONG YOUR WAY IS WHERE HIS CAR IS: held at your car, the place ran on without the car — up to 1.8 m
+    //  ahead of it, measured — and the step anything gave, the car was put there: 100 m/s of it, into you. Each step
+    //  the place is taken again from the car: the point of your way abreast of it)
+    if (this.joinK >= 1) {
+      const q0 = this.along(this.arc, this.vp), ta = this.along(this.arc - 1, this.va), tb = this.along(this.arc + 1, this.vb)
+      const tl = Math.hypot(tb.x - ta.x, tb.z - ta.z)
+      if (tl > 0.2) this.arc -= ((q0.x - this.carP.x) * (tb.x - ta.x) + (q0.z - this.carP.z) * (tb.z - ta.z)) / tl
+    }
     this.ramCool = Math.max(0, this.ramCool - dt)
-    const contact = this.car.half.z + H.size().z + 0.15
-    const gap = hostile ? (this.ramCool > 0 ? 16 : contact) : Math.max(12, Math.min(40, 10 + yours * 0.9))
+    // (how near his car's root comes to yours along your way, bumper on bumper: his front, your half length. Only to
+    //  know how far off he is — what STOPS him is his car's own nose meeting your car's own body: `reach`)
+    const yb = H.box(), hb = this.car.box
+    const front = hb ? hb.h.z - hb.c.z : this.car.half.z
+    const contact = front + yb.hz + 0.05
+    const off = end - contact - this.arc
+    const gap = hostile ? contact : Math.max(12, Math.min(40, 10 + yours * 0.9))
     const target = end - gap
     // (far behind — he lost you: back on your way out of sight, near the gap)
-    if (target - this.arc > 400) { this.arc = target - 30; this.joinK = 1 }
+    if (target - this.arc > 400) { this.arc = target - 30; this.joinK = 1; this.prevP.set(NaN, 0, 0) }
     const near = !hostile && Math.hypot(you.x - this.carP.x, you.z - this.carP.z) < 10
-    // (the enemy's CHARGE: flat out — your speed and 9 m/s more — till his bumper is on yours: eased up to you he
-    //  docked behind you and never hit; dropping back for the next run he does ease to his gap)
-    const want = hostile ? (this.ramCool > 0 ? clamp((target - this.arc) * 1.2, -6, Math.min(45, yours + 9)) : target - this.arc > 0.05 ? Math.min(45, yours + 9) : yours + 2) : near ? 0 : Math.max(0, Math.min(Math.min(60, yours + 10), (target - this.arc) * 0.8))
+    // (the way his car points, and how fast YOU go along it)
+    const fx = -Math.sin(this.carYaw), fz = -Math.cos(this.carYaw), yv = H.vel(), alongYou = yv.x * fx + yv.z * fz
+    // THE ENEMY'S RUN AT YOU (2026-11-21, the user: "when it hits me it goes back like it bounced off a balloon" — he
+    // was sent back to a 16 m gap the instant he had hit). Three parts now: the CHARGE — flat out, your speed and
+    // 9 m/s more, till his nose is on you —; the blow, and for a second and a half he keeps his weight ON you,
+    // pushing; then he lets you go — easing off behind you if you drive on; only if you stand does he back away, on
+    // his own wheels, to take another run.
+    let want0: number
+    if (!hostile) want0 = near ? 0 : Math.max(0, Math.min(Math.min(60, yours + 10), (target - this.arc) * 0.8))
+    // (your car OFF ITS WHEELS — tipped, on its side, in the air: he does not drive into that; he waits a few metres
+    //  off till it stands)
+    else if (this.yourTilt() < 0.75) { want0 = off < 6 ? (off < 3 ? -2.5 : 0) : Math.min(45, yours); this.pushT = 0; this.ramCool = Math.max(this.ramCool, 1.2) }
+    else if (this.pushT > 0) { this.pushT -= dt; want0 = Math.max(0, alongYou + 1.6) }
+    else if (this.ramCool > 0) want0 = off < 7 ? (yours < 2.5 ? -3.2 : Math.max(0, yours - 3)) : Math.min(45, yours)
+    else want0 = Math.min(45, yours + 9)
+    // (DAMAGE: a hurt car is slower — its engine's power left, every wheel bent, flat or gone; a dead one rolls to a stop)
+    const fit = this.car.damage ? this.car.damage.drive : 1
+    const want = fit <= 0 ? 0 : want0 < 0 ? want0 : Math.min(want0, (hostile ? 45 : 60) * fit)
     // (his car's pace eased: up at 6 m/s² — the enemy's 8 — down at 9)
     this.carSpeed += Math.max(-9 * dt, Math.min((hostile ? 8 : 6) * dt, want - this.carSpeed))
-    this.arc = Math.min(target + (hostile ? 0.3 : 2), this.arc + this.carSpeed * dt)
+    // (a backstop only — his nose never past your middle; where he stops at your car is `reach`'s to say)
+    const arc0 = this.arc
+    this.arc = Math.min(hostile ? end - front - 0.5 : target + 2, this.arc + this.carSpeed * dt)
     // his heading: along your way, 2 m either side of him
     const a = this.along(this.arc - 2, this.va), b = this.along(this.arc + 2, this.vb), p = this.along(this.arc, this.vp)
     let yaw = Math.hypot(b.x - a.x, b.z - a.z) > 0.5 ? Math.atan2(-(b.x - a.x), -(b.z - a.z)) : this.carYaw
     // (joining your way from where he got in: eased across over its first metres)
     if (this.joinK < 1) {
       const dj = Math.hypot(p.x - this.joinFrom.x, p.z - this.joinFrom.z)
-      this.joinK = Math.min(1, this.joinK + (this.carSpeed * dt) / Math.max(4, dj))
+      this.joinK = Math.min(1, this.joinK + (Math.max(0, this.carSpeed) * dt) / Math.max(4, dj))
       const k = this.joinK * this.joinK * (3 - 2 * this.joinK)
       p.set(this.joinFrom.x + (p.x - this.joinFrom.x) * k, 0, this.joinFrom.z + (p.z - this.joinFrom.z) * k)
       yaw = this.joinYaw + Math.atan2(Math.sin(yaw - this.joinYaw), Math.cos(yaw - this.joinYaw)) * k
     }
-    const dy = Math.atan2(Math.sin(yaw - this.carYaw), Math.cos(yaw - this.carYaw))
-    this.carYaw += dy * Math.min(1, dt * 8)
+    // (his turn this step — none while his nose is on your car: turning there swung it INTO yours, a hand's breadth
+    //  at a time, and no step along his way was tried against that)
+    const dy = this.onYou ? 0 : Math.atan2(Math.sin(yaw - this.carYaw), Math.cos(yaw - this.carYaw)) * Math.min(1, dt * 8)
+    this.carYaw += dy
+    // (… and the step is tried as he will stand after it: turned)
+    this.castQ.setFromAxisAngle(UP, dy).multiply(this.carQ)
+    // HIS CAR MEETS YOURS (2026-11-21, the user: "hit on the side, it does not touch my car's side … it must hit the
+    // car, not an invisible outer layer"): he was stopped by a distance between the two cars' MIDDLES — your car
+    // across his way, that left him a metre off its side — and what was solid of him was a box round his mirrors, his
+    // bars and his spare wheel. Now this step's way is tried with his car's own NOSE (its tail, backing) against your
+    // vehicle's own body: he goes as far as touching it, wherever on it that is, and no further.
+    // (what is cut is the CLOSING part of the step — his way less yours: of two cars going on together, nothing)
+    let mx = p.x - this.carP.x, mz = p.z - this.carP.z
+    // (a step is never longer than his speed makes it — and a little: easing across to your way)
+    { const ml = Math.hypot(mx, mz), most = Math.abs(this.carSpeed) * dt * 1.6 + 0.04; if (ml > most) { mx *= most / ml; mz *= most / ml; p.x = this.carP.x + mx; p.z = this.carP.z + mz } }
+    const k = this.reach(mx, mz, dt), touch = k < 1, rel = this.rel
+    this.onYou = touch
+    if (touch) {
+      const cut = 1 - k
+      p.x -= rel.x * cut; p.z -= rel.z * cut
+      // (STOPPED by your car, never moved by it: he does not give way before a car driven at him — the cut is of his
+      //  own step, to nothing at the most. Then it is your car that runs into his, and that is a crash: both take it)
+      if ((p.x - this.carP.x) * mx + (p.z - this.carP.z) * mz < 0) { p.x = this.carP.x; p.z = this.carP.z }
+      this.arc = arc0 + (p.x - this.carP.x) * fx + (p.z - this.carP.z) * fz
+    }
     this.carP.x = p.x
     this.carP.z = p.z
     this.tilt(dt)
-    // THE RAM: his bumper on yours and still closing — your car shoved on (and round a little), his drops back
-    if (hostile && this.ramCool <= 0 && this.joinK >= 1) {
-      const d = Math.hypot(you.x - this.carP.x, you.z - this.carP.z), closing = this.carSpeed - yours
-      if (d < contact + 0.6 && closing > 1) {
-        // (what your car takes: 1.5 m/s and 0.6 of the speed he closes at — 6 m/s at the most, a parked car knocked on ~20 km/h)
-        H.shove(-Math.sin(this.carYaw), -Math.cos(this.carYaw), Math.min(6, 1.5 + closing * 0.6), (Math.random() - 0.5) * 2)
-        this.carSpeed = Math.max(0, yours - 2)
-        this.ramCool = 2.2 + Math.random() * 1.5
-        this.rams++
-      }
+    if (!touch) { this.leanT = 0; return }
+    // (how fast he came onto you: his pace till this step, less yours along it)
+    const closing = this.carSpeed - alongYou
+    if (hostile && this.joinK >= 1 && this.ramCool <= 0 && closing > 1) {
+      // THE RAM: two cars of a weight and a DEAD blow — nothing springs back: both go on at the speed between the
+      // two. Yours is given its half of what he closed at (there, where he met it — its damage is put there, and his
+      // car takes the same: main.ts), his loses his half; and he stays on you. (His car is not moved on with yours
+      // in this step: yours takes a step or two to get going — its tyres, its brakes — and moved on ahead of that he
+      // was 7 cm and more INTO it, measured, and the physics threw it. A hand's breadth opens between them for a
+      // tenth of a second instead; then he is on it again, pushing.)
+      this.ramAt.copy(this.hitAt)
+      H.shove(fx, fz, Math.min(8, closing / 2), 0, this.hitAt, this.solid ? this.solid.body : null)
+      H.jolt?.(Math.min(1, 0.25 + closing * 0.07), you.x, you.y + 0.6, you.z)
+      this.carSpeed -= closing / 2
+      this.pushT = 1.4
+      this.ramCool = 3.4 + Math.random() * 1.5
+      this.leanT = 0
+      this.rams++
+      this.rammedAt = performance.now() / 1000
+      return // (the two now go at one speed: nothing more to take off his)
     }
+    if (hostile && this.pushT > 0) H.shove(fx, fz, 2.2 * dt, 0) // (his weight on you: pushed along, 2.2 m/s²)
+    // (on you with no blow in it — he came up as you slowed, or still easing across to your way: a third of a second
+    //  of that and he lets go, to take a run at you)
+    if (hostile && this.pushT <= 0 && this.ramCool <= 0) { if ((this.leanT += dt) > 0.35) { this.leanT = 0; this.ramCool = 2.2 + Math.random() * 1.2 } } else this.leanT = 0
+    // (against your car he goes no faster than it does)
+    if (this.carSpeed > alongYou + 0.8) this.carSpeed = Math.max(0, alongYou + 0.8)
+  }
+  /** Where his car met yours at his last ram (the world's). */
+  readonly ramAt = new GFX.Vector3()
+  /** How upright your car stands (1: on its wheels … 0: on its side; under 0: on its roof); the bike: 1. */
+  private yourTilt(): number {
+    const c = this.host.riding() ? null : this.host.car()
+    if (!c) return 1
+    const q = c.root.quaternion
+    return 1 - 2 * (q.x * q.x + q.z * q.z)
+  }
+  private pushT = 0
+  private leanT = 0
+  private onYou = false
+  private readonly castQ = new GFX.Quaternion()
+  private readonly hitAt = new GFX.Vector3()
+  private readonly rel = { x: 0, y: 0, z: 0 }
+  private meshOf = -1
+  private hasHulls = false
+  /** His car's nose and tail (its own shape's front and back 0.6 m, wrapped — car space): what is tried against
+   *  your vehicle. */
+  private nose: RAPIER.Shape | null = null
+  private tail: RAPIER.Shape | null = null
+  /** How much of this step's way (mx, mz) his car can go before its NOSE — its tail, backing — meets your vehicle's
+   *  own body, both as they stand in the physics now (1: all of it; `hitAt`: where they meet). One cast of a convex
+   *  shape of 96 points against your car's inner solid pieces, and only in the steps the two could meet in. */
+  private reach(mx: number, mz: number, dt: number): number {
+    const yb = this.host.body(), sh = this.carSpeed >= 0 ? this.nose : this.tail
+    if (!yb || !sh) return 1
+    const you = this.host.pos()
+    const v = yb.linvel(), rel = this.rel
+    // (nothing to try while the two are too far apart to meet in this step: his reach to his nose or tail, your car's
+    //  round, what the two close in the step, and half a metre)
+    { const box = this.car.box, hb = this.host.box(), far = (box ? Math.max(box.h.z - box.c.z, box.h.z + box.c.z) : 2.5) + Math.hypot(hb.hx, hb.hz) + Math.hypot(mx - v.x * dt, mz - v.z * dt) + 0.5
+      if (Math.hypot(you.x - this.carP.x, you.z - this.carP.z) > far) return 1 }
+    rel.x = mx - v.x * dt; rel.z = mz - v.z * dt
+    // (only a step that brings the two NEARER is tried: going apart, nothing holds him — and a cast that begins a
+    //  hair off a hollow mesh is not asked which way out is)
+    if (rel.x * rel.x + rel.z * rel.z < 1e-10 || rel.x * (you.x - this.carP.x) + rel.z * (you.z - this.carP.z) <= 0) return 1
+    // (your vehicle's BODY: its exact mesh and its inner pieces — not its tyre guards: capsules a hand and more
+    //  wider than the wheels, which only the desert's slabs ever met; his nose stopped on those, 0.4 m off your side)
+    // (… its INNER SOLID PIECES where it has them — a few dozen convex ones, 2–4 cm inside its panels: he is stopped
+    //  that much short of them, at the panel. Against its exact mesh — a hundred thousand triangles — one try took
+    //  2.7 ms, every step he was near: measured.)
+    const yh = yb.handle, ST = this.physics.pw.R.ShapeType
+    if (this.meshOf !== yh) { this.meshOf = yh; this.hasHulls = false; for (let i = 0, n = yb.numColliders(); i < n; i++) if (yb.collider(i).shapeType() === ST.ConvexPolyhedron) this.hasHulls = true }
+    const only = this.hasHulls
+    const hit = this.physics.pw.world.castShape(this.carP, this.castQ, rel, sh, only ? SKIN + INSET : SKIN, 1, true, undefined, undefined, undefined, this.solid ? this.solid.body : undefined, (c) => c.parent()?.handle === yh && (only ? c.shapeType() === ST.ConvexPolyhedron : c.shapeType() !== ST.Capsule))
+    if (!hit) return 1
+    this.hitAt.set(hit.witness1.x, hit.witness1.y, hit.witness1.z)
+    return Math.max(0, Math.min(1, hit.time_of_impact))
   }
   /** (the harness) how many times he has rammed you. */
   rams = 0
+  /** His car has left your way (he drove at you on foot): it joins it again from where it is. */
+  private offWay = false
 
   /** THE ENEMY IN HIS CAR, YOU ON FOOT: he drives at you (within 45 m, for 9 s at most); hits you — you go down — and
    *  pulls up (then gets out and fights). */
@@ -556,13 +740,16 @@ export class Companion {
     else {
       const dy = Math.atan2(Math.sin(Math.atan2(-dx, -dz) - this.carYaw), Math.cos(Math.atan2(-dx, -dz) - this.carYaw))
       this.carYaw += clamp(dy, -1.6 * dt, 1.6 * dt)
-      const want = Math.abs(dy) > 1 ? 4 : Math.min(13, 4 + d * 0.6)
+      const fit = this.car.damage ? this.car.damage.drive : 1
+      const want = (Math.abs(dy) > 1 ? 4 : Math.min(13, 4 + d * 0.6)) * Math.min(1, fit * 1.5)
       this.carSpeed += clamp(want - this.carSpeed, -9 * dt, 6 * dt)
-      const ahead = dx * fx + dz * fz, side = Math.abs(dx * fz - dz * fx)
-      if (this.carSpeed > 3 && ahead > 0 && ahead < this.car.half.z + 0.7 && side < this.car.half.x + 0.3) {
+      // (his bumper ON you — your body 0.3 m round — not a stride off it)
+      const ahead = dx * fx + dz * fz, side = Math.abs(dx * fz - dz * fx), hb = this.car.box, nose = hb ? hb.h.z - hb.c.z : this.car.half.z
+      if (this.carSpeed > 3 && ahead > 0 && ahead < nose + 0.35 && side < this.car.half.x + 0.25) {
         this.yours = Math.max(0, this.yours - 45)
         this.sinceHit = 0
         yh.shift(fx * 0.8, 0, fz * 0.8)
+        H.jolt?.(1, you.x, you.y + 0.8, you.z)
         if (yh.knockdown(1.6, () => { if (this.yours <= 0) this.yours = 100 })) H.toast('Run down')
         this.ranDown = true
       }
@@ -603,14 +790,26 @@ export class Companion {
     pos: new GFX.Vector3(),
     alive: () => this.kind === 'enemy' && this.mode !== 'car' && this.mode !== 'passenger' && this.hero.visible && !this.hero.isDown,
     hit: (damage: number, zone: Zone, weapon: string, dir: GFX.Vector3) => {
+      const h = this.hero, H = this.host
       this.sinceHit = 0
       this.hp = Math.max(0, this.hp - damage)
       this.shotBy[weapon] = (this.shotBy[weapon] ?? 0) + 1
-      if (dir.lengthSq() > 0.01) this.hero.shift(dir.x * 0.18, 0, dir.z * 0.18)
-      if (this.hp <= 0) { if (this.hero.knockdown(2.4, () => { this.hp = 100; this.cool = 1 })) this.host.toast('Enemy down') }
-      else { this.hero.strike(zone === 'head' ? 'hit_head' : 'hit_body', { force: true }); this.cool = Math.max(this.cool, 0.5) }
+      this.plan.length = 0
+      // (thrown the way it came: a bullet a little, the sniper's more)
+      const along = dir.lengthSq() > 0.01
+      if (along) { const k = weapon === 'sniper' ? 2.6 : 0.9; h.push(dir.x * k, dir.z * k) }
+      if (this.hp <= 0) {
+        // KILLED: he drops where he stands — back, shot from the front; onto his face, from behind — and lies
+        // there; after a while he is back, from behind you (the fists only knock him down: he gets up from those)
+        const front = !along || dir.x * -Math.sin(h.heading) + dir.z * -Math.cos(h.heading) < 0.2
+        if (h.knockdown(4.5, () => { this.hp = 100; this.cool = 1; this.join() }, front ? 'die_back' : 'die_fwd', false)) H.toast('Enemy down')
+        return
+      }
+      // (how he takes it: the head back, the leg from under him, folded over it — a heavy round staggers him)
+      const clip: FightClip = zone === 'head' ? 'hit_head' : zone === 'limb' ? 'hit_leg' : damage > 40 ? 'stagger' : 'hit_body'
+      h.strike(clip, { force: true })
+      this.cool = Math.max(this.cool, 0.5)
     },
-    stun: (seconds: number) => { this.hero.stunUntil = performance.now() / 1000 + seconds; this.cool = Math.max(this.cool, seconds) },
   }
   /** (the harness) what has hit him, by weapon. */
   readonly shotBy: Record<string, number> = {}
@@ -620,49 +819,102 @@ export class Companion {
     return [this.me]
   }
 
-  /** YOUR blow (J: a punch — jab, cross, hook … ; U: a kick), on foot in the enemy's game: thrown his way if he's close. */
+  /** YOUR blow (J: a punch; U: a kick), on foot in the enemy's game: thrown his way if he's close. A RUN of them:
+   *  pressed again once one has landed, the next is thrown straight out of it — jab, cross, hook, uppercut, a hook to
+   *  the body; a low kick, a front kick, a roundhouse (a knee when he's right on you). Left a moment, the run starts again. */
   attack(what: 'punch' | 'kick'): void {
     if (this.kind !== 'enemy' || !this.fightReady || !this.host.onFoot()) return
-    const yh = this.host.you()
-    const clip: FightClip = what === 'kick' ? (this.kicks % 3 === 2 ? 'kick_round' : 'kick_front') : (['jab', 'cross', 'hook', 'jab', 'cross', 'uppercut'] as const)[this.punches % 6]
-    if (!yh.strike(clip)) return
+    const yh = this.host.you(), now = performance.now()
+    const last = this.yoursLast
+    // (mid-blow: only once it has landed — the rest of it is cut short for the next)
+    const chain = yh.striking && !!last && yh.playing === last && yh.clipTime >= yh.hitTime(last) + 0.03
+    if (yh.striking && !chain) return
+    if (now - this.yoursAt > 1100) this.punches = this.kicks = 0
+    const dx = this.hero.pos.x - yh.pos.x, dz = this.hero.pos.z - yh.pos.z, d = Math.hypot(dx, dz)
+    const clip: FightClip = what === 'kick' ? (d < 0.95 && this.kicks % 2 === 1 ? 'knee' : KICKS[this.kicks % KICKS.length]) : PUNCHES[this.punches % PUNCHES.length]
+    if (!yh.strike(clip, { force: chain })) return
     if (what === 'kick') this.kicks++; else this.punches++
-    const dx = this.hero.pos.x - yh.pos.x, dz = this.hero.pos.z - yh.pos.z
-    if (this.mode === 'foot' && Math.hypot(dx, dz) < 3) yh.heading = Math.atan2(-dx, -dz)
-    this.blows.push({ by: 'you', t: yh.hitTime(clip), clip })
+    this.yoursLast = clip
+    this.yoursAt = now
+    if (this.mode === 'foot' && d < 3) yh.heading = Math.atan2(-dx, -dz)
+    // (a step into it: carried toward him as it's thrown — not if he's already on you)
+    if (d > 1.0 && d < 2.6) yh.push((dx / d) * 1.6, (dz / d) * 1.6)
+    this.blows.push({ by: 'you', t: yh.hitTime(clip), clip, seen: false })
   }
+  private yoursLast: FightClip | null = null
+  private yoursAt = 0
+  /** The run he is throwing (what's still to come of it), and which way he circles (+1 / −1). */
+  private readonly plan: FightClip[] = []
+  private planLast: FightClip | null = null
+  private circle = 1
+  private circleT = 0
 
-  /** He closes in on you, stands in his guard at arm's length, and throws punches and kicks; you down, he waits. */
+  /** He closes in on you; in reach he fights as a man does: CIRCLES you with his guard up and his eyes on you, throws
+   *  a RUN of blows — each out of the last as it lands — and steps off; he SEES yours coming and now and then covers
+   *  up, slips back or ducks under it. You down, he waits (and taunts). */
   private fight(dt: number): void {
-    const H = this.host, you = H.pos(), me = this.hero.pos, yh = H.you()
+    const H = this.host, you = H.pos(), me = this.hero.pos, yh = H.you(), h = this.hero
     const dx = you.x - me.x, dz = you.z - me.z, d = Math.hypot(dx, dz)
     // (he lost you: back in from behind you)
     if (d > 140 || Math.abs(you.y - me.y) > 30) { const at = this.behind(35, 8); this.standAt(at.x, at.z); return }
     const near = d < 7 && this.fightReady
-    this.hero.stance = yh.stance = near ? 'guard' : null
+    h.stance = yh.stance = near ? 'guard' : null
     // (never in each other: closer than 0.8 m he's eased back to it)
-    if (d < 0.8 && !this.hero.isDown && !yh.isDown) {
-      const ux = d > 0.05 ? -dx / d : Math.sin(this.hero.heading), uz = d > 0.05 ? -dz / d : Math.cos(this.hero.heading), k = (0.8 - d) * Math.min(1, dt * 8)
-      this.hero.shift(ux * k, 0, uz * k)
+    if (d < 0.8 && !h.isDown && !yh.isDown) {
+      const ux = d > 0.05 ? -dx / d : Math.sin(h.heading), uz = d > 0.05 ? -dz / d : Math.cos(h.heading), k = (0.8 - d) * Math.min(1, dt * 8)
+      h.shift(ux * k, 0, uz * k)
     }
+    const toYou = Math.atan2(-dx, -dz)
     const face = () => { this.go(dx, dz, 0); this.stuckT = 0 }
-    if (this.hero.isDown || this.hero.striking || (this.grace -= dt) > 0) { face(); return }
-    if (d > REACH) { this.steerTo(you.x, you.z, d > 14 ? 7.4 : d > 3.5 ? 5.4 : 2.4, dt, 2); return }
-    face()
-    if (!this.fightReady) return
+    if (h.isDown || (this.grace -= dt) > 0) { this.plan.length = 0; face(); return }
+    if (h.striking) {
+      face()
+      // THE RUN: the next blow out of this one, once it has landed
+      const last = this.planLast, next = this.plan[0]
+      if (next && last && h.playing === last && h.clipTime >= h.hitTime(last) + 0.04 && d < REACH + 0.5 && !yh.isDown) {
+        this.plan.shift()
+        if (h.strike(next, { force: true })) { this.planLast = next; this.blows.push({ by: 'him', t: h.hitTime(next), clip: next, seen: true }) }
+      }
+      return
+    }
+    if (d > REACH + 0.25) { this.plan.length = 0; this.steerTo(you.x, you.z, d > 14 ? 7.4 : d > 3.5 ? 5.4 : 2.4, dt, 2); return }
+    if (!this.fightReady) { face(); return }
     // (you're down: he stands over you — a taunt now and then)
-    if (yh.isDown) { if ((this.cool -= dt) <= 0) { this.hero.strike('taunt'); this.cool = 2.5 + Math.random() * 2 } return }
-    if ((this.cool -= dt) > 0) return
-    const r = Math.random()
-    const clip: FightClip = r < 0.26 ? 'jab' : r < 0.5 ? 'cross' : r < 0.66 ? 'hook' : r < 0.76 ? 'uppercut' : r < 0.9 ? 'kick_front' : 'kick_round'
-    if (this.hero.strike(clip)) {
-      this.blows.push({ by: 'him', t: this.hero.hitTime(clip), clip })
-      this.cool = this.hero.clipLength(clip) + 0.35 + Math.random() * 0.9
+    if (yh.isDown) { face(); if ((this.cool -= dt) <= 0) { h.strike('taunt'); this.cool = 2.5 + Math.random() * 2 } return }
+    // YOUR BLOW COMING (seen a fifth of a second out): one in three he does something about — covers up (the most),
+    // slips back, ducks under one at his head
+    for (const b of this.blows) {
+      if (b.by !== 'you' || b.seen || b.t > 0.24) continue
+      b.seen = true
+      const r = Math.random(), B = BLOW[b.clip]
+      if (r < 0.2) h.strike('block')
+      else if (r < 0.29 && !B?.kick) h.strike('dodge')
+      else if (r < 0.36 && B?.head) h.strike('duck')
+      if (h.striking) { this.cool = Math.max(this.cool, 0.25); return }
+    }
+    if ((this.cool -= dt) > 0) {
+      // BETWEEN RUNS he circles: sideways round you at a walk, facing you, kept at arm's length (the way changed now and then)
+      if ((this.circleT -= dt) <= 0) { this.circleT = 1.2 + Math.random() * 2.2; if (Math.random() < 0.45) this.circle = -this.circle }
+      const ux = dx / Math.max(d, 1e-3), uz = dz / Math.max(d, 1e-3), out = (d - REACH) * 1.6
+      this.go(-uz * this.circle + ux * out, ux * this.circle + uz * out, 1.25, toYou)
+      this.stuckT = 0
+      return
+    }
+    face()
+    // A RUN: one of his, by the reach (right on you: the knee)
+    const run = d < 0.9 && Math.random() < 0.35 ? ['knee' as FightClip] : RUNS[Math.floor(Math.random() * RUNS.length)]
+    if (h.strike(run[0])) {
+      this.plan.length = 0
+      for (let i = 1; i < run.length; i++) this.plan.push(run[i])
+      this.planLast = run[0]
+      this.blows.push({ by: 'him', t: h.hitTime(run[0]), clip: run[0], seen: true })
+      this.cool = 0.55 + Math.random() * 1.1
     }
   }
 
   /** The blows in the air: each lands at its moment — if it's still being thrown (he wasn't hit first), the other is in
-   *  reach and in front. A hit staggers (the head for a punch, the body for a kick), pushes back; strength gone: down. */
+   *  reach and in front, and didn't cover up, slip back or duck in time. A hit is TAKEN as that blow is (BLOW): the
+   *  two held on it for a moment, he's thrown back, the view jolts; strength gone: down. */
   private blowsStep(dt: number): void {
     const H = this.host, yh = H.you()
     for (let i = this.blows.length - 1; i >= 0; i--) {
@@ -671,59 +923,181 @@ export class Companion {
       this.blows.splice(i, 1)
       const A = b.by === 'him' ? this.hero : yh, V = b.by === 'him' ? yh : this.hero
       if (A.playing !== b.clip || !A.striking || V.isDown || this.mode !== 'foot' || !H.onFoot() || (V.state !== 'move' && V.state !== 'land')) continue
-      const dx = V.pos.x - A.pos.x, dz = V.pos.z - A.pos.z, d = Math.hypot(dx, dz), kick = b.clip.startsWith('kick')
-      if (d > (kick ? 1.8 : 1.5) || Math.abs(V.pos.y - A.pos.y) > 1.2) continue
+      const dx = V.pos.x - A.pos.x, dz = V.pos.z - A.pos.z, d = Math.hypot(dx, dz), B = BLOW[b.clip] ?? BLOW.jab
+      if (d > (B.kick ? 1.85 : 1.55) || Math.abs(V.pos.y - A.pos.y) > 1.2) continue
       // (in front of him: within 65° of the way he faces)
       if ((dx * -Math.sin(A.heading) + dz * -Math.cos(A.heading)) / Math.max(d, 1e-3) < 0.42) continue
-      const push = (kick ? 0.45 : 0.22) / Math.max(d, 0.2)
+      const ux = dx / Math.max(d, 0.2), uz = dz / Math.max(d, 0.2), hy = V.pos.y + (B.react === 'hit_leg' ? 0.6 : B.head ? 1.6 : 1.15)
+      // (out of its way: slipped back from a punch, under one at the head)
+      const def = V.playing
+      if ((def === 'dodge' && !B.kick) || (def === 'duck' && B.head)) continue
       this.sinceHit = 0
-      this.landed[b.by]++
-      if (b.by === 'you') {
-        // (he blocks one in four he sees coming)
-        if (!this.hero.striking && Math.random() < 0.25 && this.hero.strike('block')) { this.cool = Math.max(this.cool, 0.4); continue }
-        this.hp = Math.max(0, this.hp - (DMG[b.clip] ?? 10))
-        this.hero.shift(dx * push, 0, dz * push)
-        if (this.hp <= 0) { if (this.hero.knockdown(1.8, () => { this.hp = 100; this.cool = 0.8 })) H.toast('Enemy down') }
-        else { this.hero.strike(kick ? 'hit_body' : 'hit_head', { force: true }); this.cool = Math.max(this.cool, 0.45) }
-      } else {
-        this.yours = Math.max(0, this.yours - (DMG[b.clip] ?? 10))
-        yh.shift(dx * push, 0, dz * push)
-        if (this.yours <= 0) { if (yh.knockdown(1.2, () => { this.yours = 100 })) H.toast('You went down') }
-        else yh.strike(kick ? 'hit_body' : 'hit_head', { force: true })
+      // COVERED UP: taken on the arms — a fifth of it, knocked back into his guard
+      if (def === 'block' || def === 'block_hit') {
+        V.strike('block_hit', { force: true })
+        V.push(ux * B.push * 0.5, uz * B.push * 0.5)
+        A.hitStop(B.stop * 0.6); V.hitStop(B.stop * 0.6)
+        H.jolt?.(B.jolt * 0.35, V.pos.x - ux * 0.3, hy, V.pos.z - uz * 0.3)
+        if (b.by === 'you') { this.hp = Math.max(1, this.hp - (DMG[b.clip] ?? 10) * 0.2); this.cool = Math.max(this.cool, 0.35) }
+        else this.yours = Math.max(1, this.yours - (DMG[b.clip] ?? 10) * 0.2)
+        continue
       }
+      this.landed[b.by]++
+      A.hitStop(B.stop); V.hitStop(B.stop * 1.25)
+      V.push(ux * B.push, uz * B.push)
+      // (the view: yours taken shakes it hard, yours landed a little; the dust knocked out of him where it lands)
+      H.jolt?.(b.by === 'him' ? Math.min(1, B.jolt * 1.5) : B.jolt * 0.75, V.pos.x - ux * 0.3, hy, V.pos.z - uz * 0.3)
+      const left = b.by === 'you' ? (this.hp = Math.max(0, this.hp - (DMG[b.clip] ?? 10))) : (this.yours = Math.max(0, this.yours - (DMG[b.clip] ?? 10)))
+      if (left <= 0) {
+        if (b.by === 'you') { this.plan.length = 0; if (this.hero.knockdown(1.8, () => { this.hp = 100; this.cool = 0.8 })) H.toast('Enemy down') }
+        else if (yh.knockdown(1.2, () => { this.yours = 100 })) H.toast('You went down')
+        continue
+      }
+      // (a heavy one on a man already hurt: staggered)
+      V.strike(B.heavy && left < 55 && Math.random() < 0.45 ? 'stagger' : B.react, { force: true })
+      if (b.by === 'you') { this.plan.length = 0; this.cool = Math.max(this.cool, 0.45) }
     }
   }
   /** (the harness) the blows that landed. */
   readonly landed = { him: 0, you: 0 }
 
-  /** His car drawn where it is, and solid there. */
+  /** His car drawn where it is — between the physics' last two steps, as yours is — and solid there. */
   private poseCar(dt: number): void {
     const on = this.carOn
     this.car.root.userData.on = on
     if (!on) { this.unsolid(); return }
-    const P = this.carP, Q = this.carQ
+    let P = this.carP, Q = this.carQ
+    if (this.mode === 'car' && !Number.isNaN(this.prevP.x) && this.prevP.distanceToSquared(P) < 25) {
+      const al = this.physics.pw.alpha
+      P = this.drawP.lerpVectors(this.prevP, this.carP, al); Q = this.drawQ.slerpQuaternions(this.prevQ, this.carQ, al)
+    }
     this.car.pose([P.x, P.y, P.z], [Q.x, Q.y, Q.z, Q.w], this.mode === 'car' ? this.carSpeed : 0, dt)
+    { const sp = this.mode === 'car' ? this.carSpeed : 0; this.carVel.set(-Math.sin(this.carYaw) * sp, 0, -Math.cos(this.carYaw) * sp) }
     // (the driver: he's seen in it)
     const s = this.car.driverSeat
     if (this.mode === 'car' && s && !this.hero.seated) this.hero.sitIn(this.car.root, s.hips, () => null)
-    const box = this.car.box
-    if (!box) return
+    const shape = this.car.shape
+    if (!shape) return
     const pw = this.physics.pw, R = pw.R, key = `car:${this.car.id}`
     if (this.solid && this.solid.key !== key) this.unsolid()
     if (!this.solid) {
-      const body = pw.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(P.x, P.y, P.z).setRotation({ x: Q.x, y: Q.y, z: Q.z, w: Q.w }))
-      pw.world.createCollider(R.ColliderDesc.cuboid(box.h.x, box.h.y, box.h.z).setTranslation(box.c.x, box.c.y, box.c.z).setCollisionGroups(group(Groups.Static, 0xffff)).setFriction(0.8), body)
+      // WHAT IS SOLID OF HIS CAR: ITS OWN SHAPE (it was the box round everything on it — its mirrors, its bars, its
+      // spare wheel: an invisible layer a hand or two off its panels). The exact body as a triangle mesh — your car's
+      // inner hulls, a walker, a bullet meet it — and its own inner solid, which your car's exact mesh meets (two
+      // triangle meshes do not meet each other): metal on metal either way, to a couple of centimetres.
+      const C = this.carP, Cq = this.carQ
+      const body = pw.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(C.x, C.y, C.z).setRotation({ x: Cq.x, y: Cq.y, z: Cq.z, w: Cq.w }))
+      const idx = new Uint32Array(shape.mesh.length / 3)
+      for (let i = 0; i < idx.length; i++) idx[i] = i
+      pw.world.createCollider(R.ColliderDesc.trimesh(shape.mesh, idx).setCollisionGroups(group(Groups.Static | Groups.StaticMesh, STATIC_MESH_FILTER)).setFriction(0.6), body)
+      // (… those inner pieces, a few dozen of a hand's size, joined into SECTIONS along the car — 0.6 m each, each
+      //  wrapped: your car's mesh is a thin shell, and coming at him it slipped between the small pieces, a quarter
+      //  of a metre in, measured; a few big solid ones stop it. Inside his panels still — his wheels' room filled.)
+      { const all: number[] = []
+        for (const h of shape.hulls) for (let i = 0; i < h.length; i++) all.push(h[i])
+        const L = 0.6, nSec = Math.max(1, Math.ceil((shape.rear - shape.front) / L))
+        for (let k = 0; k < nSec; k++) {
+          const z0 = shape.front + k * L - 0.04, z1 = shape.front + (k + 1) * L + 0.04, pts: number[] = []
+          for (let i = 0; i < all.length; i += 3) if (all[i + 2] >= z0 && all[i + 2] <= z1) pts.push(all[i], all[i + 1], all[i + 2])
+          const d = pts.length >= 12 ? R.ColliderDesc.convexHull(new Float32Array(pts)) : null
+          if (d) pw.world.createCollider(d.setCollisionGroups(group(Groups.Static, Groups.VehicleMesh)).setFriction(0.6), body)
+        } }
+      // (its nose and its tail — the front and the back 0.6 m of it, wrapped: what `reach` tries against your car)
+      // (… of 96 points each: the furthest of that end of the mesh along 96 ways round — its wrap to a centimetre or
+      //  two, and never outside it. Wrapped whole — thousands of points — one try of it against your car's mesh took
+      //  3.5 ms, every physics step he was near: measured.)
+      const wrap = (keep: (z: number) => boolean): RAPIER.Shape | null => {
+        const m = shape.mesh, N = 96, best = new Float64Array(N).fill(-Infinity), at = new Int32Array(N).fill(-1), dir = new Float64Array(N * 3)
+        for (let k = 0; k < N; k++) { const y = 1 - (2 * (k + 0.5)) / N, r = Math.sqrt(1 - y * y), a = k * 2.399963; dir[k * 3] = Math.cos(a) * r; dir[k * 3 + 1] = y; dir[k * 3 + 2] = Math.sin(a) * r }
+        for (let i = 0; i < m.length; i += 3) {
+          if (!keep(m[i + 2])) continue
+          for (let k = 0; k < N; k++) { const d = m[i] * dir[k * 3] + m[i + 1] * dir[k * 3 + 1] + m[i + 2] * dir[k * 3 + 2]; if (d > best[k]) { best[k] = d; at[k] = i } }
+        }
+        const pts: number[] = []
+        for (const i of new Set(at)) if (i >= 0) pts.push(m[i], m[i + 1], m[i + 2])
+        return pts.length >= 12 ? (R.ColliderDesc.convexHull(new Float32Array(pts))?.shape ?? null) : null
+      }
+      this.nose = wrap((z) => z < shape.front + 0.6)
+      this.tail = wrap((z) => z > shape.rear - 0.6)
       this.solid = { body, key }
     }
-    this.solid.body.setNextKinematicTranslation({ x: P.x, y: P.y, z: P.z })
-    this.solid.body.setNextKinematicRotation({ x: Q.x, y: Q.y, z: Q.z, w: Q.w })
   }
+  /** YOUR CAR'S CCD OFF WHILE HIS IS NEAR (within 10 m; on again past 14). Rapier's CCD holds a fast body where it is
+   *  for the rest of a step in which it would meet something — and his car, a hair off yours and coming on, was that
+   *  something every step: your car was held (4.5 cm moved in a step its speed made 18, measured), his went on, into
+   *  it — a quarter of a metre and more — and the contacts then threw both. Without it your car goes where its speed
+   *  says; its inner solid pieces still keep it out of the ground. */
+  private ccdOff: RAPIER.RigidBody | null = null
+  private ccd(): void {
+    const b = this.host.body(), you = this.host.pos()
+    const near = !!b && this.carOn && Math.hypot(you.x - this.carP.x, you.z - this.carP.z) < (this.ccdOff ? 14 : 10)
+    const want = near ? b : null
+    if (want === this.ccdOff) return
+    if (this.ccdOff) { try { this.ccdOff.enableCcd(true) } catch { /* (that body is gone: another car taken) */ } }
+    if (want) want.enableCcd(false)
+    this.ccdOff = want
+  }
+  private readonly prevP = new GFX.Vector3(NaN, 0, 0)
+  private readonly prevQ = new GFX.Quaternion()
+  private readonly drawP = new GFX.Vector3()
+  private readonly drawQ = new GFX.Quaternion()
   private unsolid(): void {
-    if (this.solid) { this.physics.pw.world.removeRigidBody(this.solid.body); this.solid = null }
+    if (this.solid) { this.physics.pw.world.removeRigidBody(this.solid.body); this.solid = null; this.nose = this.tail = null }
   }
 
-  /** The physics step (60 Hz): his walk. */
-  fixed(dt: number): void { if (this.ready) this.hero.fixed(dt) }
+  // ------------------------------------------------------------------------------------------- his car's damage
+  /** His car's solid body (null: none stands) — what your car's crash may have been against. */
+  get carBody(): RAPIER.RigidBody | null { return this.solid ? this.solid.body : null }
+  /** His car is there to be seen (its damage's effects — main.ts). */
+  get carShown(): boolean { return this.carOn }
+  /** How his car moves (the world's, m/s). */
+  readonly carVel = new GFX.Vector3()
+  private wreckT = 0
+  /** HIS CAR TAKES A BLOW (Damage.ts): at (x, y, z), pushing its metal along (dx, dy, dz) — the world's —, of dv m/s.
+   *  Your crash into him, his ram on you: the same blow, the other way. */
+  carBlow(x: number, y: number, z: number, dx: number, dy: number, dz: number, dv: number, shot = false): void {
+    const dm = this.car.damage
+    if (!dm || !this.carOn) return
+    const q = this.qt.copy(this.carQ).invert()
+    const P = this.va.set(x, y, z).sub(this.carP).applyQuaternion(q), D = this.vb.set(dx, dy, dz).applyQuaternion(q)
+    dm.hit(P.x, P.y, P.z, D.x, D.y, D.z, dv, shot ? 'shot' : 'crash')
+    // (YOUR crash into him checks him: by how hard, his pace gone — his own ram has already taken its half of it)
+    if (!shot && this.mode === 'car' && performance.now() / 1000 - this.rammedAt > 0.3) this.carSpeed *= Math.max(0, 1 - dv / 12)
+  }
+  /** His car has BLOWN UP: in it, he is thrown out and takes the blast (the enemy: most of his strength — down). */
+  carBlown(): void {
+    if (this.mode !== 'car') return
+    this.leaveCar()
+    if (this.kind !== 'enemy') return
+    this.me.hit(DAMAGE.explosion.hurt, 'body', 'blast', this.va.set(-Math.cos(this.carYaw), 0, Math.sin(this.carYaw)))
+  }
+  /** A BLAST at (x, z), reaching r m: on foot within it, the enemy takes up to `hurt` of his strength. */
+  blast(x: number, z: number, r: number, hurt: number): void {
+    if (this.kind !== 'enemy' || !this.me.alive()) return
+    const p = this.hero.pos, d = Math.hypot(p.x - x, p.z - z)
+    if (d < r) this.me.hit(hurt * (1 - d / r), 'body', 'blast', this.va.set((p.x - x) / (d || 1), 0, (p.z - z) / (d || 1)))
+  }
+  /** The moment of his last ram (s on the page's clock; 0: none yet) — your car's crash just after it is his doing. */
+  rammedAt = 0
+
+  /** The physics step (60 Hz): his walk — and HIS CAR'S WAY, made here, in the same steps as your car's: the two
+   *  are compared as they stand at the same instant (frame by frame, his was up to a step ahead of yours — a hand's
+   *  breadth at speed), and his solid body moves a step's worth each step, whatever the frame rate. */
+  fixed(dt: number): void {
+    if (!this.ready) return
+    this.hero.fixed(dt)
+    this.prevP.copy(this.carP); this.prevQ.copy(this.carQ)
+    this.ccd()
+    if (this.mode === 'car' && this.placed && this.host.playing()) this.drive(dt)
+    if (this.solid) {
+      const P = this.carP, Q = this.carQ, b = this.solid.body, at = b.translation()
+      // (brought somewhere — beside him, back onto your way: PUT there. Swept there in one step it had the speed of
+      //  the whole move, and whatever it touched took that)
+      if ((P.x - at.x) ** 2 + (P.y - at.y) ** 2 + (P.z - at.z) ** 2 > 1.5 * 1.5) { b.setTranslation({ x: P.x, y: P.y, z: P.z }, true); b.setRotation({ x: Q.x, y: Q.y, z: Q.z, w: Q.w }, true) }
+      b.setNextKinematicTranslation({ x: P.x, y: P.y, z: P.z })
+      b.setNextKinematicRotation({ x: Q.x, y: Q.y, z: Q.z, w: Q.w })
+    }
+  }
 
   /** After the physics: his skeleton posed. */
   animate(dt: number): void {
@@ -767,6 +1141,7 @@ export class Companion {
   }
 
   dispose(): void {
+    if (this.ccdOff) { try { this.ccdOff.enableCcd(true) } catch { /* (gone) */ } this.ccdOff = null }
     this.unsolid()
     this.hero.hide()
     this.hero.root.removeFromParent(); this.hero.shadowMesh.removeFromParent()

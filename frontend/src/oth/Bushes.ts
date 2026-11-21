@@ -1,4 +1,5 @@
 import * as GFX from './gfx'
+import { lodEye } from './LodEye'
 import { parklandOf } from './Trees'
 import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
@@ -24,6 +25,7 @@ import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 const TILE = 64
 const STRIDE = 7 // x, y, z, size, rotation, kind, seed
 
+const _dir = new GFX.Vector3()
 export class Bushes {
   readonly group = new GFX.Group()
   readonly data: Float32Array
@@ -86,19 +88,25 @@ export class Bushes {
   /** Terrain occlusion (main.ts sets it): tiles behind the hills are skipped. */
   horizon: Horizon | null = null
   private readonly tileTop = new Map<number, number>()
+  private lodRev = 0
 
   update(camera: GFX.PerspectiveCamera): void {
-    const dir = camera.getWorldDirection(new GFX.Vector3())
-    if (camera.position.distanceToSquared(this.lastPos) < 9 && dir.dot(this.lastDir) > 0.999) return
+    const dir = camera.getWorldDirection(_dir)
+    // (in a lens — the scope, LodEye.ts: chosen again after a small part of the lens's turn, and when the detail's eye
+    //  moves; a bush's reach and its near shape by how far it stands from the SIGHT LINE)
+    const E = lodEye, lens = E.on
+    if (camera.position.distanceToSquared(this.lastPos) < 9 && dir.dot(this.lastDir) > E.turn(0.999) && E.rev === this.lodRev) return
+    this.lodRev = E.rev
     this.lastPos.copy(camera.position); this.lastDir.copy(dir)
-    this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+    this.pv.multiplyMatrices(lens ? E.proj : camera.projectionMatrix, camera.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = this.reach, d = this.data
     for (const l of this.lods) l.n = 0
-    const i0 = Math.floor((cx - R) / TILE), i1 = Math.floor((cx + R) / TILE), j0 = Math.floor((cz - R) / TILE), j1 = Math.floor((cz + R) / TILE)
+    const i0 = Math.floor((lens ? E.x0(R) : cx - R) / TILE), i1 = Math.floor((lens ? E.x1(R) : cx + R) / TILE), j0 = Math.floor((lens ? E.z0(R) : cz - R) / TILE), j1 = Math.floor((lens ? E.z1(R) : cz + R) / TILE)
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const list = this.tiles.get(this.key(i, j))
       if (!list) continue
+      if (lens && E.far(i * TILE, j * TILE, TILE, R)) continue
       const x0 = i * TILE, z0 = j * TILE, hc = this.map.height(x0 + TILE / 2, z0 + TILE / 2)
       this.box.min.set(x0 - 2, hc - 60, z0 - 2)
       this.box.max.set(x0 + TILE + 2, hc + 60, z0 + TILE + 2)
@@ -109,7 +117,7 @@ export class Bushes {
         if (this.horizon.hidden(x0 - 2, z0 - 2, x0 + TILE + 2, z0 + TILE + 2, top)) continue // (behind a hill)
       }
       for (const b of list) {
-        const o = b * STRIDE, dx = d[o] - cx, dz = d[o + 2] - cz, dist2 = dx * dx + dz * dz
+        const o = b * STRIDE, dx = d[o] - cx, dz = d[o + 2] - cz, dist2 = lens ? E.d2(d[o], d[o + 2]) : dx * dx + dz * dz
         if (dist2 > R * R) continue
         const L = this.lods[dist2 < this.near * this.near ? 0 : 1]
         if (L.n >= L.max) continue

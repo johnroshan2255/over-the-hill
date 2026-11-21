@@ -3,7 +3,8 @@
 # to src/assets/models/human/fight.glb: animations only, the game's Character.loadClips reads them by bone name.
 #
 #   blender -b --factory-startup --python scripts/oth/fight.py -- [OUT=src/assets/models/human/fight.glb]
-#           [PREVIEW=<dir>]   stills of every key pose (Workbench), <dir>/<clip>_<frame>.png
+#           [PREVIEW=<dir>]   a film strip of every clip (Workbench), <dir>/<clip>.png — [ONLY=jab,cross] those only,
+#                             [VIEW=side] from his right, square on
 #           [BLEND=<file>]    also save the scene (the actions on the rig — open it, edit the keys)
 #           [FROM=<file>]     export the actions of a .blend edited by hand instead of building them here
 #
@@ -15,10 +16,10 @@
 #   (30 a second), its turn from the rest pose applied to the game's rest pose — so it does not matter how Blender
 #   orients its bones — and written as each bone's own rotation (+ the hips' place).
 #
-# THE CLIPS (each starts and ends in the guard, so they chain): guard (loop), jab, cross, hook, uppercut, kick_front,
-# kick_round, block, dodge, hit_head, hit_body, knockdown (ends on his back: the game's getup_back takes over), taunt.
-# THE KATANA'S (docs/weapons/KATANA.md — each cut as long as its ticks): katana_idle (loop), katana_draw, cut1, cut2,
-# cut3, cut_heavy, katana_wake — the sword in his right fist (`blade`), the left hand put under it by the game.
+# THE CLIPS (each starts and ends in the guard, so they chain): guard (loop); the punches — jab, cross, hook,
+# uppercut, body_hook; the legs — knee, kick_front, kick_round, kick_low; the defence — block, block_hit, dodge, duck;
+# a blow taken — hit_head, hit_head_l, hit_head_r, hit_body, hit_leg, stagger; down — knockdown (ends on his back: the
+# game's getup_back takes over), die_back, die_fwd (ends on his face); taunt. How they MOVE: "the motion", below.
 import bpy, sys, os, json, math, struct
 from mathutils import Matrix, Vector, Quaternion
 
@@ -145,35 +146,10 @@ def pose(**o):
     for s, side in (('l', 'Left'), ('r', 'Right')):
         ik(side + 'Arm', side + 'ForeArm', side + 'Hand', P[s + 'h'], P[s + 'pole'])
         if (s + 'hand') in P: set_rot(side + 'Hand', P[s + 'hand'])
-    # THE KATANA in his right fist (`blade`: the way it points, the way its edge goes): the hand turned to it — at rest
-    # (the T-pose, the palm down) a held blade points forward (+Y) out of the thumb's side, its edge along the knuckles (+X)
-    if 'blade' in P:
-        d, e = blade_axes(*P['blade'])
-        set_rot('RightHand', Matrix((e, d, e.cross(d))).transposed())
     hy_, hp = P['head']
     # (the neck half way between the chest and the head)
     set_rot('Neck', turn((P['yaw'] + sy + hy_) / 2, (P['lean'] + sl + hp) / 2, (P['roll'] + sr) / 2))
     set_rot('Head', turn(hy_, hp, P.get('headroll', 0)))
-
-
-def blade_axes(d, m):
-    """The blade's direction and its edge's (the way it moves, squared to the blade)."""
-    d = Vector(d).normalized(); m = Vector(m)
-    e = (m - d * m.dot(d)).normalized()
-    return d, e
-
-
-# the sword's grip in the right hand at rest (rig space): the palm's middle; its axes (see weapons.py: the blade +Y, the edge −Z)
-GRIP = REST_HEAD['RightHand'] + Vector((0.085, 0.0, -0.025))
-SWORD_REST = Matrix(((0, 0, -1), (0, 1, 0), (1, 0, 0)))   # the sword's (x, y, z) → the rig's (−z, y, x): its edge to +X
-
-
-def sword_matrix():
-    """Where the sword is, the rig posed (the previews; the game does the same from the hand bone)."""
-    pb = PB['RightHand']
-    D = pb.matrix @ pb.bone.matrix_local.inverted()
-    R = SWORD_REST.to_4x4(); R.translation = GRIP
-    return D @ R
 
 
 LAST = {}
@@ -193,145 +169,275 @@ def key(f):
 
 CLIPS = {}
 
+# ------------------------------------------------------------------------------------------------ the motion
+# (2026-11-21, the user: "the action and animation need more, it must feel real … make it custom using Blender".
+#  The first clips were four or five poses a move with Blender's own ease between them: everything started and
+#  stopped together, the fist no faster at the jaw than leaving the guard — and the hook swung against the body's
+#  turn. A move is still WRITTEN as a few poses; what is made of them is this:)
+#
+#   EVERY FRAME is worked out and keyed — nothing is left to a curve.
+#   THE BODY LEADS THE HAND (`LAG`): each part of the pose is read a little ahead of or behind the clip's clock —
+#     the feet and the hips first, the spine after them, the fist on the clock, the head last. A punch is thrown from
+#     the floor; a blow TAKEN runs the other way (`REACT`: the head first, the feet last).
+#   HOW A POSE IS COME TO (its third value): 'in' — gathering speed all the way, fastest as it gets there (a strike
+#     arriving); 'out' — away fast, eased to rest (a recovery, a body thrown back); 'spring' — past it and back (a
+#     guard snapping home); 's' — eased both ends; 'lin'.
+#   HANDS, FEET AND HIPS TRAVEL ON CURVES through the poses either side (a strike's own leg, 'in', goes straight).
+#   A GUARD BREATHES (`breath`): the loops rise and fall, sway and turn a little, on whole cycles.
+EASE = {
+    's': lambda u: u * u * (3 - 2 * u),
+    'in': lambda u: u ** 2.3,
+    'out': lambda u: 1 - (1 - u) ** 2.6,
+    'lin': lambda u: u,
+    'spring': lambda u: (1 - math.exp(-5.5 * u) * math.cos(8.5 * u)) / (1 - math.exp(-5.5) * math.cos(8.5)),
+}
+CURVED = ('lh', 'rh', 'lf', 'rf', 'hips')
+LEGS = ('lf', 'rf', 'lfyaw', 'rfyaw', 'lfpitch', 'rfpitch', 'lknee', 'rknee')
+# (frames each part runs ahead (−) of / behind (+) the clock)
+LAG = dict({k: -1.0 for k in LEGS}, hips=-0.8, yaw=-0.8, lean=-0.5, roll=-0.5, spine=-0.3, head=0.7, headroll=0.7)
+REACT = dict({k: 0.8 for k in LEGS}, head=-1.0, headroll=-1.0, spine=-0.5, lean=-0.2, roll=-0.2, hips=0.2, yaw=0.2, lh=0.9, rh=0.9, lpole=0.9, rpole=0.9)
+NOLAG = {}
 
-def clip(name, keys, loop=False, hit=None):
-    """A clip: [(frame, pose overrides)] — a new action on the rig."""
+
+def flat(v):
+    """A pose value as a flat list of numbers (a number, a vector, a pair of vectors)."""
+    if isinstance(v, (int, float)): return [float(v)]
+    out = []
+    for x in v: out += flat(x)
+    return out
+
+
+def shaped(like, a):
+    """`a` (a flat list) back in the shape of `like`."""
+    if isinstance(like, (int, float)): return a[0]
+    if isinstance(like[0], (int, float)): return tuple(a)
+    n = len(flat(like[0]))
+    return tuple(tuple(a[i * n:(i + 1) * n]) for i in range(len(like)))
+
+
+def anim(name, base, keys, loop=False, hit=None, lag=LAG, breath=0.0):
+    """A clip: keys [(frame, pose overrides, how it's come to)] over the pose `base` — every frame worked out, posed
+    and keyed. `breath`: the loop's rise and fall (m)."""
     LAST.clear()
     act = bpy.data.actions.new(name)
     act.use_fake_user = True
     if not arm.animation_data: arm.animation_data_create()
     arm.animation_data.action = act
-    for f, o in keys:
-        pose(**o)
+    K = []
+    for k in keys:
+        P = dict(base); P.update(k[1])
+        K.append((float(k[0]), P, k[2] if len(k) > 2 else 's'))
+    F = int(math.ceil(K[-1][0]))
+    chans = list(K[0][1].keys())
+    V = {c: [flat(P[c]) for _, P, _ in K] for c in chans}
+    T = [t for t, _, _ in K]
+
+    def at(c, t):
+        t = max(T[0], min(T[-1], t))
+        i = max(0, min(len(T) - 2, max(k for k in range(len(T)) if T[k] <= t)))
+        t0, t1 = T[i], T[i + 1]
+        how = K[i + 1][2]
+        u = EASE[how]((t - t0) / (t1 - t0)) if t1 > t0 else 1.0
+        a, b = V[c][i], V[c][i + 1]
+        if c in CURVED and how in ('s', 'lin') and len(T) > 2:
+            # (a curve through the poses either side: each end's way taken from its neighbours, by the time between)
+            p0 = V[c][max(0, i - 1)]; p3 = V[c][min(len(T) - 1, i + 2)]
+            ta = T[max(0, i - 1)]; tb = T[min(len(T) - 1, i + 2)]
+            m0 = [(b[k] - p0[k]) / max(1e-6, t1 - ta) * (t1 - t0) * 0.5 for k in range(len(a))] if i > 0 else [b[k] - a[k] for k in range(len(a))]
+            m1 = [(p3[k] - a[k]) / max(1e-6, tb - t0) * (t1 - t0) * 0.5 for k in range(len(a))] if i + 2 < len(T) else [b[k] - a[k] for k in range(len(a))]
+            h00 = 2 * u ** 3 - 3 * u ** 2 + 1; h10 = u ** 3 - 2 * u ** 2 + u; h01 = -2 * u ** 3 + 3 * u ** 2; h11 = u ** 3 - u ** 2
+            return [h00 * a[k] + h10 * m0[k] + h01 * b[k] + h11 * m1[k] for k in range(len(a))]
+        return [a[k] + (b[k] - a[k]) * u for k in range(len(a))]
+
+    for f in range(F + 1):
+        # (the lead and the lag die away at the clip's two ends: it starts and ends on its poses exactly)
+        w = 0.0 if loop else max(0.0, min(1.0, f / 3.0, (F - f) / 3.0))
+        P = {c: shaped(K[0][1][c], at(c, f - lag.get(c, 0.0) * w)) for c in chans}
+        if breath:
+            ph = 2 * math.pi * f / F
+            hx, hy, hz = P['hips']
+            P['hips'] = (hx + 0.004 * math.sin(ph), hy + 0.003 * math.sin(ph * 2 + 1.0), hz + breath * math.sin(ph * 2))
+            sy, sl, sr = P['spine']
+            P['spine'] = (sy + 1.2 * math.sin(ph + 0.6), sl + 1.4 * math.sin(ph * 2 + 0.4), sr)
+        pose(**P)
         key(f)
-    CLIPS[name] = dict(frames=keys[-1][0], loop=loop, hit=hit, keys=[f for f, _ in keys])
+    CLIPS[name] = dict(frames=F, loop=loop, hit=hit, keys=[t for t in T])
+
+
+G['headroll'] = 0
+A = ANKLE_Z
 
 
 def build():
-    # GUARD: a light bounce on the balls of his feet, the fists moving a little
-    up = dict(hips=(0.0, -0.02, -0.055), lh=(-0.10, 0.335, 1.46), rh=(0.15, 0.175, 1.44), rfpitch=14)
-    dn = dict(hips=(0.0, -0.025, -0.09), lh=(-0.105, 0.325, 1.425), rh=(0.15, 0.165, 1.405), rfpitch=8)
-    clip('guard', [(0, {}), (9, up), (18, {}), (27, dn), (36, {})], loop=True)
+    # THE GUARD (orthodox, on the balls of his feet): the lead fist out before the chin, the rear by the cheek, the
+    # elbows in, the chin down
+    G.update(hips=(0.0, -0.02, -0.09), lh=(-0.10, 0.33, 1.47), rh=(0.15, 0.17, 1.46), head=(0, 6), spine=(-8, 8, 0), rfpitch=12)
+    up = dict(hips=(0.004, -0.018, -0.07), lh=(-0.098, 0.338, 1.485), rh=(0.150, 0.176, 1.475), rfpitch=17, lfpitch=3)
+    dn = dict(hips=(-0.004, -0.024, -0.105), lh=(-0.104, 0.324, 1.455), rh=(0.152, 0.166, 1.448), rfpitch=9)
+    anim('guard', G, [(0, {}), (9, up), (18, {}), (27, dn), (36, {})], loop=True, lag=NOLAG, breath=0.0)
 
-    # JAB: the lead fist straight out and back; the lead shoulder in behind it, a short step of the weight
-    clip('jab', [
-        (0, {}),
-        (2, dict(lh=(-0.12, 0.26, 1.45), yaw=-28)),
-        (6, dict(lh=(-0.04, 0.80, 1.47), lpole=(-0.6, 0, -1), yaw=-38, spine=(-14, 10, 0), hips=(0.0, 0.05, -0.085), rh=(0.14, 0.15, 1.44), lf=(-0.15, 0.24, ANKLE_Z))),
-        (8, dict(lh=(-0.04, 0.79, 1.47), lpole=(-0.6, 0, -1), yaw=-38, spine=(-14, 10, 0), hips=(0.0, 0.05, -0.085), rh=(0.14, 0.15, 1.44), lf=(-0.15, 0.24, ANKLE_Z))),
-        (13, {}),
-    ], hit=6)
+    # ---- THE PUNCHES -------------------------------------------------------------------------------------------
+    # JAB: off the rear foot — a short step of the lead, the lead shoulder rolled up in behind the fist, the fist
+    # turned over as it lands; back quicker than it went
+    jl = dict(lh=(-0.112, 0.30, 1.465), yaw=-27, hips=(0.006, -0.03, -0.095), lpole=(-0.45, -0.2, -1))
+    jx = dict(lh=(-0.03, 0.865, 1.50), lpole=(-0.75, 0.0, -0.62), yaw=-43, spine=(-17, 9, -3), hips=(-0.012, 0.085, -0.105),
+              rh=(0.135, 0.16, 1.475), lf=(-0.15, 0.29, A), rf=(0.17, -0.235, A + 0.035), rfpitch=24, head=(5, 9), lknee=(-0.1, 1, 0.1))
+    jr = dict(lh=(-0.10, 0.38, 1.47), yaw=-28, spine=(-10, 8, 0), hips=(0.0, 0.0, -0.085), lf=(-0.15, 0.215, A))
+    anim('jab', G, [(0, {}), (2, jl, 'out'), (5, jx, 'in'), (6, dict(jx, lh=(-0.03, 0.875, 1.50)), 'lin'), (10, jr, 'out'), (14, {}, 'spring')], hit=5)
 
-    # CROSS: the rear fist thrown across with the hips — they turn through, the rear heel comes up, the lead hand home
-    clip('cross', [
-        (0, {}),
-        (4, dict(yaw=-34, rh=(0.19, 0.10, 1.40), spine=(-12, 4, 0), hips=(0.0, -0.04, -0.09))),
-        (9, dict(yaw=22, spine=(26, 14, -3), hips=(-0.03, 0.09, -0.10), rh=(-0.05, 0.86, 1.45), rpole=(0.7, 0, -0.8), lh=(-0.16, 0.14, 1.42), lpole=(-0.5, -0.4, -1), rf=(0.16, -0.20, ANKLE_Z + 0.07), rfpitch=42, rfyaw=-8, rknee=(0.1, 1, 0.0), head=(0, 6))),
-        (11, dict(yaw=22, spine=(26, 14, -3), hips=(-0.03, 0.09, -0.10), rh=(-0.05, 0.85, 1.45), rpole=(0.7, 0, -0.8), lh=(-0.16, 0.14, 1.42), lpole=(-0.5, -0.4, -1), rf=(0.16, -0.20, ANKLE_Z + 0.07), rfpitch=42, rfyaw=-8, rknee=(0.1, 1, 0.0), head=(0, 6))),
-        (17, {}),
-    ], hit=9)
+    # CROSS: the rear fist thrown with the whole right side — the rear heel turns out and up, the knee and the hip go
+    # through, the shoulders past them; the weight lands on the lead leg, the lead hand home on the chin
+    cl = dict(yaw=-35, hips=(0.02, -0.05, -0.10), rh=(0.185, 0.12, 1.45), spine=(-9, 5, 2), rfpitch=6)
+    cx = dict(yaw=24, spine=(31, 13, -4), hips=(-0.04, 0.115, -0.125), rh=(-0.06, 0.905, 1.50), rpole=(0.78, 0.05, -0.6),
+              lh=(-0.145, 0.135, 1.465), lpole=(-0.5, -0.5, -1), rf=(0.15, -0.19, A + 0.075), rfpitch=47, rfyaw=-3, rknee=(0.02, 1, -0.15),
+              lknee=(-0.2, 1, 0.1), head=(-3, 9))
+    cr = dict(yaw=-8, spine=(6, 9, -1), hips=(-0.012, 0.03, -0.095), rh=(0.10, 0.37, 1.47), rf=(0.17, -0.225, A + 0.04), rfpitch=26, rfyaw=-28, lh=(-0.12, 0.26, 1.465))
+    anim('cross', G, [(0, {}), (3, cl, 'out'), (7, cx, 'in'), (8, dict(cx, rh=(-0.065, 0.92, 1.50)), 'lin'), (13, cr, 'out'), (18, {}, 'spring')], hit=7)
 
-    # HOOK: the lead arm bent square, swung round level with the hips' turn
-    clip('hook', [
-        (0, {}),
-        (4, dict(yaw=-44, spine=(-18, 6, 0), lh=(-0.30, 0.16, 1.43), lpole=(-1, -0.3, -0.2), hips=(0.02, -0.03, -0.10))),
-        (8, dict(yaw=4, spine=(34, 8, 0), lh=(0.10, 0.42, 1.47), lpole=(-1, 0.1, 0.05), hips=(-0.02, 0.04, -0.09), lf=(-0.15, 0.19, ANKLE_Z + 0.04), lfpitch=22, lfyaw=26, lknee=(0.3, 1, 0), rh=(0.16, 0.13, 1.43))),
-        (10, dict(yaw=8, spine=(38, 8, 0), lh=(0.16, 0.36, 1.47), lpole=(-1, 0.1, 0.05), hips=(-0.02, 0.04, -0.09), lf=(-0.15, 0.19, ANKLE_Z + 0.04), lfpitch=22, lfyaw=26, lknee=(0.3, 1, 0), rh=(0.16, 0.13, 1.43))),
-        (17, {}),
-    ], hit=8)
+    # HOOK (the lead hand): opened a little to the left with the weight on the lead leg — then the lead foot's heel
+    # turned out, the hips and the shoulders whipped to the RIGHT, the arm held square and level behind them
+    hl = dict(yaw=-9, hips=(-0.03, 0.02, -0.115), spine=(9, 5, -3), lh=(-0.285, 0.225, 1.43), lpole=(-1, -0.15, -0.35))
+    hx = dict(yaw=-62, spine=(-31, 6, 2), hips=(0.03, 0.0, -0.105), lh=(0.10, 0.465, 1.50), lpole=(-0.9, 0.5, 0.3),
+              lf=(-0.15, 0.19, A + 0.035), lfyaw=-58, lfpitch=20, lknee=(0.35, 1, 0), rh=(0.16, 0.14, 1.475), head=(9, 7))
+    hf = dict(hx, yaw=-70, lh=(0.185, 0.40, 1.49), spine=(-36, 6, 2))
+    hr = dict(yaw=-36, spine=(-14, 8, 0), hips=(0.01, -0.01, -0.095), lh=(-0.05, 0.31, 1.47), lfyaw=-24, lfpitch=8, lf=(-0.15, 0.19, A + 0.01))
+    anim('hook', G, [(0, {}), (3, hl, 'out'), (7, hx, 'in'), (8, hf, 'lin'), (13, hr, 'out'), (18, {}, 'spring')], hit=7)
 
-    # UPPERCUT: a dip on the rear side, then the rear fist driven up the middle with the legs
-    clip('uppercut', [
-        (0, {}),
-        (5, dict(hips=(0.03, -0.03, -0.17), yaw=-34, lean=12, spine=(-10, 10, 6), rh=(0.22, 0.14, 1.06), rpole=(0.6, -1, -0.2), head=(0, 2))),
-        (9, dict(hips=(-0.02, 0.06, -0.04), yaw=10, lean=-2, spine=(20, -6, -2), rh=(0.0, 0.42, 1.62), rpole=(0.5, -0.3, -1), lh=(-0.15, 0.16, 1.43), rf=(0.16, -0.21, ANKLE_Z + 0.07), rfpitch=40, rfyaw=-12, rknee=(0.15, 1, 0), head=(0, -4))),
-        (11, dict(hips=(-0.02, 0.06, -0.03), yaw=12, lean=-2, spine=(20, -6, -2), rh=(-0.01, 0.40, 1.66), rpole=(0.5, -0.3, -1), lh=(-0.15, 0.16, 1.43), rf=(0.16, -0.21, ANKLE_Z + 0.07), rfpitch=40, rfyaw=-12, rknee=(0.15, 1, 0), head=(0, -4))),
-        (18, {}),
-    ], hit=9)
+    # UPPERCUT (the rear hand): a dip on the rear side, the fist dropped palm-up by the ribs — then driven up the
+    # middle by the legs and the hip, the heel coming off the ground
+    ul = dict(hips=(0.03, -0.02, -0.205), yaw=-37, lean=11, roll=8, spine=(-8, 10, 8), rh=(0.20, 0.165, 1.10), rpole=(0.5, -1, 0.15), head=(0, 5), lh=(-0.11, 0.30, 1.42))
+    ux = dict(hips=(-0.03, 0.075, -0.03), yaw=7, lean=-4, roll=-2, spine=(23, -8, -2), rh=(-0.02, 0.445, 1.59), rpole=(0.5, -0.5, -1),
+              lh=(-0.15, 0.15, 1.46), rf=(0.16, -0.20, A + 0.08), rfpitch=45, rfyaw=-10, rknee=(0.1, 1, -0.1), head=(0, -3))
+    uf = dict(ux, rh=(-0.03, 0.40, 1.70), hips=(-0.03, 0.08, -0.015))
+    ur = dict(hips=(-0.01, 0.02, -0.08), yaw=-12, spine=(4, 4, 0), rh=(0.11, 0.30, 1.50), rf=(0.17, -0.225, A + 0.04), rfpitch=24)
+    anim('uppercut', G, [(0, {}), (4, ul, 'out'), (8, ux, 'in'), (9, uf, 'lin'), (14, ur, 'out'), (19, {}, 'spring')], hit=8)
 
-    # FRONT KICK (a push kick): the rear knee up, the leg thrust straight out at the belly, the body leaning back
-    cham = dict(hips=(-0.04, 0.0, -0.05), yaw=-8, lean=-6, spine=(-4, 4, 0), rf=(0.10, 0.20, 0.62), rknee=(0.15, 1, 1), rfpitch=-20, rfyaw=0, lh=(-0.14, 0.26, 1.40), rh=(0.20, 0.10, 1.34), lfyaw=18)
-    out = dict(hips=(-0.05, 0.03, -0.04), yaw=-4, lean=-20, spine=(-2, 6, 0), rf=(0.07, 0.86, 1.02), rknee=(0.1, 0.3, 1), rfpitch=-28, rfyaw=0, lh=(-0.18, 0.22, 1.36), rh=(0.30, -0.02, 1.22), rpole=(0.6, -1, -0.3), lfyaw=24, head=(0, 8))
-    clip('kick_front', [(0, {}), (6, cham), (10, out), (12, out), (16, cham), (23, {})], hit=10)
+    # BODY HOOK (the lead hand to the ribs): the hook, a level lower — the knees bent, the fist round under the elbow
+    bl = dict(yaw=-10, hips=(-0.03, 0.02, -0.21), lean=8, spine=(8, 10, -6), lh=(-0.29, 0.20, 1.12), lpole=(-1, -0.4, -0.2), head=(0, 4))
+    bx = dict(yaw=-60, hips=(0.03, 0.03, -0.20), lean=8, spine=(-30, 10, 4), lh=(0.08, 0.46, 1.14), lpole=(-0.9, 0.3, -0.1),
+              lf=(-0.15, 0.19, A + 0.03), lfyaw=-52, lfpitch=18, lknee=(0.3, 1, 0), rh=(0.16, 0.14, 1.47), head=(8, 10))
+    br = dict(yaw=-34, hips=(0.01, 0.0, -0.13), spine=(-12, 9, 0), lh=(-0.06, 0.30, 1.38), lfyaw=-22, lfpitch=6)
+    anim('body_hook', G, [(0, {}), (4, bl, 'out'), (8, bx, 'in'), (9, dict(bx, lh=(0.15, 0.42, 1.14)), 'lin'), (14, br, 'out'), (19, {}, 'spring')], hit=8)
 
-    # ROUNDHOUSE: the hips turned right over, the rear leg swung round level, the standing foot pivoting, the arms out
-    cham2 = dict(hips=(-0.05, 0.0, -0.04), yaw=30, lean=-4, roll=-10, spine=(-16, 0, -6), rf=(0.42, -0.02, 0.80), rknee=(1, 0.5, 0.6), rfpitch=-30, rfyaw=40, lfyaw=50, lf=(-0.15, 0.17, ANKLE_Z), lh=(-0.20, 0.24, 1.42), rh=(0.34, 0.0, 1.30), rpole=(0.6, -1, -0.2))
-    out2 = dict(hips=(-0.07, 0.03, -0.03), yaw=78, lean=-8, roll=-24, spine=(-34, 0, -12), rf=(-0.10, 0.80, 1.12), rknee=(0.8, 0.5, 0.8), rfpitch=-38, rfyaw=86, lfyaw=96, lf=(-0.15, 0.17, ANKLE_Z + 0.02), lfpitch=8, lknee=(-0.8, 0.6, 0), lh=(-0.22, 0.20, 1.44), rh=(0.36, -0.22, 1.16), rpole=(0.3, -1, 0.2), head=(8, 4))
-    clip('kick_round', [(0, {}), (6, cham2), (11, out2), (13, out2), (18, cham2), (26, {})], hit=11)
+    # ---- THE LEGS ----------------------------------------------------------------------------------------------
+    # KNEE: both hands out to take the head, pulled down onto the rear knee as the hips drive it up
+    kg = dict(lh=(-0.11, 0.56, 1.54), rh=(0.11, 0.54, 1.54), lpole=(-0.5, -0.3, -1), rpole=(0.5, -0.3, -1), hips=(0.0, 0.06, -0.07), yaw=-10, spine=(-2, 6, 0))
+    kx = dict(lh=(-0.09, 0.36, 1.28), rh=(0.10, 0.34, 1.28), lpole=(-0.7, -0.4, -0.6), rpole=(0.7, -0.4, -0.6), hips=(-0.04, 0.19, -0.03), yaw=-2, lean=-16, spine=(0, 14, 0),
+              rf=(0.07, 0.28, 0.80), rknee=(0.08, 1, 0.75), rfpitch=-38, rfyaw=0, lfpitch=14, lf=(-0.15, 0.19, A + 0.03), lfyaw=10, head=(0, 12))
+    kr = dict(hips=(-0.02, 0.04, -0.07), rf=(0.13, 0.02, 0.36), rknee=(0.2, 1, 0.5), rfpitch=-10, rfyaw=-20, lh=(-0.11, 0.32, 1.44), rh=(0.14, 0.20, 1.44))
+    anim('knee', G, [(0, {}), (3, kg, 'out'), (8, kx, 'in'), (10, kx, 'lin'), (15, kr, 'out'), (21, {}, 's')], hit=8)
 
-    # BLOCK: both forearms up in front of the face, the chin down behind them
-    blk = dict(lh=(-0.07, 0.25, 1.56), rh=(0.08, 0.22, 1.55), lpole=(-0.25, -0.2, -1), rpole=(0.28, -0.2, -1), spine=(-8, 14, 0), hips=(0.0, -0.04, -0.11), head=(0, 14))
-    clip('block', [(0, {}), (4, blk), (13, blk), (18, {})])
+    # FRONT KICK (a push kick, the rear leg): the knee brought up high, the hips thrown in behind the heel, the body
+    # back to balance it; the leg folded again before it comes down
+    fc = dict(hips=(-0.055, 0.02, -0.04), yaw=-8, lean=-7, spine=(-4, 6, 0), rf=(0.10, 0.22, 0.72), rknee=(0.1, 1, 0.9), rfpitch=-12, rfyaw=0,
+              lh=(-0.14, 0.28, 1.45), rh=(0.22, 0.08, 1.38), lfyaw=18, lfpitch=4)
+    fx = dict(hips=(-0.065, 0.11, -0.03), yaw=-4, lean=-23, spine=(-2, 9, 0), rf=(0.06, 0.93, 1.06), rknee=(0.1, 0.4, 1), rfpitch=-26, rfyaw=0,
+              lh=(-0.18, 0.24, 1.40), rh=(0.31, -0.06, 1.20), rpole=(0.6, -1, -0.3), lfyaw=24, lfpitch=8, head=(0, 11))
+    anim('kick_front', G, [(0, {}), (4, fc, 'out'), (8, fx, 'in'), (9, dict(fx, rf=(0.06, 0.95, 1.06)), 'lin'), (13, dict(fc, rf=(0.10, 0.30, 0.74)), 'out'), (18, dict(rf=(0.17, -0.20, A + 0.10), hips=(-0.02, 0.0, -0.07)), 's'), (23, {}, 's')], hit=8)
 
-    # DODGE: the weight thrown onto the rear leg, the body leant back out of reach
-    dod = dict(hips=(0.03, -0.17, -0.12), lean=-16, spine=(-8, -14, 0), lh=(-0.12, 0.20, 1.38), rh=(0.17, 0.02, 1.36), head=(0, 6), rknee=(0.6, 1, 0.1))
-    clip('dodge', [(0, {}), (4, dod), (9, dod), (15, {})])
+    # ROUNDHOUSE (the rear leg, to the ribs): the standing foot turned out, the knee swung up and round outside the
+    # hip, the hip rolled over and the shin thrown through level — the arm on that side flung back and down against
+    # it, the body leaning away
+    r1 = dict(hips=(-0.04, 0.02, -0.055), yaw=2, lfyaw=38, rh=(0.20, 0.12, 1.42), rf=(0.20, -0.18, A + 0.09), rfpitch=30)
+    rc = dict(hips=(-0.065, 0.04, -0.03), yaw=42, lean=-4, roll=-12, spine=(-20, 0, -8), rf=(0.46, 0.05, 0.86), rknee=(1, 0.6, 0.5), rfpitch=-30, rfyaw=52,
+              lfyaw=82, lf=(-0.15, 0.17, A + 0.02), lfpitch=8, lh=(-0.20, 0.26, 1.47), rh=(0.32, 0.02, 1.32), rpole=(0.6, -1, -0.2), head=(6, 5))
+    rx = dict(hips=(-0.085, 0.065, -0.02), yaw=90, lean=-8, roll=-27, spine=(-41, 0, -14), rf=(-0.13, 0.87, 1.18), rknee=(0.8, 0.6, 0.8), rfpitch=-40, rfyaw=96,
+              lfyaw=112, lf=(-0.15, 0.17, A + 0.03), lfpitch=11, lknee=(-0.8, 0.6, 0), lh=(-0.21, 0.22, 1.49), rh=(0.39, -0.27, 1.12), rpole=(0.2, -1, 0.3), head=(13, 5))
+    rd = dict(hips=(-0.03, 0.0, -0.07), yaw=14, lfyaw=30, rf=(0.21, -0.14, A + 0.12), rfpitch=20, rfyaw=-10, rh=(0.20, 0.10, 1.42))
+    anim('kick_round', G, [(0, {}), (3, r1, 'out'), (7, rc, 's'), (10, rx, 'in'), (11, dict(rx, rf=(-0.22, 0.82, 1.16), yaw=96), 'lin'), (15, rc, 'out'), (20, rd, 's'), (26, {}, 's')], hit=10)
 
-    # HIT IN THE HEAD: the head snapped back and round, the guard broken open, a half step back
-    hh = dict(hips=(0.03, -0.12, -0.06), lean=-12, spine=(10, -20, 6), head=(-34, -22), headroll=10, lh=(-0.26, 0.30, 1.30), rh=(0.30, 0.14, 1.26), lpole=(-0.8, -0.3, -1), rpole=(0.8, -0.3, -1), rf=(0.18, -0.34, ANKLE_Z), rfpitch=0)
-    hh2 = dict(hips=(0.02, -0.10, -0.09), lean=-4, spine=(4, -6, 3), head=(-12, -4), lh=(-0.18, 0.30, 1.38), rh=(0.22, 0.16, 1.36), rf=(0.18, -0.34, ANKLE_Z), rfpitch=0)
-    clip('hit_head', [(0, {}), (3, hh), (8, hh2), (16, {})])
+    # LOW KICK (the rear shin into the thigh): the same turn, kept low and quick — no chamber to speak of
+    lc = dict(hips=(-0.05, 0.03, -0.07), yaw=28, roll=-6, spine=(-14, 2, -4), rf=(0.36, -0.02, 0.36), rknee=(1, 0.7, 0.2), rfpitch=-16, rfyaw=40, lfyaw=60, lfpitch=6, rh=(0.28, 0.06, 1.36), lh=(-0.18, 0.28, 1.47))
+    lx = dict(hips=(-0.07, 0.06, -0.085), yaw=70, roll=-14, spine=(-30, 4, -8), rf=(-0.08, 0.74, 0.50), rknee=(0.9, 0.7, 0.3), rfpitch=-28, rfyaw=84, lfyaw=92, lfpitch=9,
+              lknee=(-0.6, 0.8, 0), rh=(0.36, -0.16, 1.22), rpole=(0.3, -1, 0.2), lh=(-0.19, 0.24, 1.48), head=(10, 8))
+    anim('kick_low', G, [(0, {}), (4, lc, 'out'), (7, lx, 'in'), (8, dict(lx, rf=(-0.16, 0.70, 0.49)), 'lin'), (12, lc, 'out'), (16, rd, 's'), (21, {}, 's')], hit=7)
 
-    # HIT IN THE BODY: doubled over it, the arms in, the hips back
-    hb = dict(hips=(0.0, -0.16, -0.14), lean=22, spine=(4, 40, 0), head=(0, 30), lh=(-0.10, 0.20, 1.02), rh=(0.12, 0.16, 1.00), lpole=(-1, -0.6, 0), rpole=(1, -0.6, 0))
-    hb2 = dict(hips=(0.0, -0.13, -0.12), lean=14, spine=(2, 26, 0), head=(0, 16), lh=(-0.11, 0.24, 1.16), rh=(0.13, 0.18, 1.14), lpole=(-1, -0.6, -0.3), rpole=(1, -0.6, -0.3))
-    clip('hit_body', [(0, {}), (4, hb), (9, hb), (13, hb2), (19, {})])
+    # ---- THE DEFENCE -------------------------------------------------------------------------------------------
+    # BLOCK: both forearms up before the face, the chin down behind them, the weight sunk
+    blk = dict(lh=(-0.07, 0.25, 1.585), rh=(0.08, 0.225, 1.575), lpole=(-0.25, -0.2, -1), rpole=(0.28, -0.2, -1), spine=(-8, 15, 0), hips=(0.0, -0.045, -0.125), head=(0, 15))
+    anim('block', G, [(0, {}), (3, blk, 'out'), (12, dict(blk, hips=(0.0, -0.05, -0.13)), 's'), (18, {}, 's')], lag=NOLAG)
+    # … and a blow TAKEN on it: knocked back into his own arms, a shuffle of the rear foot, out again
+    bh = dict(blk, lh=(-0.07, 0.19, 1.565), rh=(0.08, 0.17, 1.555), hips=(0.0, -0.13, -0.135), lean=-7, spine=(-6, 6, 0), head=(0, 6), rf=(0.18, -0.33, A), rfpitch=0)
+    anim('block_hit', G, [(0, blk), (2, bh, 'out'), (7, dict(blk, hips=(0.0, -0.08, -0.13), rf=(0.18, -0.30, A)), 's'), (14, {}, 's')], lag=REACT)
+    # DODGE: the weight thrown onto the rear leg, the head and the chest pulled back out of reach, the chin kept down
+    dod = dict(hips=(0.03, -0.19, -0.13), lean=-17, spine=(-8, -15, 0), lh=(-0.12, 0.22, 1.42), rh=(0.17, 0.04, 1.40), head=(0, 9), rknee=(0.6, 1, 0.1), lf=(-0.15, 0.17, A + 0.02), lfpitch=-8)
+    anim('dodge', G, [(0, {}), (3, dod, 'out'), (8, dict(dod, hips=(0.03, -0.18, -0.135)), 's'), (15, {}, 's')], lag=dict(REACT, head=-1.2))
+    # DUCK: under it — the knees folded, the back kept straight, a roll of the head out to the side and up
+    dk = dict(hips=(0.05, 0.0, -0.36), lean=20, spine=(-6, 16, 8), head=(0, -6), lh=(-0.10, 0.30, 1.22), rh=(0.15, 0.18, 1.20), lknee=(-0.3, 1, 0), rknee=(0.5, 1, 0))
+    dk2 = dict(hips=(-0.06, 0.02, -0.30), lean=16, spine=(8, 12, -8), head=(0, -4), lh=(-0.12, 0.30, 1.28), rh=(0.13, 0.18, 1.26), lknee=(-0.3, 1, 0), rknee=(0.5, 1, 0))
+    anim('duck', G, [(0, {}), (3, dk, 'out'), (7, dk2, 's'), (13, {}, 's')], lag=dict(REACT, head=-1.2))
 
-    # KNOCKDOWN: reeling, off his feet, down on his back — it ends lying there (the game's getup_back gets him up)
-    reel = dict(hips=(0.02, -0.16, -0.05), lean=-22, spine=(6, -26, 4), head=(-20, -26), lh=(-0.42, 0.20, 1.44), rh=(0.46, 0.10, 1.40), lpole=(-1, -0.5, -0.4), rpole=(1, -0.5, -0.4), rf=(0.18, -0.42, ANKLE_Z), rfpitch=0, lf=(-0.15, 0.10, ANKLE_Z + 0.05), lfpitch=-14)
-    fall = dict(hips=(0.0, -0.50, -0.42), yaw=-6, lean=-56, spine=(0, 10, 0), head=(0, 6), lh=(-0.50, -0.10, 1.04), rh=(0.52, -0.16, 1.00), lpole=(-1, 0.3, -0.5), rpole=(1, 0.3, -0.5), lf=(-0.16, 0.20, 0.34), rf=(0.17, 0.06, 0.24), lfpitch=-22, rfpitch=-18, lfyaw=-6, rfyaw=10, lknee=(-0.2, 0.2, 1), rknee=(0.2, 0.2, 1))
+    # ---- A BLOW TAKEN (the head goes first, the body after it, the feet last) -------------------------------------
+    # IN THE FACE: the head snapped back, the guard knocked open, the weight thrown onto the heels — a step to catch it
+    hh = dict(hips=(0.01, -0.07, -0.075), lean=-8, spine=(4, -17, 2), head=(-6, -33), lh=(-0.22, 0.34, 1.42), rh=(0.26, 0.17, 1.38), lpole=(-0.8, -0.3, -1), rpole=(0.8, -0.3, -1))
+    hh2 = dict(hips=(0.02, -0.16, -0.085), lean=-13, spine=(8, -20, 5), head=(-14, -16), headroll=6, lh=(-0.27, 0.28, 1.34), rh=(0.31, 0.12, 1.30), lpole=(-0.8, -0.3, -1), rpole=(0.8, -0.3, -1),
+               rf=(0.18, -0.39, A), rfpitch=0, lf=(-0.15, 0.15, A + 0.03), lfpitch=-12)
+    hh3 = dict(hips=(0.015, -0.11, -0.10), lean=-3, spine=(2, -2, 2), head=(-4, 6), lh=(-0.16, 0.30, 1.42), rh=(0.20, 0.16, 1.40), rf=(0.18, -0.33, A), rfpitch=4)
+    anim('hit_head', G, [(0, {}), (2, hh, 'out'), (6, hh2, 'out'), (12, hh3, 's'), (19, {}, 's')], lag=REACT)
+    # ON THE LEFT OF THE HEAD (a right hook): whipped round to his right, the shoulders dragged after it, a stumble that way
+    hl1 = dict(hips=(0.05, -0.03, -0.08), roll=7, spine=(-20, -4, 10), head=(-52, -6), headroll=18, lh=(-0.20, 0.30, 1.40), rh=(0.28, 0.14, 1.36))
+    hl2 = dict(hips=(0.11, -0.07, -0.10), yaw=-34, roll=10, spine=(-26, 4, 12), head=(-40, 8), headroll=12, lh=(-0.18, 0.26, 1.32), rh=(0.34, 0.10, 1.28),
+               rf=(0.31, -0.25, A), rfpitch=0, rfyaw=-50, lf=(-0.12, 0.17, A + 0.03), lfpitch=-6)
+    hl3 = dict(hips=(0.06, -0.05, -0.10), yaw=-28, spine=(-12, 6, 4), head=(-10, 8), lh=(-0.13, 0.30, 1.42), rh=(0.20, 0.15, 1.40), rf=(0.25, -0.25, A), rfpitch=4)
+    anim('hit_head_l', G, [(0, {}), (2, hl1, 'out'), (6, hl2, 'out'), (12, hl3, 's'), (19, {}, 's')], lag=REACT)
+    # ON THE RIGHT OF THE HEAD (a lead hook): the other way
+    hr1 = dict(hips=(-0.05, -0.02, -0.08), roll=-7, spine=(22, -4, -10), head=(50, -6), headroll=-18, lh=(-0.24, 0.30, 1.38), rh=(0.22, 0.16, 1.40))
+    hr2 = dict(hips=(-0.11, -0.05, -0.10), yaw=-12, roll=-10, spine=(28, 4, -12), head=(40, 8), headroll=-12, lh=(-0.32, 0.26, 1.30), rh=(0.20, 0.14, 1.34),
+               lf=(-0.29, 0.14, A), lfyaw=18, rf=(0.15, -0.25, A + 0.03), rfpitch=18)
+    hr3 = dict(hips=(-0.06, -0.03, -0.10), yaw=-20, spine=(10, 6, -4), head=(10, 8), lh=(-0.16, 0.30, 1.42), rh=(0.17, 0.16, 1.42), lf=(-0.23, 0.17, A))
+    anim('hit_head_r', G, [(0, {}), (2, hr1, 'out'), (6, hr2, 'out'), (12, hr3, 's'), (19, {}, 's')], lag=REACT)
+    # IN THE BODY: folded over it — the hips shot back, the arms in over the belly, the head down; held, then a breath
+    # dragged back in and up
+    hb = dict(hips=(0.0, -0.19, -0.15), lean=27, spine=(4, 45, 0), head=(0, 36), lh=(-0.09, 0.22, 1.02), rh=(0.11, 0.18, 1.00), lpole=(-1, -0.6, 0), rpole=(1, -0.6, 0), rf=(0.18, -0.34, A), rfpitch=0)
+    hb2 = dict(hb, hips=(0.0, -0.21, -0.17), spine=(2, 48, 0), head=(0, 40))
+    hb3 = dict(hips=(0.0, -0.14, -0.13), lean=15, spine=(2, 27, 0), head=(0, 17), lh=(-0.11, 0.25, 1.18), rh=(0.13, 0.19, 1.16), lpole=(-1, -0.6, -0.3), rpole=(1, -0.6, -0.3), rf=(0.18, -0.31, A), rfpitch=3)
+    anim('hit_body', G, [(0, {}), (3, hb, 'out'), (8, hb2, 's'), (15, hb3, 's'), (23, {}, 's')], lag=dict(REACT, head=0.6, spine=-0.6, hips=-1.0, lean=-0.8))
+    # IN THE LEG (a low kick on the lead thigh): the knee knocked in and from under him, the hip dropped, hopped back onto it
+    hg = dict(hips=(0.05, -0.02, -0.19), roll=-11, yaw=-16, spine=(-4, 12, 8), lf=(-0.06, 0.15, A + 0.02), lknee=(0.7, 1, 0), lfyaw=-26, lfpitch=14, head=(0, 12), lh=(-0.16, 0.30, 1.36), rh=(0.20, 0.14, 1.38))
+    hg2 = dict(hips=(0.04, -0.06, -0.12), roll=-5, lf=(-0.13, 0.12, A + 0.07), lknee=(0.2, 1, 0.2), lfpitch=10, head=(0, 8))
+    anim('hit_leg', G, [(0, {}), (3, hg, 'out'), (9, hg2, 's'), (17, {}, 's')], lag=dict(LAG, head=1.0))
+    # STAGGERED (a heavy one): thrown back off balance, the arms out to catch it, two short steps to stay up
+    s1 = dict(hips=(0.02, -0.12, -0.06), lean=-17, spine=(8, -24, 4), head=(-10, -30), lh=(-0.40, 0.24, 1.40), rh=(0.44, 0.10, 1.36), lpole=(-1, -0.4, -0.5), rpole=(1, -0.4, -0.5))
+    s2 = dict(hips=(0.04, -0.24, -0.10), lean=-19, spine=(10, -20, 6), head=(-12, -10), lh=(-0.48, 0.14, 1.30), rh=(0.50, 0.02, 1.24), lpole=(-1, -0.4, -0.3), rpole=(1, -0.4, -0.3),
+              rf=(0.20, -0.47, A), rfpitch=0, lf=(-0.15, 0.10, A + 0.06), lfpitch=-16)
+    s3 = dict(hips=(0.0, -0.22, -0.13), lean=-6, spine=(4, -4, 2), head=(-4, 6), lh=(-0.36, 0.14, 1.26), rh=(0.38, 0.06, 1.24), rf=(0.20, -0.47, A), rfpitch=0, lf=(-0.16, -0.06, A), lfpitch=0)
+    s4 = dict(hips=(0.0, -0.10, -0.11), lean=2, spine=(-4, 10, 0), head=(0, 10), lh=(-0.18, 0.28, 1.40), rh=(0.22, 0.14, 1.38), rf=(0.18, -0.32, A), lf=(-0.15, 0.10, A + 0.04))
+    anim('stagger', G, [(0, {}), (2, s1, 'out'), (7, s2, 'out'), (13, s3, 's'), (20, s4, 's'), (27, {}, 's')], lag=REACT)
+
+    # ---- DOWN --------------------------------------------------------------------------------------------------
+    # KNOCKED DOWN: reeling, the legs gone, off his feet onto his back — the hips land first, the shoulders and the
+    # head after them, the arms flung out and the last to lie still. It ends lying (the game's getup_back gets him up)
     hip_z = 0.125 - STAND_Z
-    down = dict(hips=(0.0, -0.86, hip_z + 0.02), yaw=-3, lean=-88, spine=(0, 2, 0), head=(0, -80), lh=(-0.58, -1.16, 0.10), rh=(0.60, -1.12, 0.10), lpole=(-1, 0.4, 0.3), rpole=(1, 0.4, 0.3), lf=(-0.20, -0.04, 0.17), rf=(0.22, -0.02, 0.26), lfpitch=-60, rfpitch=-50, lfyaw=-18, rfyaw=22, lknee=(-0.3, 0, 1), rknee=(0.3, 0, 1))
-    lie = dict(hips=(0.0, -0.88, hip_z), yaw=-3, lean=-90, spine=(0, 0, 0), head=(0, -86), lh=(-0.60, -1.14, 0.07), rh=(0.62, -1.10, 0.07), lpole=(-1, 0.4, 0.3), rpole=(1, 0.4, 0.3), lf=(-0.22, -0.03, 0.09), rf=(0.24, 0.0, 0.09), lfpitch=-70, rfpitch=-70, lfyaw=-24, rfyaw=26, lknee=(-0.4, 0, 1), rknee=(0.4, 0, 1))
-    clip('knockdown', [(0, {}), (4, reel), (10, fall), (15, down), (19, lie), (30, lie)])
+    reel = dict(hips=(0.02, -0.17, -0.05), lean=-23, spine=(6, -27, 4), head=(-20, -28), lh=(-0.43, 0.20, 1.44), rh=(0.47, 0.10, 1.40), lpole=(-1, -0.5, -0.4), rpole=(1, -0.5, -0.4),
+                rf=(0.18, -0.43, A), rfpitch=0, lf=(-0.15, 0.10, A + 0.05), lfpitch=-14)
+    fall = dict(hips=(0.0, -0.52, -0.44), yaw=-6, lean=-57, spine=(0, 12, 0), head=(0, 10), lh=(-0.50, -0.08, 1.06), rh=(0.52, -0.14, 1.02), lpole=(-1, 0.3, -0.5), rpole=(1, 0.3, -0.5),
+                lf=(-0.16, 0.20, 0.34), rf=(0.17, 0.06, 0.24), lfpitch=-22, rfpitch=-18, lfyaw=-6, rfyaw=10, lknee=(-0.2, 0.2, 1), rknee=(0.2, 0.2, 1))
+    land = dict(hips=(0.0, -0.84, hip_z), yaw=-3, lean=-80, spine=(0, 16, 0), head=(0, -40), lh=(-0.56, -0.86, 0.42), rh=(0.58, -0.84, 0.40), lpole=(-1, 0.4, 0.3), rpole=(1, 0.4, 0.3),
+                lf=(-0.19, -0.02, 0.36), rf=(0.21, 0.0, 0.42), lfpitch=-50, rfpitch=-44, lfyaw=-14, rfyaw=18, lknee=(-0.3, 0, 1), rknee=(0.3, 0, 1))
+    boun = dict(hips=(0.0, -0.87, hip_z + 0.035), yaw=-3, lean=-86, spine=(0, 6, 0), head=(0, -74), lh=(-0.59, -1.12, 0.16), rh=(0.61, -1.08, 0.18), lpole=(-1, 0.4, 0.3), rpole=(1, 0.4, 0.3),
+                lf=(-0.21, -0.03, 0.20), rf=(0.23, -0.01, 0.28), lfpitch=-62, rfpitch=-56, lfyaw=-20, rfyaw=23, lknee=(-0.35, 0, 1), rknee=(0.35, 0, 1))
+    lie = dict(hips=(0.0, -0.88, hip_z), yaw=-3, lean=-90, spine=(0, 0, 0), head=(0, -86), lh=(-0.60, -1.14, 0.07), rh=(0.62, -1.10, 0.07), lpole=(-1, 0.4, 0.3), rpole=(1, 0.4, 0.3),
+               lf=(-0.22, -0.03, 0.09), rf=(0.24, 0.0, 0.09), lfpitch=-70, rfpitch=-70, lfyaw=-24, rfyaw=26, lknee=(-0.4, 0, 1), rknee=(0.4, 0, 1))
+    DOWN = dict(hips=0.0, yaw=0.0, lean=0.0, roll=0.0, spine=0.6, head=1.4, headroll=1.4, lh=1.6, rh=2.0, lpole=1.6, rpole=2.0, lf=1.0, rf=1.3, lfpitch=1.0, rfpitch=1.3, lfyaw=1.0, rfyaw=1.3, lknee=1.0, rknee=1.3)
+    anim('knockdown', G, [(0, {}), (4, reel, 'out'), (10, fall, 'in'), (14, land, 'in'), (17, boun, 'out'), (22, lie, 's'), (32, lie, 'lin')], lag=DOWN)
+    # KILLED, FALLING BACK (shot from the front): no reeling — the knees simply go, he drops and tips back, limp
+    k1 = dict(hips=(0.0, -0.05, -0.20), lean=-6, spine=(2, 10, 2), head=(0, 22), lh=(-0.20, 0.22, 1.16), rh=(0.24, 0.12, 1.12), lpole=(-0.8, -0.6, -0.3), rpole=(0.8, -0.6, -0.3), lknee=(-0.3, 1, 0), rknee=(0.45, 1, 0))
+    k2 = dict(hips=(0.03, -0.30, -0.52), yaw=-12, lean=-40, roll=6, spine=(4, 20, 4), head=(6, 30), lh=(-0.34, 0.02, 0.86), rh=(0.40, -0.10, 0.78), lpole=(-1, 0.2, -0.4), rpole=(1, 0.2, -0.4),
+              lf=(-0.16, 0.16, A + 0.02), rf=(0.19, -0.10, A + 0.02), lfpitch=-10, rfpitch=-6, lknee=(-0.5, 1, 0.3), rknee=(0.6, 1, 0.3))
+    anim('die_back', G, [(0, {}), (4, k1, 'in'), (10, k2, 'in'), (14, land, 'in'), (17, boun, 'out'), (23, lie, 's'), (34, lie, 'lin')], lag=DOWN)
+    # KILLED, FALLING FORWARD: onto his knees, then down on his face, one arm under him
+    f1 = dict(hips=(0.0, 0.04, -0.20), lean=12, spine=(0, 14, 0), head=(0, 26), lh=(-0.18, 0.26, 1.10), rh=(0.20, 0.20, 1.08), lpole=(-0.8, -0.6, -0.2), rpole=(0.8, -0.6, -0.2))
+    knees = dict(hips=(0.0, 0.16, -0.47), lean=20, spine=(4, 22, 2), head=(0, 34), lh=(-0.22, 0.34, 0.74), rh=(0.24, 0.30, 0.70), lpole=(-0.8, -0.6, 0.2), rpole=(0.8, -0.6, 0.2),
+                 lf=(-0.15, -0.24, 0.16), rf=(0.17, -0.42, 0.16), lfpitch=62, rfpitch=62, lfyaw=-4, rfyaw=-12, lknee=(-0.1, 1, -0.4), rknee=(0.1, 1, -0.4))
+    face = dict(hips=(0.02, 0.56, 0.115 - STAND_Z), yaw=6, lean=84, spine=(4, -4, 0), head=(38, 74), lh=(-0.30, 1.16, 0.10), rh=(0.20, 0.72, 0.09), lpole=(-1, 0.2, 0.3), rpole=(1, -0.3, 0.2),
+                lf=(-0.17, -0.22, 0.10), rf=(0.20, -0.30, 0.10), lfpitch=84, rfpitch=84, lfyaw=-14, rfyaw=16, lknee=(-0.2, 0.2, -1), rknee=(0.2, 0.2, -1))
+    facb = dict(face, hips=(0.02, 0.55, 0.15 - STAND_Z), lean=80, head=(30, 60), lh=(-0.30, 1.10, 0.20), rh=(0.20, 0.70, 0.16))
+    anim('die_fwd', G, [(0, {}), (4, f1, 'in'), (10, knees, 'in'), (13, knees, 'lin'), (19, facb, 'in'), (22, face, 'out'), (34, face, 'lin')], lag=dict(DOWN, lh=1.2, rh=1.5))
 
-    # TAUNT: the arms thrown wide and low, the chest out — "come on, then"
-    wide = dict(hips=(0.0, 0.02, -0.03), yaw=-8, lean=-4, spine=(4, -10, 0), head=(0, -8), lh=(-0.62, 0.22, 1.02), rh=(0.62, 0.20, 1.02), lpole=(-0.6, -1, 0.2), rpole=(0.6, -1, 0.2), rfpitch=0, rf=(0.20, -0.14, ANKLE_Z))
-    wide2 = dict(wide, lh=(-0.60, 0.30, 1.10), rh=(0.60, 0.28, 1.10), hips=(0.0, 0.04, -0.02))
-    clip('taunt', [(0, {}), (8, wide), (14, wide2), (20, wide), (26, wide2), (32, wide), (42, {})])
-
-
-def build_katana():
-    # THE KATANA'S STANCE (the middle guard): the right foot forward, both hands low in front, the point at the throat
-    K = dict(hips=(0.0, 0.0, -0.06), yaw=14, lean=4, spine=(-6, 4, 0), head=(0, 3),
-             lf=(-0.15, -0.22, ANKLE_Z + 0.03), rf=(0.13, 0.20, ANKLE_Z), lfyaw=34, rfyaw=4, lfpitch=10, rfpitch=0, lknee=(-0.45, 1, 0.1), rknee=(0.15, 1, 0.1),
-             rh=(0.03, 0.30, 1.06), rpole=(0.6, -0.6, -1), lpole=(-0.6, -0.6, -1), blade=((0, 0.74, 0.67), (0, 0.67, -0.74)))
-
-    def k(**o):
-        P = dict(K); P.update(o)
-        # (the left hand under the right on the grip — the game puts it there exactly: Character.hands)
-        d = Vector(P['blade'][0]).normalized()
-        if 'lh' not in o: P['lh'] = tuple(Vector(P['rh']) - d * 0.12 + Vector((-0.03, 0, 0)))
-        return P
-    T = 1.5   # frames a tick (30 a second, 20 ticks)
-    sway = k(rh=(0.03, 0.305, 1.075), hips=(0.0, 0.0, -0.05))
-    clip('katana_idle', [(0, k()), (18, sway), (36, k())], loop=True)
-    # the DRAW: the hand to the left hip, out and up into the guard
-    clip('katana_draw', [(0, k(rh=(-0.20, 0.10, 0.99), blade=((-0.25, -0.92, -0.30), (0, -0.3, 0.95)), yaw=24, spine=(14, 6, 0))),
-                         (6, k(rh=(-0.06, 0.34, 1.10), blade=((-0.55, 0.30, 0.78), (0.6, 0.7, 0.2)), yaw=18)), (15, k())])
-    # CUT 1 — rising from the left hip to the right shoulder
-    w1 = k(rh=(-0.24, 0.14, 0.98), blade=((-0.50, -0.55, -0.67), (0.6, 0.5, 0.6)), yaw=40, spine=(22, 8, 4), hips=(0.0, -0.02, -0.10))
-    e1 = k(rh=(0.10, 0.50, 1.30), blade=((0.25, 0.80, 0.55), (0.75, 0.2, 0.62)), yaw=4, spine=(-8, 6, 0), hips=(0.0, 0.06, -0.07))
-    f1 = k(rh=(0.34, 0.36, 1.58), blade=((0.62, 0.20, 0.76), (0.6, -0.3, 0.3)), yaw=-22, spine=(-26, 0, -4), hips=(0.0, 0.07, -0.05))
-    clip('cut1', [(0, k()), (2 * T, w1), (3 * T, e1), (4 * T, f1), (5.5 * T, f1), (8 * T, k())], hit=3 * T)
-    # CUT 2 — back across, right to left, level
-    w2 = k(rh=(0.36, 0.16, 1.38), blade=((0.72, -0.52, 0.46), (-0.3, 0.9, 0.0)), yaw=-30, spine=(-30, 2, 0), hips=(0.0, -0.01, -0.08))
-    e2 = k(rh=(0.04, 0.54, 1.32), blade=((0.20, 0.97, 0.10), (-1, 0.2, 0)), yaw=6, spine=(4, 8, 0), hips=(0.0, 0.07, -0.08))
-    f2 = k(rh=(-0.30, 0.34, 1.28), blade=((-0.80, 0.56, 0.20), (-0.6, -0.8, 0)), yaw=34, spine=(30, 8, 0), hips=(0.0, 0.08, -0.08))
-    clip('cut2', [(0, k()), (2 * T, w2), (3 * T, e2), (4 * T, f2), (5.5 * T, f2), (8 * T, k())], hit=3 * T)
-    # CUT 3 — down from overhead, a step in
-    w3 = k(rh=(0.04, 0.06, 1.84), blade=((0, -0.62, 0.78), (0, 0.78, 0.62)), yaw=6, lean=-4, spine=(-2, -10, 0), hips=(0.0, -0.03, -0.04), head=(0, -2))
-    e3 = k(rh=(0.03, 0.56, 1.42), blade=((0, 0.80, 0.60), (0, 0.6, -0.8)), yaw=8, lean=10, spine=(-2, 10, 0), hips=(0.0, 0.18, -0.10), rf=(0.13, 0.42, ANKLE_Z), lfpitch=26)
-    f3 = k(rh=(0.03, 0.56, 0.98), blade=((0, 0.96, -0.28), (0, -0.28, -0.96)), yaw=8, lean=18, spine=(-2, 18, 0), hips=(0.0, 0.22, -0.17), rf=(0.13, 0.44, ANKLE_Z), lfpitch=32, head=(0, 8))
-    clip('cut3', [(0, k()), (3 * T, w3), (4 * T, e3), (5 * T, f3), (7 * T, f3), (11 * T, k())], hit=4 * T)
-    # THE HEAVY CUT — coiled to the right, a lunge and a level sweep right round to the left
-    wh = k(rh=(0.38, -0.02, 1.22), blade=((0.50, -0.83, 0.24), (-0.8, -0.5, 0)), yaw=-56, spine=(-34, 6, 0), hips=(0.03, -0.08, -0.16), lean=8)
-    eh = k(rh=(0.10, 0.62, 1.22), blade=((0.30, 0.95, 0.06), (-1, 0.3, 0)), yaw=0, spine=(6, 12, 0), hips=(0.0, 0.24, -0.16), lean=12, rf=(0.13, 0.50, ANKLE_Z), lfpitch=30)
-    fh = k(rh=(-0.40, 0.28, 1.24), blade=((-0.90, -0.38, 0.20), (0.3, -0.95, 0)), yaw=62, spine=(40, 10, 0), hips=(-0.02, 0.26, -0.15), lean=10, rf=(0.13, 0.50, ANKLE_Z), lfpitch=30, lfyaw=60)
-    clip('cut_heavy', [(0, k()), (5 * T, wh), (6.5 * T, eh), (8 * T, fh), (10 * T, fh), (16 * T, k())], hit=6.5 * T)
-    # THE ABILITY woken: the blade stood upright before the face, held, back to the guard
-    up = k(rh=(0.03, 0.26, 1.28), blade=((0, 0.04, 1.0), (0, 1, 0)), hips=(0.0, 0.0, -0.03), yaw=6, spine=(-2, 0, 0))
-    clip('katana_wake', [(0, k()), (5, up), (13, up), (18, k())])
+    # TAUNT: the arms thrown wide and low, the chest out, a beckon of the hands — "come on, then"
+    wide = dict(hips=(0.0, 0.02, -0.04), yaw=-8, lean=-5, spine=(4, -11, 0), head=(0, -9), lh=(-0.62, 0.22, 1.04), rh=(0.62, 0.20, 1.04), lpole=(-0.6, -1, 0.2), rpole=(0.6, -1, 0.2), rfpitch=0, rf=(0.20, -0.14, A))
+    wide2 = dict(wide, lh=(-0.58, 0.32, 1.14), rh=(0.58, 0.30, 1.14), hips=(0.0, 0.045, -0.025), head=(0, -13))
+    anim('taunt', G, [(0, {}), (7, wide, 'out'), (13, wide2, 's'), (19, wide, 's'), (25, wide2, 's'), (31, wide, 's'), (41, {}, 's')], lag=dict(LAG, lh=0.8, rh=0.8))
 
 
 if kw.get('FROM'):
@@ -339,7 +445,6 @@ if kw.get('FROM'):
     CLIPS.update(meta)
 else:
     build()
-    build_katana()
     arm['fight_clips'] = json.dumps(CLIPS)
 if kw.get('BLEND'):
     bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(kw['BLEND']))
@@ -402,38 +507,56 @@ def sample(name):
 
 
 def preview(name):
-    """Stills of the clip's key poses."""
+    """A FILM STRIP of the clip — every frame of a short one, every second of a long one, left to right, seen from
+    his front right — <PREVIEW>/<name>.png: the motion read at a glance (the arcs, what leads, where it is fast)."""
+    import numpy as np
     os.makedirs(PREVIEW, exist_ok=True)
     set_action(name)
     scene.render.engine = 'BLENDER_WORKBENCH'
     scene.display.shading.light = 'STUDIO'
     scene.display.shading.color_type = 'TEXTURE'
-    scene.render.resolution_x = 420; scene.render.resolution_y = 480
+    TW, TH = 230, 300
+    scene.render.resolution_x = TW; scene.render.resolution_y = TH
+    scene.render.resolution_percentage = 100
     scene.render.film_transparent = False
+    scene.render.image_settings.file_format = 'PNG'
     if not scene.camera:
         cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam'))
         scene.collection.objects.link(cam)
         scene.camera = cam
-        cam.data.lens = 50
     cam = scene.camera
-    cam.location = (3.4, 3.0, 1.25)   # (from his front right)
-    look = Vector((0, 0.1, 0.95)) - Vector(cam.location)
+    # (a long lens on a man standing; wider for one who goes down)
+    cam.data.lens = 46 if name in ('knockdown', 'die_back', 'die_fwd') else 78
+    if not scene.world: scene.world = bpy.data.worlds.new('w')
+    scene.world.color = (0.42, 0.44, 0.47)
+    side = kw.get('VIEW') == 'side'
+    cam.location = (4.6, 0.1, 1.15) if side else (3.5, 3.3, 1.3)   # (from his right, square on / from his front right)
+    look = Vector((0, -0.05 if side else 0.0, 0.92)) - Vector(cam.location)
     cam.rotation_euler = look.to_track_quat('-Z', 'Y').to_euler()
-    sword = bpy.data.objects.get('katana_fire')
-    if sword is None and os.path.exists(os.path.join(ROOT, 'src', 'assets', 'models', 'weapons', 'katana_fire.glb')):
-        before = set(bpy.data.objects)
-        bpy.ops.import_scene.gltf(filepath=os.path.join(ROOT, 'src', 'assets', 'models', 'weapons', 'katana_fire.glb'))
-        for o in set(bpy.data.objects) - before:
-            if o.name.startswith('glow'): o.hide_render = True
-            else: sword = o; o.name = 'katana_fire'
-        bpy.context.view_layer.objects.active = arm
-    if sword: sword.hide_render = not (name.startswith('cut') or name.startswith('katana'))
-    keys = CLIPS[name]['keys']
-    for f in (keys[:-1] if (name.startswith('cut') or name.startswith('katana')) else (keys[1:-1] or keys[:1])):
-        scene.frame_set(int(f), subframe=f - int(f)); upd()
-        if sword and not sword.hide_render: sword.matrix_world = sword_matrix()
-        scene.render.filepath = os.path.join(PREVIEW, f'{name}_{int(f * 10):03d}.png')
+    F = int(CLIPS[name]['frames'])
+    step = 1 if F <= 12 else 2 if F <= 26 else 3
+    frames = list(range(0, F + 1, step))
+    hit = CLIPS[name].get('hit')
+    at_hit = min(frames, key=lambda f: abs(f - hit)) if hit is not None else -1
+    tiles = []
+    tmp = os.path.join(PREVIEW, '_tile.png')
+    for f in frames:
+        scene.frame_set(f); upd()
+        scene.render.filepath = tmp
         bpy.ops.render.render(write_still=True)
+        img = bpy.data.images.load(tmp)
+        a = np.array(img.pixels[:], dtype=np.float32).reshape(TH, TW, 4)
+        # (the frame of the blow: a bar under it)
+        if f == at_hit: a[:7, :, :] = (1.0, 0.55, 0.1, 1.0)
+        tiles.append(a)
+        bpy.data.images.remove(img)
+    strip = np.concatenate(tiles, axis=1)
+    out = bpy.data.images.new('strip', strip.shape[1], strip.shape[0])
+    out.pixels = strip.ravel().tolist()
+    out.filepath_raw = os.path.join(PREVIEW, f'{name}.png'); out.file_format = 'PNG'
+    out.save()
+    bpy.data.images.remove(out)
+    if os.path.exists(tmp): os.remove(tmp)
 
 
 nodes = [{'name': PFX + n} for n in BODY]
@@ -452,6 +575,7 @@ def add(arr, typ, minmax=False):
     return len(accessors) - 1
 
 
+ONLY = kw.get('ONLY', '').split(',') if kw.get('ONLY') else None
 for name in CLIPS:
     if name not in bpy.data.actions: continue
     n_f, rot, hips = sample(name)
@@ -465,7 +589,7 @@ for name in CLIPS:
     anims.append({'name': name, 'samplers': samplers, 'channels': channels})
     c = CLIPS[name]
     info[name] = {'loop': bool(c['loop']), 'speed': 0, 'frames': n_f, **({'hit': round(c['hit'] / FPS, 4)} if c.get('hit') else {})}
-    if PREVIEW: preview(name)
+    if PREVIEW and (not ONLY or name in ONLY): preview(name)
 
 nodes.append({'name': 'skeleton', 'children': list(range(len(BODY))), 'extras': {'clips': json.dumps(info)}})
 gltf = {'asset': {'version': '2.0', 'generator': 'overhill scripts/oth/fight.py (Blender %s)' % bpy.app.version_string},

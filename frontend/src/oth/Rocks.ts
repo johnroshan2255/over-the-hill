@@ -1,4 +1,5 @@
 import * as GFX from './gfx'
+import { lodEye } from './LodEye'
 const { ConvexGeometry, mergeVertices, toCreasedNormals } = GFX
 import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK, LOOK_REACH } from './Atmosphere'
@@ -751,11 +752,15 @@ export class Rocks {
     return moved
   }
 
+  private lodRev = 0
   update(camera: GFX.PerspectiveCamera): void {
     camera.getWorldDirection(this.dir)
-    if (camera.position.distanceToSquared(this.lastPos) < 16 && this.dir.dot(this.lastDir) > 0.9985) return
+    // (in a lens — the scope, LodEye.ts: chosen again after a small part of the lens's turn, and when the detail's eye moves)
+    const E = lodEye, lens = E.on
+    if (camera.position.distanceToSquared(this.lastPos) < 16 && this.dir.dot(this.lastDir) > E.turn(0.9985) && E.rev === this.lodRev) return
+    this.lodRev = E.rev
     this.lastPos.copy(camera.position); this.lastDir.copy(this.dir)
-    this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+    this.pv.multiplyMatrices(lens ? E.proj : camera.projectionMatrix, camera.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = this.reach
     // (a rock s m big at d m is s / d × this px tall: under 2 px it isn't drawn)
@@ -765,13 +770,15 @@ export class Rocks {
     for (const m of this.farMeshes) m.count = 0
     const near2 = this.near * this.near
     this.culled.frustum = this.culled.occluded = this.culled.small = 0
-    const i0 = Math.floor((cx - R) / CELL), i1 = Math.floor((cx + R) / CELL), j0 = Math.floor((cz - R) / CELL), j1 = Math.floor((cz + R) / CELL)
+    // (… and a rock's reach and its near shape are by how far it lies from the SIGHT LINE; its size on the screen —
+    //  whether it's drawn at all — stays by the camera's own distance and lens)
+    const i0 = Math.floor((lens ? E.x0(R) : cx - R) / CELL), i1 = Math.floor((lens ? E.x1(R) : cx + R) / CELL), j0 = Math.floor((lens ? E.z0(R) : cz - R) / CELL), j1 = Math.floor((lens ? E.z1(R) : cz + R) / CELL)
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const k = this.key(i, j), list = this.grid.get(k)
       if (!list) continue
       const x0 = i * CELL, z0 = j * CELL
       const nx = Math.max(x0 - cx, 0, cx - x0 - CELL), nz = Math.max(z0 - cz, 0, cz - z0 - CELL)
-      if (nx * nx + nz * nz > R * R) continue
+      if (lens ? E.far(x0, z0, CELL, R) : nx * nx + nz * nz > R * R) continue
       let yb = this.cellBox.get(k)
       if (!yb) {
         yb = [Infinity, -Infinity]
@@ -784,9 +791,9 @@ export class Rocks {
       if (!this.frustum.intersectsBox(this.box)) { this.culled.frustum++; continue }
       if (this.horizon?.hidden(x0 - 10, z0 - 10, x0 + CELL + 10, z0 + CELL + 10, yb[1])) { this.culled.occluded++; continue }
       for (const r of list) {
-        const dx = r.x - cx, dz = r.z - cz, d2 = dx * dx + dz * dz
+        const dx = r.x - cx, dz = r.z - cz, away2 = dx * dx + dz * dz, d2 = lens ? E.d2(r.x, r.z) : away2
         if (d2 > R * R) continue
-        if (r.sy * r.sy < minRatio * minRatio * d2) { this.culled.small++; continue }
+        if (r.sy * r.sy < minRatio * minRatio * away2) { this.culled.small++; continue }
         // (a rounded boulder past rockNear: its coarse shape — the fog softens it there)
         const mesh = r.v >= VARIANTS && d2 > near2 ? this.farMeshes[r.v - VARIANTS] : this.meshes[r.v]
         this.q.setFromEuler(this.e.set(r.tilt, r.rot, r.tilt * 0.6))

@@ -1,4 +1,5 @@
 import * as GFX from './gfx'
+import { lodEye } from './LodEye'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK } from './Atmosphere'
 import type { MapData } from './MapData'
 import { PAINT_GLSL } from './paint'
@@ -31,6 +32,8 @@ const REF_FAN = 11
  *  showing between the tufts. Unlike a lower tier's budget, the blades are NOT widened to make up for it. */
 const AMOUNT = 0.7
 
+/** The grass's ring in a lens: this much smaller. */
+const LENS_THIN = 1.5
 export class Grass {
   readonly group = new GFX.Group()
   private readonly rings: Ring[] = []
@@ -129,6 +132,7 @@ export class Grass {
       ...Object.fromEntries(Object.entries(t).filter(([k]) => /^uLake|^uBog$|^uStony$|^uMeadow|^uMire/.test(k))),   // (… its lakes, its bog, its flower meadows)
       uMaskGrid: { value: new GFX.Vector4(mg.n, mg.step, mg.origin, 0) },
       uD0: { value: D0 },
+      uThin: this.thin,
       uRadius: { value: R },
       // fewer tufts on the lower tiers → each blade wider by the square root: the coverage stays HIGH's
       uWidthK: { value: Math.max(1, Math.sqrt((REF_DENSITY * REF_FAN) / (tier.grassDensity * tier.grassFan))) },
@@ -188,13 +192,27 @@ export class Grass {
     return h
   }
 
+  private readonly thin = { value: 1 }
+  private readonly lens: Ring = Object.create(null)
+  /** A ring as a lens has it: its bounds drawn in by `thin`. */
+  private lensRing(r: Ring, thin: number): Ring {
+    const o = Object.assign(this.lens, r)
+    o.rin = r.rin / thin; o.rout = r.rout / thin
+    return o
+  }
   update(camera: GFX.PerspectiveCamera): void {
-    this.field.update(camera.position.x, camera.position.z)
+    // (the grass grows round the DETAIL'S EYE — the camera, or in the scope a point out along the sight line, LodEye.ts)
+    this.field.update(lodEye.bx, lodEye.bz)
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
-    const cx = camera.position.x, cz = camera.position.z
+    const cx = lodEye.bx, cz = lodEye.bz
+    // (in a lens the whole ring is in view at once — from afar — where the open view holds a quarter of it: the ring
+    //  drawn smaller there, the blades thinned as if that much further off: about what the open view draws)
+    const thin = lodEye.on ? LENS_THIN : 1
+    this.thin.value = thin
     this.blades = 0
-    for (const ring of this.rings) {
+    for (const ring0 of this.rings) {
+      const ring = thin === 1 ? ring0 : this.lensRing(ring0, thin)
       const T = ring.tile, a = ring.tiles.array as Float32Array
       const i0 = Math.floor((cx - ring.rout) / T), i1 = Math.floor((cx + ring.rout) / T)
       const j0 = Math.floor((cz - ring.rout) / T), j1 = Math.floor((cz + ring.rout) / T)
@@ -312,6 +330,7 @@ uniform sampler2D uTrail;
 uniform float uTrailHW;
 uniform vec4 uMaskGrid;
 uniform float uD0;
+uniform float uThin;
 uniform float uBuild;
 uniform float uRin;
 uniform float uRout;
@@ -346,7 +365,7 @@ float hillLift(vec2 xz) {
 }
 void main() {
   vec2 root = aTile + aTuft.xy;
-  float d = length(root - uCamPos.xz);
+  float d = length(root - uLodPos.xz) * uThin;
   // density share at this distance → keep this tuft? (and how much wider, to hold the coverage)
   float share = (uD0 / (1.0 + pow(d / 9.0, 1.5))) / uBuild;
   float keep = step(aTuft.z, share) * step(uRin - 0.5, d) * step(d, uRout + 0.5);

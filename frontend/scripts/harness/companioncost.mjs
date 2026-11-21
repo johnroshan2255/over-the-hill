@@ -1,6 +1,6 @@
 // WHAT THE COMPANION AND THE WEAPONS COST A FRAME (oth/Companion.ts, oth/Weapons.ts): their own code timed in the page
 // — the companion's update / physics step / skeleton / cull, the weapons' update, the pick-ups' — over 240 frames in
-// each state: the friend beside you on foot, the enemy fighting you, a rifle firing, the katana cutting. JS only (the
+// each state: the friend beside you on foot, the enemy fighting you, a rifle firing. JS only (the
 // draws are counted by `npm run shot`): ms a frame on this machine; a Snapdragon 6-series runs JS about 6–8× slower.
 //   node scripts/harness/companioncost.mjs    env: PORT (5200), TIER (low)
 import puppeteer from 'puppeteer-core'
@@ -38,10 +38,6 @@ const run = async (kind) => {
   await page.keyboard.up('KeyA')
   await page.evaluate(() => window.__oth.arsenal.equip('ak47')); await sleep(900)
   await page.keyboard.down('KeyJ'); await measure('the AK-47 firing', 2500); await page.keyboard.up('KeyJ')
-  await page.evaluate(() => window.__oth.arsenal.equip('katana')); await sleep(1200)
-  const cut = setInterval(() => { void key('KeyJ') }, 450)
-  await measure('the katana cutting', 3000)
-  clearInterval(cut)
   await page.close()
 }
 await run('friend')

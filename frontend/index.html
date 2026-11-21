@@ -111,6 +111,15 @@
       .oth-touch .oth-sprint { display: none; right: calc(124px + env(safe-area-inset-right)); bottom: calc(26px + env(safe-area-inset-bottom)); width: 64px; height: 64px; font-size: 12px; }
       .oth-touch.foot .oth-sprint { display: grid; }
       @media (orientation: portrait) { .oth-touch .oth-sprint { right: calc(116px + env(safe-area-inset-right)); bottom: calc(24px + env(safe-area-inset-bottom)); width: 58px; height: 58px; } }
+      /* THE WEAPON's buttons (on foot, a weapon in the hands — or fists and someone to fight; oth/Weapons.ts): round the
+         right thumb — FIRE · PUNCH up and left of JUMP, the biggest; AIM · SCOPE · KICK over JUMP; RELOAD over FIRE.
+         Clear of SPRINT, the door and the stick sideways, short and upright
+         (scripts/harness/phonepads.mjs) */
+      .oth-touch .oth-wpad { display: none; font-size: 12px; letter-spacing: .06em; }
+      .oth-touch .oth-wpad.on { background: rgba(242, 169, 59, .85); border-color: #f2a93b; color: #120c04; }
+      .oth-touch .oth-wpad[data-wp=fire] { right: calc(122px + env(safe-area-inset-right)); bottom: calc(104px + env(safe-area-inset-bottom)); width: 74px; height: 74px; font-size: 15px; border-color: #f2a93b; }
+      .oth-touch .oth-wpad[data-wp=alt] { right: calc(38px + env(safe-area-inset-right)); bottom: calc(126px + env(safe-area-inset-bottom)); width: 56px; height: 56px; }
+      .oth-touch .oth-wpad[data-wp=third] { right: calc(134px + env(safe-area-inset-right)); bottom: calc(192px + env(safe-area-inset-bottom)); width: 54px; height: 54px; }
       /* THE DOOR button (touch): out of / into what's nearest — only when there's something to do; above the right
          thumb's pads */
       .oth-door { display: none; position: fixed; z-index: 5; right: calc(24px + env(safe-area-inset-right)); bottom: calc(196px + env(safe-area-inset-bottom)); width: 58px; height: 58px; padding: 0; border-radius: 50%; border: 2px solid #f2a93b; background: rgba(242, 169, 59, .32); color: #fff; place-items: center; touch-action: none; -webkit-tap-highlight-color: transparent; }

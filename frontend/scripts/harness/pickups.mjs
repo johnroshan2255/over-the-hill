@@ -23,8 +23,8 @@ await page.goto(`${BASE}/?tier=${process.env.TIER || 'high'}&hour=11&time=0&save
 await page.waitForFunction(() => window.__oth?.ready, { timeout: 120_000, polling: 250 })
 await sleep(2500)
 const key = async (c, ms = 80) => { await page.keyboard.down(c); await sleep(ms); await page.keyboard.up(c) }
-const sites = await page.evaluate(() => window.__oth.pickups.sites.map((s) => ({ weapon: s.weapon, katana: s.katana, place: s.place, x: Math.round(s.x), z: Math.round(s.z) })))
-console.log('sites:', sites.map((s) => `${s.weapon}${s.katana ? ':' + s.katana : ''} @ ${s.place} (${s.x}, ${s.z})`).join(' · '))
+const sites = await page.evaluate(() => window.__oth.pickups.sites.map((s) => ({ weapon: s.weapon, place: s.place, x: Math.round(s.x), z: Math.round(s.z) })))
+console.log('sites:', sites.map((s) => `${s.weapon} @ ${s.place} (${s.x}, ${s.z})`).join(' · '))
 check(sites.length >= 5 && sites[0].weapon === 'pistol', `the ruins hold the weapons (${sites.length}; the nearest: the ${sites[0]?.weapon})`)
 check((await page.evaluate(() => window.__oth.companion)) === null, 'no companion unless the setting asks for one')
 // the car put by the nearest; out; the walker put 6 m from it

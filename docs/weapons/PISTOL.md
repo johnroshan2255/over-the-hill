@@ -37,13 +37,18 @@ back over 4 ticks; each shot fired before it is back adds to the spread.
 ## In the game
 
 - **One shot a press**; no faster than **one every 3 ticks (150 ms — 400 a minute)**, as fast as a practised hand.
-- **Spread** (the cone's half angle): 0.5° standing still, 1.4° walking, 3.0° running or in the air; + 0.5° for each
-  shot fired in the last 6 ticks.
+- **It shoots where the cross is** (the user, 2026-11-21: "the cross is there but it's not shooting there"): the
+  bullet leaves for what the middle of the screen is on. **Spread** (the cone's half angle — the cross's gap opens to
+  show it): 0.15° standing still, 0.35° walking, 0.9° running or in the air; + 0.12° for each shot fired in the last
+  6 ticks, to + 0.6° at most.
+- **Pace** with it in the hands: 96 % (CS:GO's 240 of 250).
 - **Damage 26** at the muzzle (four to the body), × 2.0 to the head, × 0.75 to a limb; falls with the energy kept, never
   under 60 %.
 - **Reload 32 ticks (1.6 s)**: the magazine dropped, a new one in, the slide released. **Draw 8 ticks (0.4 s)**.
 - **Ammunition**: 17 in the gun, up to 68 carried (four magazines).
-- **Held** in the right hand, the left under it; walked and run with, aimed along the camera's line.
+- **Held** — third person (GTA's): carried in the right hand at his side while he walks, runs and sprints; aimed (the
+  other button held, or fired) out before his face in both hands, he faces the view and the keys strafe. First
+  person (CS:GO's): fixed to the view at its lower right, both hands on it, a cross in the middle.
 
 ```json
 {
@@ -52,8 +57,8 @@ back over 4 ticks; each shot fired before it is back adds to the spread.
   "auto": false, "fireTicks": 3, "reloadTicks": 32, "drawTicks": 8,
   "magazine": 17, "reserve": 68,
   "damage": 26, "head": 2.0, "limb": 0.75, "floor": 0.6,
-  "spread": { "still": 0.5, "walk": 1.4, "run": 3.0, "perShot": 0.5, "settleTicks": 6 },
+  "spread": { "still": 0.15, "walk": 0.35, "run": 0.9, "perShot": 0.12, "perShotMax": 0.6, "settleTicks": 6 },
   "recoil": { "up": 1.6, "side": 0.5, "returnTicks": 4 },
-  "mass": 0.91, "length": 0.186, "tracerEvery": 0
+  "pace": 0.96, "mass": 0.91, "length": 0.186, "tracerEvery": 0
 }
 ```

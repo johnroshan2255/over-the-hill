@@ -44,6 +44,7 @@ export class ChaseCam {
   private lift = 0
   /** How high over the vehicle it looks (m): the car's 1.6, the bike's lower. */
   private lookH = 1.6
+  private lookHNow = 1.6
 
   constructor(readonly camera: GFX.PerspectiveCamera, private readonly map: MapData, private readonly car: ChaseTarget, dom: HTMLElement) {
     dom.addEventListener('pointerdown', (e) => {
@@ -117,8 +118,10 @@ export class ChaseCam {
   snap(): void {
     if (this.car.sim) this.yaw = this.car.sim.heading
   }
-  /** OVER THE SHOULDER (a gun in the hands — Weapons.ts): the look point this far to the right of what's followed (m). */
+  /** OVER THE SHOULDER (a gun aimed — Weapons.ts): the look point this far to the right of what's followed (m);
+   *  eased there (`sideNow`). */
   side = 0
+  private sideNow = 0
   /** (aiming on foot) the view kept where it looks while what it follows turns to face it: its own yaw taken to the
    *  target's heading, the difference left in the orbit; no ease back behind. */
   aimHold(): void {
@@ -128,6 +131,10 @@ export class ChaseCam {
     this.orbit = Math.atan2(Math.sin(c - h), Math.cos(c - h))
     this.idle = 0
   }
+  /** A JOLT (a blow taken or landed, a ram, a bolt): the view shaken — k 0 … 1 — dying away in a third of a second. */
+  shake(k: number): void { this.shakeK = Math.max(this.shakeK, k) }
+  private shakeK = 0
+  private shakeT = 0
   /** The view kicked up (rad) and aside by a shot. */
   kick(up: number, side: number): void { this.pitch = GFX.MathUtils.clamp(this.pitch - up, PITCH_MIN, 1.2); this.orbit += side }
 
@@ -151,7 +158,13 @@ export class ChaseCam {
     const dist0 = this.dist * (1 + Math.min(speed, 30) / 90)
     const dist = dist0 + (Math.max(dist0, 34) - dist0) * ak
     const p = this.car.pos
-    this.look.set(p.x + Math.cos(a) * this.side, p.y + this.lookH, p.z - Math.sin(a) * this.side)
+    // (over the shoulder: the camera itself moved aside with what it looks at — the view stays along its own line —
+    //  and the look height eased: a frame's change of either was a jump)
+    this.sideNow += (this.side - this.sideNow) * Math.min(1, dt * 9)
+    if (this.sideNow > 1e-3 || this.side > 0) this.lookHNow += (this.lookH - this.lookHNow) * Math.min(1, dt * 9)
+    else { this.lookHNow = this.lookH; this.sideNow = 0 }
+    const LH = this.lookHNow, sx = Math.cos(a) * this.sideNow, sz = -Math.sin(a) * this.sideNow
+    this.look.set(p.x + sx, p.y + LH, p.z + sz)
     // (rock close behind — the car backed against a wall: the camera rises over the car instead of coming in to it)
     const po = Math.max(this.pitch, PITCH_LOW), tilt = PITCH_LOW - Math.min(this.pitch, PITCH_LOW)
     const pe0 = po + Math.max(0, 1.15 - po) * this.lift
@@ -161,10 +174,10 @@ export class ChaseCam {
     if (this.obstruct) {
       // (from the car's own middle, not the look point 1.6 m up: pressed under an overhang, the look point is in the
       //  rock and the camera stayed in it — a grey screen)
-      const oy = p.y + this.lookH * 0.56, hitLow = this.obstruct(p.x, oy, p.z, ux, uy, uz, dist + 0.6 + 0.7)
+      const oy = p.y + LH * 0.56, hitLow = this.obstruct(p.x, oy, p.z, ux, uy, uz, dist + 0.6 + 0.7)
       // (and along the camera's OWN line, from the look point — 2026-11-07, the cave world: under a low roof the camera,
       //  0.44 × lookH over the low ray, went up into the rock and looked out through the hill)
-      const hitTop = this.obstruct(p.x, p.y + this.lookH, p.z, ux, uy, uz, dist + 0.6 + 0.7)
+      const hitTop = this.obstruct(p.x, p.y + LH, p.z, ux, uy, uz, dist + 0.6 + 0.7)
       const hit0 = hitLow === null ? hitTop : hitTop === null ? hitLow : Math.min(hitLow, hitTop)
       const hit = hit0 === null ? null : Math.max(0, hit0 - 0.7)
       const free = hit === null ? 1e4 : Math.max(1.2, hit - 0.6) // (finite: Infinity − Infinity in the ease was NaN — a black screen)
@@ -173,10 +186,10 @@ export class ChaseCam {
       const blocked = free < Math.min(dist, 4.5) ? 1 : 0
       this.lift += (blocked - this.lift) * Math.min(1, dt * (blocked ? 4 : 1.2))
     }
-    const cx = p.x + ux * dd
-    const cz = p.z + uz * dd
-    let cy = p.y + this.lookH + uy * dd
-    cy = Math.max(cy, this.map.height(cx, cz) + 0.75 * this.lookH)
+    const cx = p.x + sx + ux * dd
+    const cz = p.z + sz + uz * dd
+    let cy = p.y + LH + uy * dd
+    cy = Math.max(cy, this.map.height(cx, cz) + 0.75 * LH)
     this.camera.position.set(cx, cy, cz)
     if (tilt > 0.001) {
       // (looking up: the line to the car raised by the tilt, kept short of straight up — lookAt's up vector)
@@ -184,6 +197,14 @@ export class ChaseCam {
       const el = Math.min(Math.atan2(ly, lh) + tilt, 1.54), ce = Math.cos(el)
       this.look.set(cx + (lx / lh) * ce, cy + Math.sin(el), cz + (lz / lh) * ce)
     }
+    if (this.shakeK > 0.004) {
+      // (two quick sines out of step on each axis: a rattle, not a wobble — the camera a few centimetres, its aim more)
+      this.shakeT += dt
+      const t = this.shakeT, k = this.shakeK
+      this.camera.position.x += Math.sin(t * 61) * 0.035 * k; this.camera.position.y += Math.sin(t * 79 + 1.3) * 0.045 * k; this.camera.position.z += Math.sin(t * 53 + 2.1) * 0.035 * k
+      this.look.x += Math.sin(t * 47 + 0.7) * 0.11 * k; this.look.y += Math.sin(t * 67 + 2.9) * 0.14 * k; this.look.z += Math.sin(t * 59 + 4.2) * 0.11 * k
+      this.shakeK *= Math.exp(-dt * 9)
+    } else this.shakeK = 0
     this.camera.lookAt(this.look)
     this.camera.updateMatrixWorld()
   }

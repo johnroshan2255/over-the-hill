@@ -1,0 +1,118 @@
+{
+  "tickHz": 20,
+  "id": "damage",
+  "crash": {
+    "minDv": 1.5,
+    "maxDv": 30
+  },
+  "deform": {
+    "radius": {
+      "base": 0.35,
+      "perDv": 0.11,
+      "max": 1.6
+    },
+    "depthPerDv": 0.022,
+    "maxPerHit": 0.45,
+    "maxDepth": 0.6,
+    "crumple": 0.35,
+    "cabinCell": 0.72
+  },
+  "glass": {
+    "crackDv": 2.5,
+    "shatterDv": 5,
+    "radius": 0.9
+  },
+  "lamp": {
+    "breakDv": 3,
+    "radius": 0.35
+  },
+  "spare": {
+    "cushion": 0.45,
+    "give": 0.12,
+    "glass": 0.5
+  },
+  "wheel": {
+    "radius": 0.75,
+    "bendPerDv": 0.018,
+    "maxCamber": 0.21,
+    "toePerCamber": 0.35,
+    "gripLoss": 0.45,
+    "dragNm": 400,
+    "jam": 0.15,
+    "tearOff": 0.2,
+    "tearOffDv": 14,
+    "burstDv": 9,
+    "flat": {
+      "radius": 0.8,
+      "grip": 0.55,
+      "dragNm": 250
+    },
+    "hub": {
+      "radius": 0.4,
+      "grip": 0.35
+    }
+  },
+  "landing": {
+    "bendFrom": 6.2,
+    "bendPerMs": 0.03,
+    "burstFrom": 10
+  },
+  "engine": {
+    "health": 1000,
+    "bayDamagePerDv": 30,
+    "elsewherePerDv": 5,
+    "steamAt": 650,
+    "smokeAt": 450,
+    "misfireAt": 300,
+    "fireAt": 250,
+    "fireDv": 16,
+    "power": [
+      [
+        1000,
+        1
+      ],
+      [
+        650,
+        0.92
+      ],
+      [
+        450,
+        0.75
+      ],
+      [
+        300,
+        0.5
+      ],
+      [
+        120,
+        0.3
+      ],
+      [
+        0,
+        0
+      ]
+    ],
+    "burnTicks": 200
+  },
+  "shot": {
+    "engine": 14,
+    "glassCracks": 1,
+    "glassShatters": 3,
+    "dentDv": 2.2
+  },
+  "explosion": {
+    "radius": 9,
+    "pushDv": 7,
+    "hurt": 70
+  },
+  "debris": {
+    "max": 48,
+    "lifeTicks": 400
+  },
+  "repair": {
+    "coinsPerPoint": 0.05,
+    "minCoins": 5,
+    "campFree": true
+  },
+  "spec": "docs/DAMAGE.md"
+}

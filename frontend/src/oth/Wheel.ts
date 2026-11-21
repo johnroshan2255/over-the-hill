@@ -37,6 +37,8 @@ export const ICONS = {
   moto: 'M5 14.5a3 3 0 1 0 0.01 0z M19 14.5a3 3 0 1 0 0.01 0z M5 17.5l4-5h5.5l2-3.5h2.5 M9 12.5 7.5 9h3.5 M14.5 12.5 19 17.5 M11 12.5l2 3h3',
   winch: 'M12 2v9 M12 11a4 4 0 1 0 4 4 M16 15l-2.2-1.6 M8.5 2h7',
   reset: 'M4.5 12a7.5 7.5 0 1 0 2.4-5.5 M4.5 4v5h5',
+  /** a spanner (REPAIR) */
+  repair: 'M14.5 6.5a4 4 0 0 0 5 5L11 20a2.1 2.1 0 0 1-3-3z M17 4.5l-2.5 2.5 2.5 2.5 2.5-2.5',
   /** a steering wheel (the AUTOPILOT) */
   pilot: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 10a2 2 0 1 0 0 4a2 2 0 1 0 0-4z M3.5 11 10 12 M14 12l6.5-1 M12 14v6.8',
   lights: 'M11 5.5c-4.5 0-7 2.8-7 6.5s2.5 6.5 7 6.5h1v-13z M15.5 8h5.5 M15.5 12h5.5 M15.5 16h5.5',
@@ -50,12 +52,10 @@ export const ICONS = {
   walk: 'M13 4a1.6 1.6 0 1 0 0.01 0z M10 21l2.5-6 2.5 2v4 M8 11l3-3 3 2 2.5 2.5 M11 8l1 5-3 3',
   /** the wheel's two modes: the actions (a cog), the weapons (crossed blades) */
   gear: 'M12 8.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7z M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1',
-  swords: 'M4 4l12.5 12.5 M20 4 7.5 16.5 M14 19l5-5 M5 14l5 5 M17.5 17.5 21 21 M6.5 17.5 3 21',
   fist: 'M7 11V7.5a1.5 1.5 0 0 1 3 0V11 M10 10V6.5a1.5 1.5 0 0 1 3 0V10 M13 10V7.5a1.5 1.5 0 0 1 3 0V11 M16 11V9.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-3l-2-4a1.5 1.5 0 0 1 2.5-1.5',
   pistol: 'M3 7h17v4h-9l-1 2H7l-1 7H3z M11 11v2',
   rifle: 'M2 10h14l1-2h4v3l-3 1h-5l-1 2H9l-1 6H5l1-6-4-1z M12 12l2 5',
   scope: 'M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16z M12 2v6M12 16v6M2 12h6M16 12h6',
-  katana: 'M4 20 17 7c2-2 3-4 3-4s-2 1-4 3L3 19z M5.5 15.5l3 3 M3 21l2-2',
 }
 
 export function iconSvg(d: string, size = 20): string {
@@ -167,7 +167,7 @@ export class ActionWheel {
     this.modeBar.replaceChildren()
     if (this.weapons) {
       this.modeBar.style.cssText = 'position:absolute;left:50%;top:calc(50% + min(42vmin, 250px));transform:translateX(-50%);display:flex;gap:14px'
-      for (const [m, icon, label] of [['actions', ICONS.gear, 'Actions (1)'], ['weapons', ICONS.swords, 'Weapons (2)']] as const) {
+      for (const [m, icon, label] of [['actions', ICONS.gear, 'Actions (1)'], ['weapons', ICONS.pistol, 'Weapons (2)']] as const) {
         const b = document.createElement('button')
         const lit = this.mode === m
         b.title = label

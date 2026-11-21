@@ -8,8 +8,7 @@
   "order": [
     "pistol",
     "ak47",
-    "sniper",
-    "katana"
+    "sniper"
   ],
   "weapons": {
     "ak47": {
@@ -34,10 +33,11 @@
       "limb": 0.75,
       "floor": 0.5,
       "spread": {
-        "still": 0.35,
-        "walk": 1.6,
-        "run": 4,
-        "perShot": 0.22,
+        "still": 0.12,
+        "walk": 0.4,
+        "run": 1.1,
+        "perShot": 0.07,
+        "perShotMax": 0.7,
         "settleTicks": 8
       },
       "recoil": {
@@ -47,100 +47,11 @@
         "grow": 1.8,
         "growShots": 8
       },
+      "pace": 0.86,
       "mass": 4.3,
       "length": 0.88,
-      "tracerEvery": 5,
+      "tracerEvery": 3,
       "spec": "docs/weapons/AK47.md"
-    },
-    "katana": {
-      "id": "katana",
-      "name": "Katana",
-      "kind": "blade",
-      "hold": "katana",
-      "mass": 1.15,
-      "length": 1.03,
-      "blade": 0.72,
-      "drawTicks": 10,
-      "comboTicks": 3,
-      "head": 1.5,
-      "cuts": [
-        {
-          "id": "cut1",
-          "windup": 2,
-          "edge": 2,
-          "recover": 4,
-          "arc": 110,
-          "reach": 1.9,
-          "damage": 34
-        },
-        {
-          "id": "cut2",
-          "windup": 2,
-          "edge": 2,
-          "recover": 4,
-          "arc": 120,
-          "reach": 1.9,
-          "damage": 34
-        },
-        {
-          "id": "cut3",
-          "windup": 3,
-          "edge": 2,
-          "recover": 6,
-          "arc": 50,
-          "reach": 2.1,
-          "damage": 48,
-          "head": true
-        },
-        {
-          "id": "heavy",
-          "windup": 5,
-          "edge": 3,
-          "recover": 8,
-          "arc": 200,
-          "reach": 2.3,
-          "damage": 60
-        }
-      ],
-      "types": {
-        "fire": {
-          "name": "Homura — the fire blade",
-          "awakeTicks": 160,
-          "restTicks": 400,
-          "glow": "#ff7a1a",
-          "burn": {
-            "damage": 6,
-            "everyTicks": 10,
-            "forTicks": 80
-          },
-          "wave": {
-            "length": 12,
-            "width": 2.4,
-            "speed": 20,
-            "damage": 40
-          }
-        },
-        "thunder": {
-          "name": "Raiden — the thunder blade",
-          "awakeTicks": 160,
-          "restTicks": 400,
-          "glow": "#9fd0ff",
-          "arc": {
-            "radius": 6,
-            "rainRadius": 9,
-            "damage": 18,
-            "stunTicks": 12
-          },
-          "bolt": {
-            "ahead": 6,
-            "radius": 3.5,
-            "damage": 55,
-            "stunTicks": 16,
-            "delayTicks": 6
-          }
-        }
-      },
-      "spec": "docs/weapons/KATANA.md"
     },
     "pistol": {
       "id": "pistol",
@@ -164,10 +75,11 @@
       "limb": 0.75,
       "floor": 0.6,
       "spread": {
-        "still": 0.5,
-        "walk": 1.4,
-        "run": 3,
-        "perShot": 0.5,
+        "still": 0.15,
+        "walk": 0.35,
+        "run": 0.9,
+        "perShot": 0.12,
+        "perShotMax": 0.6,
         "settleTicks": 6
       },
       "recoil": {
@@ -175,6 +87,7 @@
         "side": 0.5,
         "returnTicks": 4
       },
+      "pace": 0.96,
       "mass": 0.91,
       "length": 0.186,
       "tracerEvery": 0,
@@ -217,13 +130,13 @@
       },
       "scope": {
         "fov": [
-          40,
-          10
+          21.5,
+          5.2
         ],
         "settleTicks": 4,
-        "pace": 0.4
+        "pace": 0.5
       },
-      "pace": 0.85,
+      "pace": 0.8,
       "mass": 6.9,
       "length": 1.23,
       "tracerEvery": 1,

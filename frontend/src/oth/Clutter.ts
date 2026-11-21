@@ -1,4 +1,5 @@
 import * as GFX from './gfx'
+import { lodEye } from './LodEye'
 import { LOOK, type Atmosphere } from './Atmosphere'
 import { Builder, SURF, woodMaterial } from './Bridges'
 import type { MapData } from './MapData'
@@ -285,9 +286,11 @@ export class Clutter {
     return c
   }
 
+  private readonly eye = new GFX.Vector3()
   /** Re-pick what's drawn when the camera has moved 8 m. */
-  update(camera: GFX.Camera): void {
-    const p = camera.position
+  update(_camera: GFX.Camera): void {
+    // (laid round the DETAIL'S EYE — the camera, or in the scope a point out along the sight line, LodEye.ts)
+    const p = this.eye.set(lodEye.bx, lodEye.by, lodEye.bz)
     if (p.distanceToSquared(this.last) < 64) return
     this.last.copy(p)
     const counts = new Array<number>(KINDS.length).fill(0)

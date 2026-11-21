@@ -59,6 +59,11 @@ export interface WheelState {
   contact: boolean
 }
 
+/** DAMAGE (oth/Damage.ts — docs/DAMAGE.md) as the physics takes it: the engine's power left (0 … 1) and, per wheel,
+ *  its radius' share (a flat tyre on its rim, a bare hub), its grip's share, its toe (rad, + = right: a bent axle),
+ *  its drag (N·m; a jammed wheel: more than the tyre can turn). `rev` moves whenever the wheels' numbers change. */
+export interface SimDamage { rev: number; power: number; radius: number[]; grip: number[]; toe: number[]; drag: number[] }
+
 /** A massless collision piece: a convex hull of points (xyz…), a capsule a → b of radius r, a box, or the exact body
  *  as a triangle soup (xyz… per corner; Groups.VehicleMesh — the hulls then only meet terrain and formations). */
 export type Shape =
@@ -436,6 +441,27 @@ export class TruckSim extends VehicleBase {
   drifting = false
   readonly wheelSlip = [0, 0, 0, 0]
   private driftHold = 0
+  /** DAMAGE (drivetrain mode): what the car's state takes from the engine and the wheels — null: whole. `cut`: the
+   *  engine's power this step beyond that (a misfire: 0.1; else 1). */
+  damage: SimDamage | null = null
+  cut = 1
+  private damageRev = -1
+  /** Per wheel: the hardest it has come down on its STOPS since this was last read (the shock's closing speed, m/s —
+   *  a hard landing; whoever reads it zeroes it). */
+  readonly hardHit = [0, 0, 0, 0]
+  private applyDamage(): void {
+    const d = this.damage, D = this.drivetrain
+    if (!d || !D || this.mode !== 'drivetrain') return
+    D.powerScale = (this.tune.power / this.ref.power) * d.power * this.cut
+    if (d.rev === this.damageRev) return
+    this.damageRev = d.rev
+    const r = this.baseRadius * this.tune.tyre
+    for (let i = 0; i < 4; i++) {
+      // (the radius only — its mount stays: the corner sinks by what the tyre has lost)
+      this.vc.setWheelRadius(i, r * d.radius[i])
+      D.dmgGrip[i] = d.grip[i]; D.toe[i] = d.toe[i]; D.dmgDrag[i] = d.drag[i]
+    }
+  }
   /**
    * ARCADE handling (Asphalt-style option, Settings → Handling; the default is the realistic model): Rapier
    * still does suspension, contacts and crashes, but the feel is scripted — punchy acceleration to a high top speed, the car goes where
@@ -744,6 +770,7 @@ export class TruckSim extends VehicleBase {
    * replace it). LEGACY = the original setup (world gravity, collider masses, Rapier friction).
    */
   private configure(mode: 'legacy' | 'drivetrain'): void {
+    this.damageRev = -1 // (the wheels are set up again below: the damage's numbers put back on them at the next step)
     const vc = this.vc, body = this.body
     const prev = this.mode
     this.mode = mode
@@ -998,7 +1025,10 @@ export class TruckSim extends VehicleBase {
       // HARD STOP, inelastic (the axle on its rubber stops): past full bump the corner's closing speed is taken out
       // over ~2 steps — the wheel carries the body up the stone, it doesn't spring it into the air (a stiff spring
       // alone stored the hit and threw the car a metre up off a 25 cm rock).
-      if (hard > 0 && sv > 0) bump += Math.min(8 * this.cornerW[i], ((0.6 * this.cornerW[i]) / G_REAL) * (sv / dt))
+      if (hard > 0 && sv > 0) {
+        bump += Math.min(8 * this.cornerW[i], ((0.6 * this.cornerW[i]) / G_REAL) * (sv / dt))
+        if (sv > this.hardHit[i]) this.hardHit[i] = sv
+      }
       const av = Math.abs(sv)
       let damp = Math.sign(sv) * ((sv > 0 ? this.dampB[i] : this.dampR[i]) ?? 0) * M * (av < DAMP_KNEE ? av : DAMP_KNEE + DAMP_HIGH * (av - DAMP_KNEE))
       // A tyre only pushes: rebound damping can't pull the wheel down onto the ground.
@@ -1430,6 +1460,7 @@ export class TruckSim extends VehicleBase {
   step(dt: number): void {
     const want = this.wantMode()
     if (want !== this.mode) this.configure(want)
+    this.applyDamage()
     super.step(dt)
     if (this.afloat) this.wheelSpeed = Math.sign(this.speed || 1) * Math.max(Math.abs(this.speed), Math.max(0, this.controls.throttle) * 9)
     const D = this.drivetrain

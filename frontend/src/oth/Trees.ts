@@ -1,5 +1,6 @@
 import { grovesOf } from './Groves'
 import * as GFX from './gfx'
+import { lodEye } from './LodEye'
 import type { Horizon } from './Horizon'
 import { ATMOS_GLSL, FRAG_OUT, LOOK, LOOK_REACH, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
@@ -43,6 +44,7 @@ const IMP_SPECIES = [0, 1, 3, 4, 5, 6]
 /** The oak's impostor frame is wider (its crown 1.5× the broadleaf's): IMP.FW × this. */
 const OAK_FW = 1.62
 
+const _dir = new GFX.Vector3()
 export class Trees {
   readonly group = new GFX.Group()
   /** Every tree (TREE_STRIDE floats each). */
@@ -349,6 +351,7 @@ export class Trees {
   horizon: Horizon | null = null
   /** Tiles skipped as hidden at the last rebuild (the HUD). */
   occluded = 0
+  private lodRev = 0
 
   update(camera: GFX.PerspectiveCamera): void {
     // the see-through's cone, every frame (before the lists' early out: the car moves when the camera doesn't)
@@ -358,25 +361,29 @@ export class Trees {
       this.seeD.value.set(dx / L, dy / L, dz / L, L)
       this.seeK.value.set((1.6 * se.w) / L, L - 0.35 * se.w, L - 0.9 * se.w, 0)
     }
-    const dir = camera.getWorldDirection(new GFX.Vector3())
-    if (camera.position.distanceToSquared(this.lastPos) < 16 && dir.dot(this.lastDir) > 0.9985) return
+    const dir = camera.getWorldDirection(_dir)
+    // (in a lens — the scope, LodEye.ts: chosen again after a small part of the lens's turn, and when the detail's eye moves)
+    const E = lodEye, lens = E.on
+    if (camera.position.distanceToSquared(this.lastPos) < 16 && dir.dot(this.lastDir) > E.turn(0.9985) && E.rev === this.lodRev) return
+    this.lodRev = E.rev
     this.lastPos.copy(camera.position)
     this.lastDir.copy(dir)
-    this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+    this.pv.multiplyMatrices(lens ? E.proj : camera.projectionMatrix, camera.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = this.ranges
     const reach = R[3]
     const pick = this.pick
     for (const P of pick) P.length = 0
     this.occluded = 0
-    const i0 = Math.floor((cx - reach) / TILE), i1 = Math.floor((cx + reach) / TILE), j0 = Math.floor((cz - reach) / TILE), j1 = Math.floor((cz + reach) / TILE)
+    // (… and every tree's detail is by how far it stands from the SIGHT LINE, not from where you stand)
+    const i0 = Math.floor((lens ? E.x0(reach) : cx - reach) / TILE), i1 = Math.floor((lens ? E.x1(reach) : cx + reach) / TILE), j0 = Math.floor((lens ? E.z0(reach) : cz - reach) / TILE), j1 = Math.floor((lens ? E.z1(reach) : cz + reach) / TILE)
     const d = this.data
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const k = this.key(i, j), list = this.tiles.get(k)
       if (!list) continue
       const x0 = i * TILE, z0 = j * TILE
       const nx = Math.max(x0 - cx, 0, cx - x0 - TILE), nz = Math.max(z0 - cz, 0, cz - z0 - TILE)
-      if (nx * nx + nz * nz > reach * reach) continue
+      if (lens ? E.far(x0, z0, TILE, reach) : nx * nx + nz * nz > reach * reach) continue
       this.box.min.set(x0 - 6, this.map.height(x0 + TILE / 2, z0 + TILE / 2) - 60, z0 - 6)
       this.box.max.set(x0 + TILE + 6, (this.tileMaxH.get(k) ?? 0) + 2, z0 + TILE + 6)
       if (!this.frustum.intersectsBox(this.box)) continue
@@ -384,12 +391,13 @@ export class Trees {
       for (const t of list) {
         if (this.gone.has(t)) continue
         const o = t * TREE_STRIDE
-        const dx = d[o] - cx, dz = d[o + 2] - cz, dist = Math.sqrt(dx * dx + dz * dz)
+        const dx = d[o] - cx, dz = d[o + 2] - cz, away = Math.sqrt(dx * dx + dz * dz), dist = lens ? Math.sqrt(E.d2(d[o], d[o + 2])) : away
         if (dist > reach) continue
         // (a spruce / larch past the near ring: its IMPOSTOR, not the mid LOD — 2026-11-06, the user: "the far image is far
         //  better than the LOD, a fuller tree" — the impostor is the near LOD's own picture; the mid LOD's one ring of
         //  fronds read thin. 2 triangles, not ~480. ?treemid=geo: the mid LOD as before. A snag keeps its mesh.)
-        const sp = d[o + 5], lod = dist < R[0] ? 0 : dist < R[1] && (sp >= 2 || this.midGeo) ? 1 : 2
+        // (in a lens the near shapes reach three quarters as far from the sight line: all of them are in the glass at once)
+        const sp = d[o + 5], lod = dist < (lens ? R[0] * 0.75 : R[0]) ? 0 : dist < R[1] && (sp >= 2 || this.midGeo) ? 1 : 2
         let grow = 1
         const slot = lod === 2 ? 4 : family(d[o + 5]) * 2 + lod
         if (lod === 2) {
@@ -401,7 +409,7 @@ export class Trees {
             grow = Math.min(1.45, Math.pow(1 / share, 0.35))
           }
         }
-        pick[slot].push(dist, o, grow)
+        pick[slot].push(away, o, grow)   // (drawn nearest first: by the camera's own distance)
       }
     }
     // NEAR → FAR (2026-11-03, every GPU): each LOD's trees written nearest first — a leaf card drawn first fills the

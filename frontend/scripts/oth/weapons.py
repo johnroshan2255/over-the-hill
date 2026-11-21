@@ -1,13 +1,13 @@
 # THE WEAPONS' MODELS (2026-11-19 — docs/WEAPONS.md, docs/weapons/*.md: each one's real size), made here in Blender:
-# the 9 mm pistol, the AK-47, the bolt-action sniper rifle, the katana (two kinds: the fire blade, the thunder blade).
+# the 9 mm pistol, the AK-47, the bolt-action sniper rifle. (A katana of two kinds was made here too, till 2026-11-21:
+# taken out at the user's word.)
 # Low-poly, flat-shaded, coloured by vertex (no textures) — the game's flat look; a few hundred to ~2 k triangles each.
 #
 #   blender -b --factory-startup --python scripts/oth/weapons.py -- [OUT=src/assets/models/weapons] [PREVIEW=<dir>]
 #
 # Each is built in Blender's space as the game holds it: the RIGHT HAND's grip at the origin, the muzzle / the point
-# toward +Y (the game's −z, forward), up +Z; exported y-up to <OUT>/<id>.glb (one mesh, COLOR_0; the katana's a second
-# mesh `glow` — the blade's shell, drawn additive when its ability is awake). The points the game needs (the muzzle,
-# the left hand's place, the scope's eye, the blade's base and tip) go to <OUT>/weapons.meta.json, in the game's space.
+# toward +Y (the game's −z, forward), up +Z; exported y-up to <OUT>/<id>.glb (one mesh, COLOR_0). The points the game
+# needs (the muzzle, the left hand's place, the scope's eye) go to <OUT>/weapons.meta.json, in the game's space.
 import bpy, bmesh, sys, os, json, math
 from mathutils import Vector, Matrix
 
@@ -28,8 +28,6 @@ OLIVE = (0.215, 0.245, 0.155)      # the sniper's stock
 OLIVE_D = (0.15, 0.17, 0.11)
 GLASS = (0.10, 0.20, 0.32)
 BRASS = (0.72, 0.52, 0.17)
-BLADE = (0.74, 0.77, 0.81)
-EDGE = (0.93, 0.95, 0.98)
 
 
 class Build:
@@ -201,73 +199,6 @@ def sniper():
     return b.finish('sniper')
 
 
-def katana(kind):
-    b = Build()
-    cord = (0.42, 0.045, 0.035) if kind == 'fire' else (0.085, 0.075, 0.30)
-    metal = BRASS if kind == 'fire' else (0.16, 0.165, 0.18)
-    ray = (0.86, 0.83, 0.74)
-    # the grip: ray skin under a wrap of cord — its crossings leave diamonds; the pommel cap
-    G0, G1 = -0.125, 0.145
-    seg = 9
-    for k in range(seg):
-        y0, y1 = G0 + (G1 - G0) * k / seg, G0 + (G1 - G0) * (k + 1) / seg
-        b.box((-0.0128, y0, -0.0172), (0.0128, y1, 0.0172), cord, taper=(1, 1))
-        ym = (y0 + y1) / 2
-        for sx in (-1, 1): b.plate([(ym - 0.008, 0.0), (ym, -0.007), (ym + 0.008, 0.0), (ym, 0.007)], 0.0006, ray, x=sx * 0.0132)
-    b.box((-0.0140, G0 - 0.012, -0.0185), (0.0140, G0, 0.0185), metal)
-    b.box((-0.0136, G1 - 0.014, -0.0180), (0.0136, G1, 0.0180), metal)                 # the collar by the guard
-    # the guard: the fire blade's cut as flames (eight lobes), the thunder blade's a plain wheel with three notches
-    n = 24
-    pts = []
-    for k in range(n):
-        t = 2 * math.pi * k / n
-        r = 0.036 + (0.006 * math.cos(4 * t) if kind == 'fire' else (-0.007 if k % 8 == 0 else 0.0))
-        pts.append((math.cos(t) * r, math.sin(t) * r))
-    ring = [b.bm.verts.new((x, G1, z)) for x, z in pts]; ring2 = [b.bm.verts.new((x, G1 + 0.005, z)) for x, z in pts]
-    fs = [b.bm.faces.new(ring), b.bm.faces.new(list(reversed(ring2)))] + [b.bm.faces.new([ring[(k + 1) % n], ring[k], ring2[k], ring2[(k + 1) % n]]) for k in range(n)]
-    b._paint(fs, metal)
-    b.box((-0.0052, G1 + 0.005, -0.0165), (0.0052, G1 + 0.030, 0.0125), BRASS)          # the blade's collar (habaki)
-    # the blade: 0.72 m, curved 1.8 cm toward its back; a wedge — the back 7 mm thick, a ridge, the edge; the point
-    B0, L, SORI = G1 + 0.030, 0.72 - 0.030, 0.018
-    N = 14
-    def sect(s):
-        y = B0 + L * s
-        zc = SORI * 4 * s * (1 - s) * -1 + SORI * s * 0.0          # the bow, toward the edge (−z); the back's line stays the chord's
-        wdt = 0.031 - 0.008 * s
-        tip = max(0.0, (s - 0.945) / 0.055)                        # the point: the edge sweeps up to the back
-        zb = 0.0125 + zc                                           # the back
-        ze = zb - wdt * (1 - tip)                                  # the edge
-        zr = zb - wdt * 0.38 * (1 - tip)                           # the ridge
-        th = 0.0035 * (1 - 0.35 * s) * (1 - tip * 0.9)
-        return y, zb, zr, ze, th
-    rows = []
-    for k in range(N + 1):
-        y, zb, zr, ze, th = sect(k / N)
-        rows.append([b.bm.verts.new(p) for p in ((-th, y, zb), (th, y, zb), (th, y, zr), (0, y, ze), (-th, y, zr))])
-    for k in range(N):
-        A, Bq = rows[k], rows[k + 1]
-        b._paint([b.bm.faces.new([A[0], A[1], Bq[1], Bq[0]])], (0.55, 0.57, 0.61))                       # the back
-        b._paint([b.bm.faces.new([A[1], A[2], Bq[2], Bq[1]]), b.bm.faces.new([A[4], A[0], Bq[0], Bq[4]])], BLADE)  # the flats above the ridge
-        b._paint([b.bm.faces.new([A[2], A[3], Bq[3], Bq[2]]), b.bm.faces.new([A[3], A[4], Bq[4], Bq[3]])], EDGE)   # the tempered edge
-    b._paint([b.bm.faces.new(list(reversed(rows[0]))), b.bm.faces.new(rows[-1])], BLADE)
-    tip_y = B0 + L
-    META['katana_' + kind] = dict(base=(0, B0, 0.0), tip=(0, tip_y, sect(1)[1]), left=(0, -0.085, 0.0), edge=(0, 0, -1))
-    ob = b.finish('katana_' + kind)
-    # the GLOW's shell: the blade a little fatter — drawn additive over it when the ability is awake
-    g = Build()
-    rows = []
-    for k in range(N + 1):
-        y, zb, zr, ze, th = sect(k / N)
-        th = th + 0.004
-        rows.append([g.bm.verts.new(p) for p in ((-th, y, zb + 0.004), (th, y, zb + 0.004), (th, y, zr), (0, y, ze - 0.005), (-th, y, zr))])
-    for k in range(N):
-        A, Bq = rows[k], rows[k + 1]
-        g._paint([g.bm.faces.new([A[i], A[(i + 1) % 5], Bq[(i + 1) % 5], Bq[i]]) for i in range(5)], (1, 1, 1))
-    g._paint([g.bm.faces.new(list(reversed(rows[0]))), g.bm.faces.new(rows[-1])], (1, 1, 1))
-    glow = g.finish('glow')
-    return ob, glow
-
-
 def clear():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -296,7 +227,6 @@ def preview(name, obs, length):
     cam.data.type = 'ORTHO'
     lo = Vector((1e9,) * 3); hi = Vector((-1e9,) * 3)
     for o in obs:
-        if o.name == 'glow': continue
         for v in o.data.vertices:
             for i in range(3): lo[i] = min(lo[i], v.co[i]); hi[i] = max(hi[i], v.co[i])
     mid = (lo + hi) / 2
@@ -304,7 +234,6 @@ def preview(name, obs, length):
     for tag, off in (('side', Vector((2.0, 0.0, 0.0))), ('three', Vector((1.4, -1.2, 0.8)))):
         cam.location = mid + off
         cam.rotation_euler = (mid - cam.location).to_track_quat('-Z', 'Y').to_euler()
-        for o in obs: o.hide_render = o.name == 'glow'
         sc.render.filepath = os.path.join(PREVIEW, f'{name}_{tag}.png')
         bpy.ops.render.render(write_still=True)
 
@@ -313,7 +242,7 @@ def game(p): return [round(p[0], 4), round(p[2], 4), round(-p[1], 4)]   # Blende
 
 
 print('WEAPONS:')
-for name, make in (('pistol', pistol), ('ak47', ak47), ('sniper', sniper), ('katana_fire', lambda: katana('fire')), ('katana_thunder', lambda: katana('thunder'))):
+for name, make in (('pistol', pistol), ('ak47', ak47), ('sniper', sniper)):
     clear()
     r = make()
     obs = list(r) if isinstance(r, tuple) else [r]

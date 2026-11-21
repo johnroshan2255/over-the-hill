@@ -1,17 +1,39 @@
-# What's next for the companion, the enemy and the weapons (the hand-off, 2026-11-19)
+# What's next for the companion, the enemy and the weapons (the hand-off, 2026-11-19; round 2: 2026-11-21)
+
+**Round 2 (2026-11-21)** — after the user played it: the guns' hold (first person CS:GO's view model, third person
+GTA's carry / aim), the legs under an aimed gun, the katana carried when running, shots on the cross, the kick's
+return, the scope at CS:GO's magnifications with the world's detail drawn for it (`LodEye.ts`), real fire and
+lightning (`WeaponFx.ts`), the frame's hidden costs. The table of it: `docs/WEAPONS.md`, "Round 2". Below, §4 is
+done and §6's first point; the rest stands.
+
+**Round 3 (the same day, from the phone)**: the enemy's car no longer jumps back; the phone has its POWER button and
+its weapon buttons are laid out with the page's own; the fight's clips were made again in Blender — the user does NOT
+want Mixamo for these ("it will look bad … make it custom using Blender") — with runs of blows, a defence, blows
+taken as they land, knockback, a hit-stop and a jolt (`docs/COMPANION.md`).
+
+**Round 4 (the same day)**: **the katana is removed from the game, whole** (the user: "remove all katana thing") —
+whatever below speaks of it, of blades, of `fire` / `thunder` hits or of `WeaponFx.ts` no longer applies; the ram is
+given only with his car's body on yours; a car left before it stood comes down before it is held (`docs/WEAPONS.md`,
+"Round 4").
 
 Branch `companion` (from `look-haze`). What is built and how: `docs/COMPANION.md`, `docs/WEAPONS.md`, the specs
 `docs/weapons/*.md`. This file is only **the rest** — in the order I would do it.
 
 ## Where it stands
 
+**Car damage (2026-11-21, later the same day)** is its own file: `docs/DAMAGE.md` — built (`Damage.ts`), the enemy's
+car takes the blow of his ram and of your crash into him, his engine dead he gets out. **His car's contact with yours
+was made again with it** (its own shape, no spring-back): the hand-off for both is `docs/NEXT_damage.md`.
+
 | | |
 |---|---|
 | the companion (walks, rides, follows by car) | done — `scripts/harness/companion.mjs` |
 | the enemy (fists, kicks, knockdowns, rams, runs you down) | done — `scripts/harness/enemy.mjs` |
-| the weapons solo (pistol, AK-47, sniper + scope, the two katanas + abilities) | done — `scripts/harness/weapons.mjs` (`KATANA=thunder` for the other blade) |
+| the weapons solo (pistol, AK-47, sniper + scope) | done — `scripts/harness/weapons.mjs` (the katana: removed, round 4) |
 | the pick-ups in the ruins, the map's marks, the wheel's two buttons | done — `scripts/harness/pickups.mjs` |
+| the hold (CS:GO's in first person, GTA's in third), the scope's detail | done (round 2) — `weaponshots.mjs`, `scopeshots.mjs` |
 | the phone's buttons | written, **never tried on a phone** |
+| the fps drop the user saw | **not reproduced** here in any steady state; what could hide on a device was fixed (`docs/WEAPONS.md`) — needs the phone |
 | co-op (players hitting each other) | **nothing yet** |
 | sound | **nothing yet** |
 
@@ -25,9 +47,8 @@ the server checks it and owns the health.
 
 1. **The wire** (`proto/wire.json`; then `GOLDEN=update cargo test --test golden` in `backend/`, `npm run test:wire`
    in `frontend/`):
-   - intents: `arm` (the weapon in your hands, the katana's kind — "" for fists), `shot` (weapon, where from, the way —
-     for the others' tracers and sound), `hit` (the target's `sid`, the weapon — or `fire` / `thunder` for a blade's
-     ability —, the zone, the distance);
+   - intents: `arm` (the weapon in your hands — "" for fists), `shot` (weapon, where from, the way —
+     for the others' tracers and sound), `hit` (the target's `sid`, the weapon, the zone, the distance);
    - events: `armed` (sid, weapon, kind), `shot` (sid, …), `health` (sid, what's left), `down` (sid, by whom, with
      what), `up` (sid, where — the respawn).
 2. **The server** (`backend/src/world.rs`, a new `backend/src/weapons.rs` reading `proto/weapons.json` as `wire.rs`
@@ -46,8 +67,6 @@ the server checks it and owns the health.
      of `(Character, spec, pitch, state)` so a remote's walker is posed by the same code; their aim's pitch needs a
      byte in the pose (or in `armed` at a few Hz).
    - your own health comes from `health`; `down` plays `Character.knockdown` and holds you till `up`.
-   - the blades' abilities: the cutter's game works them out as it does solo and sends each as a `hit` with weapon
-     `fire` / `thunder`; the server needs their damages and tick gaps (they are in the katana's spec).
 4. `scripts/harness/coop.mjs` is the pattern for a two-tab test: A shoots B, B's health falls, B goes down and comes
    back.
 
@@ -63,31 +82,28 @@ Nothing makes a sound: shots (each weapon its own), the bolt, the reload, a cut'
 thunder, the ram. `Audio.ts` has no one-shot voice — add one (a small pool of buffer sources; the engine synth is the
 pattern for made sounds, `docs/ASSETS.md` gets a row for anything not made here).
 
-## 4. The abilities' look
-
-Glowing boxes now (`Arsenal.spark`): the wave's front, the bolt, its flash. Wanted by the spec: flames running up the
-fire blade and embers off a cut; arcs crawling along the thunder blade and a flash on a cut; the wave as a row of
-flames; the bolt as a jagged line with a ground flash that lights the land for 2 ticks (`atmos` has a lightning term
-for storms?); the singed grass (the ground's trodden mark). Instanced quads in one draw each; measure per tier.
+## 4. (the katana's abilities' look — gone with the katana, round 4)
 
 ## 5. The enemy armed
 
 He uses his fists and his car only. Give him an `Arsenal`-like state of his own (the hold functions lifted in 1 make
-this cheap): a pistol at range, the katana close; his aim's error by distance; you as his `Target`.
+this cheap): a pistol at range; his aim's error by distance; you as his `Target`.
 
 ## 6. How he moves with a weapon
 
-- with a gun the legs play the forward run whichever way he goes: strafe / backpedal clips (Mixamo's, into
-  `character.glb` by `hero.py`) or a blend by the angle between the heading and the way he goes;
+- (round 2: aimed, the hips turn toward the way he goes and the stride reverses backing away — `Character.legTwist`.)
+  Real strafe / backpedal clips (Mixamo's, into `character.glb` by `hero.py`) would end the small slide past 65°;
 - the reload is the left hand's trip to the belt (code): a clip each in `fight.py` would read better;
-- the katana has no scabbard; it appears in the hand;
 - `dodge` (made, in `fight.glb`) is played by nothing — a key for you, a chance for him.
 
 ## 7. On a phone
 
-The user asked for 60+ fps on a Snapdragon 6-series. Measured on the Mac only: 0.18–0.37 ms a frame of our JS
-(`scripts/harness/companioncost.mjs`), one draw for him, three + a shadow for his car, one a weapon. To do on the
-device (`npm run dev:lan`, https on the Wi-Fi): the FIRE / AIM · SCOPE · HEAVY / RELOAD · WAKE / PUNCH · KICK buttons
+The user asked for 60+ fps on a Snapdragon 6-series, and (2026-11-21) saw the fps drop "a lot" — on what, in which
+state, is not known; nothing here reproduces it (`docs/WEAPONS.md`, "The fps"). Measured on the Mac only: every state
+within ± 0.17 ms of unarmed (`scripts/harness/weaponcost.mjs`; `stateprof.mjs` says where a state's JS goes), one
+draw for him, three + a shadow for his car, one a weapon. **The first thing to do with a phone on USB:**
+`scripts/harness/phone.mjs`-style percentiles in each of `weaponcost.mjs`'s states, and the scope's second step on a
+far hillside (the detail's eye doubles the triangles there). To do on the device (`npm run dev:lan`, https on the Wi-Fi): the FIRE / AIM · SCOPE · HEAVY / RELOAD · WAKE / PUNCH · KICK buttons
 (their places against the stick, JUMP, SPRINT and the door button — `Arsenal`'s `mk(…)` calls), the scope's drag
 speed by touch, the frame rate in a fight and with the AK-47 firing.
 

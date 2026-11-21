@@ -16,6 +16,8 @@ import charUrl from '../assets/models/human/character.glb?url'
 import fightUrl from '../assets/models/human/fight.glb?url'
 import { OthAudio } from './Audio'
 import { Dust } from './Dust'
+import DAMAGE from '../../../proto/damage.json'
+import { DAMAGE_ON, DamageFx } from './Damage'
 import { ChaseCam } from './ChaseCam'
 import { Chart } from './Chart'
 import { PassMist } from './PassMist'
@@ -52,7 +54,10 @@ import { coopRequested, loadAccount, requestCoop } from '../net/api'
 import { Kind } from '../net/pose'
 import { Session } from '../net/Session'
 import { Companion, type CompanionKind } from './Companion'
-import { Arsenal, Pickups, type WeaponId } from './Weapons'
+import type RAPIER_NS from '@dimforge/rapier3d-compat'
+type RapierBody = RAPIER_NS.RigidBody
+import { Arsenal, FPP_ARMED_FOV, Pickups, type WeaponId } from './Weapons'
+import { aimLodEye, lodEye } from './LodEye'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -289,11 +294,15 @@ async function boot() {
   const eyeOff = new GFX.Vector3(), eyeAvg = new GFX.Vector3()
   let eyeAvgOn = false
   const FPP_TILT = num('fpptilt', 0.24), FPP_FOV = num('fppfov', 62)
+  const fppOff = new GFX.Vector3(0, 1.66, -0.05)
   const placeFpp = (dt: number) => {
     if (!onFoot) eyeAvgOn = false
     look.idle += dt
     if (!onFoot && look.idle > 1.2) { const k = Math.min(1, dt * 3); look.yaw -= look.yaw * k; look.pitch -= look.pitch * k }
-    qPitch.setFromAxisAngle(RIGHT, look.pitch)
+    // (a jolt, in first person: the view rattled a degree or two, dying away)
+    let jp = 0, jy = 0
+    if (fppJolt > 0.004) { fppJoltT += dt; jp = Math.sin(fppJoltT * 67) * 0.03 * fppJolt; jy = Math.sin(fppJoltT * 53 + 1.7) * 0.025 * fppJolt; fppJolt *= Math.exp(-dt * 9) } else fppJolt = 0
+    qPitch.setFromAxisAngle(RIGHT, look.pitch + jp)
     if (onFoot) {
       // (his eyes — with the stride's bob and sway steadied as GTA's: 25 % of the head's swing round its 0.6 s
       //  average; a run's head bobs 16 cm)
@@ -302,7 +311,7 @@ async function boot() {
       if (!eyeAvgOn) { eyeAvg.copy(eyeOff); eyeAvgOn = true }
       eyeAvg.lerp(eyeOff, Math.min(1, dt / 0.6))
       eye.copy(hero.pos).add(eyeAvg).addScaledVector(eyeOff.sub(eyeAvg), 0.25)
-      qYaw.setFromAxisAngle(UP, look.footYaw)
+      qYaw.setFromAxisAngle(UP, look.footYaw + jy)
       hero.camYaw = look.footYaw
       camera.quaternion.copy(qYaw).multiply(qPitch)
     } else if (riding) {
@@ -337,6 +346,8 @@ async function boot() {
     }
     camera.position.copy(eye)
     camera.updateMatrixWorld()
+    // (on foot: the eye from his feet — what he holds in first person is placed from it as he's posed next, Weapons.ts)
+    if (onFoot) fppOff.copy(eye).sub(hero.pos)
   }
   /** The driver in his seat (the character seen through the windows — and his hands on the wheel in first person): his
    *  hips set from the steering wheel (behind and under its hub), his hands at ten to two on its rim, turning with it. */
@@ -438,6 +449,9 @@ async function boot() {
   // the tyres' dust and the exhaust smoke
   const dust = new Dust(map, atmos, tier)
   scene.add(dust.mesh)
+  // CAR DAMAGE (Damage.ts — docs/DAMAGE.md; SETTINGS › PLAY, `?damage=0`): what a crash throws off, the engine's smoke,
+  // the fire — the cars' own state is theirs (Vehicle.damage, the companion's car's)
+  const damageFx = DAMAGE_ON ? new DamageFx(scene, map, atmos, shadow, env.farGrid, dust) : null
   const tyreTracks = new TyreTracks(map, tier, atmos)
   scene.add(tyreTracks.mesh)
   const winch = new Winch(map, car, world.trees, world.rocks)
@@ -493,9 +507,19 @@ async function boot() {
   }
   window.addEventListener('keydown', (e) => { if (e.code === 'KeyO' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey && !pause) toggleAutopilot() })
   const chartSize = isMobileDevice() ? 768 : 1024
+  /** Who and what the map and the minimap mark: the others (co-op) or the companion, the weapons' places — one list,
+   *  filled again each time it's asked for (every frame, by the minimap: no new arrays). */
+  const othersOut: { x: number; z: number; heading: number; colour: string; name: string; site?: boolean }[] = []
+  const others = () => {
+    othersOut.length = 0
+    const who = coop?.remotes.list ?? companion?.list, marks = pickups?.marks()
+    if (who) for (const o of who) othersOut.push(o)
+    if (marks) for (const o of marks) othersOut.push(o)
+    return othersOut
+  }
   const charts = (w: World) => {
     const chart = new Chart(w.map, chartSize)
-    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp, perfMarks: () => (perf.on ? perf.marks : []), others: () => [...(coop?.remotes.list ?? companion?.list ?? []), ...(pickups?.marks() ?? [])], claims: () => coop?.claims.list ?? [] }
+    const o = { world: w.id, lm: w.landmarks, meta: w.map.meta, chart, guide, camera, carPos: () => ride.pos, carHeading: () => ride.heading, myCamp: () => myCamp, perfMarks: () => (perf.on ? perf.marks : []), others, claims: () => coop?.claims.list ?? [] }
     const mapView = new MapView(o)
     return { chart, mapView, radar: q.get('radar') === '0' ? null : new Radar({ ...o, openMap: () => mapView.toggle() }) }
   }
@@ -841,6 +865,8 @@ async function boot() {
     const door = toWorld(d ? new GFX.Vector3(-(d.hinge.x - 0.5), d.hinge.y, d.hinge.z + d.length * 0.5) : new GFX.Vector3(car.half.x + 0.8, 0, 0))
     return { root: car.root as GFX.Object3D, hips, door, key: car.id, heading: car.sim.heading }
   }
+  const yourBox = { x: 0, z: 0, hx: 1, hz: 2.2, yaw: 0 }
+  const STILL = { x: 0, y: 0, z: 0 }
   const companionKind = (v: string | null | undefined): CompanionKind | null => (v === 'enemy' ? 'enemy' : v === 'friend' || v === '1' ? 'friend' : null)
   /** The companion as the setting says: made, changed (friend ↔ enemy) or sent away. Never in a co-op world. */
   const setCompanion = (kind: CompanionKind | null) => {
@@ -856,31 +882,57 @@ async function boot() {
       car: () => (car.sim ? { id: car.id, root: car.root } : null),
       passenger: passengerSeat,
       toast: (m) => toast(m),
+      jolt: (k, x, y, z) => jolt(k, x, y, z),
       you: () => hero,
-      size: () => (riding ? { x: 0.4, z: 1.0 } : car.half),
-      // (rammed: the body shoved on and a little up, spun about its height — by its own mass)
-      shove: (dx, dz, dv, spin) => {
-        const b = onFoot ? null : (ride.body as { mass(): number; applyImpulse(v: { x: number; y: number; z: number }, wake: boolean): void; applyTorqueImpulse(v: { x: number; y: number; z: number }, wake: boolean): void } | undefined)
+      // (your vehicle's own box: the car's body about its root, turned as it stands; the bike a man's width)
+      box: () => {
+        const o = yourBox, h = ride.heading
+        if (riding) { o.x = ride.pos.x; o.z = ride.pos.z; o.hx = 0.4; o.hz = 1.0 }
+        else { const b = car.bodyBox, c = Math.cos(h), s = Math.sin(h); o.x = car.pos.x + c * b.cx + s * b.cz; o.z = car.pos.z - s * b.cx + c * b.cz; o.hx = b.hx; o.hz = b.hz }
+        o.yaw = h
+        return o
+      },
+      // (rammed, pushed: the body shoved on — a ram's a little up too, and spun about its height — by its own mass;
+      //  a ram on the car: where it lands, for the damage — Vehicle.hitHint)
+      shove: (dx, dz, dv, spin, at, by) => {
+        const b = onFoot ? null : (ride.body as RapierBody | undefined)
         if (!b) return
         const m = b.mass()
-        b.applyImpulse({ x: dx * dv * m, y: 0.12 * dv * m, z: dz * dv * m }, true)
-        b.applyTorqueImpulse({ x: 0, y: spin * m * 1.5, z: 0 }, true)
+        if (at && !riding) car.hitHint(at.x, at.y, at.z, by ?? null)
+        // (a ram: the blow where his car met it — off its middle, it turns the car as such a blow does; a third of
+        //  the way from its centre of mass's height to there: it does not stand it on its nose)
+        if (at) { const c = b.worldCom(); b.applyImpulseAtPoint({ x: dx * dv * m, y: 0.06 * dv * m, z: dz * dv * m }, { x: at.x, y: c.y + (at.y - c.y) * 0.3, z: at.z }, true) }
+        else b.applyImpulse({ x: dx * dv * m, y: 0, z: dz * dv * m }, true)
+        if (spin) b.applyTorqueImpulse({ x: 0, y: spin * m * 1.5, z: 0 }, true)
       },
+      vel: () => { const b = onFoot ? null : (ride.body as { linvel(): { x: number; y: number; z: number } } | undefined); return b ? b.linvel() : STILL },
+      body: () => (onFoot ? null : ((ride.body as RapierBody | undefined) ?? null)),
     }, scene, map, physics, atmos, shadow, env.farGrid, charUrl, fightUrl, kind)
   }
   setCompanion(companionKind(q.get('companion')))
-  // THE WEAPONS (Weapons.ts — docs/WEAPONS.md): what you've found, the one in your hands; `?weapons=all` (with
-  // `?katana=fire|thunder`) has them all for a test — nothing of it kept
+  // THE WEAPONS (Weapons.ts — docs/WEAPONS.md): what you've found, the one in your hands; `?weapons=all` has them all
+  // for a test — nothing of it kept
   const arsenal = new Arsenal({
     onFoot: () => onFoot && !cut,
     playing: () => driving && !pause,
     targets: () => companion?.targets() ?? [],
-    kick: (up, side) => { if (fpp) { look.pitch = Math.min(1.5, look.pitch + up); look.footYaw += side } else chase.kick(up, side) },
+    kick: (up, side) => { if (fpp) { look.pitch = Math.max(-1.2, Math.min(1.5, look.pitch + up)); look.footYaw += side } else chase.kick(up, side) },
+    fpp: () => fpp && onFoot && !cut,
+    lookYaw: () => look.footYaw,
+    lookPitch: () => look.pitch,
+    eye: () => fppOff,
     toast: (m) => toast(m),
+    // (where a bullet stops: the dust it knocks out of the ground, the rock, the tree)
+    impact: (x, y, z, who) => dust.puff(x, y, z, 0.22, who ? 2 : 4, who ? HIT_DUST : SHOT_DUST),
+    // (a round that stops on a car — yours, his: Damage.ts)
+    struck: (body, x, y, z, dx, dy, dz) => {
+      if (car.sim && body === car.sim.body.handle) car.shot(x, y, z, dx, dy, dz)
+      else if (companion?.carBody?.handle === body) companion.carBlow(x, y, z, dx, dy, dz, 0, true)
+    },
     // (nothing in the hands: the phone's FIRE / AIM are a punch and a kick — the enemy's game)
     fists: (what) => { if (onFoot && !cut) companion?.attack(what === 'fire' ? 'punch' : 'kick') },
     fistsOn: () => companion?.kind === 'enemy',
-  }, hero, camera, scene, map, physics, atmos, shadow, env.farGrid, fightUrl, saving && q.get('weapons') !== 'all')
+  }, hero, camera, scene, map, physics, atmos, shadow, env.farGrid, saving && q.get('weapons') !== 'all')
   if (q.get('weaponsites') !== '0') pickups = new Pickups(arsenal, {
     onFoot: () => onFoot && !cut,
     pos: () => ride.pos,
@@ -889,13 +941,105 @@ async function boot() {
   }, world.landmarks.list, map.meta.spawn, map.half, world.id, scene, atmos, shadow, env.farGrid, saving && q.get('weapons') !== 'all')
   if (q.get('weapons') === 'all') {
     for (const id of ['pistol', 'ak47', 'sniper'] as WeaponId[]) arsenal.give(id)
-    arsenal.give('katana', q.get('katana') === 'thunder' ? 'thunder' : 'fire')
   }
+  const landH = (x: number, z: number): number => map.height(x, z)
+  /** A JOLT felt — a ram, a blow that lands, a bolt (Companion.ts, Weapons.ts): the view shaken by k (0 … 1) — the chase
+   *  camera's own shake; first person's a kick of the view that comes back — and the dust knocked up where it was. */
+  let fppJolt = 0, fppJoltT = 0
+  const jolt = (k: number, x: number, y: number, z: number) => {
+    chase.shake(k)
+    fppJolt = Math.max(fppJolt, k)
+    if (k > 0.2) dust.puff(x, y, z, 0.5 + k, Math.round(3 + k * 6), SHOT_DUST)
+  }
+  const HIT_DUST: [number, number, number] = [0.42, 0.2, 0.17], SHOT_DUST: [number, number, number] = [0.5, 0.46, 0.4]
+  // ------------------------------------------------------------------------------------------ car damage (Damage.ts)
+  // YOUR CAR'S CRASH: felt — the view jolts by how hard, the thud —, and when it was against the companion's car (or
+  // his ram on you) his car takes the same blow, the other way
+  car.onCrash = (c) => {
+    const k = Math.min(1, c.dv / 14)
+    // (his ram has given its own jolt)
+    if (!onFoot && !riding && !(companion && performance.now() / 1000 - companion.rammedAt < 0.15)) jolt(Math.max(0.25, k), c.x, c.y, c.z)
+    audio.impact('crash', k)
+    const his = companion?.carBody
+    if (companion && his && (c.other?.handle === his.handle || performance.now() / 1000 - companion.rammedAt < 0.15)) companion.carBlow(c.x, c.y, c.z, -c.dx, -c.dy, -c.dz, c.dv)
+  }
+  /** THROWN OUT of your car as it goes up: on the ground beside it, down. */
+  const blownOut = () => {
+    if (onFoot || riding || cut || !car.sim) return
+    if (winch.attached) winch.toggle()
+    car.park()
+    winch.keysOn = false
+    const p = car.pos, h = car.sim.heading, half = car.half
+    const at = besides(p.x, p.z, h, [[-(half.x + 1.8), 0], [half.x + 1.8, 0]], 0.4) ?? { x: p.x - Math.cos(h) * (half.x + 1.8), z: p.z + Math.sin(h) * (half.x + 1.8) }
+    hero.appear(at.x, at.z, h, undefined, p.y + 1.5)
+    onFoot = true
+    footCam()
+    hero.knockdown(2.4)
+  }
+  if (damageFx) damageFx.onEvent = (dm, e, x, y, z) => {
+    const mine = dm === car.damage
+    if (e.kind === 'glass' || e.kind === 'lamp') audio.impact('glass', e.kind === 'lamp' ? 0.4 : 0.9)
+    else if (e.kind === 'tyre') audio.impact('crash', 0.5)
+    else if (e.kind === 'explode') {
+      // THE BLAST: heard and felt; who is in the car is thrown out of it; what stands near takes it — the other car,
+      // you on foot, him on foot
+      audio.impact('boom')
+      jolt(1, x, y, z)
+      const R = DAMAGE.explosion.radius, X = DAMAGE.explosion
+      const near = (px: number, pz: number) => Math.max(0, 1 - Math.hypot(px - x, pz - z) / R)
+      if (mine) {
+        blownOut()
+        // (the shell thrown up a little, turning)
+        const b = car.sim?.body
+        if (b && !car.parked) { const m = b.mass(); b.applyImpulse({ x: 0, y: m * 3.5, z: 0 }, true); b.applyTorqueImpulse({ x: m * 0.8, y: m * 0.5, z: 0 }, true) }
+        const cp = companion?.carShown ? companion.car.root.position : null
+        if (companion && cp && near(cp.x, cp.z) > 0) { const d = Math.hypot(cp.x - x, cp.z - z) || 1; companion.carBlow(x + (cp.x - x) * 0.6, y, z + (cp.z - z) * 0.6, (cp.x - x) / d, 0.1, (cp.z - z) / d, X.pushDv * near(cp.x, cp.z)) }
+      } else {
+        companion?.carBlown()
+        // (your car beside his: shoved off — its own crash watch makes the dent of it)
+        const k = near(car.pos.x, car.pos.z), b = car.sim?.body
+        if (k > 0 && b && !car.parked) { const d = Math.hypot(car.pos.x - x, car.pos.z - z) || 1, m = b.mass(); b.applyImpulse({ x: ((car.pos.x - x) / d) * m * X.pushDv * k, y: m * 1.5 * k, z: ((car.pos.z - z) / d) * m * X.pushDv * k }, true) }
+      }
+      companion?.blast(x, z, R, X.hurt)
+      if (onFoot) {
+        const k = near(hero.pos.x, hero.pos.z)
+        if (k > 0.15) { hero.knockdown(1.6 + k); if (companion?.kind === 'enemy') companion.yours = Math.max(1, companion.yours - X.hurt * k) }
+      }
+    }
+    if (!mine) return
+    const W = dm.wheels[e.k]
+    const say = e.kind === 'tyre' ? 'Tyre burst' : e.kind === 'axle' ? (W?.jam ? 'Axle broken — the wheel is jammed' : 'Axle bent') : e.kind === 'wheel' ? 'Wheel torn off'
+      : e.kind === 'engine' ? (e.k === 1 ? 'Radiator hit — the engine is steaming' : e.k === 2 ? 'Engine damaged' : 'The engine is failing') : e.kind === 'dead' ? 'The engine is dead' : e.kind === 'fire' ? 'The engine is on fire — get out!'
+      : e.kind === 'explode' ? 'The car is wrecked' : null
+    if (say) toast(say, e.kind === 'fire' || e.kind === 'explode' ? 4200 : 2600)
+  }
+  const yourWheel = () => car.wheelPart, hisWheel = () => companion?.car.wheelPart ?? null
+  let deadHint = 0
+  /** REPAIR (the wheel; a rest at camp mends it for nothing): the car as it left the works, for what it costs — or
+   *  for what you have. */
+  const repairCar = () => {
+    const dm = car.damage
+    if (!dm || dm.whole) { toast('Nothing to repair'); return }
+    if (car.speedKmh > 5) { toast('Stop the car to repair it'); return }
+    const cost = Math.min(dm.cost, journal.coins)
+    dm.repair()
+    if (cost > 0) { journal.coins -= cost; keepJournal(); readouts.coins(journal.coins, -cost) }
+    toast(cost > 0 ? `Car repaired   −${cost} ◆` : 'Car repaired')
+  }
+  /** (`?lodeye=0`: the scope as a bare lens — the A/B of LodEye.ts) */
+  const LODEYE = q.get('lodeye') !== '0'
+  /** (a harness's eye — scripts/harness/weaponshots.mjs) the frame drawn from [right, up, back] m off what's followed,
+   *  in its own frame, looking `lookH` over its feet — while the game plays on with its own camera; null: off. */
+  let spectate: { x: number; y: number; z: number; lookH: number } | null = null
+  const specPos = new GFX.Vector3(), specQuat = new GFX.Quaternion(), specLook = new GFX.Vector3()
+  let specOn = false
   /** The view for what's in the hands: over the shoulder with a gun (third person), through the glass in the scope. */
   let gunView = false, scopedWas = false, fppBefore = false
   const weaponView = () => {
-    const gun = onFoot && !cut && !!arsenal.current && arsenal.current !== 'katana'
-    if (gun !== gunView) { gunView = gun; chase.side = gun ? 0.55 : 0; if (onFoot) chase.frame(gun ? 3.0 : 4.2, gun ? 1.6 : 1.45) }
+    // (third person, GTA's: the camera comes in over his right shoulder only while the gun is AIMED — carried, it is
+    //  the walker's own camera)
+    const gun = onFoot && !cut && arsenal.aiming
+    if (gun !== gunView) { gunView = gun; chase.side = gun ? 0.5 : 0; if (onFoot) chase.frame(gun ? 2.7 : 4.2, gun ? 1.62 : 1.45) }
     const sc = arsenal.scoped
     if (sc !== scopedWas) {
       scopedWas = sc
@@ -1070,7 +1214,7 @@ async function boot() {
       if (st.companion !== 'off' && (coop || coopWorld)) toast('The companion is for solo play — not in a co-op world', 3500)
       else if (!url.has('companion')) setCompanion(companionKind(st.companion))
     } else if (key === 'bot') { if (st.bot) { if (coop) startBot(); else toast('The bot joins in a co-op world — CO-OP on the title screen', 3500) } else stopBot() }
-    else if (key === 'quality' || key === 'antialias') restartPending = true
+    else if (key === 'quality' || key === 'antialias' || key === 'damage') restartPending = true
   }
   // MOUSE LOOK (mouseLook.ts): the lock lost to Esc pauses — the browser keeps that Esc, the keydown below never sees it
   initMouseLook(renderer.domElement, () => { if (!pause) setPaused(true) })
@@ -1095,6 +1239,8 @@ async function boot() {
       { id: 'winch', label: 'Winch', icon: ICONS.winch, key: 'E', run: press('KeyE'), show: () => driving && !riding && !onFoot },
       { id: 'autopilot', label: () => (autopilot.on ? 'Autopilot off' : 'Autopilot'), icon: ICONS.pilot, key: 'O', run: toggleAutopilot, on: () => autopilot.on, show: () => driving && !riding && !onFoot },
       { id: 'reset', label: 'Reset', icon: ICONS.reset, key: 'R', run: () => { if (riding) two.reset(); else car.reset() }, show: () => driving && !onFoot },
+      // (car damage — Damage.ts: shown once there is something to mend)
+      { id: 'repair', label: () => `Repair · ${Math.min(car.damage?.cost ?? 0, journal.coins)} ◆`, icon: ICONS.repair, run: repairCar, show: () => driving && !riding && !!car.damage && !car.damage.whole },
       { id: 'lights', label: 'Lights', icon: ICONS.lights, key: 'L', run: press('KeyL'), show: () => !riding && !onFoot },
       { id: 'build', label: 'Build', icon: ICONS.flag, key: 'B', run: () => { if (coop) coop.build.toggle(); else toast('Building needs a co-op world — CO-OP on the title screen', 3500) }, on: () => !!coop?.build.on },
       { id: 'time', label: 'Time', icon: ICONS.time, key: 'G', run: press('KeyG') },
@@ -1105,7 +1251,7 @@ async function boot() {
       { id: 'freecam', label: () => (driving ? 'Free camera' : 'Back to play'), icon: ICONS.camera, key: 'Shift V', run: press('KeyV', true), on: () => !driving },
     ], keyboard)
     // (its second mode — the small button under the ring: the weapons you've found; a sector puts that one in your hands)
-    const WICON: Record<string, string> = { pistol: ICONS.pistol, ak47: ICONS.rifle, sniper: ICONS.scope, katana: ICONS.katana }
+    const WICON: Record<string, string> = { pistol: ICONS.pistol, ak47: ICONS.rifle, sniper: ICONS.scope }
     wheel.weapons = () => arsenal.list().map((w) => ({ id: `w:${w.id}`, label: w.name.split(' — ')[0], icon: w.id ? WICON[w.id] : ICONS.fist, on: () => w.on, run: () => { if (!onFoot) toast('Weapons are for when you are on foot'); arsenal.equip(w.id) } }))
   }  // THE API BADGE (2026-11-05, the user: "a small icon in the top-right corner for WebGPU or WebGL"): a tag on the
   // menu button's corner — amber GPU, grey GL2
@@ -1135,7 +1281,7 @@ async function boot() {
   }
   const rest = (apply: () => void) => {
     closeMenu()
-    fadeThrough(() => { apply(); atmos.update(camera.position, clock.elapsedTime); save(); toast('Rested · progress saved') })
+    fadeThrough(() => { apply(); car.damage?.repair(); atmos.update(camera.position, clock.elapsedTime); save(); toast('Rested · progress saved') })
   }
   const openCamp = () => {
     if (pause || !canCamp()) return
@@ -1334,6 +1480,14 @@ async function boot() {
       ui.action(act)
     }
     dust.update(dt, car)
+    // (car damage: what has just broken made seen, the engines' smoke and fire, the pieces' flight)
+    if (damageFx) {
+      if (car.damage && car.sim) { const v = car.sim.body.linvel(); damageFx.car(dt, car.damage, car.root, v.x, v.y, v.z, car.paintColor, yourWheel) }
+      if (companion?.car.damage && companion.carShown) { const v = companion.carVel; damageFx.car(dt, companion.car.damage, companion.car.root, v.x, v.y, v.z, companion.car.paintColor, hisWheel) }
+      damageFx.update(dt)
+      // (the gas pressed in a car whose engine is gone: told why nothing happens — once every 8 s)
+      if ((deadHint -= dt) <= 0 && car.damage?.dead && car.sim && !onFoot && !riding && car.sim.controls.throttle > 0.5) { deadHint = 8; toast(car.damage.wrecked ? 'The car is wrecked — repair it: the wheel › Repair, or rest at a camp' : 'The engine is dead — repair it: the wheel › Repair, or rest at a camp', 4200) }
+    }
     // (the meadow pressed flat under the car — its blades grew up through the floor and the dash)
     if (car.sim && car.root.visible) world.grass.car(car.root.position.x, car.root.position.z, car.sim.heading, car.half.x + 0.1, car.half.z + 0.1)
     else world.grass.car(0, 0, 0, 0, 0)
@@ -1358,6 +1512,7 @@ async function boot() {
       else if (fpp) { if (doorCam > 0) doorCam = 0; placeFpp(dt) }
       else { if (doorCam > 0) doorCam = 0; chase.update(dt) }
     } else fly.update(dt)
+    arsenal.afterCamera()
     // (the mouse turns the camera in use only; a menu, the map or the wheel takes the cursor back — mouseLook.ts)
     chase.enabled = driving && !fpp; fly.enabled = !driving
     if (mouseLocked() && lookBlocked()) releaseMouse()
@@ -1369,7 +1524,7 @@ async function boot() {
     { const dc = camera.position.distanceTo(car.pos); car.near = car.inside || dc < 14; car.close = car.inside || dc < 6 }
     const nearWant = inFpp ? 0.05 : 0.3
     // (on a bike in first person, a wider lens — 70° — as games give it: the bars and the hands in the bottom of the view)
-    const fovWant = arsenal.scopeFov ?? (inFpp && riding ? 70 : inFpp && !onFoot ? FPP_FOV : 55)
+    const fovWant = arsenal.scopeFov ?? (inFpp && riding ? 70 : inFpp && !onFoot ? FPP_FOV : inFpp && arsenal.current ? FPP_ARMED_FOV : 55)
     if (camera.near !== nearWant || camera.fov !== fovWant) { camera.near = nearWant; camera.fov = fovWant; camera.updateProjectionMatrix() }
     ui.update(driving, atmos.clock)
     audio.update(dt, camera)
@@ -1415,6 +1570,18 @@ async function boot() {
     //  first person, on the map, in the free camera)
     world.trees.seeThrough(ride.pos, driving && !inFpp && !mapView.isOpen ? (onFoot ? 1.1 : riding ? 1.5 : 2.8) : 0)
     const t0 = performance.now()
+    // (a harness's eye: this frame drawn from beside what's followed — the game's own camera put back after the render)
+    if (spectate) {
+      const s = spectate, h = ride.heading, p = ride.pos
+      specPos.copy(camera.position); specQuat.copy(camera.quaternion); specOn = true
+      camera.position.set(p.x + Math.cos(h) * s.x + Math.sin(h) * s.z, p.y + s.y, p.z - Math.sin(h) * s.x + Math.cos(h) * s.z)
+      camera.lookAt(specLook.set(p.x, p.y + s.lookH, p.z))
+      camera.updateMatrixWorld()
+    }
+    // (THE SCOPE — LodEye.ts: the world's detail measured from the sight line, not from where you stand)
+    aimLodEye(camera, LODEYE ? arsenal.lens : 1, dt, landH)
+    ;(atmos.uniforms.uLodPos.value as GFX.Vector3).set(lodEye.bx, lodEye.by, lodEye.bz)
+    atmos.uniforms.uLens.value = lodEye.on ? Math.pow(lodEye.k, -0.7) : 1
     world.update(camera, FREEZE ? 0 : dt, FREEZE ? 100 : clock.elapsedTime, atmos.uniforms.uLamps.value, atmos.uniforms.uFire.value, ride.pos.x, ride.pos.z)
     // (what's out of view or behind the hills isn't drawn: 2026-11-02)
     viewPV.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
@@ -1427,6 +1594,7 @@ async function boot() {
     coop?.cull(view, world.horizon, camera)
     companion?.cull(view, world.horizon, camera, innerWidth, innerHeight)
     dust.cull(view, world.horizon)
+    damageFx?.cull(view, world.horizon)
     tyreTracks.cull(camera.position, clock.elapsedTime)
     fsr?.begin()
     renderer.prepare(scene, camera)
@@ -1435,7 +1603,10 @@ async function boot() {
   // FSR 1 (Fsr.ts — the Upscaling setting / ?fsr=0.77 | 0.67 | 0.5): the world drawn smaller, upscaled to the canvas
   const fsrK = num('fsr', 1)
   let fsr = fsrK > 0.3 && fsrK < 0.99 ? new Fsr(renderer, fsrK) : null
-  renderer.onPostRender(() => fsr?.end())
+  renderer.onPostRender(() => {
+    fsr?.end()
+    if (specOn) { specOn = false; camera.position.copy(specPos); camera.quaternion.copy(specQuat); camera.updateMatrixWorld() }
+  })
   // PlayCanvas's frame loop: the game in its 'update', then it renders
   renderer.start(frame)
   if (coopWorld) {
@@ -1536,12 +1707,19 @@ async function boot() {
     get bot() { return bot },
     /** (the companion — scripts/harness/companion.mjs) */
     get companion() { return companion },
+    /** (a harness's eye — weaponshots.mjs) */
+    spectate: (x?: number, y = 1.2, z = 0, lookH = 1.1) => { spectate = x === undefined ? null : { x, y, z, lookH } },
+    /** (a harness's: the companion made / changed / sent away — scripts/harness/weaponcost.mjs) */
+    setCompanion: (kind: string | null) => setCompanion(companionKind(kind)),
     /** (the weapons — scripts/harness/weapons.mjs) */
     get arsenal() { return arsenal },
     get pickups() { return pickups },
+    /** (the detail's eye — LodEye.ts; scripts/harness/scopeshots.mjs) */
+    get lodEye() { return lodEye },
     /** (a harness's aim) first person, looking this way (rad: the heading, the pitch up) */
     aim: (yaw: number, pitch: number) => { fpp = true; look.footYaw = yaw; look.pitch = pitch },
     thirdPerson: () => { fpp = false; chase.snap() },
+    get fpp() { return fpp },
     get camDir() { const d = camera.getWorldDirection(new GFX.Vector3()); return [d.x, d.y, d.z] },
     startBot,
     stopBot,
@@ -1555,6 +1733,9 @@ async function boot() {
     parts: () => ({ terrain: world.terrain.mesh, grass: world.grass.group, trees: world.trees.group, bushes: world.bushes.group, rocks: world.rocks.group, water: world.water.group, falls: world.falls.group, bridges: world.bridges.group, landmarks: world.landmarks.group, props: world.props.group, ...(world.glow ? { glow: world.glow.group } : {}), ...(world.birds ? { birds: world.birds.mesh } : {}), ...(world.cave ? { cave: world.cave.group } : {}), sky: sky.mesh, car: car.root, carShadow: car.shadowMesh, dust: dust.mesh, tracks: tyreTracks.mesh }),
     journal,
     openCamp,
+    /** (car damage — scripts/harness/damagetest.mjs) the effects; the wheel's repair */
+    damageFx,
+    repairCar,
     view: (x: number, z: number, h: number, yaw: number, pitch: number) => { driving = false; fly.place(x, z, h, yaw, pitch) },
     car,
     rain,
@@ -1666,7 +1847,7 @@ function gameHud(coins0: number) {
   return {
     coins(n: number, delta: number) {
       coins.textContent = `${n} ◆`
-      coins.dataset.d = `+${delta}`
+      coins.dataset.d = delta < 0 ? `−${-delta}` : `+${delta}`
       coins.classList.remove('pop')
       void coins.offsetWidth // (restart the animation)
       coins.classList.add('pop')

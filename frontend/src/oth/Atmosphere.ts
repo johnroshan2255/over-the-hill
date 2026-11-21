@@ -46,6 +46,12 @@ export class Atmosphere {
   sunY = 1
   readonly uniforms = {
     uCamPos: { value: new GFX.Vector3() },
+    /** The detail's eye (LodEye.ts): the camera — or, in the scope, a point out along the sight line: what the ground
+     *  and the grass measure their detail from. */
+    uLodPos: { value: new GFX.Vector3() },
+    /** A LENS (the scope): the haze's depth × this — 1 out of it; k^−0.7 for a lens k× the game's own: what the glass
+     *  is on stands clearer, as it would nearer to (not as clear as from there: it IS still that far through the air). */
+    uLens: { value: 1 },
     /** The light's direction: the sun by day, the moon by night. */
     uSunDir: { value: new GFX.Vector3(0, 1, 0) },
     uSunColor: { value: new GFX.Color() },
@@ -328,6 +334,8 @@ layout(location = 0) out highp vec4 pc_fragColor;
 export const ATMOS_GLSL = /* glsl */ `
 ${NO_BANKS ? "#define NO_BANKS" : ""}
 uniform vec3 uCamPos;
+uniform vec3 uLodPos;
+uniform float uLens;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 uniform vec3 uSunDisc;
@@ -518,7 +526,7 @@ vec3 fogColor(vec3 d) { return fogColorK(d, 0.0); }
 // 1.5 H under the floor no thicker than that).
 float hazeAmountL(vec3 wpos, out float low) {
   vec3 v = wpos - uCamPos;
-  float L = length(v), d = max(L - uFogRange.x, 0.0);
+  float L = length(v), d = max(L - uFogRange.x, 0.0) * uLens;
   float a = clamp((uCamPos.y + v.y * min(uFogRange.x / max(L, 1e-3), 1.0) - uHaze.w) / uHaze.z, -1.5, 40.0);
   float b = clamp((wpos.y - uHaze.w) / uHaze.z, -1.5, 40.0);
   float mean = abs(b - a) > 1e-3 ? (exp(-a) - exp(-b)) / (b - a) : exp(-a);
@@ -556,7 +564,7 @@ float fogAmountL(vec3 wpos, out float low) {
   low = 0.0;
   if (uHaze.x > 0.0) f = hazeAmountL(wpos, low);
   else {
-    float d = max(length(wpos - uCamPos) - uFogRange.x, 0.0);
+    float d = max(length(wpos - uCamPos) - uFogRange.x, 0.0) * uLens;
     float a = 1.0 - exp(-d / uFogRange.y);
     float low = exp(-max(wpos.y - 30.0, 0.0) / 380.0);
     f = min(a * (0.86 + 0.14 * low), 0.94);

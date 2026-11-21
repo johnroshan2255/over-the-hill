@@ -199,6 +199,11 @@ export class Drivetrain {
   /** Garage: power and grip multipliers, nitrous (Shift) torque factor. */
   powerScale = 1
   gripScale = 1
+  /** DAMAGE per wheel (VehicleSim.applyDamage — oth/Damage.ts): its grip's share, its toe (rad, + = right: a bent
+   *  axle's wheel out of line), its drag (N·m against its turning: a bent axle, a tyre on its rim; a jammed wheel). */
+  readonly dmgGrip = [1, 1, 1, 1, 1, 1, 1, 1]
+  readonly toe = [0, 0, 0, 0, 0, 0, 0, 0]
+  readonly dmgDrag = [0, 0, 0, 0, 0, 0, 0, 0]
   boostFactor = 1.6
   /** Automatic idle creep with no pedals (a real torque converter's); off = brake hold: it waits for the gas. */
   idleCreep = false
@@ -439,7 +444,7 @@ export class Drivetrain {
           const ass = Math.atan2(wi.vy, vden)
           this.alpha[i] += (ass - this.alpha[i]) * Math.min(1, ((Math.hypot(wi.vx, wi.vy) + 0.5) / SIGMA) * h)
           this.kappa[i] = k
-          const mu = gp.mu * this.heatGrip[i] * Math.max(0.6, 1 - 0.1 * (wi.Fz / this.FzStatic[i] - 1))
+          const mu = gp.mu * this.heatGrip[i] * this.dmgGrip[i] * Math.max(0.6, 1 - 0.1 * (wi.Fz / this.FzStatic[i] - 1))
           combinedSlip(k, this.alpha[i], gp, this.tmp)
           Fx = this.tmp[0] * mu * wi.Fz
           Fy = this.tmp[1] * mu * wi.Fz
@@ -474,7 +479,7 @@ export class Drivetrain {
         if (this.handbrake && (i >> 1) === R.axles.length - 1) Tb += 1.5 * gp.mu * this.FzStatic[i] * r + 0.6 * this.brakeMax[i]
         if (this.selector === 'P') Tb += 1e6
         const crr = gp.crr + gp.sand * 0.1 * Math.min(1, Math.abs(this.kappa[i]))
-        const Tf = Tb + (wi.contact ? crr * Math.max(0, wi.Fz) * r : 0)
+        const Tf = Tb + this.dmgDrag[i] + (wi.contact ? crr * Math.max(0, wi.Fz) * r : 0)
         const dw = (Tf / this.I[i]) * h
         this.omega[i] = Math.abs(this.omega[i]) <= dw ? 0 : this.omega[i] - Math.sign(this.omega[i]) * dw
       }
@@ -816,8 +821,8 @@ export class Drivetrain {
         dl = s * (s > 0 ? outer : inner)
         dr = s * (s > 0 ? inner : outer)
       } else if (ax.steered) dl = dr = this.steerAngle
-      this.steer[k * 2] = dl
-      this.steer[k * 2 + 1] = dr
+      this.steer[k * 2] = dl + this.toe[k * 2]
+      this.steer[k * 2 + 1] = dr + this.toe[k * 2 + 1]
     }
   }
 

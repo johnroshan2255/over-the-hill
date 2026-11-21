@@ -1,4 +1,5 @@
 import * as GFX from './gfx'
+import { lodEye } from './LodEye'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere } from './Atmosphere'
 import type { MapData } from './MapData'
 import { ROAD_REACH, ROAD_STEP } from './mapPrep'
@@ -260,9 +261,11 @@ export class Terrain {
   update(camera: GFX.PerspectiveCamera): void {
     this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
-    this.cx = camera.position.x
-    this.cz = camera.position.z
-    const agl = Math.max(0, camera.position.y - this.map.height(this.cx, this.cz))
+    // (the patches and the painted ground are laid round the DETAIL'S EYE — the camera, or in the scope a point out
+    //  along the sight line, LodEye.ts; the shader's own measures with it: uLodPos)
+    this.cx = lodEye.bx
+    this.cz = lodEye.bz
+    const agl = Math.max(0, lodEye.by - this.map.height(this.cx, this.cz))
     this.agl2 = agl * agl
     this.uniforms.uAgl2.value = this.agl2
     // (the wet banks: the four still waters nearest the camera — by their shore's distance)
@@ -500,7 +503,7 @@ vec2 morphStep(vec2 xz, float dist, float L, float c) {
 void main() {
   float cell = aNode.z / uGridN;
   vec2 xz = aNode.xy + position.xz * cell;
-  vec2 d2 = xz - uCamPos.xz;
+  vec2 d2 = xz - uLodPos.xz;
   float dist = sqrt(dot(d2, d2) + uAgl2);
   // geomorph through up to three coarser levels (written out, no loop — rockRelief.ts says why; a level whose blend
   // is 0 moves nothing, and every coarser one's is 0 too)
@@ -970,7 +973,7 @@ uniform vec4 uGC;
 // camera within 16 texels, 2 more for the filter), blended into the next over the last quarter of its reach (a
 // hillside facing the camera across a valley is reach-bound: the texel no coarser than it must be)
 float gcLevel(vec2 xz, float foot) {
-  vec2 d = abs(xz - uCamPos.xz);
+  vec2 d = abs(xz - uLodPos.xz);
   float r = max(max(d.x, d.y), 1e-3) / ((uGC.x * 0.5 - 20.0) * uGC.y); // (the distance in level-0 reaches)
   float lf = max(log2(foot * GC_BIAS / uGC.y), 0.0);
   float L = max(floor(lf), ceil(log2(r)));
@@ -1148,7 +1151,7 @@ void main() {
   vec3 Ns = groundNormal(xz, box);
 #endif
   vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld);
-  float dcam = length(vWorld.xz - uCamPos.xz);
+  float dcam = length(vWorld.xz - uLodPos.xz);
   bool farG = dcam > 2000.0;
   // the pixel's footprint on the ground (m): the paint's small marks fade before they'd shimmer
   float foot = max(length(fwidth(xz)), 0.001);
@@ -1269,7 +1272,7 @@ void main() {
 #endif
   // under the grass the ground lies in the blades' shade (it shows between them); the shade lifts toward the
   // grass's edge, where the ground alone must look like the field from afar
-  float under = s.under * (1.0 - smoothstep(uGrassR * 0.3, uGrassR * 0.95, length(vWorld - uCamPos)));
+  float under = s.under * (1.0 - smoothstep(uGrassR * 0.3, uGrassR * 0.95, length(vWorld - uLodPos)));
   vec3 lit = col * (1.0 - 0.14 * under);
 #ifdef OTH_SHAPE
   // the small shapes' light: the hollows, and the bumps' slopes against the hill's (its normal ~30 m across)

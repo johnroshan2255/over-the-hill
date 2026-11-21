@@ -86,9 +86,12 @@ await shot('3_driving')
 await aside('4_follow_above', 0, 30, 14)
 await hold(['KeyS'], 2500); await sleep(3500)
 await aside('5_stopped_above', 0, 24, 10)
-await key('KeyF'); await footIs(true)
+// (out — asked again till he is: a car knocked about on the way — car damage — may still be rolling at the first asking)
+for (let i = 0; i < 8; i++) { await key('KeyF'); await sleep(900); if (await page.evaluate(() => window.__oth.onFoot)) break; await hold(['Space'], 1200) }
+await footIs(true)
 s = await until('foot', 15)
 console.log('stopped', JSON.stringify(s))
+if (s.mode !== 'foot') console.log('   (not out:', JSON.stringify(await page.evaluate(() => { const o = window.__oth, c = o.companion, d = o.car.damage, h = c.car.damage; return { youOnFoot: o.onFoot, kmh: Math.round(o.car.speedKmh), his: { mode: c.mode, speed: +c.carSpeed.toFixed(2), joinK: +c.joinK.toFixed(2), d: +Math.hypot(c.carP.x - o.car.pos.x, c.carP.z - o.car.pos.z).toFixed(1) }, yours: d ? { engine: Math.round(d.engine), bend: d.wheels.map((w) => +(w.bend * 57.3).toFixed(1)), up: +(1 - 2 * (o.car.root.quaternion.x ** 2 + o.car.root.quaternion.z ** 2)).toFixed(2) } : null, hisCar: h ? { engine: Math.round(h.engine), drive: +h.drive.toFixed(2) } : null } })), ')')
 check(s.mode === 'foot', 'he pulls up and gets out of his car')
 await sleep(4000)
 

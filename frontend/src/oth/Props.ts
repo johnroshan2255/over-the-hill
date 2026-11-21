@@ -1,4 +1,5 @@
 import * as GFX from './gfx'
+import { lodEye } from './LodEye'
 import { ATMOS_GLSL, FRAG_OUT, type Atmosphere, LOOK, LOOK_REACH } from './Atmosphere'
 import { Builder, SURF, woodMaterial } from './Bridges'
 import type { Horizon } from './Horizon'
@@ -426,22 +427,28 @@ export class Props {
 
   get crateCount(): number { return this.props.filter((p) => p.kind === 'crate').length }
 
+  private lodRev = 0
   /** Re-pick what's drawn when the camera has moved 6 m or turned (or something changed). */
   update(camera: GFX.PerspectiveCamera): void {
     camera.getWorldDirection(this.dir)
-    if (!this.dirty && camera.position.distanceToSquared(this.lastPos) < 36 && this.dir.dot(this.lastDir) > 0.9985) return
+    // (in a lens — the scope, LodEye.ts: chosen again after a small part of the lens's turn, and when the detail's eye
+    //  moves; a thing's reach by how far it stands from the SIGHT LINE — its size on the screen by the camera's own)
+    const E = lodEye, lens = E.on
+    if (!this.dirty && camera.position.distanceToSquared(this.lastPos) < 36 && this.dir.dot(this.lastDir) > E.turn(0.9985) && E.rev === this.lodRev) return
+    this.lodRev = E.rev
     this.dirty = false
     this.lastPos.copy(camera.position); this.lastDir.copy(this.dir)
-    this.pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+    this.pv.multiplyMatrices(lens ? E.proj : camera.projectionMatrix, camera.matrixWorldInverse)
     this.frustum.setFromProjectionMatrix(this.pv, GFX.WebGLCoordinateSystem, camera.reversedDepth)
     const cx = camera.position.x, cz = camera.position.z, R = 800 * this.reachK
     // (a thing s m tall at d m is s / d × this px: under 2 px it isn't drawn)
     const minRatio = 2 / ((innerHeight * Math.min(devicePixelRatio, 2)) / (2 * Math.tan((camera.fov * Math.PI) / 360)))
     for (const mesh of this.meshes.values()) mesh.count = 0
-    const i0 = Math.floor((cx - R) / CELL), i1 = Math.floor((cx + R) / CELL), j0 = Math.floor((cz - R) / CELL), j1 = Math.floor((cz + R) / CELL)
+    const i0 = Math.floor((lens ? E.x0(R) : cx - R) / CELL), i1 = Math.floor((lens ? E.x1(R) : cx + R) / CELL), j0 = Math.floor((lens ? E.z0(R) : cz - R) / CELL), j1 = Math.floor((lens ? E.z1(R) : cz + R) / CELL)
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const c = this.cells.get(this.key(i, j))
       if (!c) continue
+      if (lens && E.far(i * CELL, j * CELL, CELL, R)) continue
       const x0 = i * CELL, z0 = j * CELL
       this.cellBox.min.set(x0 - 8, c.y0, z0 - 8)
       this.cellBox.max.set(x0 + CELL + 8, c.y1, z0 + CELL + 8)
@@ -450,8 +457,8 @@ export class Props {
       for (const k of c.idx) {
         const p = this.props[k], K = KINDS[p.kind]
         if (p.kind === 'crate' && this.collected.has(p.id)) continue
-        const d2 = (p.x - cx) ** 2 + (p.z - cz) ** 2, reach = K.reach * this.reachK, size = K.size * (p.s ?? 1)
-        if (d2 > reach * reach || size * size < minRatio * minRatio * d2) continue
+        const away2 = (p.x - cx) ** 2 + (p.z - cz) ** 2, d2 = lens ? E.d2(p.x, p.z) : away2, reach = K.reach * this.reachK, size = K.size * (p.s ?? 1)
+        if (d2 > reach * reach || size * size < minRatio * minRatio * away2) continue
         const mesh = this.meshes.get(p.kind)!
         ;(mesh.instanceMatrix.array as Float32Array).set(this.matrices.subarray(k * 16, k * 16 + 16), mesh.count * 16)
         mesh.count++

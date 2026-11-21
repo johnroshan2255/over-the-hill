@@ -35,6 +35,9 @@ export interface Settings {
   /** THE COMPANION (oth/Companion.ts), solo play: an NPC who walks and rides with you ('friend'), or comes after you —
    *  punches and kicks on foot, rams your car with his ('enemy'). */
   companion: 'off' | 'friend' | 'enemy'
+  /** CAR DAMAGE (oth/Damage.ts — docs/DAMAGE.md): crashes crumple the shell, bend the axles, wear the engine out; off:
+   *  the cars take nothing, as before. */
+  damage: boolean
 }
 
 export const DEFAULTS: Settings = {
@@ -52,6 +55,7 @@ export const DEFAULTS: Settings = {
   sound: true,
   bot: false,
   companion: 'off',
+  damage: true,
 }
 
 const KEY = 'overhill.settings.v1'
@@ -98,6 +102,7 @@ export function gameParams(): URLSearchParams {
   if (!s.sound) p.set('sound', '0')
   if (s.bot) p.set('bot', '1')
   if (s.companion !== 'off') p.set('companion', s.companion)
+  if (s.damage === false) p.set('damage', '0')
   for (const [k, v] of new URLSearchParams(location.search)) p.set(k, v)
   return p
 }

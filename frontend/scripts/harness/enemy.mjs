@@ -50,6 +50,54 @@ check(s.kind === 'enemy' && s.mode !== 'passenger', 'the enemy never rides with 
 s = await until((l) => l.mode === 'car', 25)
 check(s.mode === 'car', `he takes his own car (${s.mode})`)
 
+// (his car watched every frame while he drives it: the furthest it moves in one — the user, 2026-11-21: "when the
+//  enemy's car hits me it goes 100 m back": dropping back after a ram it was simply PUT at its gap, and after driving
+//  at you on foot it was put back where it had left your way)
+await page.evaluate(() => {
+  const o = window.__oth, w = (window.__carJump = { max: 0, at: '', rams: [] })
+  let px = NaN, pz = NaN, was = ''
+  // (how far apart two boxes on the ground are — under 0: into each other — along whichever of their sides' lines keeps them furthest)
+  const apart = (ax, az, ahx, ahz, ay, bx, bz, bhx, bhz, by) => {
+    let m = -1e9
+    for (const [nx, nz] of [[Math.cos(ay), -Math.sin(ay)], [Math.sin(ay), Math.cos(ay)], [Math.cos(by), -Math.sin(by)], [Math.sin(by), Math.cos(by)]]) {
+      const ra = ahx * Math.abs(Math.cos(ay) * nx - Math.sin(ay) * nz) + ahz * Math.abs(Math.sin(ay) * nx + Math.cos(ay) * nz)
+      const rb = bhx * Math.abs(Math.cos(by) * nx - Math.sin(by) * nz) + bhz * Math.abs(Math.sin(by) * nx + Math.cos(by) * nz)
+      m = Math.max(m, Math.abs((bx - ax) * nx + (bz - az) * nz) - ra - rb)
+    }
+    return m
+  }
+  const f = () => {
+    const c = o.companion
+    // A RAM: how far his car's own NOSE is from your car's own body at the BLOW — the two shapes, as they stand in the
+    // physics when his car gives yours its shove (the step after, yours has gone a hand's breadth on).
+    // (2026-11-21: it was the two cars' boxes — his mirrors and bars against yours; the user: "it must hit the car,
+    //  not an invisible outer layer")
+    if (c && c.host && !c.host.__watched) {
+      c.host.__watched = true
+      const shove = c.host.shove
+      c.host.shove = (dx, dz, dv, spin, at, by) => {
+        if (at && c.nose) {
+          const body = o.car.sim.body
+          let gap = 9
+          for (let i = 0; i < body.numColliders(); i++) {
+            const col = body.collider(i)
+            if (col.shapeType() !== o.physics.pw.R.ShapeType.TriMesh) continue
+            const k = col.contactShape(c.nose, c.carP, c.carQ, 3)
+            if (k) gap = Math.min(gap, k.distance)
+          }
+          // (his car stands where it will be against yours at the end of this step: yours has its own step to go)
+          const v = body.linvel()
+          w.rams.push(+(gap + Math.max(0, v.x * dx + v.z * dz) / 60).toFixed(3))
+        }
+        return shove(dx, dz, dv, spin, at, by)
+      }
+    }
+    if (c && c.mode === 'car' && was === 'car' && !Number.isNaN(px)) { const d = Math.hypot(c.carP.x - px, c.carP.z - pz); if (d > w.max) { w.max = d; w.at = `rams ${c.rams}, on foot ${o.onFoot}` } }
+    if (c) { px = c.carP.x; pz = c.carP.z; was = c.mode }
+    requestAnimationFrame(f)
+  }
+  requestAnimationFrame(f)
+})
 // drive on: he catches you and rams
 await page.keyboard.down('KeyW')
 let rammedAt = null
@@ -58,6 +106,12 @@ await page.keyboard.up('KeyW')
 console.log('driving', JSON.stringify(s))
 check(s.rams > 0, `he rams your car (${s.rams})`)
 await aside('2_ram_above', 6, 16, 7)
+// (… and through his dropping back for the next run)
+await sleep(3500)
+let jump = await page.evaluate(() => window.__carJump)
+check(jump.max < 2.5, `rammed, his car drops back on its wheels — it never jumps (the most in a frame: ${jump.max.toFixed(2)} m)`)
+// (… and it hit: his car's body ON yours as the shove was given — "my car gets hit from a few metres back", the user)
+check(jump.rams.length > 0 && jump.rams.every((g) => g < 0.12 && g > -0.2), `a ram is given with his car's nose ON your car's body (the two shapes apart at each: ${jump.rams.join(', ')} m — under 0: into it; he is stopped at your car's inner solid pieces, which stand further in at its corners and wheel arches: a hand's breadth there, on a car that is moving and turning)`)
 
 // stop and get out: he drives at you or gets out — then it's on foot
 await hold(['KeyS'], 2500); await sleep(1500)
@@ -91,6 +145,18 @@ await sleep(500)
 await aside('6_he_is_down', 3.4, -1.5, 1.6)
 s = await until((l) => !l.hisDown, 15)
 check(!s.hisDown, 'he gets up again')
+// back in your car and off: he takes his again and joins your way from where it stands
+await page.evaluate(() => { window.__carJump.max = 0 })
+for (let i = 0; i < 25 && (await look()).onFoot; i++) { await key('KeyF'); await sleep(1000) }
+await sleep(1500)
+await page.keyboard.down('KeyW')
+s = await until((l) => l.mode === 'car', 40)
+await sleep(5000)
+await page.keyboard.up('KeyW')
+jump = await page.evaluate(() => window.__carJump)
+console.log('back in the cars', JSON.stringify(s))
+check(s.mode === 'car' && jump.max < 2.5, `back in the cars, his joins your way from where it stood (${s.mode}; the most in a frame: ${jump.max.toFixed(2)} m — ${jump.at})`)
+check(jump.rams.every((g) => g < 0.12 && g > -0.2), `every ram of the run was his car's nose on your car's body (apart: ${jump.rams.join(', ')} m — under 0: into it; he is stopped at your car's inner solid pieces, which stand further in at its corners and wheel arches: a hand's breadth there, on a car that is moving and turning)`)
 check(errs.length === 0, `no page errors (${errs.length})`)
 await browser.close()
 console.log(ok ? 'ALL PASS' : 'SOME FAILED')

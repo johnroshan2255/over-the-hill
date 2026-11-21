@@ -36,13 +36,17 @@ Sighted at 200 m: aim dead on to 250 m, hold over beyond it — the scope's mark
 
 - `U` / right mouse: **off → ×1 → ×2 → off**; the mouse wheel steps in and out; firing leaves it where it is, working
   the bolt drops out of it and comes back to the step it was on (as the eye leaves the glass).
-- **×1: the view 40° tall. ×2: 10° tall** (the game's own is 55°) — the land four times, then five and a half times,
-  nearer than the bare eye.
+- **×1: the land 2.75× nearer. ×2: 11.4× nearer** — CS:GO's AWP exactly (its 40° and 10° of a 90° view; the user,
+  2026-11-21: "we just zoom in / out and no clear is there" — the first numbers here were its 40° and 10° taken of
+  THIS game's 55° view: 1.4× and 6×). Of the game's 55° that is a view **21.5° and 5.2° tall**.
+- **What the glass is on is drawn as if you stood that much nearer** (oth/LodEye.ts): the world's detail — the
+  ground's, the grass, the trees' own shapes in place of their far pictures, the rocks, the bushes — is measured from
+  the sight line, not from where you stand, and what's in view is chosen again with every small turn of the glass.
 - In the scope the whole screen is the glass: a black surround, a fine cross, the hold marks; the rifle and the
   character aren't drawn. The mouse turns the view slower by the same share as the lens (so a hand's move covers the
   same of the glass).
 - Scoping takes **4 ticks (0.2 s)** to settle: a shot before that flies as unscoped.
-- Scoped, you walk at 40 % pace; running drops out of the scope.
+- With it in the hands you go at 80 % pace; scoped, half of that (CS:GO's 200 and 100 of 250).
 
 ## The recoil
 
@@ -69,7 +73,7 @@ game the view kicks up 4.5° and comes back over 14 ticks, while the bolt is wor
   "damage": 115, "head": 2.5, "limb": 0.75, "floor": 0.7,
   "spread": { "still": 4.0, "walk": 7.0, "run": 9.0, "perShot": 0, "settleTicks": 0, "scopedStill": 0.02, "scopedWalk": 1.2 },
   "recoil": { "up": 4.5, "side": 0.6, "returnTicks": 14 },
-  "scope": { "fov": [40, 10], "settleTicks": 4, "pace": 0.4 },
-  "pace": 0.85, "mass": 6.9, "length": 1.23, "tracerEvery": 1
+  "scope": { "fov": [21.5, 5.2], "settleTicks": 4, "pace": 0.5 },
+  "pace": 0.8, "mass": 6.9, "length": 1.23, "tracerEvery": 1
 }
 ```

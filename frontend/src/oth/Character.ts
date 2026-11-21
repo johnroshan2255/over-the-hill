@@ -38,8 +38,9 @@ const FPP_SIT_UP = -0.4
 export type HandPose = 'open' | 'relaxed' | 'grip' | 'fist'
 export type ClipName = 'idle' | 'walk' | 'run' | 'sprint' | 'jump' | 'jump_run' | 'fall' | 'land' | 'pickup' | 'grab_ledge' | 'climb_ledge' | 'open_door' | 'car_enter' | 'car_exit' | 'sit_drive' | 'turn_left' | 'turn_right' | 'getup_back' | 'getup_front' | 'chop' | 'mine' | 'carry' | FightClip
 /** THE FIGHT's clips (fight.glb — scripts/oth/fight.py, made in Blender; Character.loadClips). */
-export type FightClip = 'guard' | 'jab' | 'cross' | 'hook' | 'uppercut' | 'kick_front' | 'kick_round' | 'block' | 'dodge' | 'hit_head' | 'hit_body' | 'knockdown' | 'taunt'
-  | 'katana_idle' | 'katana_draw' | 'cut1' | 'cut2' | 'cut3' | 'cut_heavy' | 'katana_wake'
+export type FightClip = 'guard' | 'jab' | 'cross' | 'hook' | 'uppercut' | 'body_hook' | 'knee' | 'kick_front' | 'kick_round' | 'kick_low'
+  | 'block' | 'block_hit' | 'dodge' | 'duck' | 'hit_head' | 'hit_head_l' | 'hit_head_r' | 'hit_body' | 'hit_leg' | 'stagger'
+  | 'knockdown' | 'die_back' | 'die_fwd' | 'taunt'
 
 interface Channel { bone: number; path: 'translation' | 'rotation'; times: Float32Array; values: Float32Array }
 interface Clip { name: string; dur: number; loop: boolean; speed: number; channels: Channel[] }
@@ -130,19 +131,33 @@ function mul4(a: Float32Array, b: Float32Array, out: Float32Array): void {
   for (let c = 0; c < 4; c++) for (let rr = 0; rr < 4; rr++) r[c * 4 + rr] = a[rr] * b[c * 4] + a[4 + rr] * b[c * 4 + 1] + a[8 + rr] * b[c * 4 + 2] + a[12 + rr] * b[c * 4 + 3]
   out.set(r)
 }
-function qmul(a: Q, b: Q): [number, number, number, number] {
-  return [a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1], a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0], a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3], a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]]
+// (each result written into `out` where one is given — the pose's own scratch, Character.q4 / v3: a new array a call was
+//  most of the ~25 KB of garbage a walker made a frame; the arithmetic is unchanged)
+function qmul(a: Q, b: Q, out: number[] = [0, 0, 0, 0]): number[] {
+  const x = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1], y = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0], z = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3], w = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]
+  out[0] = x; out[1] = y; out[2] = z; out[3] = w
+  return out
 }
-function qaxis(x: number, y: number, z: number, ang: number): [number, number, number, number] { const s = Math.sin(ang / 2); return [x * s, y * s, z * s, Math.cos(ang / 2)] }
+function qaxis(x: number, y: number, z: number, ang: number, out: number[] = [0, 0, 0, 0]): number[] { const s = Math.sin(ang / 2); out[0] = x * s; out[1] = y * s; out[2] = z * s; out[3] = Math.cos(ang / 2); return out }
 /** The shortest turn taking direction a onto direction b. */
-function qfromTo(a: number[], b: number[]): [number, number, number, number] {
+function qfromTo(a: ArrayLike<number>, b: ArrayLike<number>, out: number[] = [0, 0, 0, 0]): number[] {
   const la = Math.hypot(a[0], a[1], a[2]) || 1, lb = Math.hypot(b[0], b[1], b[2]) || 1
   const ax = a[0] / la, ay = a[1] / la, az = a[2] / la, bx = b[0] / lb, by = b[1] / lb, bz = b[2] / lb
   const d = ax * bx + ay * by + az * bz
-  if (d > 0.999999) return [0, 0, 0, 1]
+  if (d > 0.999999) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; return out }
   const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx, w = 1 + d
   const n = Math.hypot(cx, cy, cz, w) || 1
-  return [cx / n, cy / n, cz / n, w / n]
+  out[0] = cx / n; out[1] = cy / n; out[2] = cz / n; out[3] = w / n
+  return out
+}
+/** The turn of a 4 × 4 (column-major, no scale) as a quaternion. */
+function qOfMat(m: ArrayLike<number>, out: number[]): number[] {
+  const m00 = m[0], m10 = m[1], m20 = m[2], m01 = m[4], m11 = m[5], m21 = m[6], m02 = m[8], m12 = m[9], m22 = m[10], tr = m00 + m11 + m22
+  if (tr > 0) { const s = 0.5 / Math.sqrt(tr + 1); out[3] = 0.25 / s; out[0] = (m21 - m12) * s; out[1] = (m02 - m20) * s; out[2] = (m10 - m01) * s }
+  else if (m00 > m11 && m00 > m22) { const s = 2 * Math.sqrt(1 + m00 - m11 - m22); out[3] = (m21 - m12) / s; out[0] = 0.25 * s; out[1] = (m01 + m10) / s; out[2] = (m02 + m20) / s }
+  else if (m11 > m22) { const s = 2 * Math.sqrt(1 + m11 - m00 - m22); out[3] = (m02 - m20) / s; out[0] = (m01 + m10) / s; out[1] = 0.25 * s; out[2] = (m12 + m21) / s }
+  else { const s = 2 * Math.sqrt(1 + m22 - m00 - m11); out[3] = (m10 - m01) / s; out[0] = (m02 + m20) / s; out[1] = (m12 + m21) / s; out[2] = 0.25 * s }
+  return out
 }
 /** Turn a 4 × 4's rotation by q (pre-multiplied: a turn in model space), its origin kept. */
 function turnMat(m: Float32Array, q: Q): void {
@@ -153,11 +168,13 @@ function turnMat(m: Float32Array, q: Q): void {
     m[c * 4] = r0 * a + r3 * b + r6 * e; m[c * 4 + 1] = r1 * a + r4 * b + r7 * e; m[c * 4 + 2] = r2 * a + r5 * b + r8 * e
   }
 }
-function rotV(q: Q, v: number[]): number[] {
-  const [x, y, z, w] = [q[0], q[1], q[2], q[3]], [vx, vy, vz] = v
+function rotV(q: Q, v: ArrayLike<number>, out: number[] = [0, 0, 0]): number[] {
+  const x = q[0], y = q[1], z = q[2], w = q[3], vx = v[0], vy = v[1], vz = v[2]
   const ix = w * vx + y * vz - z * vy, iy = w * vy + z * vx - x * vz, iz = w * vz + x * vy - y * vx, iw = -x * vx - y * vy - z * vz
-  return [ix * w + iw * -x + iy * -z - iz * -y, iy * w + iw * -y + iz * -x - ix * -z, iz * w + iw * -z + ix * -y - iy * -x]
+  out[0] = ix * w + iw * -x + iy * -z - iz * -y; out[1] = iy * w + iw * -y + iz * -x - ix * -z; out[2] = iz * w + iw * -z + ix * -y - iy * -x
+  return out
 }
+const _skin = new Float32Array(16)
 
 /** The yaw (about +y) a quaternion turns the forward axis (−z) by. */
 function yawOf(q: Q, o = 0): number {
@@ -215,33 +232,60 @@ export class Character {
   /** Free to move (false: the game holds it — getting in or out, a cut). */
   control = true
   /** STEERED by the game, not the keys (the companion — Companion.ts): the way to go (world x, z — any length) and the
-   *  pace (m/s: 0 stand, 1.7 walk, 4.6 run, 7.2 sprint); null: the keys (with `control`). */
-  steer: { x: number; z: number; pace: number } | null = null
+   *  pace (m/s: 0 stand, 1.7 walk, 4.6 run, 7.2 sprint); `face`: the way he faces whatever way he goes (rad — the
+   *  enemy circling you, his eyes on you); null: the keys (with `control`). */
+  steer: { x: number; z: number; pace: number; face?: number | null } | null = null
   /** The physics' terrain streamed round him (the player); false for anyone else walking (the companion). */
   leads = true
   /** What he stands in when still (the fight's `guard`); null: the idle. */
   stance: ClipName | null = null
   // A WEAPON IN HIS HANDS (Weapons.ts):
-  /** where his wrists must be (world; left, right; null: as the clip has them) — the arms bent to them after the clip. */
-  handIK: (() => [GFX.Vector3 | null, GFX.Vector3 | null]) | null = null
-  /** his chest and arms tipped up (+) or down to where he aims (rad). */
+  /** asked while he is posed — after the clip and his spine's turns, before his arms are bent (so what it reads of him
+   *  is THIS frame's: nothing lags as he runs or turns): it fills `grip`. */
+  handIK: (() => void) | null = null
+  /** WHERE HIS HANDS GO, in HIS OWN space (m from his feet: x to his right, y up, z behind him): each wrist (`l`, `r`
+   *  — taken when `lOn` / `rOn`), the way its elbow points (`lp`, `rp`), and the hand's own turn from the bind pose —
+   *  the T-pose: fingers out along ±x, the palm down, the thumb forward — as a quaternion (`lq`, `rq`, when `lqOn` /
+   *  `rqOn`); `stretch`: how far past its reach an arm may be let out (1: not at all — first person: 1.3). */
+  readonly grip = { l: [0, 0, 0], r: [0, 0, 0], lp: [0, -1, 0], rp: [0, -1, 0], lq: [0, 0, 0, 1], rq: [0, 0, 0, 1], lOn: false, rOn: false, lqOn: false, rqOn: false, stretch: 1 }
+  /** his chest tipped up (+) or down to where he aims (rad). */
   aimPitch = 0
   /** he FACES this way (rad) whatever way he walks — aiming: the keys strafe; null: he faces where he goes. */
   aimYaw: number | null = null
+  /** his chest turned from the way he faces (rad, + to his left; a rifle at the right shoulder: −, the left shoulder
+   *  forward) — his head stays on what he faces. Eased. */
+  torsoYaw = 0
+  private torso = 0
+  /** STRAFING (aiming): the way he goes from the way he faces (rad, + to his left), and what his legs make of it — the
+   *  hips turned toward it (`legTwist`, his spine turned back) and the stride played backward when he backs away. */
+  private moveRel = 0
+  private legTwist = 0
+  private strideDir = 1
+  private backK = 0
   /** what his hands hold (their fingers); null: as the clip says. */
   holdPose: HandPose | null = null
   /** his pace with it (a heavy rifle, the scope: < 1). */
   paceK = 1
   /** STUNNED (the thunder blade): no moving, no striking, till this time (s, performance.now() / 1000). */
   stunUntil = 0
-  /** The hands' bones in the bind pose (model space): where a thing held is fixed to them (Weapons.ts). */
-  readonly handBind = [new GFX.Matrix4(), new GFX.Matrix4()]
   /** ROOTED: a strike or a reaction is playing — his feet still till it ends. */
   private rooted = false
   /** Each fight clip's blow (s into it). */
   private readonly hitAt = new Map<string, number>()
   /** DOWN (the fight): knocked off his feet — 0 falling, 1 lying (t s more), 2 getting up (till the clip's `endP`). */
-  private down: { phase: 0 | 1 | 2; t: number; endP: number; then?: () => void } | null = null
+  private down: { phase: 0 | 1 | 2 | 3; t: number; endP: number; then?: () => void; clip: ClipName; rise: boolean } | null = null
+  /** HIT-STOP: his pose held (s left) — the frame a blow lands, both of them still on it. */
+  private stop = 0
+  hitStop(s: number): void { this.stop = Math.max(this.stop, s) }
+  /** KNOCKED BACK: thrown (m/s, the world's x and z) — it dies away in a third of a second; he's carried by it through
+   *  whatever he's doing (the controller: a wall stops him). */
+  private kbx = 0
+  private kbz = 0
+  push(vx: number, vz: number): void { this.kbx += vx; this.kbz += vz }
+  /** He faces one way and goes another (aiming; steered with `face`): his legs turn to it (pose). */
+  private strafes = false
+  /** How far into the clip playing (s). */
+  get clipTime(): number { return this.cur?.t ?? 0 }
   state: State = 'hidden'
   /** Ground speed (m/s) and vertical (m/s). */
   speed = 0
@@ -260,6 +304,19 @@ export class Character {
    *  "like Superman"): the clip whose spine and arms are mixed in, and how much. */
   private upper: { clip: Clip; t: number; w: number } | null = null
   private upperBones: number[] = []
+  /** The limbs' bones (upper, lower, end): the left leg, the right; the left arm, the right. */
+  private legsIdx: number[][] = []
+  private armsIdx: number[][] = []
+  /** The hands' turns in the bind pose (left, right). */
+  private readonly handBindQ = [[0, 0, 0, 1], [0, 0, 0, 1]]
+  /** A pose's scratch (docs/PERF.md "the garbage"): its quaternions and points, handed out in turn, taken back at the
+   *  next pose — the posts keep theirs for the frame. */
+  private readonly q4s: number[][] = Array.from({ length: 160 }, () => [0, 0, 0, 1])
+  private readonly v3s: number[][] = Array.from({ length: 160 }, () => [0, 0, 0])
+  private qn = 0
+  private vn = 0
+  private q4(): number[] { return this.q4s[this.qn++ % 160] }
+  private v3(): number[] { return this.v3s[this.vn++ % 160] }
   private readonly upT = new Float32Array(NB_MAX * 3)
   private readonly upR = new Float32Array(NB_MAX * 4)
   private readonly lt: Float32Array = new Float32Array(NB_MAX * 3)
@@ -305,7 +362,7 @@ export class Character {
   /** Foot IK: its weight (0 … 1), the pelvis drop (m), eased. */
   private ikW = 0
   private pelvis = 0
-  private readonly post: ([number, number, number, number] | null)[] = []
+  private readonly post: (number[] | null)[] = []
   private readonly lt2 = new Float32Array(NB_MAX * 3)
   private readonly lr2 = new Float32Array(NB_MAX * 4)
   private readonly lt3 = new Float32Array(NB_MAX * 3)
@@ -415,11 +472,15 @@ export class Character {
     // THE LOCOMOTION BLEND: a clip of its own ('loco', sampled from walk / run / sprint / idle by the speed)
     this.clips.set('loco', { name: 'loco', dur: 1, loop: true, speed: 0, channels: [] })
     this.bones.forEach((b, i) => { this.bi[b.name.replace(/^.*:/, '')] = i; this.post.push(null) })
+    this.legsIdx = [['LeftUpLeg', 'LeftLeg', 'LeftFoot'], ['RightUpLeg', 'RightLeg', 'RightFoot']].map((l) => l.map((n) => this.bi[n]))
+    this.armsIdx = [['LeftArm', 'LeftForeArm', 'LeftHand'], ['RightArm', 'RightForeArm', 'RightHand']].map((l) => l.map((n) => this.bi[n]))
     // THE FINGERS' AXES: the bind pose's FK; each digit bone's direction (to the next joint; the tip's, from the last)
     // × the palm's normal, into the bone's own frame (its bind turn's columns)
     for (let b = 0; b < this.bones.length; b++) { this.lt2.set(this.bones[b].t, b * 3); this.lr2.set(this.bones[b].r, b * 4) }
     this.fk(this.lt2, this.lr2)
-    if (this.bi.LeftHand !== undefined && this.bi.RightHand !== undefined) { this.handBind[0].fromArray(this.world[this.bi.LeftHand]); this.handBind[1].fromArray(this.world[this.bi.RightHand]) }
+    if (this.bi.LeftHand !== undefined && this.bi.RightHand !== undefined) {
+      qOfMat(this.world[this.bi.LeftHand], this.handBindQ[0]); qOfMat(this.world[this.bi.RightHand], this.handBindQ[1])
+    }
     // (the jacket's bounds in the bind pose — tint: the hips to the neck, wrist to wrist)
     if (this.bi.Neck !== undefined && this.bi.LeftHand !== undefined) (this.uniforms.uTintBox.value as GFX.Vector4).set(this.wpos(this.hipsIndex)[1] - 0.03, this.wpos(this.bi.Neck)[1] - 0.005, Math.abs(this.wpos(this.bi.LeftHand)[0]) - 0.035, (this.uniforms.uTintBox.value as GFX.Vector4).w)
     for (let hand = 0; hand < 2; hand++) {
@@ -544,14 +605,16 @@ export class Character {
   get striking(): boolean { return this.rooted }
   get isDown(): boolean { return !!this.down }
   /** KNOCKED DOWN: he reels and falls on his back (the knockdown clip), lies `lie` s, gets up (getup_back, laid where
-   *  he fell) — then free again, `then` called. His place follows the fall and the get-up. */
-  knockdown(lie = 1, then?: () => void): boolean {
-    if (!this.clips.has('knockdown') || !this.body || this.down || (this.state !== 'move' && this.state !== 'land')) return false
+   *  he fell) — then free again, `then` called. His place follows the fall and the get-up. `clip`: another way down
+   *  (die_back, die_fwd); `rise` false: he does not get up — `then` is called when the `lie` is over and he lies on
+   *  (till he is placed again: appear). */
+  knockdown(lie = 1, then?: () => void, clip: ClipName = 'knockdown', rise = true): boolean {
+    if (!this.clips.has(clip) || !this.body || this.down || (this.state !== 'move' && this.state !== 'land')) return false
     this.state = 'action'
     this.rooted = false
     this.speed = 0
-    const d = (this.down = { phase: 0 as 0 | 1 | 2, t: lie, endP: 1, then })
-    this.play('knockdown', { fade: 0.08, restart: true, then: () => { if (this.down === d) d.phase = 1 } })
+    const d = (this.down = { phase: 0 as 0 | 1 | 2 | 3, t: lie, endP: 1, then, clip, rise })
+    this.play(clip, { fade: 0.08, restart: true, then: () => { if (this.down === d) d.phase = 1 } })
     return true
   }
   /** (each frame, while he's down) the lying timed, the get-up laid where he fell, his feet handed back at its end. */
@@ -560,10 +623,11 @@ export class Character {
     if (!d) return
     const rot = (x: number, z: number, h: number): [number, number] => [x * Math.cos(h) + z * Math.sin(h), -x * Math.sin(h) + z * Math.cos(h)]
     if (d.phase === 1 && (d.t -= dt) <= 0) {
+      if (!d.rise) { d.phase = 3; d.then?.(); return }
       const UP: ClipName = 'getup_back', T0 = 1.9, T1 = 6.3
       if (!this.clips.has(UP)) { this.rise(); return }
       // (where he lies: the fall's last frame; the get-up's lying start put on it, its head where his is)
-      const k = this.lieOf('knockdown', this.clipLength('knockdown')), l = this.lieOf(UP, T0)
+      const k = this.lieOf(d.clip, this.clipLength(d.clip)), l = this.lieOf(UP, T0)
       const [hx, hz] = rot(k.hips[0], k.hips[2], this.heading)
       const h2 = this.heading + k.headYaw - l.headYaw
       const [lx, lz] = rot(l.hips[0], l.hips[2], h2)
@@ -684,12 +748,25 @@ export class Character {
   private pose(dt: number): void {
     const cur = this.cur
     if (!cur) return
+    // (hit-stop: the clips all but still for its moment)
+    if (this.stop > 0) { this.stop -= dt; dt *= 0.05 }
     this.dtPose = dt
     // (the stride phase: a cycle per stride length at the speed moved — the feet don't slide)
     {
       const w = this.locoW(this.locoSpeed()), st = (n: string) => this.stride.get(n) ?? 2
       const L = st('walk') + (st('run') - st('walk')) * w.run + (st('sprint') - st('run')) * w.sprint * w.run
-      this.phase = (this.phase + (Math.max(this.locoSpeed(), 0.6 * w.walk) * dt) / L) % 1
+      // (aiming, the way he goes is not the way he faces: his hips turn toward it — up to 65° — and, backing away, the
+      //  stride runs backward; his spine turns back, so his chest and his weapon stay on what he aims at)
+      {
+        const free = this.state === 'move', mr = free && this.strafes && this.speed > 0.25 ? this.moveRel : 0
+        const back = Math.abs(mr) > 1.75
+        const tw = back ? Math.atan2(Math.sin(mr - Math.PI), Math.cos(mr - Math.PI)) : mr
+        this.legTwist += (Math.max(-1.13, Math.min(1.13, tw)) - this.legTwist) * Math.min(1, dt * 10)
+        this.strideDir = back ? -1 : 1
+        this.backK += ((back ? Math.min(1, this.speed / 4) : 0) - this.backK) * Math.min(1, dt * 8)
+        this.torso += ((free || this.state === 'land' ? this.torsoYaw : 0) - this.torso) * Math.min(1, dt * 9)
+      }
+      this.phase = (((this.phase + (this.strideDir * Math.max(this.locoSpeed(), 0.6 * w.walk) * dt) / L) % 1) + 1) % 1
       this.idleT += dt
     }
     cur.t += dt * cur.rate
@@ -736,7 +813,31 @@ export class Character {
       if (q) turnMat(this.world[b], q)
     }
   }
-  private wpos(b: number): number[] { const w = this.world[b]; return [w[12], w[13], w[14]] }
+  private wpos(b: number, out: number[] = [0, 0, 0]): number[] { const w = this.world[b]; out[0] = w[12]; out[1] = w[13]; out[2] = w[14]; return out }
+  /** A bone's place in HIS OWN space (m from his feet), as he is posed now — for what he holds (Weapons.ts, inside
+   *  `handIK`). False: no such bone. */
+  jointAt(name: string, out: GFX.Vector3): boolean {
+    const b = this.bi[name]
+    if (b === undefined) return false
+    const w = this.world[b]
+    out.set(w[12], w[13], w[14])
+    return true
+  }
+  /** His eyes in his own space, as he is posed now (first person's camera sits there). */
+  eyeAt(out: GFX.Vector3): GFX.Vector3 {
+    const w = this.world[this.bi.Head], e = this.eyeLocal
+    return out.set(w[0] * e[0] + w[4] * e[1] + w[8] * e[2] + w[12], w[1] * e[0] + w[5] * e[1] + w[9] * e[2] + w[13], w[2] * e[0] + w[6] * e[1] + w[10] * e[2] + w[14])
+  }
+  /** The stride's phase (0 … 1) — what he holds rocks with it. */
+  get stridePhase(): number { return this.phase }
+  /** A hand's (0 left, 1 right) turn from its bind pose as he is posed now, in his own space — to ease from the clip's
+   *  hold to another (Weapons.ts, inside `handIK`). */
+  handTurn(i: 0 | 1, out: GFX.Quaternion): GFX.Quaternion {
+    const c = qOfMat(this.world[this.armsIdx[i][2]], this.q4()), b = this.handBindQ[i], n = this.q4()
+    n[0] = -b[0]; n[1] = -b[1]; n[2] = -b[2]; n[3] = b[3]
+    const q = qmul(c, n, this.q4())
+    return out.set(q[0], q[1], q[2], q[3])
+  }
   /** The ground's height under a model-space point (world: the root's place and heading). */
   ground: ((x: number, z: number, y0: number) => number) | null = null
   private groundAt(mx: number, mz: number): number {
@@ -747,6 +848,7 @@ export class Character {
 
   private skin(): void {
     const B = this.bi
+    this.qn = 0; this.vn = 0
     for (let b = 0; b < this.bones.length; b++) this.post[b] = null
     const free = this.state === 'move' || this.state === 'land'
     // THE LEAN (GTA's banking): into a turn by its rate × the speed, forward with a start, back on a stop — the whole
@@ -759,36 +861,52 @@ export class Character {
     if (free && this.speed < 3) { let d = this.camYaw - this.heading; d = Math.atan2(Math.sin(d), Math.cos(d)); lk = Math.abs(d) < 2.2 ? Math.max(-1.0, Math.min(1.0, d)) : 0 }
     this.look += (lk - this.look) * 0.06
     // FOOT IK (on uneven ground): each foot's ground under it against the root's; the pelvis down for the lower one
-    const legs = [['LeftUpLeg', 'LeftLeg', 'LeftFoot'], ['RightUpLeg', 'RightLeg', 'RightFoot']].map((l) => l.map((n) => B[n]))
+    const legs = this.legsIdx
     this.ikW += ((free && this.grounded ? 1 : 0) - this.ikW) * 0.2
     this.fingers()
     this.fk(this.lt, this.lr)
-    const d: number[] = [0, 0]
-    if (this.ikW > 0.01) legs.forEach(([, , f], i) => { const a = this.wpos(f); d[i] = Math.max(-0.45, Math.min(0.35, this.groundAt(a[0], a[2]) - this.pos.y)) * this.ikW })
-    this.pelvis += (Math.min(0, d[0], d[1]) - this.pelvis) * 0.25
+    let d0 = 0, d1 = 0
+    if (this.ikW > 0.01) {
+      const a = this.wpos(legs[0][2], this.v3()), b = this.wpos(legs[1][2], this.v3())
+      d0 = Math.max(-0.45, Math.min(0.35, this.groundAt(a[0], a[2]) - this.pos.y)) * this.ikW
+      d1 = Math.max(-0.45, Math.min(0.35, this.groundAt(b[0], b[2]) - this.pos.y)) * this.ikW
+    }
+    this.pelvis += (Math.min(0, d0, d1) - this.pelvis) * 0.25
     const h = B.Hips
     this.lt[h * 3 + 1] += this.pelvis
     // the turns, in model space: the lean about the root (the hips' post: x z about the feet — a roll about +z
     // leans the head toward −x, a pitch about +x the head back), the head
-    const lean = qmul(qaxis(0, 0, 1, this.leanR), qaxis(1, 0, 0, this.leanP))
-    this.post[h] = lean
-    if (Math.abs(this.look) > 0.01) { this.post[B.Neck] = qaxis(0, 1, 0, this.look * 0.35); this.post[B.Head] = qaxis(0, 1, 0, this.look * 0.45) }
-    // (aiming: the chest tipped to it — half in each of the two upper spine bones)
-    if (Math.abs(this.aimPitch) > 0.005 && free && B.Spine1 !== undefined && B.Spine2 !== undefined) { this.post[B.Spine1] = qaxis(1, 0, 0, this.aimPitch * 0.5); this.post[B.Spine2] = qaxis(1, 0, 0, this.aimPitch * 0.5) }
+    // (backing away: the run's own forward lean taken back out of his spine — he runs back upright)
+    const bk = free ? this.backK * 0.26 : 0
+    const lean = qmul(qaxis(0, 0, 1, this.leanR, this.q4()), qaxis(1, 0, 0, this.leanP + bk * 0.15, this.q4()), this.q4())
+    // (strafing: the hips turned toward the way he goes, about their own upright — the spine turns it back below)
+    const tw = free ? this.legTwist : 0, ty = this.torso, ap = free ? this.aimPitch : 0
+    this.post[h] = Math.abs(tw) > 1e-3 ? qmul(lean, qaxis(0, 1, 0, tw, this.q4()), this.q4()) : lean
+    const hy = this.look * 0.35 - ty * 0.5, hd = this.look * 0.45 - ty * 0.5
+    if (Math.abs(hy) > 0.004 || Math.abs(hd) > 0.004) { this.post[B.Neck] = qaxis(0, 1, 0, hy, this.q4()); this.post[B.Head] = qaxis(0, 1, 0, hd, this.q4()) }
+    // (the spine: the hips' turn taken back out, the chest turned for the weapon at his shoulder, tipped to where he
+    //  aims — each turn in his own space, the tip last: always about the line across what he faces)
+    if (B.Spine !== undefined && B.Spine1 !== undefined && B.Spine2 !== undefined && (Math.abs(tw) > 1e-3 || Math.abs(ty) > 1e-3 || Math.abs(ap) > 0.005 || bk > 1e-3)) {
+      this.post[B.Spine] = qmul(qaxis(1, 0, 0, bk * 0.5, this.q4()), qaxis(0, 1, 0, -tw * 0.6 + ty * 0.3, this.q4()), this.q4())
+      this.post[B.Spine1] = qmul(qaxis(1, 0, 0, ap * 0.4 + bk * 0.5, this.q4()), qaxis(0, 1, 0, -tw * 0.4 + ty * 0.35, this.q4()), this.q4())
+      this.post[B.Spine2] = qmul(qaxis(1, 0, 0, ap * 0.6, this.q4()), qaxis(0, 1, 0, ty * 0.35, this.q4()), this.q4())
+    }
     this.fk(this.lt, this.lr, true)
     // (the lean turned the hips about their own origin: put the body back over the feet — the root's floor)
-    if (Math.abs(this.leanR) + Math.abs(this.leanP) > 1e-4) {
-      const hp = this.wpos(h), r = rotV(lean, [hp[0], hp[1] - this.pelvis, hp[2]])
+    if (Math.abs(this.leanR) + Math.abs(this.leanP) + this.backK > 1e-4) {
+      const hp = this.wpos(h, this.v3()), from = this.v3()
+      from[0] = hp[0]; from[1] = hp[1] - this.pelvis; from[2] = hp[2]
+      const r = rotV(lean, from, this.v3())
       this.lt[h * 3] += r[0] - hp[0]; this.lt[h * 3 + 2] += r[2] - hp[2]; this.lt[h * 3 + 1] += r[1] - (hp[1] - this.pelvis)
       this.fk(this.lt, this.lr, true)
     }
     if (this.ikW > 0.01) {
-      legs.forEach(([u, l, f], i) => {
-        const A = this.wpos(f)
-        const T = [A[0], A[1] + d[i] - this.pelvis, A[2]]
-        if (Math.abs(T[1] - A[1]) < 0.005) return
-        this.twoBone(u, l, f, T, true)
-      })
+      for (let i = 0; i < 2; i++) {
+        const A = this.wpos(legs[i][2], this.v3()), T = this.v3()
+        T[0] = A[0]; T[1] = A[1] + (i ? d1 : d0) - this.pelvis; T[2] = A[2]
+        if (Math.abs(T[1] - A[1]) < 0.005) continue
+        this.twoBone(legs[i][0], legs[i][1], legs[i][2], T, true)
+      }
       this.fk(this.lt, this.lr, true)
     }
     this.skinRest()
@@ -803,8 +921,10 @@ export class Character {
       case 'chop': case 'mine': case 'carry': case 'grab_ledge': case 'climb_ledge': return ['grip', 'grip']
       case 'pickup': return p > 0.35 ? ['grip', 'grip'] : ['open', 'open']
       case 'open_door': return p > 0.2 && p < 0.75 ? ['grip', 'grip'] : ['relaxed', 'relaxed']
-      case 'fall': case 'getup_back': case 'getup_front': case 'knockdown': case 'taunt': return ['open', 'open']
-      case 'guard': case 'jab': case 'cross': case 'hook': case 'uppercut': case 'kick_front': case 'kick_round': case 'block': case 'dodge': case 'hit_head': case 'hit_body': return ['fist', 'fist']
+      case 'fall': case 'getup_back': case 'getup_front': case 'knockdown': case 'die_back': case 'die_fwd': case 'taunt': case 'stagger': return ['open', 'open']
+      case 'knee': return ['grip', 'grip']
+      case 'guard': case 'jab': case 'cross': case 'hook': case 'uppercut': case 'body_hook': case 'kick_front': case 'kick_round': case 'kick_low': case 'block': case 'block_hit': case 'dodge': case 'duck':
+      case 'hit_head': case 'hit_head_l': case 'hit_head_r': case 'hit_body': case 'hit_leg': return ['fist', 'fist']
     }
     if (this.holding || this.upper?.clip.name === 'carry') return ['grip', 'grip']
     return ['relaxed', 'relaxed']
@@ -833,38 +953,49 @@ export class Character {
 
   /** TWO-BONE IK (model space): the chain u → l → f's end brought to T, bending in the plane it bends in now; its
    *  turns written as the bones' posts (the end's own turn kept when `keepEnd`). */
-  private twoBone(u: number, l: number, f: number, T: number[], keepEnd: boolean): void {
-    {
-      {
-        const H = this.wpos(u), K = this.wpos(l), A = this.wpos(f)
-        const l1 = Math.hypot(K[0] - H[0], K[1] - H[1], K[2] - H[2]), l2 = Math.hypot(A[0] - K[0], A[1] - K[1], A[2] - K[2])
-        const HT = [T[0] - H[0], T[1] - H[1], T[2] - H[2]]
-        const dd = Math.max(Math.abs(l1 - l2) + 1e-3, Math.min(l1 + l2 - 1e-3, Math.hypot(HT[0], HT[1], HT[2])))
-        const dir = HT.map((v) => v / (Math.hypot(HT[0], HT[1], HT[2]) || 1))
-        // the bend plane: as the leg bends now (the knee forward)
-        const HK = [K[0] - H[0], K[1] - H[1], K[2] - H[2]], HA = [A[0] - H[0], A[1] - H[1], A[2] - H[2]]
-        let n = [HK[1] * HA[2] - HK[2] * HA[1], HK[2] * HA[0] - HK[0] * HA[2], HK[0] * HA[1] - HK[1] * HA[0]]
-        if (Math.hypot(n[0], n[1], n[2]) < 1e-5) n = [1, 0, 0]
-        let pp = [n[1] * dir[2] - n[2] * dir[1], n[2] * dir[0] - n[0] * dir[2], n[0] * dir[1] - n[1] * dir[0]]
-        const pl = Math.hypot(pp[0], pp[1], pp[2]) || 1; pp = pp.map((v) => v / pl)
-        if (pp[0] * HK[0] + pp[1] * HK[1] + pp[2] * HK[2] < 0) pp = pp.map((v) => -v)
-        const ca = Math.max(-1, Math.min(1, (l1 * l1 + dd * dd - l2 * l2) / (2 * l1 * dd))), sa = Math.sqrt(1 - ca * ca)
-        const K2 = [H[0] + l1 * (dir[0] * ca + pp[0] * sa), H[1] + l1 * (dir[1] * ca + pp[1] * sa), H[2] + l1 * (dir[2] * ca + pp[2] * sa)]
-        const q1 = qfromTo(HK, [K2[0] - H[0], K2[1] - H[1], K2[2] - H[2]])
-        const KA1 = rotV(q1, [A[0] - K[0], A[1] - K[1], A[2] - K[2]])
-        const q2 = qfromTo(KA1, [T[0] - K2[0], T[1] - K2[1], T[2] - K2[2]])
-        this.post[u] = this.post[u] ? qmul(q1, this.post[u]!) : q1
-        this.post[l] = this.post[l] ? qmul(q2, this.post[l]!) : q2
-        // (the end keeps its own turn — the foot flat as it was)
-        if (keepEnd) { const q12 = qmul(q2, q1); this.post[f] = [-q12[0], -q12[1], -q12[2], q12[3]] }
-      }
+  private twoBone(u: number, l: number, f: number, T: ArrayLike<number>, keepEnd: boolean, pole: ArrayLike<number> | null = null): void {
+    const H = this.wpos(u, this.v3()), K = this.wpos(l, this.v3()), A = this.wpos(f, this.v3())
+    const l1 = Math.hypot(K[0] - H[0], K[1] - H[1], K[2] - H[2]), l2 = Math.hypot(A[0] - K[0], A[1] - K[1], A[2] - K[2])
+    const tx = T[0] - H[0], ty = T[1] - H[1], tz = T[2] - H[2], tl = Math.hypot(tx, ty, tz) || 1
+    const dd = Math.max(Math.abs(l1 - l2) + 1e-3, Math.min(l1 + l2 - 1e-3, tl))
+    const dx = tx / tl, dy = ty / tl, dz = tz / tl
+    const HK = this.v3(); HK[0] = K[0] - H[0]; HK[1] = K[1] - H[1]; HK[2] = K[2] - H[2]
+    let px: number, py: number, pz: number
+    if (pole) {
+      // (the middle joint toward the pole: its part square to the reach — an elbow told where to point)
+      const k = pole[0] * dx + pole[1] * dy + pole[2] * dz
+      px = pole[0] - dx * k; py = pole[1] - dy * k; pz = pole[2] - dz * k
+      if (Math.hypot(px, py, pz) < 1e-5) { px = HK[0]; py = HK[1]; pz = HK[2] }
+    } else {
+      // the bend plane: as the limb bends now (the knee forward)
+      const ax = A[0] - H[0], ay = A[1] - H[1], az = A[2] - H[2]
+      let nx = HK[1] * az - HK[2] * ay, ny = HK[2] * ax - HK[0] * az, nz = HK[0] * ay - HK[1] * ax
+      if (Math.hypot(nx, ny, nz) < 1e-5) { nx = 1; ny = 0; nz = 0 }
+      px = ny * dz - nz * dy; py = nz * dx - nx * dz; pz = nx * dy - ny * dx
+      if (px * HK[0] + py * HK[1] + pz * HK[2] < 0) { px = -px; py = -py; pz = -pz }
     }
+    const pl = Math.hypot(px, py, pz) || 1
+    px /= pl; py /= pl; pz /= pl
+    const ca = Math.max(-1, Math.min(1, (l1 * l1 + dd * dd - l2 * l2) / (2 * l1 * dd))), sa = Math.sqrt(1 - ca * ca)
+    const K2 = this.v3(); K2[0] = H[0] + l1 * (dx * ca + px * sa); K2[1] = H[1] + l1 * (dy * ca + py * sa); K2[2] = H[2] + l1 * (dz * ca + pz * sa)
+    const a = this.v3(); a[0] = K2[0] - H[0]; a[1] = K2[1] - H[1]; a[2] = K2[2] - H[2]
+    const q1 = qfromTo(HK, a, this.q4())
+    const b = this.v3(); b[0] = A[0] - K[0]; b[1] = A[1] - K[1]; b[2] = A[2] - K[2]
+    const KA1 = rotV(q1, b, this.v3())
+    const c = this.v3(); c[0] = T[0] - K2[0]; c[1] = T[1] - K2[1]; c[2] = T[2] - K2[2]
+    const q2 = qfromTo(KA1, c, this.q4())
+    this.post[u] = this.post[u] ? qmul(q1, this.post[u]!, this.q4()) : q1
+    this.post[l] = this.post[l] ? qmul(q2, this.post[l]!, this.q4()) : q2
+    // (the end keeps its own turn — the foot flat as it was)
+    if (keepEnd) { const q12 = qmul(q2, q1, this.q4()); q12[0] = -q12[0]; q12[1] = -q12[1]; q12[2] = -q12[2]; this.post[f] = q12 }
   }
 
   /** The pelvis back, the hands on the wheel (seated), the skin's matrices. */
   private skinRest(): void {
-    const s = new Float32Array(16), B = this.bi, h = B.Hips
-    this.lt[h * 3 + 1] -= this.pelvis
+    const s = _skin, B = this.bi, h = B.Hips
+    // (seated, riding: the hips are the seat's — the walker's lowered pelvis taken back out. On foot it STAYS: a weapon's
+    //  hands pose him again below, and without it he stood |pelvis| too high — off his feet, his hands off the weapon)
+    if (this.seat || this.ride) this.lt[h * 3 + 1] -= this.pelvis
     // RIDING: the hips on the bike's, the body leant as its rider leans (from the seated clip's near-upright), the
     // arms to the grips, the legs to the ankles' places on the pedals / pegs (the feet keep their turn)
     if (this.ride && !this.ride.bail()) {
@@ -897,27 +1028,50 @@ export class Character {
     const hands = this.seat?.hands()
     if (hands) {
       const at = this.seat!.at
-      const arms = [['LeftArm', 'LeftForeArm', 'LeftHand'], ['RightArm', 'RightForeArm', 'RightHand']].map((l) => l.map((n) => B[n]))
-      arms.forEach(([u, l, f], i) => {
-        const T = [hands[i].x - at.x, hands[i].y - at.y, hands[i].z - at.z]
+      for (let i = 0; i < 2; i++) {
+        const u = this.armsIdx[i][0], l = this.armsIdx[i][1], f = this.armsIdx[i][2]
         // (the grip is the palm's middle: the wrist sits ~8 cm back from it, toward the elbow)
-        const A0 = this.wpos(f), K0 = this.wpos(l), back = [K0[0] - A0[0], K0[1] - A0[1], K0[2] - A0[2]], bl = Math.hypot(back[0], back[1], back[2]) || 1
-        const Tw = [T[0] + (back[0] / bl) * 0.08, T[1] + (back[1] / bl) * 0.08, T[2] + (back[2] / bl) * 0.08]
+        const A0 = this.wpos(f, this.v3()), K0 = this.wpos(l, this.v3()), bx = K0[0] - A0[0], by = K0[1] - A0[1], bz = K0[2] - A0[2], bl = Math.hypot(bx, by, bz) || 1
+        const Tw = this.v3()
+        Tw[0] = hands[i].x - at.x + (bx / bl) * 0.08; Tw[1] = hands[i].y - at.y + (by / bl) * 0.08; Tw[2] = hands[i].z - at.z + (bz / bl) * 0.08
         this.twoBone(u, l, f, Tw, false)
-      })
+      }
       this.fk(this.lt, this.lr, true)
     }
-    // A WEAPON HELD (handIK): each wrist bent to where the weapon's grip is — the world's place into his own space
-    const hk = !this.seat && !this.ride && !this.down && this.handIK ? this.handIK() : null
-    if (hk && (hk[0] || hk[1])) {
-      const c = Math.cos(this.heading), sn = Math.sin(this.heading)
-      const arms = [['LeftArm', 'LeftForeArm', 'LeftHand'], ['RightArm', 'RightForeArm', 'RightHand']].map((l) => l.map((n) => B[n]))
-      arms.forEach(([u, l, f], i) => {
-        const w = hk[i]
-        if (!w) return
-        const dx = w.x - this.pos.x, dz = w.z - this.pos.z
-        this.twoBone(u, l, f, [dx * c - dz * sn, w.y - this.pos.y, dx * sn + dz * c], false)
-      })
+    // A WEAPON HELD (handIK → grip): each wrist put where it holds it, its elbow where it's told, the hand turned to it
+    const g = this.grip
+    g.lOn = g.rOn = g.lqOn = g.rqOn = false
+    g.stretch = 1
+    if (!this.seat && !this.ride && !this.down && this.handIK) this.handIK()
+    if (g.lOn || g.rOn) {
+      // (first person's weapon is held where the view shows it best, further than an arm reaches: the forearm and the
+      //  hand let out — up to `stretch` — as every first-person game's arms are)
+      if (g.stretch > 1) {
+        let any = false
+        for (let i = 0; i < 2; i++) {
+          if (!(i ? g.rOn : g.lOn)) continue
+          const u = this.armsIdx[i][0], l = this.armsIdx[i][1], f = this.armsIdx[i][2], T = i ? g.r : g.l, H = this.world[u]
+          const reach = Math.hypot(this.lt[l * 3], this.lt[l * 3 + 1], this.lt[l * 3 + 2]) + Math.hypot(this.lt[f * 3], this.lt[f * 3 + 1], this.lt[f * 3 + 2])
+          const k = Math.min(g.stretch, Math.hypot(T[0] - H[12], T[1] - H[13], T[2] - H[14]) / (reach * 0.97))
+          if (k <= 1) continue
+          for (const b of [l, f]) { this.lt[b * 3] *= k; this.lt[b * 3 + 1] *= k; this.lt[b * 3 + 2] *= k }
+          any = true
+        }
+        if (any) this.fk(this.lt, this.lr, true)
+      }
+      if (g.lOn) this.twoBone(this.armsIdx[0][0], this.armsIdx[0][1], this.armsIdx[0][2], g.l, false, g.lp)
+      if (g.rOn) this.twoBone(this.armsIdx[1][0], this.armsIdx[1][1], this.armsIdx[1][2], g.r, false, g.rp)
+      this.fk(this.lt, this.lr, true)
+    }
+    if (g.lqOn || g.rqOn) {
+      // (the hand's own turn: what it must be — its bind pose turned by `lq` / `rq` — over what the arm left it)
+      for (let i = 0; i < 2; i++) {
+        if (!(i ? g.rqOn : g.lqOn)) continue
+        const f = this.armsIdx[i][2], cur = qOfMat(this.world[f], this.q4())
+        cur[0] = -cur[0]; cur[1] = -cur[1]; cur[2] = -cur[2]
+        const q = qmul(qmul(i ? g.rq : g.lq, this.handBindQ[i], this.q4()), cur, this.q4())
+        this.post[f] = this.post[f] ? qmul(q, this.post[f]!, this.q4()) : q
+      }
       this.fk(this.lt, this.lr, true)
     }
     for (let b = 0; b < this.bones.length; b++) {
@@ -940,7 +1094,9 @@ export class Character {
     this.down = null
     this.rooted = false
     const R = this.physics.pw.R, world = this.physics.pw.world
-    this.physics.follow(x, z)
+    // (only who leads the physics' ground — the player: the companion appearing a tile away took the ground from under
+    //  you and back, a tile's rebuild each way)
+    if (this.leads) this.physics.follow(x, z)
     const gy = y ?? this.physics.surface(x, z, this.map.height(x, z), from)
     if (!this.body) {
       this.body = world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x, gy + 0.9, z))
@@ -1098,17 +1254,20 @@ export class Character {
     const sprint = k.has('ShiftLeft') || k.has('ShiftRight') || T.sprint > 0 || stick > 0.96, walk = k.has('ControlLeft') || k.has('ControlRight') || (stick > 0.05 && stick < 0.5)
     // (the stick: a little = walk, most of the way = run, pushed to its edge = sprint)
     const stunned = performance.now() / 1000 < this.stunUntil
-    const target = this.rooted || stunned ? 0 : (st ? st.pace : mag < 0.05 ? 0 : walk ? 1.7 : sprint ? 7.2 : 4.6) * this.paceK
+    // (aiming: no sprint — a run with the weapon up, its own pace)
+    const target = this.rooted || stunned ? 0 : (st ? st.pace : mag < 0.05 ? 0 : walk ? 1.7 : sprint && this.aimYaw === null ? 7.2 : 4.6) * this.paceK
     // the way the keys point, from the camera's view; the body turns toward it
     // WEIGHT (GTA's): the body turns toward the way the keys point — quickly standing, slower the faster it goes (a
     // sprint swings wide) — and gets up to speed / stops with momentum, slower uphill
     const h0 = this.heading
     // (AIMING: he faces where he aims and the keys STRAFE — the way he goes kept apart from the way he faces)
     let goYaw = NaN
-    if (this.aimYaw !== null && !st) {
-      const d = Math.atan2(Math.sin(this.aimYaw - this.heading), Math.cos(this.aimYaw - this.heading))
+    const faceYaw = st ? st.face ?? null : this.aimYaw
+    this.strafes = faceYaw !== null
+    if (faceYaw !== null) {
+      const d = Math.atan2(Math.sin(faceYaw - this.heading), Math.cos(faceYaw - this.heading))
       this.heading += Math.max(-dt * 14, Math.min(dt * 14, d))
-      if (mag > 0.05) goYaw = this.camYaw + Math.atan2(-ix, iz)
+      if (mag > 0.05) { goYaw = st ? Math.atan2(-st.x, -st.z) : this.camYaw + Math.atan2(-ix, iz); this.moveRel = Math.atan2(Math.sin(goYaw - this.heading), Math.cos(goYaw - this.heading)) }
     } else
     // (steered: he turns to face the way given even standing — pace 0)
     if (mag > 0.05 || (st && st.x * st.x + st.z * st.z > 1e-4)) {
@@ -1153,7 +1312,9 @@ export class Character {
     //  slid him back down it, a 32° stair walked at a fifth of the pace)
     if (this.grounded && this.vy < 0) this.vy = -0.3
     const t = this.body.translation()
-    const desired = { x: fx * this.speed * dt, y: this.vy * dt, z: fz * this.speed * dt }
+    // (… and what he's been knocked back by, dying away)
+    const desired = { x: (fx * this.speed + this.kbx) * dt, y: this.vy * dt, z: (fz * this.speed + this.kbz) * dt }
+    if (this.kbx !== 0 || this.kbz !== 0) { const k = Math.exp(-dt * 7); this.kbx *= k; this.kbz *= k; if (this.kbx * this.kbx + this.kbz * this.kbz < 4e-4) this.kbx = this.kbz = 0 }
     this.cc.computeColliderMovement(this.col, desired, undefined, group(Groups.Player, Groups.Terrain | Groups.Static | Groups.Vehicle | Groups.VehicleMesh))
     const mv = this.cc.computedMovement()
     const was = this.grounded

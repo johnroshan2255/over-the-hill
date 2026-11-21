@@ -65,6 +65,7 @@ const AUDIO: Choice[] = [
 ] as Choice[]
 
 const PLAY: Choice[] = [
+  { key: 'damage', label: 'Car damage', help: 'Crashes count: the body crumples where it is hit, windows crack and fall out, lamps break, a bent axle pulls the car to one side, tyres burst, a wheel can be torn off, and the engine wears out — steam, smoke, misfires, then it dies; a burning car blows up. Mend it by resting at a camp, or with REPAIR on the wheel (for ◆). Off: cars take nothing. Changing it restarts the game.', options: [{ v: true, label: 'On' }, { v: false, label: 'Off' }] },
   { key: 'companion', label: 'Companion', help: 'Solo play only. Companion: a man who walks beside you, sits in your passenger seat when you get in near him, or follows in his own car (H calls him). Enemy: he comes after you — punches and kicks on foot (you hit back: J punch, U kick), and rams your car with his. Off: you are alone.', options: [{ v: 'off', label: 'Off' }, { v: 'friend', label: 'Companion' }, { v: 'enemy', label: 'Enemy' }] },
 ] as Choice[]
 
@@ -73,7 +74,7 @@ const COOP: Choice[] = [
 ] as Choice[]
 
 const KEYS: [string, string][] = [
-  ['W A S D', 'Drive and steer · on foot: move'], ['F', 'Get out / get in'], ['H', 'Companion: call him to you / into your car'], ['J / U', 'Enemy: punch / kick (on foot)'], ['Space', 'Handbrake · on foot: jump'], ['Shift', 'Boost · on foot: sprint'], ['X / Z', 'Gear up / down (manual)'], ['E', 'Winch'], ['R', 'Reset the car'],
+  ['W A S D', 'Drive and steer · on foot: move'], ['F', 'Get out / get in'], ['H', 'Companion: call him to you / into your car'], ['J / U', 'On foot — fists: punch / kick (pressed again as each lands: the next out of it) · a gun: fire (left mouse) / AIM while held (right mouse; the sniper: the scope, the wheel steps it)'], ['R', 'A gun: reload'], ['V', 'First person (a gun there is held as in CS:GO) / third person (as in GTA: carried till aimed)'], ['Q', 'The wheel — its second button: the weapons you have found'], ['Space', 'Handbrake · on foot: jump'], ['Shift', 'Boost · on foot: sprint'], ['X / Z', 'Gear up / down (manual)'], ['E', 'Winch'], ['R', 'Reset the car'],
   ['C', 'Camp: pitch / rest'], ['B', 'Build (co-op): mark your land'], ['1 / 2', 'Overlander 4×4 / Sierra K'], ['L', 'Lights'], ['N', 'Minimap'], ['Tab', 'Map'], ['V', 'Free camera'], ['+ −', 'Zoom'], ['G', 'Time of day'], ['Shift + G', 'Weather'], ['M', 'Sound'], ['F3', 'Stats'], ['Q', 'Action wheel'], ['Esc', 'Pause'],
 ]
 
