@@ -437,6 +437,75 @@
         "sid": 2,
         "t": "ride"
       }
+    },
+    {
+      "hex": "380203",
+      "json": {
+        "sid": 2,
+        "t": "armed",
+        "weapon": "sniper"
+      }
+    },
+    {
+      "hex": "380300",
+      "json": {
+        "sid": 3,
+        "t": "armed",
+        "weapon": "fists"
+      }
+    },
+    {
+      "hex": "3902020000c03f00808c42000040c0000000009a99193fcdcc4cbf",
+      "json": {
+        "dx": 0.0,
+        "dy": 0.6000000238418579,
+        "dz": -0.800000011920929,
+        "sid": 2,
+        "t": "shot",
+        "weapon": "ak47",
+        "x": 1.5,
+        "y": 70.25,
+        "z": -3.0
+      }
+    },
+    {
+      "hex": "3a0300008442020300",
+      "json": {
+        "by": 2,
+        "hp": 66.0,
+        "sid": 3,
+        "t": "health",
+        "weapon": "sniper",
+        "zone": "head"
+      }
+    },
+    {
+      "hex": "3a0300004042020102",
+      "json": {
+        "by": 2,
+        "hp": 48.0,
+        "sid": 3,
+        "t": "health",
+        "weapon": "pistol",
+        "zone": "limb"
+      }
+    },
+    {
+      "hex": "3b0302045261766902",
+      "json": {
+        "by": 2,
+        "by_name": "Ravi",
+        "sid": 3,
+        "t": "down",
+        "weapon": "ak47"
+      }
+    },
+    {
+      "hex": "3c03",
+      "json": {
+        "sid": 3,
+        "t": "up"
+      }
     }
   ],
   "intents": [
@@ -621,6 +690,47 @@
         "car": "fortyfive",
         "req": null,
         "t": "ride"
+      }
+    },
+    {
+      "hex": "1b0003",
+      "json": {
+        "req": null,
+        "t": "arm",
+        "weapon": "sniper"
+      }
+    },
+    {
+      "hex": "1b0000",
+      "json": {
+        "req": null,
+        "t": "arm",
+        "weapon": "fists"
+      }
+    },
+    {
+      "hex": "1c00010000803f00008d42000000c00000803f0000000000000000",
+      "json": {
+        "dx": 1.0,
+        "dy": 0.0,
+        "dz": 0.0,
+        "req": null,
+        "t": "shot",
+        "weapon": "pistol",
+        "x": 1.0,
+        "y": 70.5,
+        "z": -2.0
+      }
+    },
+    {
+      "hex": "1d00ac02010200004841",
+      "json": {
+        "dist": 12.5,
+        "req": null,
+        "sid": 300,
+        "t": "hit",
+        "weapon": "pistol",
+        "zone": "limb"
       }
     },
     {

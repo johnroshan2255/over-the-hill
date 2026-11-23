@@ -192,6 +192,21 @@ export class Vehicle {
   }
   /** (the harness) parked and still coming to rest. */
   get landing(): boolean { return this.parked && this.settling > 0 }
+  /** STRUCK WHERE IT STANDS (parked — the enemy's car on it as he runs you down): held, it was a kinematic thing that
+   *  another kinematic one passed through. Live again, braked, to take the blow about to be given it — its crash watch
+   *  told it stood still before (so that blow is a blow, and the dent is made) — and held again once it stands. */
+  knocked(): void {
+    if (!this.sim || !this.parked) return
+    const b = this.sim.body, R = this.physics.pw.R
+    if (b.bodyType() !== R.RigidBodyType.Dynamic) {
+      b.setBodyType(R.RigidBodyType.Dynamic, true)
+      const s = this.w0, t = b.translation()
+      s.vx = s.vy = s.vz = s.fx = s.fy = s.fz = s.wx = s.wy = s.wz = 0; s.px = t.x; s.py = t.y; s.pz = t.z
+      s.on = !!this.damage
+    }
+    this.settling = 4
+    this.restT = 0
+  }
   /** Back in: the body live again (placed at (x, z, heading) first, when given — the car brought to the rider). */
   unpark(at?: { x: number; z: number; heading: number }): void {
     if (!this.sim || !this.parked) return

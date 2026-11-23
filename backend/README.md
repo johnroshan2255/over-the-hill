@@ -78,6 +78,9 @@ the teleport flag is ignored. The server relays each entity's 17 bytes as they c
 | `ride` | `car`: the garage's id of the car the player drives (≤ 24 letters / digits / `_` `-`) — relayed to everyone as the `ride` event (`sid`, `car`); the server keeps none of it: the game says it again when someone joins | — |
 | `pond` | `x`, `z`, `r` (3–15), `depth` (0.5–3) | inside your claim; 4 each |
 | `ping` | `n` | answered at once with `pong {n}` (the round trip) |
+| `arm` | `weapon` (`fists` `pistol` `ak47` `sniper`) | what's in your hands — kept here (your hits are checked against it), told to the others as `armed` (and to whoever joins later) |
+| `shot` | `weapon`, `x y z`, `dx dy dz` | a shot left: relayed to the others as `shot` to draw; counted, at most its fire rate (a bucket of 2, one more every `fireTicks`) |
+| `hit` | `sid` (the player hit), `weapon`, `zone` (`head` `body` `limb`), `dist` | **the fight** below |
 
 Building, shaping and paving: the player within 40 m of their claim's edge. Taking things: within reach of them
 (the trailer's own pose for `trailer`).
@@ -86,7 +89,16 @@ Building, shaping and paving: the player within 40 m of their claim's edge. Taki
 `left`, `chat`, `tree_cut`, `tree_back`, `drop`, `drop_gone`, `node`, `node_back`, `inv` (yours), `claim`,
 `claim_gone`, `stock`, `guard` `{claim, on}`, `raid` `{claim, owner, by, by_name, bag}`, `piece`, `piece_gone`,
 `cells` `{claim, cells: [[i, j, cm]]}` (the 2 m grid's cell, its height change from the map's), `pave`, `pond`,
-`pond_gone`, `ok`, `err`, `pong`.
+`pond_gone`, `ok`, `err`, `pong`, `ride`, `armed` `{sid, weapon}`, `shot` `{sid, weapon, x…dz}`,
+`health` `{sid, hp, by, weapon, zone}`, `down` `{sid, by, by_name, weapon}`, `up` `{sid}`.
+
+**The fight** (`weapons.rs`, by the numbers in `proto/weapons.json` — the specs' — docs/WEAPONS.md): each player has
+100 health, kept here. A `hit` is taken only if both are on foot and the target is standing; the weapon is in the
+shooter's hands; one of its `shot`s from the last 60 ticks is spent on it (no shot, no hit); the distance said is
+within the gun's range and agrees with the two poses (± 3 m + 2 %). The damage is worked out here —
+`damage × zone × max(floor, e^(−2·drag·dist))` — never taken from the client; fists don't hurt other players; everyone gets
+`health`; at 0 `down`, and 100 ticks (5 s) later `up` (the player's game puts them back at their camp, else by their
+car). The ammunition isn't checked (a magazine's rounds and reloads are the client's).
 
 **The guard**: a claim is guarded while its owner is inside it (within its radius + 2 m). With the world rule
 `offline_guard`, also while they're offline (off by default: the user's rule — "if we are out they can steal").

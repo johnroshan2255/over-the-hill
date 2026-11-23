@@ -1,4 +1,5 @@
-// CO-OP's COST (MODE=claims: a claim in view — the flag, its stakes and rope, its edge — on vs off instead) (CLAUDE.md: every feature's cost per tier, uncapped 1080p, interleaved): two players; A stands on foot
+// CO-OP's COST (MODE=claims: a claim in view — the flag, its stakes and rope, its edge — on vs off instead; MODE=armed:
+// A holding the AK-47 vs A's fists — what a friend's weapon costs, its model and its hold) (CLAUDE.md: every feature's cost per tier, uncapped 1080p, interleaved): two players; A stands on foot
 // by its parked car (the walker + the car: what a friend costs at their busiest), B's camera on them ~12 m off. B's frame
 // time with A drawn vs not (Remotes.off) — ABBA × ROUNDS, each window WIN ms after a settle.
 //   node scripts/harness/coopcost.mjs     env: PORT (5200), TIERS (low,ultra), ROUNDS (3), WIN (2500)
@@ -29,10 +30,11 @@ for (const tier of TIERS) {
     const page = await ctx.newPage()
     page.on('pageerror', (e) => console.log(`[${who.name}]`, e.message))
     await page.evaluateOnNewDocument((a) => localStorage.setItem('overhill.player.v1', JSON.stringify(a)), { id: who.id, name: who.name, token: who.token })
-    await page.goto(`${BASE}/?coop=${world.id}&tier=${tier}&hour=12&time=0&save=0&dpr=fixed`, { waitUntil: 'load' })
+    await page.goto(`${BASE}/?coop=${world.id}&tier=${tier}&hour=12&time=0&save=0&dpr=fixed${who === A && armed ? '&weapons=all' : ''}`, { waitUntil: 'load' })
     await page.waitForFunction(() => window.__oth?.ready && window.__oth.coop, { timeout: 120_000, polling: 250 })
     return page
   }
+  const armed = process.env.MODE === 'armed'
   const pa = await open(A), pb = await open(B)
   const claims = process.env.MODE === 'claims'
   if (claims) {
@@ -54,7 +56,13 @@ for (const tier of TIERS) {
   await pb.bringToFront()
   await pb.evaluate((m) => { window.__MODE = m }, process.env.MODE || '')
   await sleep(2500)
-  const win = (off) => pb.evaluate((off, WIN) => new Promise((res) => {
+  const win = async (off) => armed ? (await pa.evaluate((off) => window.__oth.arsenal.equip(off ? null : 'ak47'), off), pb.evaluate((WIN) => new Promise((res) => {
+    setTimeout(() => {
+      const ts = []
+      const f = (t) => { ts.push(t); if (t - ts[0] < WIN) requestAnimationFrame(f); else res((ts.at(-1) - ts[0]) / (ts.length - 1)) }
+      requestAnimationFrame(f)
+    }, 700)
+  }), WIN)) : pb.evaluate((off, WIN) => new Promise((res) => {
     if (window.__MODE === 'claims') window.__oth.coop.claims.group.visible = !off; else window.__oth.coop.remotes.off = off
     setTimeout(() => {
       const ts = []
@@ -73,7 +81,7 @@ for (const tier of TIERS) {
   const cpu = await pb.evaluate(() => ({ u: window.__oth.coop.updateMs, c: window.__oth.coop.cullMs }))
   const st = await pb.evaluate(() => window.__oth.stats())
   console.log(`        the others' CPU: posing ${cpu.u.toFixed(3)} ms, culling + tags ${cpu.c.toFixed(3)} ms`)
-  console.log(`${tier.padEnd(6)} ${claims ? 'a claim in view (flag + bounds)' : 'a friend in view (walker + car)'}: ${mean(on).toFixed(3)} ms · without: ${mean(off).toFixed(3)} ms · cost ${(mean(on) - mean(off)).toFixed(3)} ms   (${(1000 / mean(on)).toFixed(0)} vs ${(1000 / mean(off)).toFixed(0)} fps; draws ${st.draws})`)
+  console.log(`${tier.padEnd(6)} ${claims ? 'a claim in view (flag + bounds)' : armed ? 'a friend holding the AK-47 (vs fists)' : 'a friend in view (walker + car)'}: ${mean(on).toFixed(3)} ms · without: ${mean(off).toFixed(3)} ms · cost ${(mean(on) - mean(off)).toFixed(3)} ms   (${(1000 / mean(on)).toFixed(0)} vs ${(1000 / mean(off)).toFixed(0)} fps; draws ${st.draws})`)
   console.log(`        on ${on.map((x) => x.toFixed(2)).join(' ')} | off ${off.map((x) => x.toFixed(2)).join(' ')}`)
   await pa.browserContext().close(); await pb.browserContext().close()
 }

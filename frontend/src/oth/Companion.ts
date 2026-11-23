@@ -56,6 +56,9 @@ export interface CompanionHost {
   /** Your vehicle SHOVED (his car rams it, pushes it): along (dx, dz) by `dv` m/s, spun by `spin` rad/s; `at`: where
    *  his car met it (the world's), `by`: his car's body — a ram's (the damage is put there: Vehicle.hitHint). */
   shove(dx: number, dz: number, dv: number, spin: number, at?: GFX.Vector3, by?: RAPIER.RigidBody | null): void
+  /** A BODY THAT IS NOT YOUR VEHICLE struck by his car (you on foot: your parked car — made live for it —, a crate…):
+   *  along (dx, dz) by `dv` m/s, at `at` (the world's), by his car's body. */
+  knock?(b: RAPIER.RigidBody, dx: number, dz: number, dv: number, at: GFX.Vector3, by: RAPIER.RigidBody | null): void
   /** How your vehicle moves (the world's, m/s; nothing on foot) and its body in the physics (null on foot). */
   vel(): { x: number; y: number; z: number }
   body(): RAPIER.RigidBody | null
@@ -736,10 +739,12 @@ export class Companion {
     this.downT += dt
     const fx = -Math.sin(this.carYaw), fz = -Math.cos(this.carYaw)
     const free = yh.state === 'move' || yh.state === 'land'
+    let turn = 0
     if (d > 45 || yh.isDown || this.downT > 9 || this.ranDown || !free) this.carSpeed += Math.max(-12 * dt, Math.min(0, -this.carSpeed))
     else {
       const dy = Math.atan2(Math.sin(Math.atan2(-dx, -dz) - this.carYaw), Math.cos(Math.atan2(-dx, -dz) - this.carYaw))
-      this.carYaw += clamp(dy, -1.6 * dt, 1.6 * dt)
+      turn = clamp(dy, -1.6 * dt, 1.6 * dt)
+      this.carYaw += turn
       const fit = this.car.damage ? this.car.damage.drive : 1
       const want = (Math.abs(dy) > 1 ? 4 : Math.min(13, 4 + d * 0.6)) * Math.min(1, fit * 1.5)
       this.carSpeed += clamp(want - this.carSpeed, -9 * dt, 6 * dt)
@@ -754,9 +759,57 @@ export class Companion {
         this.ranDown = true
       }
     }
-    this.carP.x += -Math.sin(this.carYaw) * this.carSpeed * dt
-    this.carP.z += -Math.cos(this.carYaw) * this.carSpeed * dt
+    // HIS WAY TRIED AGAINST WHAT STANDS IN IT (NEXT_damage §2.4: he drove through your parked car — a held car is a
+    // kinematic thing, as his is, and two of those pass through each other — and through trees, rocks and walls): his
+    // nose (his tail, backing) cast along the step, turned as he will stand after it. Met: there he stops — a blow
+    // to his car and to what he met, by how fast he came —, and the run is over: he gets out and comes on foot.
+    let mx = -Math.sin(this.carYaw) * this.carSpeed * dt, mz = -Math.cos(this.carYaw) * this.carSpeed * dt
+    this.castQ.setFromAxisAngle(UP, turn).multiply(this.carQ)
+    let k = this.blocked(mx, mz)
+    // (the turn alone swung his nose into it: not turned)
+    if (k === 0 && turn !== 0) { this.carYaw -= turn; this.castQ.copy(this.carQ); k = this.blocked(mx = -Math.sin(this.carYaw) * this.carSpeed * dt, mz = -Math.cos(this.carYaw) * this.carSpeed * dt) }
+    if (k < 1) {
+      mx *= k; mz *= k
+      const v = Math.abs(this.carSpeed), sg = this.carSpeed >= 0 ? 1 : -1, other = this.blockedBy
+      if (v > 2) {
+        // (a body that can move — your parked car — takes half of it, a dead blow, and his car its half through your
+        //  car's own crash: main.ts; what can't move takes all of it, his car the lot)
+        if (other && (other.isDynamic() || other.isKinematic()) && this.host.knock) { this.rammedAt = performance.now() / 1000; this.host.knock(other, fx * sg, fz * sg, v / 2, this.hitAt, this.solid ? this.solid.body : null) }
+        else this.carBlow(this.hitAt.x, this.hitAt.y, this.hitAt.z, -fx * sg, 0, -fz * sg, v)
+        this.ranDown = true
+      }
+      this.carSpeed = 0
+      // (held up there, pressing on, a second: he gives up the run)
+      if ((this.blockT += dt) > 1.2) this.ranDown = true
+    } else this.blockT = 0
+    this.carP.x += mx
+    this.carP.z += mz
     this.tilt(dt)
+  }
+  private blockT = 0
+  private blockedBy: RAPIER.RigidBody | null = null
+  /** How much of this step's way (mx, mz) his car can go before its nose (its tail, backing) — turned as `castQ` — meets
+   *  anything solid: your parked car's inner pieces, a tree, a rock, a wall, a prop (not the land, not you — the run is
+   *  for that —, nothing that is only ground: the roads' ribbons, the bridges' decks; not a wheel's guard). 1: all of
+   *  it; `hitAt` / `blockedBy`: where, what. */
+  private blocked(mx: number, mz: number): number {
+    const sh = this.carSpeed >= 0 ? this.nose : this.tail
+    this.blockedBy = null
+    if (!sh || mx * mx + mz * mz < 1e-10) return 1
+    const pw = this.physics.pw, ST = pw.R.ShapeType, me = this.host.you().rigid as RAPIER.RigidBody | null | undefined
+    const hit = pw.world.castShape(this.carP, this.castQ, { x: mx, y: 0, z: mz }, sh, SKIN + INSET, 1, true, pw.R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, undefined, this.solid ? this.solid.body : undefined, (c) => {
+      const t = c.shapeType(), p = c.parent()
+      if (t === ST.HeightField || t === ST.Capsule || (me && p?.handle === me.handle)) return false
+      // (ground: a static trimesh or a ground box — the StaticMesh group — but a rock's hull; a car's exact mesh: its
+      //  inner pieces are what's met, as `reach` has it)
+      if (((c.collisionGroups() >>> 16) & Groups.StaticMesh) && t !== ST.ConvexPolyhedron) return false
+      if (t === ST.TriMesh && p && !p.isFixed()) return false
+      return true
+    })
+    if (!hit) return 1
+    this.hitAt.set(hit.witness1.x, hit.witness1.y, hit.witness1.z)
+    this.blockedBy = hit.collider.parent()
+    return Math.max(0, Math.min(1, hit.time_of_impact))
   }
 
   // ------------------------------------------------------------------------------------------------ the enemy on foot

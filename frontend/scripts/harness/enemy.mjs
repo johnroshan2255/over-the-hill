@@ -147,7 +147,9 @@ s = await until((l) => !l.hisDown, 15)
 check(!s.hisDown, 'he gets up again')
 // back in your car and off: he takes his again and joins your way from where it stands
 await page.evaluate(() => { window.__carJump.max = 0 })
-for (let i = 0; i < 25 && (await look()).onFoot; i++) { await key('KeyF'); await sleep(1000) }
+// (the fight drifts off from your car — F only gets you in within 3.2 m of its door: put by it first, its left side)
+const byDoor = () => page.evaluate(() => { const o = window.__oth, c = o.car, h = c.sim.heading, d = c.half.x + 0.8; o.hero.appear(c.pos.x - Math.cos(h) * d, c.pos.z + Math.sin(h) * d, h) })
+for (let i = 0; i < 25 && (await look()).onFoot; i++) { if (i % 5 === 0) { await byDoor(); await sleep(600) } await key('KeyF'); await sleep(1000) }
 await sleep(1500)
 await page.keyboard.down('KeyW')
 s = await until((l) => l.mode === 'car', 40)

@@ -129,10 +129,13 @@ script.
   PUNCH, AIM (stays on till pressed again) · SCOPE · KICK, RELOAD by the right thumb.
 - **Found in the ruins** — ten of them, each marked on the map and the minimap by what lies there: walk up to it, `E` takes it. A
   weapon is yours for good (kept with the save); its site gives ammunition again every 5 minutes.
-- **Co-op**: everyone sees what you hold and your shots. A hit is an intent to the server (`hit`: who, which weapon,
-  the zone, the distance); the server takes it only if that weapon's fire interval has passed since your last, the
-  distance is within its range and the target's pose is within 3 m of where you said — then it takes the health off,
-  tells everyone, and counts the kill. Solo: the same rules against the enemy (`Companion.ts`).
+- **Co-op**: everyone sees what you hold (`arm` → `armed`) and your shots (`shot`). A hit is an intent to the server
+  (`hit`: who, which weapon, the cut / the blow, the zone, the distance); the server (`backend/src/weapons.rs`) takes it
+  only if that weapon is in your hands, a shot of it is in the air (each `shot` held to its fire rate — a bucket of two,
+  one more every `fireTicks`: the network bunches two, never more), a cut's or a blow's gap on that target has passed,
+  and the distance is within its range and agrees with the two poses (± 3 m) — then it works out the damage from the
+  spec, takes it off, tells everyone (`health`), and at 0 `down` / 5 s later `up`. The rules in `backend/README.md`
+  ("The fight"). Solo: the same numbers against the enemy (`Companion.ts`).
 
 ## The order of work, and where it stands (2026-11-19, the evening)
 
@@ -145,7 +148,7 @@ script.
 | 5 | ~~the katana's abilities~~ | removed with the katana (round 4) |
 | 6 | the pick-ups in the ruins, on the map and the minimap (`Weapons.ts` `Pickups`) | **done** — `scripts/harness/pickups.mjs`; kept in `localStorage` (`overhill.weapons.v1`, `overhill.weaponsites.v1`) |
 | 7 | the wheel's two buttons (`Wheel.ts`: keys 1 / 2 too); the phone's buttons (FIRE / AIM · SCOPE / RELOAD; PUNCH / KICK) | **done** — laid out by `phonepads.mjs` on three emulated phones; not tried on a real one by me |
-| 8 | co-op: the wire (`proto/wire.json`), the server's check, health, kills, the others seen armed | **not started** |
+| 8 | co-op: the wire (`proto/wire.json`), the server's check, health, kills, the others seen armed | **done** (2026-11-19, the night; 2026-11-21 onto round 4, guns only) — `scripts/harness/coopfight.mjs` (two players), `cargo test` (`weapons::tests`, `world::tests::a_shoots_b_down_and_b_gets_up`) |
 | 9 | each step's cost per tier | measured on the PC only — below |
 
 ### How it's made (for whoever goes on)
@@ -180,10 +183,15 @@ posed by distance as the co-op players' are; the fight's clips and the weapons' 
 
 ### What's left, and what bites
 
-- **Co-op (step 8)**: nothing of it. The plan is in "The rules they share" above: a `hit` intent the server checks
-  against `proto/weapons.json` (the fire interval in ticks, the range, the target's pose), health and kills as events,
-  the weapon held as part of `ride`-like state so `Remotes.ts` can draw it (`weaponModel` + the same `placeGun`).
-  `proto/wire.json` changes must pass `cargo test --test golden` and `npm run test:wire`.
+- **Co-op (step 8)** is in: `arm` / `shot` / `hit` → `armed` / `shot` / `health` / `down` / `up` (guns only: the
+  katana's `blade`, `awake`, `part` and `stun` went with it, 2026-11-21). How it's drawn: each player's gun in their
+  hands by third person's own hold, lifted out of `Arsenal` (`holdOther` — Weapons.ts: carried, GTA's; up for a second
+  after each shot, at that shot's pitch — the pose has no aim); their staggers as clips on the puppet
+  (`Character.puppetStrike`), down a knockdown held till `up`; their shots flown as ghosts (`Arsenal.ghost`: tracers —
+  hitting nobody, though a round that stops on your car still holes it); their health a bar under their name; yours
+  bottom left; a hit of yours turns the cross red for a moment. Left of it: the aim's pitch isn't in the pose; the
+  server doesn't count rounds or reloads; fists don't hurt other players; no kill count is kept; no health comes back
+  but by going down.
 - **No sound** for any of it (shots, hits, blows) — `Audio.ts` has no one-shot voice yet.
 - **Third person's aim** has no clip of its own for the legs (the hips turned, the stride reversed — round 2): a side
   step is the forward run turned up to 65°; past that the feet slide a little.

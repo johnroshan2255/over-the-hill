@@ -1,6 +1,6 @@
 import { type Account, socketUrl } from './api'
 import { type Ent, FLAG_TELEPORT, Kind, poseFrame, readPoses } from './pose'
-import { type Claim, decodeEv, encodeIntent, type Ev, type Intent, type Inv, type Loose, type Piece, type PlayerView, type Pond, type Stroke, type WorldInfo } from './wire'
+import { type Claim, decodeEv, encodeIntent, type Ev, type Intent, type Inv, type Loose, type Piece, type PlayerView, type Pond, type Stroke, type WireWeapon, type WireZone, type WorldInfo } from './wire'
 
 /**
  * A CO-OP SESSION — one world's WebSocket (backend/README.md): the world as the server says it is (players, claims and
@@ -70,8 +70,12 @@ function slerp(a: number[], b: number[], t: number, out: number[]): void {
   for (let j = 0; j < 4; j++) out[j] /= len
 }
 
-/** (`car`: the garage car they drive — the `ride` event; '' until they've said: the main car is drawn) */
-export interface Remote { sid: number; id: string; name: string; colour: string; car: string; tracks: Map<number, Track> }
+/** (`car`: the garage car they drive — the `ride` event; '' until they've said: the main car is drawn)
+ *  THE FIGHT (docs/WEAPONS.md): what's in their hands; their health; down (till the server's `up`). */
+export interface Remote {
+  sid: number; id: string; name: string; colour: string; car: string; tracks: Map<number, Track>
+  weapon: WireWeapon; hp: number; down: boolean
+}
 
 /** A player's colour (their car's paint, their name tag, their flag) — from their id, the same on every screen. */
 export const COLOURS = ['#c8462d', '#2f7fb8', '#d9a227', '#3f9a5b', '#8e4fb0', '#d26f9a', '#2aa6a1', '#e07b2f', '#6b7fd1', '#9fb83a', '#b84a4a', '#4f6f8f']
@@ -99,6 +103,9 @@ export class Session {
   readonly stumps = new Map<number, { x: number; z: number }>()
   /** The rocks and scrap worked (by key, "rock:<i>" / "scrap:<place>"): what's left in each. */
   readonly nodes = new Map<string, number>()
+  /** OUR health (the server owns it: its `health` events), and down till its `up`. */
+  hp = 100
+  down = false
   /** The round trip (ms), from the pings. */
   rtt = 0
   /** Bytes in / out (the HUD's debug line). */
@@ -211,6 +218,22 @@ export class Session {
     this.send(encodeIntent({ t: 'ride', car }))
   }
 
+  /** WHAT'S IN OUR HANDS, told to the others (and the server, who checks our hits against it): on a change. */
+  private armed: WireWeapon = 'fists'
+  arm(weapon: WireWeapon): void {
+    if (weapon === this.armed || this.closed) return
+    this.armed = weapon
+    this.send(encodeIntent({ t: 'arm', weapon }))
+  }
+  /** A shot left: the others draw it; the server counts it (a hit must spend one). */
+  shot(weapon: WireWeapon, p: { x: number; y: number; z: number }, d: { x: number; y: number; z: number }): void {
+    this.send(encodeIntent({ t: 'shot', weapon, x: p.x, y: p.y, z: p.z, dx: d.x, dy: d.y, dz: d.z }))
+  }
+  /** What our shot hit — the server checks it and takes the health. */
+  hit(sid: number, weapon: WireWeapon, zone: WireZone, dist: number): void {
+    this.send(encodeIntent({ t: 'hit', sid, weapon, zone, dist }))
+  }
+
   private ended(why: string): void {
     if (this.closed) return
     this.closed = true
@@ -220,7 +243,7 @@ export class Session {
   }
 
   private addPlayer(sid: number, id: string, name: string): void {
-    this.remotes.set(sid, { sid, id, name, colour: colourOf(id), car: '', tracks: new Map() })
+    this.remotes.set(sid, { sid, id, name, colour: colourOf(id), car: '', tracks: new Map(), weapon: 'fists', hp: 100, down: false })
   }
 
   private message(b: Uint8Array): void {
@@ -253,6 +276,10 @@ export class Session {
       // (someone new: they don't know our car yet — said again)
       case 'joined': this.addPlayer(e.sid, e.id, e.name); if (this.car) this.send(encodeIntent({ t: 'ride', car: this.car })); break
       case 'ride': { const r = this.remotes.get(e.sid); if (r) r.car = e.car; break }
+      case 'armed': { const r = this.remotes.get(e.sid); if (r) r.weapon = e.weapon; break }
+      case 'health': { if (e.sid === this.me.sid) this.hp = e.hp; const r = this.remotes.get(e.sid); if (r) r.hp = e.hp; break }
+      case 'down': { if (e.sid === this.me.sid) { this.hp = 0; this.down = true } const r = this.remotes.get(e.sid); if (r) { r.hp = 0; r.down = true } break }
+      case 'up': { if (e.sid === this.me.sid) { this.hp = 100; this.down = false } const r = this.remotes.get(e.sid); if (r) { r.hp = 100; r.down = false } break }
       case 'left': this.remotes.delete(e.sid); break
       case 'ok': { const p = this.pending.get(e.req); this.pending.delete(e.req); p?.ok(); break }
       case 'err': { if (e.req !== null) { const p = this.pending.get(e.req); this.pending.delete(e.req); p?.fail(e.msg) } break }

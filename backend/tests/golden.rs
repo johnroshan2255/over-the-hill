@@ -5,6 +5,7 @@
 
 use overhill_server::{
     catalog::{Bag, Mat},
+    weapons::{Weapon, Zone},
     wire,
     world::{Claim, Ev, Inv, Loose, NodeView, Piece, PlayerView, Pond, Rules, StateView, Stroke, StumpView, WorldInfo},
 };
@@ -68,6 +69,13 @@ fn events() -> Vec<Value> {
         Ev::Err { req: None, msg: "slow down" },
         Ev::Pong { n: 123_456_789 },
         Ev::Ride { sid: 2, car: "steppe" },
+        Ev::Armed { sid: 2, weapon: Weapon::Sniper },
+        Ev::Armed { sid: 3, weapon: Weapon::Fists },
+        Ev::Shot { sid: 2, weapon: Weapon::Ak47, x: 1.5, y: 70.25, z: -3.0, dx: 0.0, dy: 0.6, dz: -0.8 },
+        Ev::Health { sid: 3, hp: 66.0, by: 2, weapon: Weapon::Sniper, zone: Zone::Head },
+        Ev::Health { sid: 3, hp: 48.0, by: 2, weapon: Weapon::Pistol, zone: Zone::Limb },
+        Ev::Down { sid: 3, by: 2, by_name: "Ravi", weapon: Weapon::Ak47 },
+        Ev::Up { sid: 3 },
     ];
     evs.iter().map(|e| json!({ "hex": hex(&wire::encode_ev(e)), "json": serde_json::to_value(e).unwrap() })).collect()
 }
@@ -91,6 +99,10 @@ fn intents() -> Vec<Value> {
         json!({ "t": "pond", "req": 14, "x": 1.0, "z": 2.0, "r": 6.0, "depth": 1.5 }),
         json!({ "t": "ping", "req": null, "n": 99 }),
         json!({ "t": "ride", "req": null, "car": "fortyfive" }),
+        json!({ "t": "arm", "req": null, "weapon": "sniper" }),
+        json!({ "t": "arm", "req": null, "weapon": "fists" }),
+        json!({ "t": "shot", "req": null, "weapon": "pistol", "x": 1.0, "y": 70.5, "z": -2.0, "dx": 1.0, "dy": 0.0, "dz": 0.0 }),
+        json!({ "t": "hit", "req": null, "sid": 300, "weapon": "pistol", "zone": "limb", "dist": 12.5 }),
         json!({ "t": "stow", "req": 15, "from": "carry", "to": "trailer", "bag": { "wood": 3, "stone": 1, "metal": 0 } }),
     ];
     v.into_iter().map(|j| json!({ "hex": hex(&wire::encode_intent(&j).unwrap_or_else(|e| panic!("{j}: {e}"))), "json": j })).collect()

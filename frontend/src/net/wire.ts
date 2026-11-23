@@ -26,6 +26,10 @@ export interface State {
   pieces: Piece[]; drops: Loose[]; stumps: { tree: number; x: number; z: number }[]; nodes: { key: string; left: number }[]; ponds: Pond[]
 }
 
+/** What's in the hands (`fists`: nothing) — in a hit, what did it. */
+export type WireWeapon = 'fists' | 'pistol' | 'ak47' | 'sniper'
+export type WireZone = 'head' | 'body' | 'limb'
+
 export type Ev =
   | { t: 'welcome'; you: PlayerView; world: WorldInfo; state: State; inv: Inv }
   | { t: 'joined'; sid: number; id: string; name: string }
@@ -53,6 +57,11 @@ export type Ev =
   | { t: 'err'; req: number | null; msg: string }
   | { t: 'pong'; n: number }
   | { t: 'ride'; sid: number; car: string }
+  | { t: 'armed'; sid: number; weapon: WireWeapon }
+  | { t: 'shot'; sid: number; weapon: WireWeapon; x: number; y: number; z: number; dx: number; dy: number; dz: number }
+  | { t: 'health'; sid: number; hp: number; by: number; weapon: WireWeapon; zone: WireZone }
+  | { t: 'down'; sid: number; by: number; by_name: string; weapon: WireWeapon }
+  | { t: 'up'; sid: number }
 
 export type Store = 'carry' | 'trailer'
 export type Intent =
@@ -73,6 +82,9 @@ export type Intent =
   | { t: 'pond'; x: number; z: number; r: number; depth: number }
   | { t: 'ping'; n: number }
   | { t: 'stow'; from: Store; to: Store; bag: Bag }
+  | { t: 'arm'; weapon: WireWeapon }
+  | { t: 'shot'; weapon: WireWeapon; x: number; y: number; z: number; dx: number; dy: number; dz: number }
+  | { t: 'hit'; sid: number; weapon: WireWeapon; zone: WireZone; dist: number }
 
 // ---- the schema, compiled once
 type Ty =

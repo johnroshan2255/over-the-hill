@@ -61,7 +61,7 @@ export class Coop {
     atmos: Atmosphere,
     shadow: TerrainShadow,
     farGrid: GFX.Vector4,
-    urls: { char: string; moto: string; rider: string },
+    urls: { char: string; moto: string; rider: string; fight: string },
     private readonly toast: (m: string, ms?: number) => void,
     tier: Tier,
     private readonly camera: GFX.PerspectiveCamera,

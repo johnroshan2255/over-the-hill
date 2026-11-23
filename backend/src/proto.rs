@@ -15,7 +15,10 @@
 
 use serde::Deserialize;
 
-use crate::catalog::{Bag, Mat};
+use crate::{
+    catalog::{Bag, Mat},
+    weapons::{Weapon, Zone},
+};
 
 #[derive(Deserialize, Debug)]
 pub struct Envelope {
@@ -79,6 +82,13 @@ pub enum ClientMsg {
     Ping { n: u32 },
     /// Your own things between your hands and your trailer (by it).
     Stow { from: Store, to: Store, bag: Bag },
+    /// THE WEAPONS (weapons.rs): what's in your hands (`fists`: nothing).
+    Arm { weapon: Weapon },
+    /// A shot left (a gun's: counted, its rate held) — or a cut (`part`: which), a wave of fire, a bolt called: told on
+    /// to the others, who draw it (where from, the way).
+    Shot { weapon: Weapon, x: f32, y: f32, z: f32, dx: f32, dy: f32, dz: f32 },
+    /// What your shot / cut / ability hit: the player (`sid`), the zone, how far — checked, then the damage worked out here.
+    Hit { sid: u32, weapon: Weapon, zone: Zone, dist: f32 },
 }
 
 pub const ENTITY_BYTES: usize = 17;

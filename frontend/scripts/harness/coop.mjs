@@ -38,7 +38,7 @@ const open = async (who) => {
   page.on('pageerror', (e) => console.log(`[${who.name} pageerror]`, e.message))
   page.on('console', (m) => { const t = m.text(); if (/error|co-op/i.test(t)) console.log(`[${who.name}]`, t.slice(0, 400)) })
   await page.evaluateOnNewDocument((acct) => localStorage.setItem('overhill.player.v1', JSON.stringify(acct)), { id: who.id, name: who.name, token: who.token })
-  await page.goto(`${BASE}/?coop=${world.id}&tier=${process.env.TIER || 'low'}&hour=12&time=0&save=0&dpr=fixed`, { waitUntil: 'load' })
+  await page.goto(`${BASE}/?coop=${world.id}&tier=${process.env.TIER || 'low'}&hour=12&time=0&save=0&dpr=fixed${process.env.EXTRA || ""}`, { waitUntil: 'load' })
   await page.waitForFunction(() => window.__oth?.ready && window.__oth.coop, { timeout: 120_000, polling: 250 })
   return page
 }

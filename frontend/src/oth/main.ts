@@ -58,6 +58,7 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat'
 type RapierBody = RAPIER_NS.RigidBody
 import { Arsenal, FPP_ARMED_FOV, Pickups, type WeaponId } from './Weapons'
 import { aimLodEye, lodEye } from './LodEye'
+import type { WireWeapon } from '../net/wire'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -905,6 +906,14 @@ async function boot() {
         else b.applyImpulse({ x: dx * dv * m, y: 0, z: dz * dv * m }, true)
         if (spin) b.applyTorqueImpulse({ x: 0, y: spin * m * 1.5, z: 0 }, true)
       },
+      // (his car on a body that is not what you're on — your parked car: live again for it, the blow placed there for
+      //  its damage; anything else that can move: pushed)
+      knock: (b, dx, dz, dv, at, by) => {
+        if (car.sim && b.handle === car.sim.body.handle) { car.knocked(); car.hitHint(at.x, at.y, at.z, by) }
+        if (!b.isDynamic()) return
+        const m = b.mass(), c = b.worldCom()
+        b.applyImpulseAtPoint({ x: dx * dv * m, y: 0.06 * dv * m, z: dz * dv * m }, { x: at.x, y: c.y + (at.y - c.y) * 0.3, z: at.z }, true)
+      },
       vel: () => { const b = onFoot ? null : (ride.body as { linvel(): { x: number; y: number; z: number } } | undefined); return b ? b.linvel() : STILL },
       body: () => (onFoot ? null : ((ride.body as RapierBody | undefined) ?? null)),
     }, scene, map, physics, atmos, shadow, env.farGrid, charUrl, fightUrl, kind)
@@ -915,7 +924,10 @@ async function boot() {
   const arsenal = new Arsenal({
     onFoot: () => onFoot && !cut,
     playing: () => driving && !pause,
-    targets: () => companion?.targets() ?? [],
+    // (co-op: the others on foot — a hit goes to the server; solo: the enemy)
+    targets: () => (coop && !coop.session.closed ? coop.remotes.targets(hero.pos) : companion?.targets() ?? []),
+    shot: (w, from, dir) => coop?.session.shot(w, from, dir),
+    armed: (id) => coop?.session.arm(id ?? 'fists'),
     kick: (up, side) => { if (fpp) { look.pitch = Math.max(-1.2, Math.min(1.5, look.pitch + up)); look.footYaw += side } else chase.kick(up, side) },
     fpp: () => fpp && onFoot && !cut,
     lookYaw: () => look.footYaw,
@@ -1033,6 +1045,47 @@ async function boot() {
   let spectate: { x: number; y: number; z: number; lookH: number } | null = null
   const specPos = new GFX.Vector3(), specQuat = new GFX.Quaternion(), specLook = new GFX.Vector3()
   let specOn = false
+  // CO-OP'S FIGHT (docs/WEAPONS.md — the server owns the health): ours shown, a hit staggers us, down — out 5 s — then
+  // back at our camp (or by our car, or the start) whole; the others' shots drawn (Arsenal.ghost); who downed whom told
+  // to everyone
+  const hpBar = document.createElement('div'), hpFill = document.createElement('div')
+  hpBar.style.cssText = 'position:fixed;left:24px;bottom:72px;width:200px;height:10px;background:rgba(8,8,8,0.72);border:1px solid rgba(255,255,255,0.18);z-index:4;display:none;pointer-events:none'
+  hpFill.style.cssText = 'height:100%;width:100%;background:#e0a040'
+  hpBar.appendChild(hpFill)
+  document.body.appendChild(hpBar)
+  const drawHp = (hp: number) => {
+    hpBar.style.display = hp < 100 ? 'block' : 'none'
+    hpFill.style.width = `${Math.max(0, hp)}%`
+    hpFill.style.background = hp < 30 ? '#d04030' : '#e0a040'
+  }
+  const WHAT: Record<WireWeapon, string> = { fists: '', pistol: 'the pistol', ak47: 'an AK-47', sniper: 'the sniper rifle' }
+  const fightOn = (session: Session) => {
+    if (arsenal.current) session.arm(arsenal.current)
+    void hero.loadClips(fightUrl)
+    session.on((e) => {
+      const me = session.me.sid
+      if (e.t === 'shot') { if (e.sid !== me) arsenal.ghost(e.weapon, new GFX.Vector3(e.x, e.y, e.z), new GFX.Vector3(e.dx, e.dy, e.dz)) }
+      else if (e.t === 'health' && e.sid === me) {
+        drawHp(e.hp)
+        if (e.hp > 0 && onFoot && !cut && !hero.isDown) hero.strike(e.zone === 'head' ? 'hit_head' : 'hit_body', { force: true })
+      } else if (e.t === 'down') {
+        const w = WHAT[e.weapon], with_ = w ? ` with ${w}` : ''
+        if (e.sid === me) { drawHp(0); if (onFoot && !cut) hero.knockdown(600); if (e.by) toast(`${e.by_name} downed you${with_} — back in 5 s`, 5000) }
+        else if (e.by) toast(`${e.by === me ? 'You' : e.by_name} downed ${session.remotes.get(e.sid)?.name ?? 'someone'}${with_}`, 3500)
+      } else if (e.t === 'up' && e.sid === me) {
+        drawHp(100)
+        if (!onFoot || cut) return
+        // (back at the camp — beside the tent; no camp: beside your car, where you left it; else the start)
+        const c = myCamp, s = map.meta.spawn, cp = car.sim ? car.pos : null, ch = car.sim?.heading ?? 0, hx = car.half.x + 0.8
+        const by = cp ? besides(cp.x, cp.z, ch, [[-hx, 0], [hx, 0], [0, car.half.z + 1.2]], 0.4) ?? { x: cp.x - Math.cos(ch) * hx, z: cp.z + Math.sin(ch) * hx } : null
+        if (c) hero.appear(c.x + Math.cos(c.rot) * 4, c.z - Math.sin(c.rot) * 4, c.rot)
+        else if (by && cp) hero.appear(by.x, by.z, ch, undefined, cp.y + 1.5)
+        else hero.appear(s.x, s.z, s.yaw)
+        footCam()
+        toast(c ? 'Back at your camp' : by ? 'Back by your car' : 'Back at the start', 3000)
+      }
+    })
+  }
   /** The view for what's in the hands: over the shoulder with a gun (third person), through the glass in the scope. */
   let gunView = false, scopedWas = false, fppBefore = false
   const weaponView = () => {
@@ -1615,8 +1668,9 @@ async function boot() {
     try {
       if (!acct) throw new Error('no account here — open CO-OP on the title screen')
       const session = await Session.connect(acct, coopWorld)
-      coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
+      coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl, fight: fightUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
       coop.build.onToggle = (on) => { chase.aerial = on }
+      fightOn(session)
       coop.worldParts = () => ({ rocks: world.rocks, grass: world.grass })
       coop.build.obstacle = (x, z) => (world.trees.nearest(x, z, 4.5) ? 'Too close to a tree — its branches would hide your flag' : world.rocks.biggestNear(x, z, 1.5) ? 'Not on a boulder' : '')
       gather = new Gather(session, () => ({ id: world.id, map: world.map, trees: world.trees, rocks: world.rocks, grass: world.grass }), physics, hero, atmos, shadow, env.farGrid, toast,

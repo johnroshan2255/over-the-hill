@@ -34,13 +34,31 @@ was made again with it** (its own shape, no spring-back): the hand-off for both 
 | the hold (CS:GO's in first person, GTA's in third), the scope's detail | done (round 2) — `weaponshots.mjs`, `scopeshots.mjs` |
 | the phone's buttons | written, **never tried on a phone** |
 | the fps drop the user saw | **not reproduced** here in any steady state; what could hide on a device was fixed (`docs/WEAPONS.md`) — needs the phone |
-| co-op (players hitting each other) | **nothing yet** |
+| co-op (players hitting each other) | **done** (2026-11-19, the night; brought onto round 4 — guns only — 2026-11-21) — `scripts/harness/coopfight.mjs` (needs the server too: `cd backend && cargo run --release`) |
 | sound | **nothing yet** |
 
 Each harness wants `npm run dev -- --port 5200` in `frontend/` first (`PORT=` for another port); they print PASS / FAIL
 and write stills to the folder given.
 
-## 1. Co-op: the weapons between players (the big one)
+## 1. Co-op: the weapons between players — DONE (2026-11-19, the night)
+
+Built as planned below, with these changes: a gun's hit must spend one of its `shot`s from the last 60 ticks (hits
+can't outnumber shots, shots can't beat the fire rate — a bucket of two, so the network's bunching isn't punished);
+`health` carries who, with what and the zone; `up` has no place — your own game puts you back at your camp, else beside your car (the map's spawn was
+a kilometre off). The newcomer is told who holds what and who's hurt or down. What it does and costs:
+`docs/WEAPONS.md` (step 8), the rules: `backend/README.md` ("The fight").
+
+**2026-11-21, brought onto round 4** (it had been left uncommitted on the PC, and the Mac's commit went on without it):
+guns only — the katana's `blade`, `awake`, `part` and `stun` are off the wire and out of `weapons.rs`; another
+player's gun is held by third person's own hold (`holdOther` / `standOther`, lifted out of `Arsenal.holdGun` —
+round 2's bone-by-bone grip), carried, up for a second after each of their shots; `coopfight.mjs` 17 checks pass.
+
+Left of it, smaller: the aim's pitch isn't in the pose (a player's gun is at their last shot's pitch, easing level);
+the server doesn't count rounds or reloads; fists between players do nothing; no kill count; no health back but by
+going down (the spec says none — decide). `coop.mjs`'s "B saw A drive off" wants > 5 m in 4 s: A's car does 5.0 –
+7.6 m headless, so it fails now and then on the old code too.
+
+The plan as it was:
 
 The rule is in `docs/WEAPONS.md` ("The rules they share"): the shooter's game flies the bullet and says what it hit;
 the server checks it and owns the health.
