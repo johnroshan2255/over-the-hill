@@ -11,7 +11,7 @@ import { Claims } from './Claims'
 import type { Tier } from './quality'
 import type { Bag } from '../net/wire'
 import type { TerrainShadow } from './TerrainShadow'
-import { type Ent, FLAG_HITCHED, FLAG_TELEPORT, Kind, Slot } from '../net/pose'
+import { type Ent, FLAG_AIM, FLAG_HITCHED, FLAG_TELEPORT, Kind, Slot } from '../net/pose'
 import type { Session } from '../net/Session'
 
 /**
@@ -30,6 +30,8 @@ export interface Local {
   parked: { kind: Kind; p: GFX.Vector3; q: GFX.Quaternion } | null
   /** Our trailer (Trailer.ts), hitched or standing. */
   trailer: { p: GFX.Vector3; q: GFX.Quaternion; hitched: boolean } | null
+  /** On foot, the gun up (the others raise it on our walker; `q` carries the aim's pitch then). */
+  aim?: boolean
 }
 
 const SEND_EVERY = 0.05
@@ -47,7 +49,18 @@ export class Coop {
   /** The world's rocks and grass (main.ts): what's built treads the ground. */
   worldParts: (() => { rocks: { mark(id: string, x: number, z: number, r: number): void }; grass: { refresh(): void } }) | null = null
   private readonly chip: HTMLDivElement
-  private readonly last = { p: new GFX.Vector3(Infinity, 0, 0), q: new GFX.Quaternion(), kind: -1, parked: -1, t: 0, tp: new GFX.Vector3(Infinity, 0, 0), th: false }
+  /** OUR HEALTH (co-op weapons — the server's): a bar shown once it's below full or we're down; a red flash as a hit
+   *  lands. */
+  private readonly hp: HTMLDivElement
+  private readonly hpFill: HTMLDivElement
+  private readonly hurt: HTMLDivElement
+  private hpShown = -1
+  /** (co-op weapons) another player's shot arrived: their tracer (main.ts: Arsenal.ghostShot). */
+  onShot: ((weapon: string, x: number, y: number, z: number, dx: number, dy: number, dz: number) => void) | null = null
+  /** (co-op weapons) WE are down (`by`: who; their weapon) / up again, whole. */
+  onDown: ((by: string, weapon: string) => void) | null = null
+  onUp: (() => void) | null = null
+  private readonly last = { p: new GFX.Vector3(Infinity, 0, 0), q: new GFX.Quaternion(), kind: -1, parked: -1, t: 0, tp: new GFX.Vector3(Infinity, 0, 0), th: false, aim: false }
   private sinceSend = 0
   private hudT = 0
   private readonly names = new Map<number, string>()
@@ -61,7 +74,7 @@ export class Coop {
     atmos: Atmosphere,
     shadow: TerrainShadow,
     farGrid: GFX.Vector4,
-    urls: { char: string; moto: string; rider: string },
+    urls: { char: string; moto: string; rider: string; fight?: string },
     private readonly toast: (m: string, ms?: number) => void,
     tier: Tier,
     private readonly camera: GFX.PerspectiveCamera,
@@ -80,6 +93,13 @@ export class Coop {
     this.chip = document.createElement('div')
     this.chip.className = 'oth-coop'
     document.body.appendChild(this.chip)
+    this.hp = document.createElement('div')
+    this.hp.className = 'oth-hp'
+    this.hp.innerHTML = '<b>Health</b><i><s></s></i>'
+    this.hpFill = this.hp.querySelector('s') as HTMLDivElement
+    this.hurt = document.createElement('div')
+    this.hurt.className = 'oth-hurt'
+    document.body.append(this.hp, this.hurt)
     this.off = session.on((e) => {
       if (e.t === 'joined') { this.names.set(e.sid, e.name); this.toast(`${e.name} joined`, 3000) }
       else if (e.t === 'left') { this.toast(`${this.names.get(e.sid) ?? 'Someone'} left`, 3000); this.names.delete(e.sid) }
@@ -87,6 +107,16 @@ export class Coop {
       // (someone took from OUR land while we were away)
       else if (e.t === 'raid' && e.owner === session.me.id) this.toast(`${e.by_name} took ${bagText(e.bag)} from your land!`, 6000)
       else if (e.t === 'claim' && e.claim.owner !== session.me.id) this.toast(`${e.claim.owner_name} planted a flag`, 3000)
+      // THE WEAPONS between players: their shots seen, hits felt, who's down
+      else if (e.t === 'shot') { this.remotes.fired(e.sid); this.onShot?.(e.weapon, e.x, e.y, e.z, e.dx, e.dy, e.dz) }
+      else if (e.t === 'dent') this.remotes.dent(e.sid, e.px, e.py, e.pz, e.dx, e.dy, e.dz, e.dv, e.kind)
+      else if (e.t === 'health' && e.sid === session.me.sid && e.by !== null) this.flashHurt()
+      // (a replay — told on joining who was already down: by themselves — no toast)
+      else if (e.t === 'down' && e.by !== e.sid) {
+        const who = e.sid === session.me.sid ? 'you' : this.names.get(e.sid) ?? 'someone', by = e.by === session.me.sid ? 'You' : this.names.get(e.by) ?? 'Someone'
+        this.toast(`${by} downed ${who} · ${weaponLabel(e.weapon)}`, 4000)
+        if (e.sid === session.me.sid) this.onDown?.(this.names.get(e.by) ?? 'Someone', e.weapon)
+      } else if (e.t === 'up' && e.sid === session.me.sid) this.onUp?.()
     })
     session.onClose = (why) => { this.toast(`Co-op: ${why}`, 6000); this.writeChip() }
     const n = session.remotes.size
@@ -117,18 +147,21 @@ export class Coop {
     if (!S.closed) {
       S.update(dt)
       this.sinceSend += dt
-      const moved = me.p.distanceToSquared(this.last.p) > 0.0004 || Math.abs(me.q.dot(this.last.q)) < 0.99999 || me.kind !== this.last.kind || (me.parked?.kind ?? -1) !== this.last.parked
+      const aim = !!me.aim && me.kind === Kind.Foot
+      const moved = me.p.distanceToSquared(this.last.p) > 0.0004 || Math.abs(me.q.dot(this.last.q)) < 0.99999 || me.kind !== this.last.kind || (me.parked?.kind ?? -1) !== this.last.parked || aim !== this.last.aim
         || (!!me.trailer && (me.trailer.p.distanceToSquared(this.last.tp) > 0.0004 || me.trailer.hitched !== this.last.th))
-      if ((moved && this.sinceSend >= SEND_EVERY) || this.sinceSend >= STILL_EVERY) {
+      // (20 a second: the time left over carried to the next — reset to 0, three frames at 60 fps came to a hair under
+      //  50 ms and it went every 4th: 13–16 a second, measured — scripts/harness/syncplay.mjs)
+      if ((moved && this.sinceSend >= SEND_EVERY - 1e-4) || this.sinceSend >= STILL_EVERY) {
         const jump = me.p.distanceTo(this.last.p) > 40
-        const ents: Ent[] = [{ slot: Slot.Player, kind: me.kind, flags: jump ? FLAG_TELEPORT : 0, p: [me.p.x, me.p.y, me.p.z], q: [me.q.x, me.q.y, me.q.z, me.q.w] }]
+        const ents: Ent[] = [{ slot: Slot.Player, kind: me.kind, flags: (jump ? FLAG_TELEPORT : 0) | (aim ? FLAG_AIM : 0), p: [me.p.x, me.p.y, me.p.z], q: [me.q.x, me.q.y, me.q.z, me.q.w] }]
         if (me.parked) ents.push({ slot: Slot.ParkedCar, kind: me.parked.kind, flags: 0, p: [me.parked.p.x, me.parked.p.y, me.parked.p.z], q: [me.parked.q.x, me.parked.q.y, me.parked.q.z, me.parked.q.w] })
         const tr = me.trailer
         if (tr) ents.push({ slot: Slot.Trailer, kind: Kind.Trailer, flags: (tr.hitched ? FLAG_HITCHED : 0) | (jump ? FLAG_TELEPORT : 0), p: [tr.p.x, tr.p.y, tr.p.z], q: [tr.q.x, tr.q.y, tr.q.z, tr.q.w] })
         S.sendPose(ents)
-        this.last.p.copy(me.p); this.last.q.copy(me.q); this.last.kind = me.kind; this.last.parked = me.parked?.kind ?? -1
+        this.last.p.copy(me.p); this.last.q.copy(me.q); this.last.kind = me.kind; this.last.parked = me.parked?.kind ?? -1; this.last.aim = aim
         if (tr) { this.last.tp.copy(tr.p); this.last.th = tr.hitched }
-        this.sinceSend = 0
+        this.sinceSend = moved ? Math.min(SEND_EVERY, Math.max(0, this.sinceSend - SEND_EVERY)) : 0
       }
     }
     this.me = me
@@ -140,6 +173,24 @@ export class Coop {
     this.remotes.update(dt)
     this.updateMs += (performance.now() - t0 - this.updateMs) * 0.05
     if ((this.hudT -= dt) <= 0) { this.hudT = 0.5; this.writeChip() }
+    this.writeHp()
+  }
+
+  private writeHp(): void {
+    const S = this.session, hp = S.down ? 0 : Math.max(0, Math.min(100, S.hp))
+    if (hp === this.hpShown) return
+    this.hpShown = hp
+    this.hp.classList.toggle('on', hp < 100 && !S.closed)
+    this.hp.classList.toggle('low', hp <= 30)
+    this.hpFill.style.width = `${hp}%`
+  }
+  private hurtT = 0
+  private flashHurt(): void {
+    this.hurt.classList.remove('on')
+    void this.hurt.offsetWidth // (the animation again from its start)
+    this.hurt.classList.add('on')
+    clearTimeout(this.hurtT)
+    this.hurtT = window.setTimeout(() => this.hurt.classList.remove('on'), 450)
   }
 
   cull(view: GFX.Frustum, horizon: Horizon, camera: GFX.PerspectiveCamera): void {
@@ -172,6 +223,8 @@ export class Coop {
     this.off()
     this.remotes.dispose()
     this.chip.remove()
+    this.hp.remove()
+    this.hurt.remove()
     this.session.close()
   }
 }
@@ -187,6 +240,8 @@ function bagText(b: Bag): string {
   const parts = (['wood', 'stone', 'metal'] as const).filter((k) => b[k] > 0).map((k) => `${b[k]} ${k}`)
   return parts.length ? parts.join(', ') : 'things'
 }
+
+const weaponLabel = (id: string): string => ({ pistol: 'pistol', ak47: 'AK-47', sniper: 'sniper rifle' } as Record<string, string>)[id] ?? id
 
 /** Our player entity's kind for the car `id`. */
 export const carKind = (id: string): Kind => (id === 'e30' ? Kind.E30 : Kind.Jeep)

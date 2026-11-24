@@ -101,8 +101,11 @@ const srv = await pb.evaluate((c) => window.__oth.coop.session.ask({ t: 'claim',
 check(srv !== 'taken', `the server refuses it too: "${srv}"`)
 await pb.evaluate(() => window.__oth.coop.build.toggle(false))
 // B drives off (put 120 m on along the track) and plants its own land where it stands, well clear of A's
+// (its tab in front: a tab behind draws no frames — its pose isn't sent and the server still has it where it was)
+await pb.bringToFront()
 const bAt = await pb.evaluate(() => { const o = window.__oth, L = o.map.meta.trails.lines[0]; let d = 0, i = 0; for (; i < L.length - 1 && d < 120; i++) d += Math.hypot(L[i + 1][0] - L[i][0], L[i + 1][1] - L[i][1]); o.car.placeAt(L[i][0], L[i][1], 0); return { x: L[i][0], z: L[i][1] } })
-await sleep(1500)
+await pb.waitForFunction((p) => { const L = window.__oth.coop['last'].p; return Math.hypot(L.x - p.x, L.z - p.z) < 8 }, { timeout: 10000, polling: 100 }, bAt).catch(() => {})
+await sleep(300)
 const far = Math.hypot(bAt.x - claimA.x, bAt.z - claimA.z)
 const mineB = await pb.evaluate((p) => window.__oth.coop.session.ask({ t: 'claim', x: p.x, z: p.z, r: 14 }).then(() => 'taken', (e) => e.message), bAt)
 check(mineB === 'taken', `B's own land where it stands (${far.toFixed(0)} m from A's): ${mineB}`)
@@ -113,8 +116,9 @@ await pa.evaluate(() => window.__oth.drive(true))
 await pa.keyboard.press('KeyN') // (the minimap)
 await sleep(1200)
 await pa.screenshot({ path: `${out}/5_minimap_a.png` })
-// A gives its land up: build mode, Del twice
+// A gives its land up: build mode (it opens on the pieces once you have land), C — your land —, Del twice
 await pa.keyboard.press('KeyB'); await sleep(200)
+await pa.keyboard.press('KeyC'); await sleep(200)
 await pa.keyboard.press('Delete'); await sleep(200); await pa.keyboard.press('Delete')
 await pa.waitForFunction((id) => !window.__oth.coop.session.claims.has(id), { timeout: 8000 }, claimA.id).catch(() => {})
 check(!(await pa.evaluate((id) => window.__oth.coop.session.claims.has(id), claimA.id)), 'A gave its land up (Del twice)')

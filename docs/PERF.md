@@ -712,3 +712,29 @@ compression; Draco / meshopt would roughly halve it, needs a tool not installed 
 far.pk 2.5, naga 2.1 MB (WebAssembly — a host that gzips .wasm sends ~0.8), Rapier 1.6 MB (its WebAssembly inlined
 as base64 in the -compat build), character 1.2 MB, mask.pk 1.1. The host should gzip / brotli .js, .wasm, .json and
 .glb; the .pk are gzip already. Not measured on a phone.
+
+## Each view's cost, and first person in the car (2026-11-24)
+
+The user: "if we are in first person we don't need to render the car's outer body or shaders — check all".
+`scripts/harness/viewcost.mjs ultra` (uncapped 1080p, pace.mjs, the M4): draws, triangles, JS and the GPU's frame in each
+view, and in the car's first person each part of the car hidden in turn.
+
+| view | GPU | draws | triangles | JS |
+|---|---|---|---|---|
+| the car, chase camera | 2.29 ms | 126 | 897 k | 0.39 ms |
+| the car, first person | 2.95 ms | 127 | 890 k | 0.63 ms |
+| on foot, third person | 2.90 ms | 131 | 878 k | 0.62 ms |
+| on foot, first person | 2.59 ms | 128 | 855 k | 0.31 ms |
+
+- **The car's outer body from inside costs nothing to speak of** (hidden: −0.14 ms, noise): its faces point outward and
+  are dropped before a single pixel of them is shaded. Hiding it would save no time and take away what is seen through
+  the glass — the bonnet, the wings, the mirrors. Left drawn.
+- **What does cost from inside is the GLASS** (1.0 ms hidden vs drawn in the first toggle — noisy, see the last point; the
+  view as a whole is 0.66 ms dearer than the chase camera's): see-through,
+  double-sided, and from the driver's seat the windows cover most of the screen — a blended pass over ~1.5 M pixels
+  at 4× MSAA. Its shader is not the cost: the whole of it replaced by one flat colour saved ~0.06 ms; it's the fill
+  and the blending. Cheaper glass from inside would look different (a step for the user to decide).
+- The wheels (0.14 ms) and the contact shadow (0.08) are within the noise, and both are seen through the side
+  windows: drawn.
+- **On this Mac short in-page A/Bs mislead**: the GPU's clock moves between windows of a second or two — one toggle
+  read −1 ms, the same toggle +2 ms. Decide with `abgpu.mjs` (alternating loads, medians) before changing anything.

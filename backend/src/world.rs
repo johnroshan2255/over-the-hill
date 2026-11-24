@@ -29,6 +29,7 @@ use crate::{
     map::{Ground, Maps},
     proto::{self, ClientMsg, Entity, Envelope, ShapeOp, Store},
     util::{finite, now_ms, rand_id},
+    weapons::{self, Fighter, Zone},
     wire,
 };
 
@@ -52,6 +53,10 @@ const MSG_RATE: f32 = 30.0;
 const MSG_BURST: f32 = 60.0;
 /// Poses: players within NEAR m of each other every tick (20 Hz); beyond, every FAR_EVERY ticks (5 Hz).
 const NEAR: f32 = 300.0;
+/// The blows to a player's car kept for whoever joins after (a wreck is a few dozen).
+const DENTS: usize = 64;
+/// How long a player's health is kept after they leave.
+const LOST_FOR: Duration = Duration::from_secs(600);
 const FAR_EVERY: u32 = 4;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -252,6 +257,12 @@ pub enum Ev<'a> {
     Left { sid: u32 },
     Chat { sid: u32, name: &'a str, text: &'a str },
     Ride { sid: u32, car: &'a str },
+    Armed { sid: u32, weapon: &'a str },
+    Shot { sid: u32, weapon: &'a str, x: f32, y: f32, z: f32, dx: f32, dy: f32, dz: f32 },
+    Health { sid: u32, hp: u32, by: Option<u32> },
+    Down { sid: u32, by: u32, weapon: &'a str },
+    Up { sid: u32 },
+    Dent { sid: u32, px: f32, py: f32, pz: f32, dx: f32, dy: f32, dz: f32, dv: f32, kind: proto::DentKind },
     TreeCut { tree: u32, x: f32, z: f32, by: u32 },
     TreeBack { tree: u32 },
     Drop { drop: &'a Loose },
@@ -287,7 +298,7 @@ pub enum Cmd {
     Join { pid: String, name: String, tx: mpsc::Sender<Out>, reply: oneshot::Sender<Result<u32, String>> },
     Leave { sid: u32 },
     Msg { sid: u32, env: Envelope },
-    Pose { sid: u32, ents: Vec<Entity> },
+    Pose { sid: u32, t: u16, ents: Vec<Entity> },
     /// (tests) everything the world holds, as JSON.
     #[allow(dead_code)]
     Dump { reply: oneshot::Sender<serde_json::Value> },
@@ -306,6 +317,14 @@ struct Member {
     ver: u32,
     /// Each other player's `ver` last sent to this one.
     seen: HashMap<u32, u32>,
+    /// Their clock when they took the pose `ents` (ms, mod 65 536 — proto.rs), relayed with it.
+    t: u16,
+    /// The weapon in their hands, their health, down or up (weapons.rs) — this session's only, never stored.
+    fight: Fighter,
+    /// The car they drive (`ride`) and the blows it has taken since it was whole (`dent`, at most DENTS) — told again to
+    /// whoever joins after (a newcomer saw everyone's car whole, and fists in every hand: 2026-11-24).
+    car: String,
+    dents: Vec<(f32, f32, f32, f32, f32, f32, f32, proto::DentKind)>,
 }
 
 type R = Result<(), String>;
@@ -331,6 +350,9 @@ pub struct World {
     guards: HashMap<String, bool>,
     /// Members whose queue overflowed or closed: dropped after the current command.
     kicks: RefCell<Vec<u32>>,
+    /// The health of those who left lately (by player id; LOST_FOR): coming back — a reload, a dropped line — they are
+    /// as they were, not whole (a reload healed you, and got you up at once).
+    lost: HashMap<String, (Fighter, Instant)>,
 }
 
 impl World {
@@ -354,6 +376,7 @@ impl World {
             invs: HashMap::new(),
             guards: HashMap::new(),
             kicks: RefCell::new(vec![]),
+            lost: HashMap::new(),
         };
         for (kind, id, data) in rows {
             let ok = match kind.as_str() {
@@ -390,7 +413,7 @@ impl World {
                     Some(c) => self.handle(c),
                     None => break,
                 },
-                _ = poses.tick() => self.send_poses(),
+                _ = poses.tick() => { self.revive(now_ms()); self.send_poses() },
                 _ = slow.tick() => self.regrow(now_ms()),
             }
             self.apply_kicks();
@@ -421,7 +444,14 @@ impl World {
                 }
                 self.next_sid = sid % 65535 + 1;
                 let now = Instant::now();
-                self.members.insert(sid, Member { pid, name, tx, ents: vec![], last: None, budget: MSG_BURST, budget_at: now, ver: 0, seen: HashMap::new() });
+                // (back within LOST_FOR: their health as it was — down still, if they were; the weapon in their hands is
+                //  told again by their game)
+                self.lost.retain(|_, (_, at)| now.duration_since(*at) < LOST_FOR);
+                let fight = match self.lost.remove(&pid) {
+                    Some((f, _)) => Fighter { armed: String::new(), ..f },
+                    None => Fighter::default(),
+                };
+                self.members.insert(sid, Member { pid, name, tx, ents: vec![], last: None, budget: MSG_BURST, budget_at: now, ver: 0, seen: HashMap::new(), t: 0, fight, car: String::new(), dents: vec![] });
                 self.online.store(self.members.len() as u32, Ordering::Relaxed);
                 let m = &self.members[&sid];
                 let welcome = Ev::Welcome {
@@ -431,13 +461,46 @@ impl World {
                     inv: self.invs.get(&m.pid).unwrap_or(&EMPTY_INV),
                 };
                 self.to(sid, &welcome);
+                // (their own health, if they came back hurt or down)
+                {
+                    let f = &self.members[&sid].fight;
+                    if f.hp < weapons::HEALTH {
+                        self.to(sid, &Ev::Health { sid, hp: f.hp.ceil() as u32, by: None });
+                    }
+                    if f.down() {
+                        self.to(sid, &Ev::Down { sid, by: sid, weapon: "" });
+                    }
+                }
+                // (what the welcome's state doesn't hold, the newcomer told now: each one's car, its dents, the weapon
+                //  in their hands, their health, who is down)
+                for (o, om) in &self.members {
+                    if *o == sid {
+                        continue;
+                    }
+                    if !om.car.is_empty() {
+                        self.to(sid, &Ev::Ride { sid: *o, car: &om.car });
+                    }
+                    for &(px, py, pz, dx, dy, dz, dv, kind) in &om.dents {
+                        self.to(sid, &Ev::Dent { sid: *o, px, py, pz, dx, dy, dz, dv, kind });
+                    }
+                    if !om.fight.armed.is_empty() {
+                        self.to(sid, &Ev::Armed { sid: *o, weapon: &om.fight.armed });
+                    }
+                    if om.fight.hp < weapons::HEALTH {
+                        self.to(sid, &Ev::Health { sid: *o, hp: om.fight.hp.ceil() as u32, by: None });
+                    }
+                    if om.fight.down() {
+                        self.to(sid, &Ev::Down { sid: *o, by: *o, weapon: "" });
+                    }
+                }
+                let m = &self.members[&sid];
                 let ev = Ev::Joined { sid, id: &m.pid, name: &m.name };
                 self.others(sid, &ev);
                 let _ = reply.send(Ok(sid));
                 self.refresh_guards(None);
             }
             Cmd::Leave { sid } => self.leave(sid),
-            Cmd::Pose { sid, ents } => self.pose(sid, ents),
+            Cmd::Pose { sid, t, ents } => self.pose(sid, t, ents),
             Cmd::Msg { sid, env } => {
                 if !self.spend_budget(sid) {
                     self.to(sid, &Ev::Err { req: env.req, msg: "slow down" });
@@ -459,7 +522,10 @@ impl World {
     }
 
     fn leave(&mut self, sid: u32) {
-        if self.members.remove(&sid).is_some() {
+        if let Some(m) = self.members.remove(&sid) {
+            if m.fight.hp < weapons::HEALTH || m.fight.down() {
+                self.lost.insert(m.pid, (m.fight, Instant::now()));
+            }
             self.online.store(self.members.len() as u32, Ordering::Relaxed);
             // (its session id may be given again: nobody remembers this one's poses)
             for m in self.members.values_mut() {
@@ -576,6 +642,7 @@ impl World {
                         continue;
                     }
                     b.extend_from_slice(&(*sid as u16).to_le_bytes());
+                    b.extend_from_slice(&m.t.to_le_bytes());
                     b.push(m.ents.len() as u8);
                     for e in &m.ents {
                         b.extend_from_slice(&e.raw);
@@ -694,7 +761,7 @@ impl World {
         }
     }
 
-    fn pose(&mut self, sid: u32, ents: Vec<Entity>) {
+    fn pose(&mut self, sid: u32, t: u16, ents: Vec<Entity>) {
         let Some(m) = self.members.get_mut(&sid) else { return };
         let now = Instant::now();
         if let Some(e) = ents.iter().find(|e| e.slot == 0) {
@@ -708,6 +775,7 @@ impl World {
             m.last = Some((now, e.p));
         }
         m.ents = ents;
+        m.t = t;
         m.ver = m.ver.wrapping_add(1);
         let pid = m.pid.clone();
         if self.claims.values().any(|c| c.owner == pid) {
@@ -769,12 +837,119 @@ impl World {
                 // (an id: short, letters / digits / _ - only — it's shown to nobody, only looked up in the game's garage)
                 if car.is_empty() || car.len() > 24 || !car.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') { return Err("no such car".into()) }
                 self.all(&Ev::Ride { sid, car: &car });
+                // (another car: whole — its dents were the last one's)
+                if let Some(m) = self.members.get_mut(&sid)
+                    && m.car != car
+                {
+                    m.car = car;
+                    m.dents.clear();
+                }
                 Ok(())
             }
             ClientMsg::Ping { n } => {
                 self.to(sid, &Ev::Pong { n });
                 Ok(())
             }
+            ClientMsg::Arm { weapon } => self.arm(sid, weapon),
+            ClientMsg::Shot { weapon, x, y, z, dx, dy, dz } => self.shot(sid, &weapon, [x, y, z], [dx, dy, dz]),
+            ClientMsg::Hit { target, weapon, zone, dist } => self.hit(sid, target, &weapon, zone, dist, now_ms()),
+            ClientMsg::Dent { px, py, pz, dx, dy, dz, dv, kind } => {
+                // (in the car's space: within a car's size, a unit-ish way, a change of velocity a crash can make)
+                let ok = [px, py, pz, dx, dy, dz, dv].iter().all(|v| v.is_finite()) && px.abs() < 12.0 && py.abs() < 12.0 && pz.abs() < 12.0 && (0.0..=300.0).contains(&dv);
+                if !ok {
+                    return Err("bad dent".into());
+                }
+                self.others(sid, &Ev::Dent { sid, px, py, pz, dx, dy, dz, dv, kind });
+                if let Some(m) = self.members.get_mut(&sid) {
+                    if kind == proto::DentKind::Repair {
+                        m.dents.clear();
+                    } else if m.dents.len() < DENTS {
+                        m.dents.push((px, py, pz, dx, dy, dz, dv, kind));
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    // ---- the weapons between players (weapons.rs)
+
+    fn arm(&mut self, sid: u32, weapon: String) -> R {
+        if !weapon.is_empty() && weapons::spec(&weapon).is_none() {
+            return Err("no such weapon".into());
+        }
+        let Some(m) = self.members.get_mut(&sid) else { return Ok(()) };
+        if m.fight.armed == weapon {
+            return Ok(());
+        }
+        m.fight.armed = weapon;
+        // (a new weapon starts with a full bucket: its own interval, not the last one's)
+        m.fight.bucket = 2.0;
+        m.fight.bucket_at = 0;
+        let ev = Ev::Armed { sid, weapon: &self.members[&sid].fight.armed };
+        self.others(sid, &ev);
+        Ok(())
+    }
+
+    fn shot(&mut self, sid: u32, weapon: &str, p: [f32; 3], d: [f32; 3]) -> R {
+        let Some(m) = self.members.get(&sid) else { return Ok(()) };
+        if m.fight.down() || m.fight.armed != weapon || !p.iter().chain(d.iter()).all(|v| v.is_finite()) {
+            return Err("not armed".into());
+        }
+        let ev = Ev::Shot { sid, weapon, x: p[0], y: p[1], z: p[2], dx: d[0], dy: d[1], dz: d[2] };
+        self.others(sid, &ev);
+        Ok(())
+    }
+
+    fn hit(&mut self, sid: u32, target: u32, weapon: &str, zone: Zone, dist: f32, now: u64) -> R {
+        if target == sid {
+            return Err("not yourself".into());
+        }
+        let Some(spec) = weapons::spec(weapon) else { return Err("no such weapon".into()) };
+        if !dist.is_finite() || dist < 0.0 || dist > spec.range {
+            return Err("out of range".into());
+        }
+        let (Some(me), Some(them)) = (self.members.get(&sid), self.members.get(&target)) else { return Err("nobody there".into()) };
+        if me.fight.down() || me.fight.armed != weapon {
+            return Err("not armed".into());
+        }
+        if them.fight.down() {
+            return Err("already down".into());
+        }
+        let (Some(a), Some(b)) = (self.ent(sid, 0), self.ent(target, 0)) else { return Err("nobody there".into()) };
+        if b.kind != proto::KIND_FOOT {
+            return Err("not on foot".into());
+        }
+        let real = ((a.p[0] - b.p[0]).powi(2) + (a.p[1] - b.p[1]).powi(2) + (a.p[2] - b.p[2]).powi(2)).sqrt();
+        if (real - dist).abs() > weapons::SLACK {
+            return Err("missed".into());
+        }
+        if !self.members.get_mut(&sid).is_some_and(|m| m.fight.spend(spec, now)) {
+            return Err("too fast".into());
+        }
+        let dmg = weapons::damage(spec, zone, dist);
+        let t = self.members.get_mut(&target).expect("target");
+        t.fight.hp = (t.fight.hp - dmg).max(0.0);
+        let hp = t.fight.hp.ceil() as u32;
+        self.all(&Ev::Health { sid: target, hp, by: Some(sid) });
+        if hp == 0 {
+            let t = self.members.get_mut(&target).expect("target");
+            t.fight.down_until = now + weapons::DOWN_MS;
+            self.all(&Ev::Down { sid: target, by: sid, weapon });
+        }
+        Ok(())
+    }
+
+    /// Those down long enough are back, whole (each client puts itself at its camp or the spawn: `up`).
+    fn revive(&mut self, now: u64) {
+        let back: Vec<u32> = self.members.iter().filter(|(_, m)| m.fight.down_until != 0 && m.fight.down_until <= now).map(|(s, _)| *s).collect();
+        for sid in back {
+            if let Some(m) = self.members.get_mut(&sid) {
+                m.fight.down_until = 0;
+                m.fight.hp = weapons::HEALTH;
+            }
+            self.all(&Ev::Up { sid });
+            self.all(&Ev::Health { sid, hp: weapons::HEALTH as u32, by: None });
         }
     }
 
@@ -1325,11 +1500,100 @@ mod tests {
         if trailer {
             e.push(Entity::new(2, proto::KIND_TRAILER, 0, [x, 0.0, z - 5.0], [0.0, 0.0, 0.0, 1.0]));
         }
-        w.handle(Cmd::Pose { sid, ents: e });
+        w.handle(Cmd::Pose { sid, t: 0, ents: e });
     }
 
     fn act(w: &mut World, sid: u32, m: ClientMsg) -> R {
         w.on_msg(sid, m)
+    }
+
+    fn on_foot(w: &mut World, sid: u32, x: f32, z: f32) {
+        w.handle(Cmd::Pose { sid, t: 0, ents: vec![Entity::new(0, proto::KIND_FOOT, proto::FLAG_TELEPORT, [x, 0.0, z], [0.0, 0.0, 0.0, 1.0])] });
+    }
+
+    #[test]
+    fn shots_between_players() {
+        let mut w = world();
+        let (a, _ra) = join(&mut w, "a");
+        let (b, mut rb) = join(&mut w, "b");
+        on_foot(&mut w, a, 0.0, 0.0);
+        on_foot(&mut w, b, 30.0, 0.0);
+        let hit = |w: &mut World, weapon: &str, zone: Zone, dist: f32, now: u64| w.hit(a, b, weapon, zone, dist, now);
+        // not armed with it; a weapon that doesn't exist
+        assert!(hit(&mut w, "ak47", Zone::Body, 30.0, 1_000).is_err());
+        assert!(act(&mut w, a, ClientMsg::Arm { weapon: "katana".into() }).is_err());
+        act(&mut w, a, ClientMsg::Arm { weapon: "ak47".into() }).unwrap();
+        // where they aren't (said 10 m, they're 30 m off); out of its range; yourself
+        assert_eq!(hit(&mut w, "ak47", Zone::Body, 10.0, 1_000).unwrap_err(), "missed");
+        assert!(hit(&mut w, "ak47", Zone::Body, 500.0, 1_000).is_err());
+        assert!(w.hit(a, a, "ak47", Zone::Body, 0.0, 1_000).is_err());
+        // a body hit at 30 m: the spec's damage, less what the bullet lost
+        while rb.try_recv().is_ok() {}
+        hit(&mut w, "ak47", Zone::Body, 30.0, 1_000).unwrap();
+        let want = weapons::damage(weapons::spec("ak47").unwrap(), Zone::Body, 30.0);
+        assert!((w.members[&b].fight.hp - (100.0 - want)).abs() < 1e-3);
+        assert!(rb.try_recv().is_ok(), "the target is told its health");
+        // the fire interval: the bucket's second at once, a third refused, then one 100 ms (2 ticks) on
+        hit(&mut w, "ak47", Zone::Body, 30.0, 1_001).unwrap();
+        assert_eq!(hit(&mut w, "ak47", Zone::Body, 30.0, 1_002).unwrap_err(), "too fast");
+        hit(&mut w, "ak47", Zone::Head, 30.0, 1_102).unwrap();
+        // three body hits and a head shot: down; no more hits on them; back after 5 s, whole
+        assert!(w.members[&b].fight.down(), "hp {}", w.members[&b].fight.hp);
+        assert_eq!(hit(&mut w, "ak47", Zone::Body, 30.0, 2_000).unwrap_err(), "already down");
+        w.revive(1_102 + weapons::DOWN_MS - 1);
+        assert!(w.members[&b].fight.down());
+        w.revive(1_102 + weapons::DOWN_MS);
+        assert!(!w.members[&b].fight.down());
+        assert_eq!(w.members[&b].fight.hp, weapons::HEALTH);
+        // not in a car
+        at(&mut w, b, 30.0, 0.0, false);
+        assert_eq!(hit(&mut w, "ak47", Zone::Body, 30.0, 9_000).unwrap_err(), "not on foot");
+        // a shot is relayed only for the weapon in the hands
+        assert!(act(&mut w, a, ClientMsg::Shot { weapon: "pistol".into(), x: 0.0, y: 1.5, z: 0.0, dx: 1.0, dy: 0.0, dz: 0.0 }).is_err());
+        act(&mut w, a, ClientMsg::Shot { weapon: "ak47".into(), x: 0.0, y: 1.5, z: 0.0, dx: 1.0, dy: 0.0, dz: 0.0 }).unwrap();
+    }
+
+    /// Every event a receiver has, by its tag name.
+    fn names(rx: &mut mpsc::Receiver<Out>) -> Vec<String> {
+        let mut out = vec![];
+        while let Ok(o) = rx.try_recv() {
+            if let Out::Event(b) = o
+                && let Some(v) = wire::decode_ev(&b)
+            {
+                out.push(v["t"].as_str().unwrap_or("").to_string());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_newcomer_is_told_and_health_survives_a_reload() {
+        let mut w = world();
+        let (a, _ra) = join(&mut w, "a");
+        let (b, _rb) = join(&mut w, "b");
+        on_foot(&mut w, a, 0.0, 0.0);
+        on_foot(&mut w, b, 20.0, 0.0);
+        act(&mut w, a, ClientMsg::Ride { car: "steppe".into() }).unwrap();
+        act(&mut w, a, ClientMsg::Dent { px: 0.5, py: 0.5, pz: -2.0, dx: 0.0, dy: 0.0, dz: 1.0, dv: 12.0, kind: proto::DentKind::Crash }).unwrap();
+        act(&mut w, a, ClientMsg::Arm { weapon: "pistol".into() }).unwrap();
+        w.hit(a, b, "pistol", Zone::Body, 20.0, 1_000).unwrap();
+        let hp = w.members[&b].fight.hp;
+        assert!(hp < 100.0);
+        // C comes: told A's car, its dent, A's pistol, B's health
+        let (_c, mut rc) = join(&mut w, "c");
+        let got = names(&mut rc);
+        for want in ["welcome", "ride", "dent", "armed", "health"] {
+            assert!(got.iter().any(|g| g == want), "the newcomer is told {want}: {got:?}");
+        }
+        // B reloads: back as hurt as they were (not whole), and told so
+        w.handle(Cmd::Leave { sid: b });
+        let (b2, mut rb2) = join(&mut w, "b");
+        assert_eq!(w.members[&b2].fight.hp, hp);
+        assert!(names(&mut rb2).iter().any(|g| g == "health"));
+        // a new car: whole again — nobody joining after is told the old one's dents
+        act(&mut w, a, ClientMsg::Ride { car: "fortyfive".into() }).unwrap();
+        let (_d, mut rd) = join(&mut w, "d");
+        assert!(!names(&mut rd).iter().any(|g| g == "dent"));
     }
 
     #[test]
@@ -1408,7 +1672,7 @@ mod tests {
         let (a, _ra) = join(&mut w, "a");
         at(&mut w, a, 0.0, 0.0, false);
         let jump = vec![Entity::new(0, 1, 0, [900.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])];
-        w.handle(Cmd::Pose { sid: a, ents: jump });
+        w.handle(Cmd::Pose { sid: a, t: 0, ents: jump });
         assert_eq!(w.ent(a, 0).unwrap().p[0], 0.0, "a 900 m jump in a frame is ignored");
     }
 

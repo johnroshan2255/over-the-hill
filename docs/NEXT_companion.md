@@ -1,5 +1,11 @@
 # What's next for the companion, the enemy and the weapons (the hand-off, 2026-11-19; round 2: 2026-11-21)
 
+**2026-11-24 — co-op weapons built (§1 done)**: the wire, the server's check and health, being downed and coming
+back, what each holds and aims seen, their shots seen — `docs/WEAPONS.md`, "Co-op"; `scripts/harness/coopfight.mjs`.
+With it: the others' cars solid as their own shape (not the box), and dented as their games say (`dent` —
+`docs/NEXT_damage.md` §7); the harnesses that had gone stale (`claimtest`, `gathertest`, `buildtest`) brought up to the
+game; a tour of the world's places (`scripts/harness/funtour.mjs`).
+
 **Round 2 (2026-11-21)** — after the user played it: the guns' hold (first person CS:GO's view model, third person
 GTA's carry / aim), the legs under an aimed gun, the katana carried when running, shots on the cross, the kick's
 return, the scope at CS:GO's magnifications with the world's detail drawn for it (`LodEye.ts`), real fire and
@@ -34,13 +40,13 @@ was made again with it** (its own shape, no spring-back): the hand-off for both 
 | the hold (CS:GO's in first person, GTA's in third), the scope's detail | done (round 2) — `weaponshots.mjs`, `scopeshots.mjs` |
 | the phone's buttons | written, **never tried on a phone** |
 | the fps drop the user saw | **not reproduced** here in any steady state; what could hide on a device was fixed (`docs/WEAPONS.md`) — needs the phone |
-| co-op (players hitting each other) | **nothing yet** |
+| co-op (players hitting each other) | done (2026-11-24) — `scripts/harness/coopfight.mjs`, `cargo test` (`shots_between_players`) |
 | sound | **nothing yet** |
 
 Each harness wants `npm run dev -- --port 5200` in `frontend/` first (`PORT=` for another port); they print PASS / FAIL
 and write stills to the folder given.
 
-## 1. Co-op: the weapons between players (the big one)
+## 1. Co-op: the weapons between players — DONE 2026-11-24 (`docs/WEAPONS.md`, "Co-op"; what follows was the plan)
 
 The rule is in `docs/WEAPONS.md` ("The rules they share"): the shooter's game flies the bullet and says what it hit;
 the server checks it and owns the health.
@@ -109,8 +115,8 @@ speed by touch, the frame rate in a fight and with the AK-47 firing.
 
 ## 8. Smaller things
 
-- `scripts/harness/prodcheck.mjs` for the new `.glb` paths (`fight.glb`, `models/weapons/*.glb`): the build gzips
-  them, the loaders go through `GFX.unpacked` — built, not yet checked served.
+- the new `.glb` paths (`fight.glb`, `models/weapons/*.glb`) checked served (2026-11-24): `weapons.mjs` against
+  `npx vite preview --port 4173` (PORT=4173) — all 19 pass, no page errors.
 - a bullet's zone is by height on a standing capsule: a man down or doubled over is hit as if standing.
 - the pick-ups are laid for the world the game starts in (`Pickups` is built once in main.ts): the cave world and a
   crossing get none.

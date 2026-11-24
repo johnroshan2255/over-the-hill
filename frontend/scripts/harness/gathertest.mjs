@@ -125,7 +125,8 @@ const claim = await pa.evaluate(async () => {
 })
 check(!!claim, 'A has land')
 if (claim) {
-  await pa.evaluate((c) => { const o = window.__oth; o.hero.appear(c.x + 3.2 - 1.4, c.z + 1.6 + 1.4, Math.atan2(1.4, -1.4)) }, claim)
+  // (the stockpile stands beside the flag — Gather's own stockSpot: the flag is 4 m in from the edge since step 5)
+  const spot = await pa.evaluate((c) => { const o = window.__oth, [x, z] = o.gather.stockSpot(c); o.hero.appear(x - 1.4, z + 1.4, Math.atan2(1.4, -1.4)); return [x, z] }, claim)
   await sleep(1200)
   check(/^E Stock \d+ wood/.test(await prompt(pa)), `at the stockpile: "${await prompt(pa)}"`)
   await pa.keyboard.press('KeyE')
@@ -135,7 +136,7 @@ if (claim) {
   await pa.waitForFunction(() => window.__oth.coop.session.inv.carry.wood === 0, { timeout: 5000, polling: 100 }).catch(() => {})
   check(await pa.evaluate(() => window.__oth.coop.session.inv.carry.wood === 0), `A's hands empty again (${JSON.stringify(await pa.evaluate(() => window.__oth.coop.session.inv.carry))})`)
   await sleep(1000)
-  await pa.evaluate((c) => { window.__oth.view(c.x + 3.2 + 5, c.z + 1.6 + 4, 2.6, Math.atan2(5, 4), -0.22) }, claim)
+  await pa.evaluate(([x, z]) => { window.__oth.view(x + 5, z + 4, 2.6, Math.atan2(5, 4), -0.22) }, spot)
   await sleep(1200)
   await pa.screenshot({ path: `${out}/5_stockpile.png` })
   await pa.evaluate(() => window.__oth.drive(true))

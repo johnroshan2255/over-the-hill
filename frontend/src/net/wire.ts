@@ -53,8 +53,17 @@ export type Ev =
   | { t: 'err'; req: number | null; msg: string }
   | { t: 'pong'; n: number }
   | { t: 'ride'; sid: number; car: string }
+  | { t: 'armed'; sid: number; weapon: string }
+  | { t: 'shot'; sid: number; weapon: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
+  | { t: 'health'; sid: number; hp: number; by: number | null }
+  | { t: 'down'; sid: number; by: number; weapon: string }
+  | { t: 'up'; sid: number }
+  | { t: 'dent'; sid: number; px: number; py: number; pz: number; dx: number; dy: number; dz: number; dv: number; kind: DentKind }
 
 export type Store = 'carry' | 'trailer'
+export type Zone = 'head' | 'body' | 'limb'
+/** A blow to a car (Damage.ts — in its own space), or its repair. */
+export type DentKind = 'crash' | 'shot' | 'repair'
 export type Intent =
   | { t: 'chat'; text: string }
   | { t: 'ride'; car: string }
@@ -73,6 +82,10 @@ export type Intent =
   | { t: 'pond'; x: number; z: number; r: number; depth: number }
   | { t: 'ping'; n: number }
   | { t: 'stow'; from: Store; to: Store; bag: Bag }
+  | { t: 'arm'; weapon: string }
+  | { t: 'shot'; weapon: string; x: number; y: number; z: number; dx: number; dy: number; dz: number }
+  | { t: 'hit'; target: number; weapon: string; zone: Zone; dist: number }
+  | { t: 'dent'; px: number; py: number; pz: number; dx: number; dy: number; dz: number; dv: number; kind: DentKind }
 
 // ---- the schema, compiled once
 type Ty =

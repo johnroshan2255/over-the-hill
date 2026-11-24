@@ -253,6 +253,7 @@ export class CarDamage {
    * of the car's velocity there); all in the car's space. 'shot': a bullet's — a small dent, its own table.
    */
   hit(px: number, py: number, pz: number, dx: number, dy: number, dz: number, dv: number, kind: 'crash' | 'shot' = 'crash'): void {
+    this.onHit?.(px, py, pz, dx, dy, dz, dv, kind)
     const shot = kind === 'shot'
     // (ON THE SPARE WHEEL — the tail's, a blow that drives it forward: the tyre takes it. A round stops in the
     //  rubber; a crash reaches what is behind it with less than half its force — the window over it does not crack
@@ -519,8 +520,13 @@ export class CarDamage {
     m.dirty = true
   }
 
+  /** (co-op) each blow as it's taken, and the repair — told to the others (main.ts: Session.dent), who dent the car they
+   *  draw of ours the same way. */
+  onHit: ((px: number, py: number, pz: number, dx: number, dy: number, dz: number, dv: number, kind: 'crash' | 'shot') => void) | null = null
+  onRepair: (() => void) | null = null
   /** MENDED: as it left the works. */
   repair(): void {
+    this.onRepair?.()
     for (const m of this.meshes) {
       if (m.rest) { m.pos.set(m.rest); m.nor.set(m.nor0!); m.gone!.fill(0) }
       m.dmg.fill(0)

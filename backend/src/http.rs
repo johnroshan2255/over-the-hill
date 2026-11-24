@@ -249,8 +249,8 @@ async fn conn(socket: WebSocket, world: WorldHandle, p: PlayerRow) {
             msg = stream.next() => match msg {
                 Some(Ok(Message::Binary(b))) => {
                     if b.first() == Some(&proto::TAG_POSE) {
-                        if let Some(ents) = proto::parse_pose(&b)
-                            && world.tx.send(Cmd::Pose { sid, ents }).await.is_err() { break }
+                        if let Some((t, ents)) = proto::parse_pose_t(&b)
+                            && world.tx.send(Cmd::Pose { sid, t, ents }).await.is_err() { break }
                     } else if let Some(env) = wire::decode_intent(&b) {
                         if world.tx.send(Cmd::Msg { sid, env }).await.is_err() { break }
                     } else {

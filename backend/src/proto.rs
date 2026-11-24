@@ -1,21 +1,25 @@
 //! THE WIRE, by hand where it's hot: the POSES, 20 a second from every player (everything else: wire.rs, by the
 //! schema in proto/wire.json). Little-endian.
 //!
-//! Pose, client → server:  [1u8] [n u8] n × ENTITY
-//! Poses, server → client: [2u8] [tick u32] [p u8] p × ([sid u16] [n u8] n × ENTITY)   — only the players who moved
-//!   since the last frame (a player's n entities replace what was known of them; a new arrival gets everyone's)
+//! Pose, client → server:  [1u8] [n u8] [t u16] n × ENTITY
+//! Poses, server → client: [2u8] [tick u32] [p u8] p × ([sid u16] [t u16] [n u8] n × ENTITY)   — only the players who
+//!   moved since the last frame (a player's n entities replace what was known of them; a new arrival gets everyone's)
+//! t: THE SENDER'S CLOCK when it took the pose (ms, mod 65 536), relayed as it came — the others play each player back
+//!   on that player's own clock, so a pose that reaches the server early or late in its 50 ms tick doesn't show as a
+//!   stutter (2026-11-24: at 20 a second each way, unsynchronised, two poses fell in one tick and none in the next).
 //! ENTITY (17 B): [meta u8] [x y z f32] [rotation u32]
 //!   meta: slot (bits 0–1: 0 the player — what they control, 1 their car parked while they're on foot, 2 the trailer)
 //!         | kind (bits 2–4: 0 on foot, 1 the jeep, 2 the E30, 3 the motorbike, 4 the trailer)
-//!         | bit 5 teleported (no speed check) | bit 6 the trailer hitched
+//!         | bit 5 teleported (no speed check) | bit 6 the trailer hitched | bit 7 aimed (on foot: the gun up)
 //!   rotation: the quaternion's "smallest three" — bits 30–31 which component is the largest (dropped, rebuilt from
 //!   the others, sign made +), then the other three in order, 10 bits each over ±1/√2 (≈ 0.08° steps).
 //!
 //! The server relays each entity's 17 bytes as the client sent them: nothing re-encoded.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::catalog::{Bag, Mat};
+pub use crate::weapons::Zone;
 
 #[derive(Deserialize, Debug)]
 pub struct Envelope {
@@ -79,6 +83,24 @@ pub enum ClientMsg {
     Ping { n: u32 },
     /// Your own things between your hands and your trailer (by it).
     Stow { from: Store, to: Store, bag: Bag },
+    /// THE WEAPON IN YOUR HANDS (weapons.rs): its id in `proto/weapons.json`, "" for fists — relayed as `armed`.
+    Arm { weapon: String },
+    /// A shot left your gun at (x, y, z) along (dx, dy, dz) — relayed to the others as `shot` (their tracer, its flash).
+    Shot { weapon: String, x: f32, y: f32, z: f32, dx: f32, dy: f32, dz: f32 },
+    /// Your bullet hit player `target` (their sid) in `zone`, `dist` m from you: checked here (weapons.rs) — the damage
+    /// is the server's, from the spec.
+    Hit { target: u32, weapon: String, zone: Zone, dist: f32 },
+    /// A BLOW TO YOUR CAR (the game's Damage.ts — `CarDamage.hit`, in the car's own space: where, the way it pushed, the
+    /// change of velocity), or `repair`: relayed to the others as `dent`, so the car they draw of yours is dented too.
+    Dent { px: f32, py: f32, pz: f32, dx: f32, dy: f32, dz: f32, dv: f32, kind: DentKind },
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DentKind {
+    Crash,
+    Shot,
+    Repair,
 }
 
 pub const ENTITY_BYTES: usize = 17;
@@ -87,6 +109,8 @@ pub const TAG_POSES: u8 = 2;
 pub const MAX_ENTITIES: usize = 3;
 pub const FLAG_TELEPORT: u16 = 1;
 pub const FLAG_HITCHED: u16 = 2;
+/// (on foot) the gun is up, aimed — the pitch of the aim is the entity's rotation's (weapons.rs; the game's Remotes.ts).
+pub const FLAG_AIM: u16 = 4;
 
 pub const KIND_FOOT: u8 = 0;
 pub const KIND_TRAILER: u8 = 4;
@@ -105,7 +129,7 @@ pub struct Entity {
 impl Entity {
     pub fn new(slot: u8, kind: u8, flags: u16, p: [f32; 3], q: [f32; 4]) -> Entity {
         let mut e = Entity { slot, kind, flags, p, q, raw: [0; ENTITY_BYTES] };
-        e.raw[0] = (slot & 3) | ((kind & 7) << 2) | (((flags & FLAG_TELEPORT) as u8) << 5) | ((((flags & FLAG_HITCHED) >> 1) as u8) << 6);
+        e.raw[0] = (slot & 3) | ((kind & 7) << 2) | (((flags & FLAG_TELEPORT) as u8) << 5) | ((((flags & FLAG_HITCHED) >> 1) as u8) << 6) | ((((flags & FLAG_AIM) >> 2) as u8) << 7);
         for (k, v) in p.iter().enumerate() {
             e.raw[1 + k * 4..5 + k * 4].copy_from_slice(&v.to_le_bytes());
         }
@@ -118,10 +142,10 @@ impl Entity {
         let raw: [u8; ENTITY_BYTES] = raw.try_into().ok()?;
         let m = raw[0];
         let (slot, kind) = (m & 3, (m >> 2) & 7);
-        let flags = ((m >> 5) & 1) as u16 | (((m >> 6) & 1) as u16) << 1;
+        let flags = ((m >> 5) & 1) as u16 | (((m >> 6) & 1) as u16) << 1 | (((m >> 7) & 1) as u16) << 2;
         let f = |o: usize| f32::from_le_bytes([raw[o], raw[o + 1], raw[o + 2], raw[o + 3]]);
         let p = [f(1), f(5), f(9)];
-        if slot > 2 || kind > 4 || m & 0x80 != 0 || !p.iter().all(|v| v.is_finite() && v.abs() < 1e5) {
+        if slot > 2 || kind > 4 || !p.iter().all(|v| v.is_finite() && v.abs() < 1e5) {
             return None;
         }
         let q = unpack_quat(u32::from_le_bytes([raw[13], raw[14], raw[15], raw[16]]));
@@ -175,27 +199,39 @@ pub fn unpack_quat(w: u32) -> [f32; 4] {
 
 /// A client's pose frame → its entities (None: malformed).
 pub fn parse_pose(b: &[u8]) -> Option<Vec<Entity>> {
-    if b.len() < 2 || b[0] != TAG_POSE {
+    parse_pose_t(b).map(|(_, e)| e)
+}
+
+/// A client's pose frame → (its clock, its entities).
+pub fn parse_pose_t(b: &[u8]) -> Option<(u16, Vec<Entity>)> {
+    if b.len() < 4 || b[0] != TAG_POSE {
         return None;
     }
     let n = b[1] as usize;
-    if n > MAX_ENTITIES || b.len() != 2 + n * ENTITY_BYTES {
+    if n > MAX_ENTITIES || b.len() != 4 + n * ENTITY_BYTES {
         return None;
     }
+    let t = u16::from_le_bytes([b[2], b[3]]);
     let mut out: Vec<Entity> = Vec::with_capacity(n);
     for k in 0..n {
-        let e = Entity::parse(&b[2 + k * ENTITY_BYTES..2 + (k + 1) * ENTITY_BYTES])?;
+        let e = Entity::parse(&b[4 + k * ENTITY_BYTES..4 + (k + 1) * ENTITY_BYTES])?;
         if out.iter().any(|o| o.slot == e.slot) {
             return None;
         }
         out.push(e);
     }
-    Some(out)
+    Some((t, out))
 }
 
-/// A client's pose frame (the tests' bots; the browser writes the same — net/pose.ts).
+/// A client's pose frame (the tests' bots; the browser writes the same — net/pose.ts), its clock 0.
 pub fn pose_frame(ents: &[Entity]) -> Vec<u8> {
+    pose_frame_t(0, ents)
+}
+
+/// … at its clock `t` (ms).
+pub fn pose_frame_t(t: u16, ents: &[Entity]) -> Vec<u8> {
     let mut out = vec![TAG_POSE, ents.len() as u8];
+    out.extend_from_slice(&t.to_le_bytes());
     for e in ents {
         out.extend_from_slice(&e.raw);
     }
@@ -207,6 +243,11 @@ pub fn pose_frame(ents: &[Entity]) -> Vec<u8> {
 pub type PosesFrame = Vec<(u16, Vec<Entity>)>;
 
 pub fn parse_poses(b: &[u8]) -> Option<(u32, PosesFrame)> {
+    parse_poses_t(b).map(|(tick, v)| (tick, v.into_iter().map(|(s, _, e)| (s, e)).collect()))
+}
+
+/// … with each player's clock: (tick, [(sid, t, entities)]).
+pub fn parse_poses_t(b: &[u8]) -> Option<(u32, Vec<(u16, u16, Vec<Entity>)>)> {
     if b.len() < 6 || b[0] != TAG_POSES {
         return None;
     }
@@ -216,14 +257,15 @@ pub fn parse_poses(b: &[u8]) -> Option<(u32, PosesFrame)> {
     let mut out = vec![];
     for _ in 0..p {
         let sid = u16::from_le_bytes([*b.get(o)?, *b.get(o + 1)?]);
-        let n = *b.get(o + 2)? as usize;
-        o += 3;
+        let t = u16::from_le_bytes([*b.get(o + 2)?, *b.get(o + 3)?]);
+        let n = *b.get(o + 4)? as usize;
+        o += 5;
         let mut ents = vec![];
         for _ in 0..n {
             ents.push(Entity::parse(b.get(o..o + ENTITY_BYTES)?)?);
             o += ENTITY_BYTES;
         }
-        out.push((sid, ents));
+        out.push((sid, t, ents));
     }
     (o == b.len()).then_some((tick, out))
 }
@@ -237,15 +279,17 @@ mod tests {
         let e = Entity::new(0, 1, FLAG_TELEPORT, [1.0, 2.0, -3.5], [0.0, std::f32::consts::FRAC_1_SQRT_2, 0.0, std::f32::consts::FRAC_1_SQRT_2]);
         let t = Entity::new(2, KIND_TRAILER, FLAG_HITCHED, [1.0, 2.0, -9.0], [0.0, 0.0, 0.0, 1.0]);
         let f = pose_frame(&[e, t]);
-        assert_eq!(f.len(), 2 + 2 * ENTITY_BYTES);
+        assert_eq!(f.len(), 4 + 2 * ENTITY_BYTES);
         let back = parse_pose(&f).unwrap();
         assert_eq!(back, vec![e, t]);
         assert_eq!(back[0].flags, FLAG_TELEPORT);
         assert_eq!(back[1].flags, FLAG_HITCHED);
         assert_eq!(parse_pose(&f[..f.len() - 1]), None);
         let mut bad = f.clone();
-        bad[2] = 3; // slot 3
+        bad[4] = 3; // slot 3
         assert_eq!(parse_pose(&bad), None);
+        // the sender's clock, through
+        assert_eq!(parse_pose_t(&pose_frame_t(54_321, &[e])).unwrap().0, 54_321);
     }
 
     #[test]

@@ -6,7 +6,8 @@ Accounts, saves, and the shared worlds: friends in one valley, claiming land, ga
 ```sh
 cd backend
 cargo run                    # http://0.0.0.0:5280 — overhill.db here, the maps from ../frontend/public/oth
-cargo test                   # unit tests + tests/flow.rs (two players over real HTTP / WebSockets, a restart)
+cargo test                   # unit tests (+ the weapons: shots_between_players) + tests/flow.rs (two players over real
+                             # HTTP / WebSockets, a restart) + tests/golden.rs (the wire, pinned)
 cargo build --release
 ```
 
@@ -43,19 +44,32 @@ for an enum. `tests/golden.json` pins one of every message as bytes; `cargo test
 `npm run test:wire` both check it, so neither side can drift.
 
 ```
-pose     client → server  [1u8] [n u8] n × ENTITY                                  20/s while moving, 1/s still
-poses    server → client  [2u8] [tick u32] [p u8] p × ([sid u16] [n u8] n × ENTITY)
+pose     client → server  [1u8] [n u8] [t u16] n × ENTITY                          20/s while moving, 1/s still
+poses    server → client  [2u8] [tick u32] [p u8] p × ([sid u16] [t u16] [n u8] n × ENTITY)
+t              the sender's clock when it took the pose (ms, mod 65 536), relayed as it came
 ENTITY (17 B)  [meta u8] [x y z f32] [rotation u32]
   meta      slot (bits 0–1: 0 the player · 1 their car parked while they're out · 2 the trailer)
             | kind (bits 2–4: 0 on foot · 1 the jeep · 2 the E30 · 3 the motorbike · 4 the trailer)
-            | bit 5 teleported (no speed check) · bit 6 trailer hitched
+            | bit 5 teleported (no speed check) · bit 6 trailer hitched · bit 7 aimed (on foot: the gun up — the
+              aim's pitch is the rotation's)
   rotation  the quaternion's "smallest three": bits 30–31 the dropped (largest) one, 10 bits each for the rest
 ```
 
 Each player gets their own poses frame, every 50 ms: the OTHER players whose pose changed since that player last heard
 — within 300 m every tick (20 Hz), beyond every 4th (5 Hz); what was last sent is remembered per player, so a far car
 still arrives where it stopped. Nobody moved: no frame. A newcomer gets everyone. A pose faster than 90 m/s without
-the teleport flag is ignored. The server relays each entity's 17 bytes as they came.
+the teleport flag is ignored. The server relays each entity's 17 bytes as they came, and the sender's `t` with them:
+**the game plays each player back on their own clock** (net/Session.ts), drawn a little behind — their poses' spacing
+and how late they've been arriving: ~110 ms near, ~400 ms far. (Till 2026-11-24 the poses were placed on the tick
+the server passed them on in; at 20 a second each way, unsynchronised, two of a player's poses fell in one tick and
+none in the next — a stutter at the rate itself: 4 cm RMS on a runner, measured by `scripts/harness/syncplay.mjs`;
+on their own clock, 0.8–3.8 cm. And the game sent 13–16 poses a second at 60 fps, not 20: its timer was reset to 0,
+and three frames came to a hair under 50 ms.)
+
+**A newcomer is told** what the welcome's state doesn't hold, at once after it: each player's car (`ride`), the blows
+it has taken since it was whole (`dent`, up to 64; a new car clears them), the weapon in their hands (`armed`), their
+health if it's below full, who is down. **Health outlives a reload**: a player who leaves hurt or down and comes back
+within 10 minutes is as they were (and told so) — a reload healed you, and got you up at once.
 
 **Intents** (client → server): `[tag] [req varn] fields…` — give a `req` to get `ok {req}` or `err {req, msg}` back
 (the message is for the player's screen). The shapes, by name (tags and field order: `proto/wire.json`):
@@ -78,6 +92,10 @@ the teleport flag is ignored. The server relays each entity's 17 bytes as they c
 | `ride` | `car`: the garage's id of the car the player drives (≤ 24 letters / digits / `_` `-`) — relayed to everyone as the `ride` event (`sid`, `car`); the server keeps none of it: the game says it again when someone joins | — |
 | `pond` | `x`, `z`, `r` (3–15), `depth` (0.5–3) | inside your claim; 4 each |
 | `ping` | `n` | answered at once with `pong {n}` (the round trip) |
+| `dent` | `px py pz` (in the car's own space), `dx dy dz` (the way it pushed), `dv` (m/s), `kind`: `crash` \| `shot` \| `repair` | a blow to the sender's car (the game's `CarDamage.hit`) or its repair, relayed as `dent` (`sid`, …): the others dent the car they draw of theirs the same way; kept for newcomers |
+| `arm` | `weapon`: an id in `proto/weapons.json` (`pistol`, `ak47`, `sniper`), `""` for fists | relayed to the others as `armed` (`sid`, `weapon`); the game says it again when someone joins |
+| `shot` | `weapon`, `x y z` (the muzzle), `dx dy dz` (the way) | the weapon must be the one armed, the player up; relayed to the others as `shot` (`sid`, …): their tracer, the flash |
+| `hit` | `target` (their sid), `weapon`, `zone`: `head` \| `body` \| `limb`, `dist` (m) | **weapons.rs**: the shooter up and holding that weapon; the target another player, up, on foot; the fire interval (a bucket: one hit a `fireTicks`, two at most); `dist` within the weapon's range and within ±3 m of the two poses' distance. The damage is the server's — `damage × zone × max(floor, e^(−2·drag·dist))` from the spec, never the client's — off the target's health (100): `health` (`sid`, `hp`, `by`) to everyone; at 0 `down` (`sid`, `by`, `weapon`), and 5 s later `up` (`sid`) and `health` 100 (the game puts itself back at its camp or the start). Errors (`missed`, `too fast`, `already down`, …) go to the shooter only, shown to nobody |
 
 Building, shaping and paving: the player within 40 m of their claim's edge. Taking things: within reach of them
 (the trailer's own pose for `trailer`).
@@ -86,7 +104,11 @@ Building, shaping and paving: the player within 40 m of their claim's edge. Taki
 `left`, `chat`, `tree_cut`, `tree_back`, `drop`, `drop_gone`, `node`, `node_back`, `inv` (yours), `claim`,
 `claim_gone`, `stock`, `guard` `{claim, on}`, `raid` `{claim, owner, by, by_name, bag}`, `piece`, `piece_gone`,
 `cells` `{claim, cells: [[i, j, cm]]}` (the 2 m grid's cell, its height change from the map's), `pave`, `pond`,
-`pond_gone`, `ok`, `err`, `pong`.
+`pond_gone`, `ok`, `err`, `pong`, `ride`, `dent`, and the weapons' `armed`, `shot`, `health`, `down`, `up`.
+
+**The weapons between players** (`weapons.rs`, docs/WEAPONS.md "Co-op"): the shooter's game flies the bullet and says
+what it hit; the server checks the claim and owns everyone's health — this session's only (a reconnect is whole), never
+stored. The numbers are `proto/weapons.json`, the game's own (one file, read by both).
 
 **The guard**: a claim is guarded while its owner is inside it (within its radius + 2 m). With the world rule
 `offline_guard`, also while they're offline (off by default: the user's rule — "if we are out they can steal").
@@ -113,6 +135,7 @@ keep only when worlds spread over several machines.
 - `http.rs` — the HTTP routes and the WebSocket connection.
 - `db.rs` — SQLite: players, saves, worlds, members; a world's things as rows `(world, kind, id) → JSON`, written
   behind by a thread (the last write of a row in 250 ms wins).
+- `weapons.rs` — the weapons' numbers (`proto/weapons.json`), a hit's damage, each player's health and fire interval.
 - `map.rs` — the ground (`height.bin`); `catalog.rs` — materials and costs; `proto.rs` — the poses (by hand);
   `wire.rs` — everything else, by `proto/wire.json`.
 - `examples/load.rs` — the load test; `tests/flow.rs` — two players over real sockets; `tests/golden.rs` — the wire.

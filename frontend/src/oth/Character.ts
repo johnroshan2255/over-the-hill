@@ -1204,6 +1204,8 @@ export class Character {
     this.seat = null
     this.ride = null
     this.control = false
+    // (down: lying where they fell — the fall's last frame held)
+    if (this.puppetLies) { this.pos.set(x, y, z); this.speed = 0; return }
     const turn = Math.atan2(Math.sin(heading - this.heading), Math.cos(heading - this.heading))
     this.heading = heading
     const k = Math.min(1, dt * 10)
@@ -1213,6 +1215,24 @@ export class Character {
     this.grounded = true
     if (this.state !== 'move') { this.state = 'move'; this.root.visible = true; this.play('loco' as ClipName, { fade: 0.2 }) }
   }
+
+  /** (co-op) ANOTHER PLAYER DOWN (the server's `down`): the fall played where they stand, held as they lie, till
+   *  `false` (their `up` — they come back at their camp: puppet() takes them on from there). Without the fight's clips
+   *  (Character.loadClips) the knockdown, else nothing to play: they stand on. */
+  puppetDown(on: boolean): void {
+    if (on === this.puppetLies) return
+    this.puppetLies = on
+    if (on) {
+      const clip: ClipName = this.clips.has('die_back') ? 'die_back' : 'knockdown'
+      if (!this.clips.has(clip)) { this.puppetLies = false; return }
+      this.state = 'action'
+      this.speed = 0
+      this.root.visible = true
+      this.play(clip, { fade: 0.08, restart: true })
+    } else if (this.state === 'action') this.state = 'land' // (puppet() next: back to the stride)
+  }
+  private puppetLies = false
+  get lying(): boolean { return this.puppetLies }
 
   /** Shown at a place without the controller (a scripted moment: getting in or out — main.ts moves it). */
   stage(x: number, y: number, z: number, heading: number): void {

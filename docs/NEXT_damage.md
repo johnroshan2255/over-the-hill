@@ -52,8 +52,12 @@ gameplay off by default"; on is my reading of "add damage … like a normal car 
    parked car.
 5. **A door torn off** when it stands open in a blow (GTA IV's). Not built.
 6. **Saved**: the damage is the session's — a reload, or another car from the garage, is whole.
-7. **Co-op**: your car takes damage; the others' cars are not shown damaged, nothing of it is on the wire, and their
-   solid is still the box (`Remotes.ts`) — the same invisible layer the enemy's had.
+7. **Co-op** — done 2026-11-24: each blow your car takes (`CarDamage.hit`, in the car's own space) and its repair go on
+   the wire as `dent`; the others put the same blow on the car they draw of yours (`Remotes.dent`), with its smoke,
+   fire and pieces (`DamageFx.car`); and their car is solid as **its own shape** (`Vehicle.carSolid` — the enemy's
+   builder, shared), not the box. Left: a newcomer sees your car whole till its next blow; a bullet on another player's
+   car does nothing (their game owns their car). (`CarDamage` has no randomness: the same blows in the same order make
+   the same dents on every screen.)
 8. **Per-car numbers** (GTA IV's `handling.dat` multipliers): one table for every car; the engine is taken to be at
    the front; the bike takes no damage.
 9. **Deeper**: the collider does not crumple with the shell; a flat tyre does not come off its rim with speed; nobody

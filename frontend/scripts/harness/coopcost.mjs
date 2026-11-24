@@ -30,10 +30,14 @@ for (const tier of TIERS) {
     page.on('pageerror', (e) => console.log(`[${who.name}]`, e.message))
     await page.evaluateOnNewDocument((a) => localStorage.setItem('overhill.player.v1', JSON.stringify(a)), { id: who.id, name: who.name, token: who.token })
     await page.goto(`${BASE}/?coop=${world.id}&tier=${tier}&hour=12&time=0&save=0&dpr=fixed`, { waitUntil: 'load' })
-    await page.waitForFunction(() => window.__oth?.ready && window.__oth.coop, { timeout: 120_000, polling: 250 })
+    await page.waitForFunction(() => window.__oth?.ready && window.__oth.coop, { timeout: 120_000, polling: 250 }).catch(async (e) => {
+      console.log(`[${who.name}] not ready:`, JSON.stringify(await page.evaluate(() => ({ oth: !!window.__oth, ready: window.__oth?.ready, coop: !!window.__oth?.coop, status: document.getElementById('status')?.textContent }))))
+      throw e
+    })
     return page
   }
-  const pa = await open(A), pb = await open(B)
+  // (both loaded at once: the first, drawing uncapped at ULTRA 1080p, starved the second's load past 2 minutes)
+  const [pa, pb] = await Promise.all([open(A), open(B)])
   const claims = process.env.MODE === 'claims'
   if (claims) {
     // (A claims land round where it stands; B looks at the flag from 20 m)

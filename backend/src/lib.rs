@@ -6,6 +6,7 @@ pub mod http;
 pub mod map;
 pub mod proto;
 pub mod util;
+pub mod weapons;
 pub mod wire;
 pub mod world;
 

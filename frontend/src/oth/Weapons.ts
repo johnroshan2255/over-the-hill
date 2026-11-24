@@ -41,7 +41,8 @@ export interface Target {
   id: string
   pos: GFX.Vector3
   alive(): boolean
-  hit(damage: number, zone: Zone, weapon: string, dir: GFX.Vector3): void
+  /** `dist`: how far the bullet flew (m) — co-op sends it to the server, which works the damage out itself. */
+  hit(damage: number, zone: Zone, weapon: string, dir: GFX.Vector3, dist?: number): void
 }
 export interface ArsenalHost {
   onFoot(): boolean
@@ -66,6 +67,8 @@ export interface ArsenalHost {
   struck?(body: number, x: number, y: number, z: number, dx: number, dy: number, dz: number): void
   /** (co-op) a shot left / a hit landed — told to the others. */
   shot?(weapon: string, from: GFX.Vector3, dir: GFX.Vector3): void
+  /** (co-op) what's in the hands now (null: fists) — told to the others. */
+  armed?(weapon: WeaponId | null): void
 }
 
 interface GunSpec {
@@ -229,7 +232,83 @@ const smooth = (a: number, b: number, x: number): number => { const k = Math.max
 
 /** A bullet in the air: where, how fast, how far gone; `off`: the muzzle from the sight line it flies along (its trace
  *  is drawn that much aside at first). */
-interface Bullet { p: GFX.Vector3; v: GFX.Vector3; gone: number; spec: GunSpec; tracer: number; off: GFX.Vector3 }
+interface Bullet { p: GFX.Vector3; v: GFX.Vector3; gone: number; spec: GunSpec; tracer: number; off: GFX.Vector3; ghost?: boolean }
+
+// ------------------------------------------------------------------------------------------------ the hold, shared
+/** How a gun is held this frame (third person): eased up (`aimK` 0 carried … 1 aimed), the aim's way (`aimY` the
+ *  heading, `aimP` the pitch), the kick (`recoil` 1 → 0), lowered (`low`: drawn, reloaded), the reload's progress
+ *  (`rl`, −1 none). The player's own Arsenal and every other player's walker (RemoteHold) pose it by the same code. */
+interface HoldState { aimK: number; aimY: number; aimP: number; recoil: number; low: number; reloading: boolean; rl: number }
+const _va = new GFX.Vector3(), _vb = new GFX.Vector3(), _vc = new GFX.Vector3(), _vd = new GFX.Vector3()
+const _qa = new GFX.Quaternion(), _qb = new GFX.Quaternion(), _e3 = new GFX.Euler()
+/** THIRD PERSON: where the gun is in HIS space (gp, gq) — aimed (a rifle in his right shoulder's pocket, a pistol out
+ *  before his face) eased from carried (GTA's: a pistol in the stride's own right hand, a rifle across him). */
+function holdThird(h: Character, g: GunSpec, s: HoldState, gp: GFX.Vector3, gq: GFX.Quaternion): void {
+  const H = HOLDS[g.id], K = HANDS[g.id], rifle = g.hold === 'rifle', low = s.low, rc = s.recoil, rl = s.rl
+  const yaw = wrap(s.aimY - h.heading), pitch = Math.max(-1.2, Math.min(1.2, s.aimP))
+  if (rifle) {
+    // a rifle: its butt in his right shoulder's pocket — a hand in from the joint, before it
+    gq.setFromEuler(_e3.set(pitch - low * 0.85 + rc * 0.03, yaw, s.reloading ? -0.35 * Math.sin(Math.PI * rl) : 0, 'YXZ'))
+    h.jointAt('RightArm', _va)
+    _va.x -= 0.05; _va.z -= 0.07
+    gp.set(-H.butt[0], -H.butt[1], -H.butt[2] + rc * 0.03).applyQuaternion(gq).add(_va)
+  } else {
+    // a pistol: out before his face in both hands, turning about the middle of his shoulders
+    gq.setFromEuler(_e3.set(pitch - low * 0.9 + rc * 0.12, yaw, 0, 'YXZ'))
+    h.jointAt('LeftArm', _va); h.jointAt('RightArm', _vb)
+    _va.add(_vb).multiplyScalar(0.5)
+    gp.set(0.03, 0.085, -0.56 + low * 0.2 + rc * 0.03).applyQuaternion(gq).add(_va)
+  }
+  // … CARRIED (k → 0), GTA's: a pistol where the stride's own right hand has it — down at his side, swinging with
+  // his arm; a rifle across him in both hands, the grip under his ribs, the muzzle down to the front and left
+  const k = s.aimK
+  if (k < 0.999) {
+    if (rifle) {
+      h.jointAt('RightArm', _vd)
+      _vd.x -= 0.06; _vd.y -= 0.29; _vd.z -= 0.27
+      _qa.setFromEuler(_e3.set(-0.44, 0.52, 0.2, 'YXZ'))
+    } else {
+      h.handTurn(1, _qa).multiply(_qb.copy(K.r.q).invert())
+      h.jointAt('RightHand', _vd)
+      _vd.sub(_vc.copy(K.r.wrist).applyQuaternion(_qa))
+    }
+    const e = k * k * (3 - 2 * k)
+    gp.lerpVectors(_vd, gp, e)
+    gq.copy(_qb.copy(_qa).slerp(gq, e))
+  }
+}
+/** HIS HANDS ON IT (gp, gq in his space): the right on the grip; the left under the fore-end / round the right —
+ *  reloading, down to the belt for the magazine and back. (A pistol carried is simply in the stride's own hand: no arm
+ *  is bent to it; his left hand comes to it as it's raised.) `up`: how far it's up (first person: 1). */
+function handsOn(h: Character, g: GunSpec, gp: GFX.Vector3, gq: GFX.Quaternion, fp: boolean, up: number, reloading: boolean, rl: number): void {
+  const G = h.grip, K = HANDS[g.id], rifle = g.hold === 'rifle', both = rifle ? 1 : smooth(0.25, 0.9, up)
+  if (rifle || up > 0.01) {
+    _vc.copy(K.r.wrist).applyQuaternion(gq).add(gp)
+    G.r[0] = _vc.x; G.r[1] = _vc.y; G.r[2] = _vc.z
+    _qb.copy(gq).multiply(K.r.q)
+    G.rq[0] = _qb.x; G.rq[1] = _qb.y; G.rq[2] = _qb.z; G.rq[3] = _qb.w
+    // (the elbow: down and out aimed; back and out, the rifle carried)
+    const c = rifle && !fp ? 1 - up : 0
+    G.rp[0] = fp ? 0.8 : 0.6; G.rp[1] = (fp ? -0.55 : -0.75) + c * 0.45; G.rp[2] = 0.3 + c * 0.5
+    G.rOn = G.rqOn = true
+  }
+  if (both < 0.01) return
+  _vc.copy(K.l.wrist).applyQuaternion(gq).add(gp)
+  let free = 1 - both
+  if (reloading) {
+    const kk = rl < 0.3 ? rl / 0.3 : rl < 0.5 ? 1 : rl < 0.8 ? 1 - (rl - 0.5) / 0.3 : 0
+    free = Math.max(free, kk * kk * (3 - 2 * kk))
+    _vc.lerp(_vd.set(-0.2, 0.98, -0.12), kk * kk * (3 - 2 * kk))
+  } else if (free > 0) { h.jointAt('LeftHand', _vd); _vc.lerp(_vd, free) }
+  G.l[0] = _vc.x; G.l[1] = _vc.y; G.l[2] = _vc.z
+  G.lp[0] = rifle ? -0.45 : -0.7; G.lp[1] = rifle ? -0.85 : -0.65; G.lp[2] = 0.15
+  G.lOn = true
+  if (free < 0.3) {
+    _qb.copy(gq).multiply(K.l.q)
+    G.lq[0] = _qb.x; G.lq[1] = _qb.y; G.lq[2] = _qb.z; G.lq[3] = _qb.w
+    G.lqOn = true
+  }
+}
 interface Saved { owned: WeaponId[]; ammo: Record<string, [number, number]> }
 const KEY = 'overhill.weapons.v1'
 
@@ -284,13 +363,9 @@ export class Arsenal {
   private readonly gp = new GFX.Vector3()
   private readonly gq = new GFX.Quaternion()
   private readonly qa = new GFX.Quaternion()
-  private readonly qb = new GFX.Quaternion()
   private readonly e3 = new GFX.Euler()
   private readonly one = new GFX.Vector3(1, 1, 1)
   private readonly va = new GFX.Vector3()
-  private readonly vb = new GFX.Vector3()
-  private readonly vc = new GFX.Vector3()
-  private readonly vd = new GFX.Vector3()
   /** The view's kick: what's still to be given (a shot's is spread over a few frames — given at once the view jumped,
    *  ten times a second with the AK-47: a stutter), and what's been given and must come back (rad: up, aside). */
   private kickUp = 0
@@ -466,6 +541,7 @@ export class Arsenal {
     if (id && !this.owned.has(id)) return
     if (id === this.current) return
     this.current = id
+    this.host.armed?.(id)
     this.setScope(0)
     this.trigger = false
     this.aimHeld = false
@@ -575,7 +651,7 @@ export class Arsenal {
       const d = this.v.copy(b.v).multiplyScalar(1 / sp)
       const wall = this.castWorld(b.p, d, step), wallBody = this.wallBody
       let best = wall ?? step, who: Target | null = null, zone: Zone = 'body'
-      for (const t of T) {
+      for (const t of b.ghost ? [] : T) {
         if (!t.alive()) continue
         // (a capsule: 0.36 m round his middle line, 1.8 m tall — the nearest the piece comes to that line)
         const ox = b.p.x - t.pos.x, oz = b.p.z - t.pos.z, A = d.x * d.x + d.z * d.z, Bq = ox * d.x + oz * d.z
@@ -590,14 +666,14 @@ export class Arsenal {
       }
       if (who) {
         const keep = Math.max(g.floor, Math.exp(-2 * g.drag * (b.gone + best)))
-        who.hit(g.damage * (zone === 'head' ? g.head : zone === 'limb' ? g.limb : 1) * keep, zone, g.id, d)
+        who.hit(g.damage * (zone === 'head' ? g.head : zone === 'limb' ? g.limb : 1) * keep, zone, g.id, d, b.gone + best)
         this.stats.hits++
       }
       if (who || wall !== null) {
         this.lastImpact.copy(b.p).addScaledVector(d, best)
         this.host.impact?.(this.lastImpact.x, this.lastImpact.y, this.lastImpact.z, !!who)
         // (a round that stops on a car: a hole in it, its glass, its tyre, its engine — Damage.ts)
-        if (!who && wallBody >= 0) this.host.struck?.(wallBody, this.lastImpact.x, this.lastImpact.y, this.lastImpact.z, d.x, d.y, d.z)
+        if (!who && wallBody >= 0 && !b.ghost) this.host.struck?.(wallBody, this.lastImpact.x, this.lastImpact.y, this.lastImpact.z, d.x, d.y, d.z)
       }
       if (who || wall !== null || b.gone + step > g.range) { this.bullets.splice(i, 1); continue }
       b.p.addScaledVector(d, step)
@@ -749,7 +825,7 @@ export class Arsenal {
     turn.setFromEuler(this.e3.set(Math.max(-1.45, Math.min(1.45, this.host.lookPitch())), wrap(this.host.lookYaw() - h.heading), 0, 'YXZ'))
   }
   private holdGun(g: GunSpec): void {
-    const h = this.hero, G = h.grip, H = HOLDS[g.id], K = HANDS[g.id], rifle = g.hold === 'rifle', now = tickNow()
+    const h = this.hero, G = h.grip, H = HOLDS[g.id], rifle = g.hold === 'rifle', now = tickNow()
     const draw = Math.max(0, Math.min(1, 1 - (this.busyUntil - now) / Math.max(1, g.drawTicks)))
     const rl = this.reloading ? Math.min(1, (now - this.reloadFrom) / g.reloadTicks) : -1
     // (lowered while it's drawn or reloaded)
@@ -769,71 +845,26 @@ export class Arsenal {
       this.gp.applyQuaternion(this.qa).add(this.va)
       this.gq.premultiply(this.qa)
     } else {
-      // THIRD PERSON — AIMED (k → 1):
-      const yaw = wrap(this.aimY - h.heading), pitch = Math.max(-1.2, Math.min(1.2, this.aimP))
-      if (rifle) {
-        // a rifle: its butt in his right shoulder's pocket — a hand in from the joint, before it
-        this.gq.setFromEuler(this.e3.set(pitch - low * 0.85 + rc * 0.03, yaw, this.reloading ? -0.35 * Math.sin(Math.PI * rl) : 0, 'YXZ'))
-        h.jointAt('RightArm', this.va)
-        this.va.x -= 0.05; this.va.z -= 0.07
-        this.gp.set(-H.butt[0], -H.butt[1], -H.butt[2] + rc * 0.03).applyQuaternion(this.gq).add(this.va)
-      } else {
-        // a pistol: out before his face in both hands, turning about the middle of his shoulders
-        this.gq.setFromEuler(this.e3.set(pitch - low * 0.9 + rc * 0.12, yaw, 0, 'YXZ'))
-        h.jointAt('LeftArm', this.va); h.jointAt('RightArm', this.vb)
-        this.va.add(this.vb).multiplyScalar(0.5)
-        this.gp.set(0.03, 0.085, -0.56 + low * 0.2 + rc * 0.03).applyQuaternion(this.gq).add(this.va)
-      }
-      // … CARRIED (k → 0), GTA's: a pistol where the stride's own right hand has it — down at his side, swinging with
-      // his arm; a rifle across him in both hands, the grip under his ribs, the muzzle down to the front and left
-      const k = this.aimK
-      if (k < 0.999) {
-        if (rifle) {
-          h.jointAt('RightArm', this.vd)
-          this.vd.x -= 0.06; this.vd.y -= 0.29; this.vd.z -= 0.27
-          this.qa.setFromEuler(this.e3.set(-0.44, 0.52, 0.2, 'YXZ'))
-        } else {
-          h.handTurn(1, this.qa).multiply(this.qb.copy(K.r.q).invert())
-          h.jointAt('RightHand', this.vd)
-          this.vd.sub(this.vc.copy(K.r.wrist).applyQuaternion(this.qa))
-        }
-        const e = k * k * (3 - 2 * k)
-        this.gp.lerpVectors(this.vd, this.gp, e)
-        this.gq.copy(this.qb.copy(this.qa).slerp(this.gq, e))
-      }
+      const st = this.holdSt
+      st.aimK = this.aimK; st.aimY = this.aimY; st.aimP = this.aimP; st.recoil = rc; st.low = low; st.reloading = this.reloading; st.rl = rl
+      holdThird(h, g, st, this.gp, this.gq)
     }
     this.gunL.compose(this.gp, this.gq, this.one)
     this.held = true
-    // HIS HANDS ON IT: the right on the grip; the left under the fore-end / round the right — reloading, down to the
-    // belt for the magazine and back. (A pistol carried is simply in the stride's own hand: no arm is bent to it; his
-    // left hand comes to it as it's raised.)
-    const up = fp ? 1 : this.aimK, both = rifle ? 1 : smooth(0.25, 0.9, up)
-    if (rifle || up > 0.01) {
-      this.vc.copy(K.r.wrist).applyQuaternion(this.gq).add(this.gp)
-      G.r[0] = this.vc.x; G.r[1] = this.vc.y; G.r[2] = this.vc.z
-      this.qb.copy(this.gq).multiply(K.r.q)
-      G.rq[0] = this.qb.x; G.rq[1] = this.qb.y; G.rq[2] = this.qb.z; G.rq[3] = this.qb.w
-      // (the elbow: down and out aimed; back and out, the rifle carried)
-      const c = rifle && !fp ? 1 - up : 0
-      G.rp[0] = fp ? 0.8 : 0.6; G.rp[1] = (fp ? -0.55 : -0.75) + c * 0.45; G.rp[2] = 0.3 + c * 0.5
-      G.rOn = G.rqOn = true
-    }
-    if (both < 0.01) return
-    this.vc.copy(K.l.wrist).applyQuaternion(this.gq).add(this.gp)
-    let free = 1 - both
-    if (this.reloading) {
-      const kk = rl < 0.3 ? rl / 0.3 : rl < 0.5 ? 1 : rl < 0.8 ? 1 - (rl - 0.5) / 0.3 : 0
-      free = Math.max(free, kk * kk * (3 - 2 * kk))
-      this.vc.lerp(this.vd.set(-0.2, 0.98, -0.12), kk * kk * (3 - 2 * kk))
-    } else if (free > 0) { h.jointAt('LeftHand', this.vd); this.vc.lerp(this.vd, free) }
-    G.l[0] = this.vc.x; G.l[1] = this.vc.y; G.l[2] = this.vc.z
-    G.lp[0] = rifle ? -0.45 : -0.7; G.lp[1] = rifle ? -0.85 : -0.65; G.lp[2] = 0.15
-    G.lOn = true
-    if (free < 0.3) {
-      this.qb.copy(this.gq).multiply(K.l.q)
-      G.lq[0] = this.qb.x; G.lq[1] = this.qb.y; G.lq[2] = this.qb.z; G.lq[3] = this.qb.w
-      G.lqOn = true
-    }
+    handsOn(h, g, this.gp, this.gq, fp, fp ? 1 : this.aimK, this.reloading, rl)
+  }
+  private readonly holdSt: HoldState = { aimK: 0, aimY: 0, aimP: 0, recoil: 0, low: 0, reloading: false, rl: -1 }
+
+  /** (co-op) ANOTHER PLAYER'S SHOT, seen: its tracer from where they fired, along the way they fired — flown against
+   *  the land and the solid things only (their game says what it hit; ours draws the dust where it stops). */
+  ghostShot(weapon: string, x: number, y: number, z: number, dx: number, dy: number, dz: number): void {
+    const g = SPECS[weapon as WeaponId]
+    if (!g) return
+    const d = new GFX.Vector3(dx, dy, dz)
+    if (d.lengthSq() < 1e-6) return
+    d.normalize()
+    this.bullets.push({ p: new GFX.Vector3(x, y, z), v: d.multiplyScalar(g.muzzleVelocity), gone: 0, spec: g, tracer: 1, off: new GFX.Vector3(), ghost: true })
+    this.idle = false
   }
 
   private hudA = ''
@@ -842,6 +873,8 @@ export class Arsenal {
   private aimP = 0
   private aimY = 0
   private crossMode = -1
+  /** The aim's pitch (rad, up +) — co-op sends it with our pose while the gun is up. */
+  get aimPitch(): number { return this.aimP }
   private gapPx = -1
   private drawHud(now: number, active: boolean): void {
     const g = this.gun
@@ -886,6 +919,103 @@ export class Arsenal {
     for (const b of this.pads) b.remove()
   }
 }
+
+/** (co-op) WHAT ANOTHER PLAYER HOLDS, posed on their walker by the same code as your own (holdThird, handsOn): the
+ *  weapon they said they hold (the `armed` event), raised when their pose says they aim (FLAG_AIM), at the pitch their
+ *  pose carries; the kick and a flash at its muzzle as their shots arrive. One draw while it's out (the flash another,
+ *  for 45 ms). */
+export class RemoteHold {
+  private id: WeaponId | null = null
+  private model: Model | null = null
+  private want = ''
+  private readonly gunL = new GFX.Matrix4()
+  private readonly gunM = new GFX.Matrix4()
+  private readonly gp = new GFX.Vector3()
+  private readonly gq = new GFX.Quaternion()
+  private readonly one = new GFX.Vector3(1, 1, 1)
+  private readonly v = new GFX.Vector3()
+  private readonly q = new GFX.Quaternion()
+  private readonly s3 = new GFX.Vector3()
+  private readonly st: HoldState = { aimK: 0, aimY: 0, aimP: 0, recoil: 0, low: 0, reloading: false, rl: -1 }
+  private readonly flash: GFX.Mesh
+  private flashUntil = 0
+  private held = false
+  private on = false
+
+  constructor(private readonly hero: Character, private readonly group: GFX.Group, private readonly mat: GFX.ShaderMaterial) {
+    this.flash = new GFX.Mesh(flashBox(), glowMat('#ffc070', 3))
+    this.flash.frustumCulled = false; this.flash.matrixAutoUpdate = false; this.flash.visible = false; this.flash.renderOrder = 4
+    group.add(this.flash)
+  }
+  private get gun(): GunSpec | null { return this.id ? SPECS[this.id] ?? null : null }
+  /** In their hands now: a weapon's id, '' — nothing. */
+  get weapon(): string { return this.id ?? '' }
+  private readonly holdFn = (): void => {
+    const g = this.gun
+    if (!g) return
+    holdThird(this.hero, g, this.st, this.gp, this.gq)
+    this.gunL.compose(this.gp, this.gq, this.one)
+    this.held = true
+    handsOn(this.hero, g, this.gp, this.gq, false, this.st.aimK, false, -1)
+  }
+  /** What they hold ('' or an unknown id: nothing). */
+  set(weapon: string): void {
+    if (weapon === this.want) return
+    this.want = weapon
+    const id = SPECS[weapon as WeaponId] ? (weapon as WeaponId) : null
+    this.id = id
+    this.held = false
+    if (this.model) { this.model.mesh.removeFromParent(); this.model = null }
+    if (id) void weaponModel(id, this.mat).then((m) => { if (this.id !== id) return; this.model = m; this.group.add(m.mesh) })
+  }
+  /** Before their walker is posed: what it must do with the weapon. `shown`: on foot, up, drawn. */
+  update(dt: number, aimed: boolean, pitch: number, shown: boolean): void {
+    const g = this.gun, h = this.hero
+    this.on = shown && !!g
+    const up = this.on && aimed
+    this.st.aimK += ((up ? 1 : 0) - this.st.aimK) * Math.min(1, dt * (up ? 16 : 7))
+    if (!this.on) this.st.aimK = 0
+    this.st.aimY = h.heading
+    this.st.aimP = pitch
+    this.st.recoil = Math.max(0, this.st.recoil - dt * 9)
+    const k = this.st.aimK
+    h.handIK = this.on ? this.holdFn : null
+    h.aimYaw = null
+    h.aimPitch = this.on ? Math.max(-1.1, Math.min(1.1, pitch)) * 0.6 * k : 0
+    h.holdPose = this.on ? 'grip' : null
+    h.torsoYaw = this.on && g?.hold === 'rifle' ? -0.42 * k : 0
+  }
+  /** After their walker is posed (and placed): the weapon where their hands have it; the flash. */
+  place(): void {
+    const m = this.model, h = this.hero
+    const show = this.on && this.held && h.visible && h.root.visible
+    if (m) m.mesh.visible = show
+    if (show) {
+      this.gunM.multiplyMatrices(h.root.matrixWorld, this.gunL)
+      if (m) { m.mesh.matrix.copy(this.gunM); m.mesh.matrixWorld.copy(this.gunM) }
+    }
+    const fl = show && performance.now() < this.flashUntil
+    this.flash.visible = fl
+    if (fl && this.id) {
+      const p = PTS[this.id]?.muzzle ?? [0, 0, -0.3], sz = this.gun?.hold === 'rifle' ? 0.16 : 0.1
+      this.v.set(p[0], p[1], p[2]).applyMatrix4(this.gunM)
+      this.flash.matrix.compose(this.v, this.q.setFromRotationMatrix(this.gunM), this.s3.set(sz, sz, sz * 2.2)); this.flash.matrixWorld.copy(this.flash.matrix)
+    }
+  }
+  /** Their shot left: the kick, the flash. */
+  fire(): void {
+    this.st.recoil = 1
+    this.flashUntil = performance.now() + 45
+  }
+  dispose(): void {
+    const h = this.hero
+    h.handIK = null; h.aimYaw = null; h.aimPitch = 0; h.holdPose = null; h.torsoYaw = 0
+    this.model?.mesh.removeFromParent()
+    this.flash.removeFromParent()
+  }
+}
+let flashGeo: GFX.BufferGeometry | null = null
+const flashBox = (): GFX.BufferGeometry => (flashGeo ??= boxGeometry())
 
 /** A place a weapon lies (a ruin), what lies there, whether you've seen it, when it gives rounds again. */
 export interface PickupSite { id: string; weapon: WeaponId; x: number; y: number; z: number; place: string; seen: boolean; readyAt: number }

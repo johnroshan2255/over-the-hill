@@ -1,15 +1,21 @@
 import { type Account, socketUrl } from './api'
 import { type Ent, FLAG_TELEPORT, Kind, poseFrame, readPoses } from './pose'
-import { type Claim, decodeEv, encodeIntent, type Ev, type Intent, type Inv, type Loose, type Piece, type PlayerView, type Pond, type Stroke, type WorldInfo } from './wire'
+import { type Claim, decodeEv, encodeIntent, type Ev, type Intent, type Inv, type Loose, type Piece, type PlayerView, type Pond, type Stroke, type WorldInfo, type Zone, type DentKind } from './wire'
 
 /**
  * A CO-OP SESSION — one world's WebSocket (backend/README.md): the world as the server says it is (players, claims and
  * their guards, pieces, loose piles, ponds, our hands and trailer), the other players' poses smoothed for drawing, and
  * our intents with their answers. Everything binary (wire.ts, pose.ts).
  *
- * THE SMOOTHING: each remote entity keeps its last poses by the server's tick (50 ms); it's drawn INTERP ticks behind
- * the server's clock — between two poses it has, so a late frame or a far player's 5 Hz never shows as a jump; past
- * its last pose it carries on a little (≤ 3 ticks), then holds. The server's clock is ours less the smallest delay seen.
+ * THE SMOOTHING: each remote entity keeps its last poses BY THE SENDER'S OWN CLOCK (each pose carries it — pose.ts;
+ * counted here in ticks of 50 ms); each player is drawn on their own clock, a little behind — between two poses it has,
+ * so a late frame or a far player's 5 Hz never shows as a jump; past its last pose it carries on a little (≤ 3 ticks),
+ * then holds. Their clock is ours less the smallest delay seen (creeping back up slowly, so one lucky frame or a
+ * drifting clock doesn't hold it wrong); how far behind is THEIR poses' spacing and how late they've been arriving
+ * (`Clock`): 20 a second near — ~110 ms —, 5 a second far — ~400 ms.
+ * (Till 2026-11-24 the poses were placed on the server's tick they were passed on in: at 20 a second each way,
+ * unsynchronised, two of a player's poses fell in one tick — the first lost — and none in the next, a stutter at the
+ * rate itself; far players were mostly extrapolated and held — scripts/harness/syncplay.mjs.)
  */
 export const TICK_MS = 50
 const INTERP = 2
@@ -70,8 +76,16 @@ function slerp(a: number[], b: number[], t: number, out: number[]): void {
   for (let j = 0; j < 4; j++) out[j] /= len
 }
 
-/** (`car`: the garage car they drive — the `ride` event; '' until they've said: the main car is drawn) */
-export interface Remote { sid: number; id: string; name: string; colour: string; car: string; tracks: Map<number, Track> }
+/** A REMOTE PLAYER'S CLOCK (ms): their last pose's time, unwrapped from its 16 bits (`base`, `last16`); ours less
+ *  theirs, the smallest seen (`off`); their poses' spacing (`gap`) and how much later than the quickest they've been
+ *  arriving (`late`, a decaying worst); how far behind they're drawn (`delay`, eased to gap + late). */
+export interface Clock { base: number; last16: number; off: number; gap: number; late: number; delay: number }
+const newClock = (): Clock => ({ base: 0, last16: -1, off: NaN, gap: TICK_MS, late: TICK_MS, delay: TICK_MS * INTERP })
+
+/** (`car`: the garage car they drive — the `ride` event; '' until they've said: the main car is drawn; `weapon`: what's
+ *  in their hands — the `armed` event, '' fists; `hp` their health, `down` till they're `up` — the server's; `clock`:
+ *  their poses' own time) */
+export interface Remote { sid: number; id: string; name: string; colour: string; car: string; weapon: string; hp: number; down: boolean; tracks: Map<number, Track>; clock: Clock }
 
 /** A player's colour (their car's paint, their name tag, their flag) — from their id, the same on every screen. */
 export const COLOURS = ['#c8462d', '#2f7fb8', '#d9a227', '#3f9a5b', '#8e4fb0', '#d26f9a', '#2aa6a1', '#e07b2f', '#6b7fd1', '#9fb83a', '#b84a4a', '#4f6f8f']
@@ -101,6 +115,9 @@ export class Session {
   readonly nodes = new Map<string, number>()
   /** The round trip (ms), from the pings. */
   rtt = 0
+  /** OUR HEALTH (the server's — backend/src/weapons.rs) and whether we're down (till `up`). */
+  hp = 100
+  down = false
   /** Bytes in / out (the HUD's debug line). */
   bytesIn = 0
   bytesOut = 0
@@ -168,9 +185,9 @@ export class Session {
     })
   }
 
-  /** Our pose (pose.ts) — main.ts's co-op step, 20 a second while moving. */
+  /** Our pose (pose.ts) — main.ts's co-op step, 20 a second while moving — with our clock now. */
   sendPose(ents: Ent[]): void {
-    this.send(new Uint8Array(poseFrame(ents)))
+    this.send(new Uint8Array(poseFrame(ents, performance.now())))
   }
 
   private send(b: Uint8Array<ArrayBuffer>): void {
@@ -184,13 +201,27 @@ export class Session {
     return Number.isNaN(this.tickOff) ? 0 : now / TICK_MS - this.tickOff
   }
 
-  /** The tick to draw the others at. */
+  /** The tick to draw the others at (the server's clock — a player without a clock of their own yet). */
   drawTick(now = performance.now()): number {
     return this.serverTick(now) - INTERP
   }
+  /** The tick (on THEIR clock, fractional) to draw player r at now. */
+  drawTickOf(r: Remote, now = performance.now()): number {
+    const c = r.clock
+    return Number.isNaN(c.off) ? this.drawTick(now) : (now - c.off - c.delay) / TICK_MS
+  }
 
-  /** Once a frame: the pings. */
+  /** Once a frame: the pings; each player's clock crept and their delay eased. */
   update(dt: number): void {
+    for (const r of this.remotes.values()) {
+      const c = r.clock
+      if (Number.isNaN(c.off)) continue
+      c.off += dt * 6 // (6 ms a second: the smallest delay seen let go of slowly)
+      c.late *= Math.exp(-dt * 0.5)
+      const want = Math.max(70, Math.min(420, c.gap + c.late + 15))
+      // (eased at 5 % of play speed: a change in delay is the others played a little slower or quicker, never a jump)
+      c.delay += Math.max(-dt * 50, Math.min(dt * 50, want - c.delay))
+    }
     if ((this.pingT -= dt) <= 0) {
       this.pingT = 2
       this.send(encodeIntent({ t: 'ping', n: Math.floor(performance.now() * 10) % 2 ** 32 }))
@@ -211,6 +242,26 @@ export class Session {
     this.send(encodeIntent({ t: 'ride', car }))
   }
 
+  /** THE WEAPON IN OUR HANDS ('' fists), told to the others: on a change, and to each player who joins after. */
+  private weapon = ''
+  arm(weapon: string): void {
+    if (weapon === this.weapon || this.closed) return
+    this.weapon = weapon
+    this.send(encodeIntent({ t: 'arm', weapon }))
+  }
+  /** A shot left our gun (their tracer, its flash). */
+  shot(weapon: string, x: number, y: number, z: number, dx: number, dy: number, dz: number): void {
+    if (!this.closed) this.send(encodeIntent({ t: 'shot', weapon, x, y, z, dx, dy, dz }))
+  }
+  /** A BLOW TO OUR CAR (Damage.ts, in the car's space) or its repair — the others dent the car they draw of ours. */
+  dent(px: number, py: number, pz: number, dx: number, dy: number, dz: number, dv: number, kind: DentKind): void {
+    if (!this.closed) this.send(encodeIntent({ t: 'dent', px, py, pz, dx, dy, dz, dv, kind }))
+  }
+  /** Our bullet hit player `target` — the server checks it and takes the health (or doesn't: `err`, said to nobody). */
+  hit(target: number, weapon: string, zone: Zone, dist: number): void {
+    if (!this.closed) this.send(encodeIntent({ t: 'hit', target, weapon, zone, dist }))
+  }
+
   private ended(why: string): void {
     if (this.closed) return
     this.closed = true
@@ -220,7 +271,7 @@ export class Session {
   }
 
   private addPlayer(sid: number, id: string, name: string): void {
-    this.remotes.set(sid, { sid, id, name, colour: colourOf(id), car: '', tracks: new Map() })
+    this.remotes.set(sid, { sid, id, name, colour: colourOf(id), car: '', weapon: '', hp: 100, down: false, tracks: new Map(), clock: newClock() })
   }
 
   private message(b: Uint8Array): void {
@@ -236,12 +287,25 @@ export class Session {
       for (const p of f.players) {
         const r = this.remotes.get(p.sid)
         if (!r) continue
+        // THEIR CLOCK: the 16 bits unwrapped onto the last; a jump of more than 5 s (a tab put away and back): a new start
+        const c = r.clock
+        let d = c.last16 < 0 ? 0 : p.t - c.last16
+        if (d < -32768) d += 65536
+        else if (d > 32768) d -= 65536
+        const fresh = c.last16 < 0 || Math.abs(d) > 5000
+        if (fresh) { Object.assign(c, newClock()); c.base = p.t; r.tracks.clear() }
+        else { if (d > 0) c.gap += (Math.min(d, 1000) - c.gap) * 0.15; c.base += d }
+        c.last16 = p.t
+        const off = now - c.base
+        if (Number.isNaN(c.off) || off < c.off) { if (!Number.isNaN(c.off)) c.late = Math.max(c.late, 0); c.off = off }
+        else c.late = Math.max(c.late, off - c.off)
+        const tick = c.base / TICK_MS
         const slots = new Set<number>()
         for (const e of p.ents) {
           slots.add(e.slot)
           let t = r.tracks.get(e.slot)
           if (!t) r.tracks.set(e.slot, (t = new Track()))
-          t.add({ tick: f.tick, p: e.p, q: e.q, kind: e.kind, flags: e.flags })
+          t.add({ tick, p: e.p, q: e.q, kind: e.kind, flags: e.flags })
         }
         for (const s of [...r.tracks.keys()]) if (!slots.has(s)) r.tracks.delete(s)
       }
@@ -251,8 +315,16 @@ export class Session {
     if (!e) return
     switch (e.t) {
       // (someone new: they don't know our car yet — said again)
-      case 'joined': this.addPlayer(e.sid, e.id, e.name); if (this.car) this.send(encodeIntent({ t: 'ride', car: this.car })); break
+      case 'joined':
+        this.addPlayer(e.sid, e.id, e.name)
+        if (this.car) this.send(encodeIntent({ t: 'ride', car: this.car }))
+        if (this.weapon) { const w = this.weapon; this.weapon = ''; this.arm(w) }
+        break
       case 'ride': { const r = this.remotes.get(e.sid); if (r) r.car = e.car; break }
+      case 'armed': { const r = this.remotes.get(e.sid); if (r) r.weapon = e.weapon; break }
+      case 'health': { if (e.sid === this.me.sid) this.hp = e.hp; else { const r = this.remotes.get(e.sid); if (r) r.hp = e.hp } break }
+      case 'down': { if (e.sid === this.me.sid) this.down = true; else { const r = this.remotes.get(e.sid); if (r) r.down = true } break }
+      case 'up': { if (e.sid === this.me.sid) { this.down = false; this.hp = 100 } else { const r = this.remotes.get(e.sid); if (r) { r.down = false; r.hp = 100 } } break }
       case 'left': this.remotes.delete(e.sid); break
       case 'ok': { const p = this.pending.get(e.req); this.pending.delete(e.req); p?.ok(); break }
       case 'err': { if (e.req !== null) { const p = this.pending.get(e.req); this.pending.delete(e.req); p?.fail(e.msg) } break }

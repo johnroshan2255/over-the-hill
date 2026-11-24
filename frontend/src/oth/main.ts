@@ -36,7 +36,7 @@ import { Sky } from './Sky'
 import { TerrainShadow } from './TerrainShadow'
 import { TREE_STRIDE } from './Trees'
 import { TyreTracks } from './TyreTracks'
-import { Vehicle } from './Vehicle'
+import { startOf, Vehicle } from './Vehicle'
 import { Winch } from './Winch'
 import { ActionWheel, ICONS } from './Wheel'
 import { liveMap, World, type WorldEnv, type WorldId, WORLDS } from './World'
@@ -409,6 +409,24 @@ async function boot() {
   addEventListener('keydown', (e: KeyboardEvent) => { if (e.code === 'KeyB' && !e.repeat && !coop && !pause && !document.querySelector('.oh-front')) toast('Building needs a co-op world — CO-OP on the title screen', 3500) })
   // CO-OP: the session (null: playing alone), and what we are this frame for it — Coop.ts
   let coop: Coop | null = null
+  /** (co-op) hooks our car's damage to the wire — again whenever the car is changed (a new car, a new CarDamage). */
+  let coopTellDamage: (() => void) | null = null
+  /** (co-op) s left till our car is set down clear of the others' (everyone starts on one track: the last to come stood
+   *  in the others' cars) — once their poses are in. */
+  let coopSpread = 0
+  const spreadOut = () => {
+    if (!coop || !car.sim || onFoot || riding || cut || car.speedKmh > 3) return
+    const occ = coop.remotes.occupied(), half = car.half, me = Math.hypot(half.x, half.z)
+    const clash = (x: number, z: number) => occ.some((o) => Math.hypot(o.x - x, o.z - z) < o.r + me + 1)
+    if (!clash(car.pos.x, car.pos.z)) return
+    const h = car.sim.heading, P = car.pos
+    for (const [sx, sz] of [[7, 0], [-7, 0], [14, 0], [-14, 0], [0, 12], [0, -12], [7, 12], [-7, 12], [21, 0], [-21, 0], [7, -12], [-7, -12], [28, 0], [-28, 0]] as [number, number][]) {
+      const x = P.x + Math.cos(h) * sx + Math.sin(h) * sz, z = P.z - Math.sin(h) * sx + Math.cos(h) * sz
+      if (clash(x, z) || !clearAt(x, z, half.x + 0.4) || map.waterAt(x, z) !== null) continue
+      car.placeAt(x, z, h)
+      return
+    }
+  }
   /** THE COMPANION (Companion.ts — SETTINGS › PLAY, off by default; `?companion=friend|enemy`): an NPC, solo play
    *  only — a FRIEND who walks with you, rides with you or follows in his own car, or an ENEMY who fights you on foot
    *  and rams your car. Made below, once getting in and out is. */
@@ -418,7 +436,7 @@ async function boot() {
   /** Gathering on foot (Gather.ts) — a co-op world's. */
   let gather: Gather | null = null
   let ground: GroundEdits | null = null
-  const coopQ = new GFX.Quaternion(), coopUp = new GFX.Vector3(0, 1, 0)
+  const coopQ = new GFX.Quaternion(), coopUp = new GFX.Vector3(0, 1, 0), coopQ2 = new GFX.Quaternion(), coopX = new GFX.Vector3(1, 0, 0)
   const coopLocal: Local = { kind: Kind.Jeep, p: new GFX.Vector3(), q: new GFX.Quaternion(), parked: null, trailer: null }
   /** Our trailer (Trailer.ts) — a co-op world's: hauling what's gathered. */
   let trailer: Trailer | null = null
@@ -438,7 +456,9 @@ async function boot() {
     const out = onFoot || riding
     // (which car is ours: the others draw that one — sent when it changes, and to each who joins: Session.ride)
     if (car.id) coop?.session.ride(car.id)
-    if (onFoot) { L.kind = Kind.Foot; L.p.copy(hero.pos); L.q.copy(coopQ.setFromAxisAngle(coopUp, hero.heading)) }
+    // (on foot with the gun up: the others raise it on our walker, at our aim's pitch — the rotation's)
+    L.aim = onFoot && !cut && arsenal.aiming && arsenal.aimK > 0.5
+    if (onFoot) { L.kind = Kind.Foot; L.p.copy(hero.pos); L.q.copy(coopQ.setFromAxisAngle(coopUp, hero.heading)); if (L.aim) L.q.multiply(coopQ2.setFromAxisAngle(coopX, arsenal.aimPitch)) }
     else if (riding) { L.kind = Kind.Moto; L.p.copy(two.root.position); L.q.copy(two.root.quaternion) }
     else { L.kind = carKind(car.id); L.p.copy(car.root.position); L.q.copy(car.root.quaternion) }
     if (out && car.sim) { coopParked.kind = carKind(car.id); coopParked.p.copy(car.root.position); coopParked.q.copy(car.root.quaternion); L.parked = coopParked }
@@ -915,7 +935,11 @@ async function boot() {
   const arsenal = new Arsenal({
     onFoot: () => onFoot && !cut,
     playing: () => driving && !pause,
-    targets: () => companion?.targets() ?? [],
+    // (the enemy — solo; the other players on foot — co-op: their hits go to the server, Remotes.targets)
+    targets: () => coop ? coop.remotes.targets() : companion?.targets() ?? [],
+    // (co-op: what's in our hands and each shot told to the others — their walker holds it, their screen draws the tracer)
+    armed: (id) => coop?.session.arm(id ?? ''),
+    shot: (w, from, d) => coop?.session.shot(w, from.x, from.y, from.z, d.x, d.y, d.z),
     kick: (up, side) => { if (fpp) { look.pitch = Math.max(-1.2, Math.min(1.5, look.pitch + up)); look.footYaw += side } else chase.kick(up, side) },
     fpp: () => fpp && onFoot && !cut,
     lookYaw: () => look.footYaw,
@@ -1443,6 +1467,8 @@ async function boot() {
     pickups?.update(dt)
     weaponView()
     companion?.animate(dt)
+    if (coop && car.damage && !car.damage.onHit) coopTellDamage?.()
+    if (coopSpread > 0 && (coopSpread -= dt) <= 0) spreadOut()
     coop?.frame(dt, localNow())
     trailer?.update(dt)
     // (towing: the chase camera further back and higher — the trailer in view behind the car, not filling it)
@@ -1484,6 +1510,8 @@ async function boot() {
     if (damageFx) {
       if (car.damage && car.sim) { const v = car.sim.body.linvel(); damageFx.car(dt, car.damage, car.root, v.x, v.y, v.z, car.paintColor, yourWheel) }
       if (companion?.car.damage && companion.carShown) { const v = companion.carVel; damageFx.car(dt, companion.car.damage, companion.car.root, v.x, v.y, v.z, companion.car.paintColor, hisWheel) }
+      // (co-op: the others' cars, dented as their games say — the smoke, the fire, the pieces)
+      if (coop) for (const o of coop.remotes.damaged()) damageFx.car(dt, o.car.damage!, o.car.root, o.vx, 0, o.vz, o.car.paintColor, () => o.car.wheelPart)
       damageFx.update(dt)
       // (the gas pressed in a car whose engine is gone: told why nothing happens — once every 8 s)
       if ((deadHint -= dt) <= 0 && car.damage?.dead && car.sim && !onFoot && !riding && car.sim.controls.throttle > 0.5) { deadHint = 8; toast(car.damage.wrecked ? 'The car is wrecked — repair it: the wheel › Repair, or rest at a camp' : 'The engine is dead — repair it: the wheel › Repair, or rest at a camp', 4200) }
@@ -1615,7 +1643,45 @@ async function boot() {
     try {
       if (!acct) throw new Error('no account here — open CO-OP on the title screen')
       const session = await Session.connect(acct, coopWorld)
-      coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
+      coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl, fight: fightUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
+      // THE WEAPONS BETWEEN PLAYERS (docs/WEAPONS.md, "Co-op"): what we hold told; their shots drawn; down by a hit —
+      // the fall, lying till the server says we're up (5 s), then back at our camp (or the spawn) with full health
+      session.arm(arsenal.current ?? '')
+      // (our car's blows and its repair, told: the others dent the car they draw of ours)
+      const tellDamage = () => {
+        const dm = car.damage
+        if (!dm) return
+        dm.onHit = (px, py, pz, dx, dy, dz, dv, kind) => session.dent(px, py, pz, dx, dy, dz, dv, kind)
+        dm.onRepair = () => session.dent(0, 0, 0, 0, 0, 0, 0, 'repair')
+      }
+      tellDamage()
+      coopTellDamage = tellDamage
+      void hero.loadClips(fightUrl).catch(() => {})
+      coop.onShot = (w, x, y, z, dx, dy, dz) => arsenal.ghostShot(w, x, y, z, dx, dy, dz)
+      // (ours, for the others' solids: theirs is made only once it's clear of our car and of us — Remotes.clear)
+      const ourBox = { x: 0, z: 0, h: 0, hx: 1, hz: 2.3 }
+      coop.remotes.ours = () => {
+        let cb: typeof ourBox | null = null
+        if (car.sim) {
+          const bb = car.bodyBox, h = car.sim.heading, c = Math.cos(h), sn = Math.sin(h), P = car.pos
+          ourBox.x = P.x + bb.cx * c + bb.cz * sn; ourBox.z = P.z - bb.cx * sn + bb.cz * c; ourBox.h = h; ourBox.hx = bb.hx; ourBox.hz = bb.hz
+          cb = ourBox
+        }
+        return { car: cb, me: onFoot ? hero.pos : riding ? two.pos : null }
+      }
+      coopSpread = 2.5
+      coop.onDown = () => {
+        arsenal.press('fire', false)
+        if (onFoot && !cut) hero.knockdown(60, undefined, hero.has('die_back') ? 'die_back' : 'knockdown', false)
+      }
+      coop.onUp = () => {
+        if (!onFoot || cut) return
+        // (beside the camp; else the start — by the track, 4 m off it)
+        const st = startOf(map), at = myCamp ? { x: myCamp.x + 2, z: myCamp.z + 2, h: myCamp.rot } : { x: st.x + Math.cos(st.heading) * 4, z: st.z - Math.sin(st.heading) * 4, h: st.heading }
+        hero.appear(at.x, at.z, at.h)
+        footCam()
+        toast(myCamp ? 'Back at your camp' : 'Back at the start', 2500)
+      }
       coop.build.onToggle = (on) => { chase.aerial = on }
       coop.worldParts = () => ({ rocks: world.rocks, grass: world.grass })
       coop.build.obstacle = (x, z) => (world.trees.nearest(x, z, 4.5) ? 'Too close to a tree — its branches would hide your flag' : world.rocks.biggestNear(x, z, 1.5) ? 'Not on a boulder' : '')

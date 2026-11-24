@@ -44,8 +44,10 @@ await pa.waitForFunction(() => window.__oth.onFoot && window.__oth.hero.control,
 const spot = await pa.evaluate(() => {
   const o = window.__oth, p = o.hero.pos, m = o.world.map
   let best = null
-  for (let k = 0; k < 160; k++) {
-    const a = k * 2.399, r = 25 + (k % 10) * 6, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r
+  // (out to ~300 m: since the knolls the ground right round the spawn rolls more than a foundation takes)
+  for (let k = 0; k < 600; k++) {
+    if (best && best.s < 0.35 && k > 160) break
+    const a = k * 2.399, r = 25 + (k % 20) * 14, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r
     let lo = 1e9, hi = -1e9
     for (let i = -3; i <= 3; i++) for (let j = -2; j <= 3; j++) { const y = m.height(x + i * 2, z + j * 2); lo = Math.min(lo, y); hi = Math.max(hi, y) }
     if (m.waterAt(x, z) !== null || m.trackDist(x, z) < 14 || o.world.trees.nearest(x, z, 9)) continue

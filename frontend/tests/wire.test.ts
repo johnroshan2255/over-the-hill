@@ -45,14 +45,14 @@ check(decodeEv(bytes(w + '00')) === null, 'a long frame is refused')
 const close = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) < 1e-6)
 const c = gold.poses.client
 const ents: Ent[] = c.ents.map((e: Ent, k: number) => ({ ...e, q: c.q_in[k] }))
-check(hex(new Uint8Array(poseFrame(ents))) === c.hex, 'our pose frame writes', `got ${hex(new Uint8Array(poseFrame(ents)))}\n      want ${c.hex}`)
+check(hex(new Uint8Array(poseFrame(ents, c.t))) === c.hex, 'our pose frame writes', `got ${hex(new Uint8Array(poseFrame(ents, c.t)))}\n      want ${c.hex}`)
 const back = readPose(bytes(c.hex))
 check(!!back && back.every((e, k) => e.slot === c.ents[k].slot && e.kind === c.ents[k].kind && e.flags === c.ents[k].flags && close(e.p, c.ents[k].p) && close(e.q, c.ents[k].q)), 'our pose frame reads back')
 const s = gold.poses.server, got = readPoses(bytes(s.hex))
 check(!!got && got.tick === s.tick && got.players.length === s.players.length, 'the poses frame: tick and players')
 got?.players.forEach((p, i) => {
   const want = s.players[i]
-  check(p.sid === want.sid && p.ents.length === want.ents.length, `poses: player ${want.sid}`)
+  check(p.sid === want.sid && p.t === want.t && p.ents.length === want.ents.length, `poses: player ${want.sid} (their clock ${p.t})`)
   p.ents.forEach((e, k) => {
     const we = want.ents[k]
     check(e.slot === we.slot && e.kind === we.kind && e.flags === we.flags && close(e.p, we.p) && close(e.q, we.q), `poses: player ${want.sid} entity ${k}`, `got ${JSON.stringify(e)}\n      want ${JSON.stringify(we)}`)

@@ -628,6 +628,8 @@ export class Bot {
     const S = this.S, w = this.o.world()
     if (!S || S.closed || !w || this.stopped) return
     S.update(dt)
+    // (shot down in a co-op fight — the server's `down`: he lies where he fell till he's `up`, then walks on)
+    if (S.down) return
     const wk = this.walk
     if (wk) {
       const wp = wk.route[0]

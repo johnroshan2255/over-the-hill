@@ -4,7 +4,9 @@
     "mat": ["wood", "stone", "metal"],
     "store": ["carry", "trailer"],
     "op": ["raise", "lower", "flatten", "smooth"],
-    "pave": ["stone", "gravel", "planks", "dirt", "erase"]
+    "pave": ["stone", "gravel", "planks", "dirt", "erase"],
+    "zone": ["head", "body", "limb"],
+    "dent": ["crash", "shot", "repair"]
   },
   "types": {
     "bag": { "obj": [["wood", "var"], ["stone", "var"], ["metal", "var"]] },
@@ -59,7 +61,13 @@
     "ok": [52, [["req", "var"]]],
     "err": [53, [["req", "varn"], ["msg", "str"]]],
     "pong": [54, [["n", "var"]]],
-    "ride": [55, [["sid", "var"], ["car", "str"]]]
+    "ride": [55, [["sid", "var"], ["car", "str"]]],
+    "armed": [56, [["sid", "var"], ["weapon", "str"]]],
+    "shot": [57, [["sid", "var"], ["weapon", "str"], ["x", "f32"], ["y", "f32"], ["z", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"]]],
+    "health": [58, [["sid", "var"], ["hp", "var"], ["by", "varn"]]],
+    "down": [59, [["sid", "var"], ["by", "var"], ["weapon", "str"]]],
+    "up": [60, [["sid", "var"]]],
+    "dent": [61, [["sid", "var"], ["px", "f32"], ["py", "f32"], ["pz", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"], ["dv", "f32"], ["kind", "dent"]]]
   },
   "intents": {
     "chat": [10, [["text", "str"]]],
@@ -77,6 +85,10 @@
     "pave": [22, [["mat", "pave"], ["x", "f32"], ["z", "f32"], ["r", "f32"]]],
     "pond": [23, [["x", "f32"], ["z", "f32"], ["r", "f32"], ["depth", "f32"]]],
     "ping": [24, [["n", "var"]]], "stow": [25, [["from", "store"], ["to", "store"], ["bag", "bag"]]],
-    "ride": [26, [["car", "str"]]]
+    "ride": [26, [["car", "str"]]],
+    "arm": [27, [["weapon", "str"]]],
+    "shot": [28, [["weapon", "str"], ["x", "f32"], ["y", "f32"], ["z", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"]]],
+    "hit": [29, [["target", "var"], ["weapon", "str"], ["zone", "zone"], ["dist", "f32"]]],
+    "dent": [9, [["px", "f32"], ["py", "f32"], ["pz", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"], ["dv", "f32"], ["kind", "dent"]]]
   }
 }

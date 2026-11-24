@@ -6,8 +6,8 @@ import type { MapData } from './MapData'
 import type { OthPhysics } from './Physics'
 import type { TerrainShadow } from './TerrainShadow'
 import type { Target, Zone } from './Weapons'
-import { RemoteCar } from './Vehicle'
-import { group, Groups, STATIC_MESH_FILTER } from '../physics/PhysicsWorld'
+import { carSolid, RemoteCar } from './Vehicle'
+import { group, Groups } from '../physics/PhysicsWorld'
 import type RAPIER from '@dimforge/rapier3d-compat'
 import DAMAGE from '../../../proto/damage.json'
 import { DAMAGE_ON } from './Damage'
@@ -987,21 +987,7 @@ export class Companion {
       // triangle meshes do not meet each other): metal on metal either way, to a couple of centimetres.
       const C = this.carP, Cq = this.carQ
       const body = pw.world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(C.x, C.y, C.z).setRotation({ x: Cq.x, y: Cq.y, z: Cq.z, w: Cq.w }))
-      const idx = new Uint32Array(shape.mesh.length / 3)
-      for (let i = 0; i < idx.length; i++) idx[i] = i
-      pw.world.createCollider(R.ColliderDesc.trimesh(shape.mesh, idx).setCollisionGroups(group(Groups.Static | Groups.StaticMesh, STATIC_MESH_FILTER)).setFriction(0.6), body)
-      // (… those inner pieces, a few dozen of a hand's size, joined into SECTIONS along the car — 0.6 m each, each
-      //  wrapped: your car's mesh is a thin shell, and coming at him it slipped between the small pieces, a quarter
-      //  of a metre in, measured; a few big solid ones stop it. Inside his panels still — his wheels' room filled.)
-      { const all: number[] = []
-        for (const h of shape.hulls) for (let i = 0; i < h.length; i++) all.push(h[i])
-        const L = 0.6, nSec = Math.max(1, Math.ceil((shape.rear - shape.front) / L))
-        for (let k = 0; k < nSec; k++) {
-          const z0 = shape.front + k * L - 0.04, z1 = shape.front + (k + 1) * L + 0.04, pts: number[] = []
-          for (let i = 0; i < all.length; i += 3) if (all[i + 2] >= z0 && all[i + 2] <= z1) pts.push(all[i], all[i + 1], all[i + 2])
-          const d = pts.length >= 12 ? R.ColliderDesc.convexHull(new Float32Array(pts)) : null
-          if (d) pw.world.createCollider(d.setCollisionGroups(group(Groups.Static, Groups.VehicleMesh)).setFriction(0.6), body)
-        } }
+      for (const d of carSolid(R, shape)) pw.world.createCollider(d, body)
       // (its nose and its tail — the front and the back 0.6 m of it, wrapped: what `reach` tries against your car)
       // (… of 96 points each: the furthest of that end of the mesh along 96 ways round — its wrap to a centimetre or
       //  two, and never outside it. Wrapped whole — thousands of points — one try of it against your car's mesh took

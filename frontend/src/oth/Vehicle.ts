@@ -15,6 +15,7 @@ import type { OthPhysics } from './Physics'
 import type { Tier } from './quality'
 import { SHADOW_GLSL, type TerrainShadow } from './TerrainShadow'
 import type RAPIER from '@dimforge/rapier3d-compat'
+import { group, Groups, STATIC_MESH_FILTER } from '../physics/PhysicsWorld'
 
 /** A CRASH your car has just had (Vehicle.onCrash): the change of its velocity where it was hit (m/s), that point and
  *  the way the blow pushed (the world's), the other body (null: the ground, a rock, a tree). */
@@ -243,15 +244,7 @@ export class Vehicle {
     } else if (this.spawnAt) {
       at = this.spawnAt
       this.spawnAt = null
-    } else {
-      // the start: the map's first track where it passes nearest the spawn, along it (the desert's is its pass road —
-      // which runs on out over the crossing's gate line: not from its end)
-      const L = this.map.meta.trails.lines[0], sp = this.map.meta.spawn
-      let k = 0
-      for (let i = 1; i + 4 < L.length; i++) if ((L[i][0] - sp.x) ** 2 + (L[i][1] - sp.z) ** 2 < (L[k][0] - sp.x) ** 2 + (L[k][1] - sp.z) ** 2) k = i
-      const [x, z] = L[k], [x2, z2] = L[k + 4]
-      at = { x, z, heading: Math.atan2(-(x2 - x), -(z2 - z)) }
-    }
+    } else at = startOf(this.map)
     this.id = def.id
     this.model = truck
     this.sim = new TruckSim(this.physics.pw, truck, { ...def.stock })
@@ -1243,6 +1236,41 @@ function beamMaterial(): GFX.ShaderMaterial {
  * by the distance it moves and steer by how fast it turns; its contact shadow and, at night, its lamps' glow. Three
  * draws (body, glass, the wheels instanced) + the shadow, culled with its sphere and the hills.
  */
+/** WHAT IS SOLID OF A CAR NOT OURS (the enemy's — Companion.ts —, another player's — Remotes.ts): ITS OWN SHAPE, not the
+ *  box round everything on it (its mirrors, its bars, its spare wheel: an invisible layer a hand or two off its panels —
+ *  the user, 2026-11-21: "the collision must hit the car, not an invisible outer layer"). The exact body as a triangle
+ *  mesh — our car's inner hulls, a walker, a bullet meet it — and its own inner solid, which our car's exact mesh meets
+ *  (two triangle meshes do not meet each other): the inner pieces, a few dozen of a hand's size, joined into SECTIONS
+ *  along the car, 0.6 m each, each wrapped (our car's mesh is a thin shell: coming at it, it slipped between small
+ *  pieces, a quarter of a metre in, measured; a few big solid ones stop it). Metal on metal either way. */
+export function carSolid(R: typeof RAPIER, shape: { mesh: Float32Array; hulls: Float32Array[]; front: number; rear: number }, friction = 0.6): RAPIER.ColliderDesc[] {
+  const out: RAPIER.ColliderDesc[] = []
+  const idx = new Uint32Array(shape.mesh.length / 3)
+  for (let i = 0; i < idx.length; i++) idx[i] = i
+  out.push(R.ColliderDesc.trimesh(shape.mesh, idx).setCollisionGroups(group(Groups.Static | Groups.StaticMesh, STATIC_MESH_FILTER)).setFriction(friction))
+  const all: number[] = []
+  for (const h of shape.hulls) for (let i = 0; i < h.length; i++) all.push(h[i])
+  const L = 0.6, nSec = Math.max(1, Math.ceil((shape.rear - shape.front) / L))
+  for (let k = 0; k < nSec; k++) {
+    const z0 = shape.front + k * L - 0.04, z1 = shape.front + (k + 1) * L + 0.04, pts: number[] = []
+    for (let i = 0; i < all.length; i += 3) if (all[i + 2] >= z0 && all[i + 2] <= z1) pts.push(all[i], all[i + 1], all[i + 2])
+    const d = pts.length >= 12 ? R.ColliderDesc.convexHull(new Float32Array(pts)) : null
+    if (d) out.push(d.setCollisionGroups(group(Groups.Static, Groups.VehicleMesh)).setFriction(friction))
+  }
+  return out
+}
+
+/** THE START: the map's first track where it passes nearest the spawn, along it (the desert's is its pass road — which
+ *  runs on out over the crossing's gate line: not from its end). Where a new game puts the car, and where a player
+ *  downed in co-op comes back without a camp. */
+export function startOf(map: MapData): { x: number; z: number; heading: number } {
+  const L = map.meta.trails.lines[0], sp = map.meta.spawn
+  let k = 0
+  for (let i = 1; i + 4 < L.length; i++) if ((L[i][0] - sp.x) ** 2 + (L[i][1] - sp.z) ** 2 < (L[k][0] - sp.x) ** 2 + (L[k][1] - sp.z) ** 2) k = i
+  const [x, z] = L[k], [x2, z2] = L[k + 4]
+  return { x, z, heading: Math.atan2(-(x2 - x), -(z2 - z)) }
+}
+
 export class RemoteCar {
   readonly root = new GFX.Group()
   readonly shadow: GFX.Mesh
@@ -1264,7 +1292,7 @@ export class RemoteCar {
   /** The body's box in car space (centre, half size) — null until its model is in. */
   box: { c: GFX.Vector3; h: GFX.Vector3 } | null = null
   /** DAMAGE (Damage.ts): set `damageOn` before its car is given — the companion's car takes blows; another player's
-   *  (co-op) does not yet. */
+   *  (co-op) takes the blows their own game tells of (the `dent` event — Remotes.dent). */
   damageOn = false
   damage: CarDamage | null = null
   private readonly charU = { value: 0 }

@@ -68,6 +68,15 @@ fn events() -> Vec<Value> {
         Ev::Err { req: None, msg: "slow down" },
         Ev::Pong { n: 123_456_789 },
         Ev::Ride { sid: 2, car: "steppe" },
+        Ev::Armed { sid: 2, weapon: "ak47" },
+        Ev::Armed { sid: 2, weapon: "" },
+        Ev::Shot { sid: 2, weapon: "sniper", x: 1.5, y: 70.25, z: -3.0, dx: 0.75, dy: 0.0, dz: -0.5 },
+        Ev::Health { sid: 300, hp: 66, by: Some(2) },
+        Ev::Health { sid: 300, hp: 100, by: None },
+        Ev::Down { sid: 300, by: 2, weapon: "pistol" },
+        Ev::Up { sid: 300 },
+        Ev::Dent { sid: 2, px: 0.75, py: 0.5, pz: -2.25, dx: 0.0, dy: 0.0, dz: 1.0, dv: 9.5, kind: overhill_server::proto::DentKind::Crash },
+        Ev::Dent { sid: 2, px: 0.0, py: 0.0, pz: 0.0, dx: 0.0, dy: 0.0, dz: 0.0, dv: 0.0, kind: overhill_server::proto::DentKind::Repair },
     ];
     evs.iter().map(|e| json!({ "hex": hex(&wire::encode_ev(e)), "json": serde_json::to_value(e).unwrap() })).collect()
 }
@@ -92,6 +101,10 @@ fn intents() -> Vec<Value> {
         json!({ "t": "ping", "req": null, "n": 99 }),
         json!({ "t": "ride", "req": null, "car": "fortyfive" }),
         json!({ "t": "stow", "req": 15, "from": "carry", "to": "trailer", "bag": { "wood": 3, "stone": 1, "metal": 0 } }),
+        json!({ "t": "arm", "req": null, "weapon": "sniper" }),
+        json!({ "t": "shot", "req": null, "weapon": "ak47", "x": 1.5, "y": 70.25, "z": -3.0, "dx": 0.75, "dy": 0.0, "dz": -0.5 }),
+        json!({ "t": "hit", "req": 16, "target": 300, "weapon": "ak47", "zone": "head", "dist": 42.5 }),
+        json!({ "t": "dent", "req": null, "px": -0.75, "py": 0.5, "pz": 2.25, "dx": 0.0, "dy": 0.0, "dz": -1.0, "dv": 12.5, "kind": "shot" }),
     ];
     v.into_iter().map(|j| json!({ "hex": hex(&wire::encode_intent(&j).unwrap_or_else(|e| panic!("{j}: {e}"))), "json": j })).collect()
 }
@@ -132,13 +145,14 @@ fn poses() -> Value {
     use overhill_server::proto::{self, Entity};
     let car = Entity::new(0, 1, proto::FLAG_TELEPORT, [100.5, 68.25, -20.0], [0.0, 0.38268343, 0.0, 0.9238795]);
     let trailer = Entity::new(2, proto::KIND_TRAILER, proto::FLAG_HITCHED, [100.5, 68.0, -26.0], [0.05, -0.7, 0.1, 0.7]);
-    let walker = Entity::new(0, proto::KIND_FOOT, 0, [-3.0, 70.5, 2048.0], [0.0, -1.0, 0.0, 0.0]);
-    let client = proto::pose_frame(&[car, trailer]);
+    let walker = Entity::new(0, proto::KIND_FOOT, proto::FLAG_AIM, [-3.0, 70.5, 2048.0], [0.0, -1.0, 0.0, 0.0]);
+    let client = proto::pose_frame_t(51_234, &[car, trailer]);
     let mut server = vec![proto::TAG_POSES];
     server.extend_from_slice(&123_456u32.to_le_bytes());
     server.push(2);
-    for (sid, es) in [(7u16, vec![car, trailer]), (300u16, vec![walker])] {
+    for (sid, t, es) in [(7u16, 51_234u16, vec![car, trailer]), (300u16, 65_535u16, vec![walker])] {
         server.extend_from_slice(&sid.to_le_bytes());
+        server.extend_from_slice(&t.to_le_bytes());
         server.push(es.len() as u8);
         for e in &es {
             server.extend_from_slice(&e.raw);
@@ -146,10 +160,10 @@ fn poses() -> Value {
     }
     assert!(proto::parse_poses(&server).is_some());
     json!({
-        "client": { "hex": hex(&client), "ents": [ent_json(&car), ent_json(&trailer)],
+        "client": { "hex": hex(&client), "t": 51_234, "ents": [ent_json(&car), ent_json(&trailer)],
                     "q_in": [[0.0, 0.38268343, 0.0, 0.9238795], [0.05, -0.7, 0.1, 0.7]] },
         "server": { "hex": hex(&server), "tick": 123_456, "players": [
-            { "sid": 7, "ents": [ent_json(&car), ent_json(&trailer)] },
-            { "sid": 300, "ents": [ent_json(&walker)] } ] },
+            { "sid": 7, "t": 51_234, "ents": [ent_json(&car), ent_json(&trailer)] },
+            { "sid": 300, "t": 65_535, "ents": [ent_json(&walker)] } ] },
     })
 }

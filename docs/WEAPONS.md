@@ -6,6 +6,33 @@
 > weapons are **the pistol, the AK-47, the sniper rifle** — and fists. What is written of the katana below (the first
 > request, rounds 2 and 3) is the record of what was asked and done, not of what is in the game.
 
+## Co-op (2026-11-24) — the weapons between players
+
+The rule as "The rules they share" has it: **the shooter's game flies the bullet and says what it hit; the server checks
+the claim and owns everyone's health.** Built on the wire (`proto/wire.json`), the server (`backend/src/weapons.rs`,
+`world.rs`) and the game (`Remotes.ts`, `Coop.ts`, `Weapons.ts`, `main.ts`).
+
+| | how |
+|---|---|
+| what you hold, seen | `arm` (the weapon in your hands, `""` fists) → everyone's `armed`; said again to whoever joins (as `ride` is). Their walker holds it by **the same code as yours**: the third-person hold and the hands lifted out of `Arsenal` (`holdThird`, `handsOn` — moved, not changed) and used by `RemoteHold` too |
+| aimed, seen | your pose's **bit 7** (`FLAG_AIM`, on foot): the gun up; the aim's pitch rides in the pose's rotation (the heading as before, the pitch about its x). Their game raises it at that pitch, the chest turned for a rifle |
+| a shot, seen | `shot` (weapon, muzzle, way) → the others: the flash at their muzzle, the kick, and its tracer flown in your world against the land and the solid things only (`Arsenal.ghostShot`: it hits nobody — their game decided that) with the dust where it stops |
+| a hit | each other player on foot is a `Target` (`Remotes.targets`) — the bullet meets their drawn capsule as it meets the enemy — whose `hit` sends `hit` (their sid, the weapon, the zone, the distance flown). **The server** takes it only if: you're up and hold that weapon; they're another player, up, on foot; the fire interval allows it (a bucket: one hit per `fireTicks`, two at most — two a tick apart can arrive in one read); the distance is within the weapon's range and within ±3 m of your two poses' distance. The damage is worked out there from `proto/weapons.json` — `damage × zone × max(floor, e^(−2·drag·distance))` — never sent by the game |
+| health | 100, the server's, this session's only. `health` (sid, hp, by) to everyone: your bar (bottom middle, shown below full; red at 30) and a red edge as a hit lands |
+| down | at 0: `down` (sid, by, weapon) — the toast "Asha downed Ravi · AK-47"; you fall (the fight's `die_back`) and lie; your trigger is let go; they see you fall and lie (`Character.puppetDown`); further hits are refused ("already down") |
+| up | 5 s later `up` and `health` 100: you're back beside your camp — or by the start (the first track nearest the spawn: `Vehicle.startOf`, where a new game begins), whole, weapons kept |
+| the helper bot | a player like any other: he can be shot; down, he lies where he fell till he's up (`Bot.tick`) |
+
+Checked by `scripts/harness/coopfight.mjs` (two Chrome profiles, one world): B sees the AK-47 in A's hands and raised;
+A fires at B 14 m off — B is told of every shot, the server takes B's health in 4 hits, B lies down (on both screens),
+5 s on B is up, whole, at the start; A's hands empty again seen. The server's checks: `world::tests::shots_between_players`
+(not armed, a weapon that isn't, where they aren't, out of range, yourself, the fire interval, down / up, not on
+foot, a shot relayed only for the weapon held) and `weapons::tests`.
+
+Not yet: no sound (nothing in the game has one-shot sounds); a newcomer doesn't know who is down till they're up; a
+bullet on another player's car does nothing to it (their game owns their car's damage — it dents only from their own
+crashes, told by `dent`: docs/NEXT_damage.md); the zone is by height on a standing capsule (a man down is not hit).
+
 ## Round 4 (2026-11-21, the same day — from the phone again)
 
 "Now no katana is showing — remove all katana thing from the game. Also fix the collision: my car gets hit from a few
@@ -180,7 +207,7 @@ posed by distance as the co-op players' are; the fight's clips and the weapons' 
 
 ### What's left, and what bites
 
-- **Co-op (step 8)**: nothing of it. The plan is in "The rules they share" above: a `hit` intent the server checks
+- **Co-op (step 8)**: built 2026-11-24 — "Co-op" at the top. (What follows was the plan.) A `hit` intent the server checks
   against `proto/weapons.json` (the fire interval in ticks, the range, the target's pose), health and kills as events,
   the weapon held as part of `ride`-like state so `Remotes.ts` can draw it (`weaponModel` + the same `placeGun`).
   `proto/wire.json` changes must pass `cargo test --test golden` and `npm run test:wire`.
