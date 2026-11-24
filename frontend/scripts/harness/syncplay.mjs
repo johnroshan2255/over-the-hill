@@ -48,7 +48,7 @@ const open = async (who) => {
   await page.evaluateOnNewDocument((acct) => localStorage.setItem('overhill.player.v1', JSON.stringify(acct)), { id: who.id, name: who.name, token: who.token })
   const laggy = (process.env.LAGGY || '').split(',').includes('ABCD'[names.indexOf(who.name)])
   const base = laggy ? `http://localhost:${process.env.LAGPORT || 5201}` : BASE
-  await page.goto(`${base}/?coop=${world.id}&tier=${process.env.TIER || 'low'}&hour=12&time=0&save=0&dpr=fixed&weapons=all&weaponsites=0`, { waitUntil: 'load' })
+  await page.goto(`${base}/?coop=${world.id}&tier=${process.env.TIER || 'low'}&hour=12&time=0&save=0&dpr=fixed&weapons=all&weaponsites=0`, { waitUntil: 'load', timeout: 120_000 })
   await page.waitForFunction(() => window.__oth?.ready && window.__oth.coop, { timeout: 180_000, polling: 250 })
   return page
 }
@@ -150,6 +150,8 @@ for (const [o, rec] of Object.entries(recs)) {
     results.push({ pair: `${o} sees ${s}`, jumps: jumps.length, delay: best.d, rms: +best.rms.toFixed(3), worst: +best.mx.toFixed(2), jitter: +Math.sqrt(jj / res.length).toFixed(3), moved: +moved.toFixed(0) })
   }
 }
+// (each one's playback of the others, as it stands now: their poses' spacing, how late they come, how far behind drawn)
+for (const [k, p] of [['A', pa], ['B', pb], ['C', pc]]) console.log(`${k} plays back:`, JSON.stringify(await p.evaluate(() => [...window.__oth.coop.session.remotes.values()].map((r) => ({ who: r.name, gap: Math.round(r.clock.gap), late: Math.round(r.clock.late), delay: Math.round(r.clock.delay) })))))
 console.log('pair        delay ms   error RMS / worst (m)   jitter RMS (m)   (moved m)')
 for (const r of results) console.log(`${r.pair.padEnd(12)} ${String(r.delay).padStart(6)}      ${r.rms.toFixed(3)} / ${r.worst.toFixed(2)}            ${r.jitter.toFixed(3)}        ${r.moved}${r.jumps ? `   (${r.jumps} jump${r.jumps > 1 ? 's' : ''} of their own left out)` : ''}`)
 // (the poses sent a second while moving: the sends with less than 80 ms to the one before — a still player sends 1 a second)

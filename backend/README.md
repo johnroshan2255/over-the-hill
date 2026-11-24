@@ -6,7 +6,7 @@ Accounts, saves, and the shared worlds: friends in one valley, claiming land, ga
 ```sh
 cd backend
 cargo run                    # http://0.0.0.0:5280 — overhill.db here, the maps from ../frontend/public/oth
-cargo test                   # unit tests (+ the weapons: shots_between_players) + tests/flow.rs (two players over real
+cargo test                   # unit tests (+ the weapons: a_shoots_b_down_and_b_gets_up) + tests/flow.rs (two players over real
                              # HTTP / WebSockets, a restart) + tests/golden.rs (the wire, pinned)
 cargo build --release
 ```
@@ -93,9 +93,9 @@ within 10 minutes is as they were (and told so) — a reload healed you, and got
 | `pond` | `x`, `z`, `r` (3–15), `depth` (0.5–3) | inside your claim; 4 each |
 | `ping` | `n` | answered at once with `pong {n}` (the round trip) |
 | `dent` | `px py pz` (in the car's own space), `dx dy dz` (the way it pushed), `dv` (m/s), `kind`: `crash` \| `shot` \| `repair` | a blow to the sender's car (the game's `CarDamage.hit`) or its repair, relayed as `dent` (`sid`, …): the others dent the car they draw of theirs the same way; kept for newcomers |
-| `arm` | `weapon`: an id in `proto/weapons.json` (`pistol`, `ak47`, `sniper`), `""` for fists | relayed to the others as `armed` (`sid`, `weapon`); the game says it again when someone joins |
-| `shot` | `weapon`, `x y z` (the muzzle), `dx dy dz` (the way) | the weapon must be the one armed, the player up; relayed to the others as `shot` (`sid`, …): their tracer, the flash |
-| `hit` | `target` (their sid), `weapon`, `zone`: `head` \| `body` \| `limb`, `dist` (m) | **weapons.rs**: the shooter up and holding that weapon; the target another player, up, on foot; the fire interval (a bucket: one hit a `fireTicks`, two at most); `dist` within the weapon's range and within ±3 m of the two poses' distance. The damage is the server's — `damage × zone × max(floor, e^(−2·drag·dist))` from the spec, never the client's — off the target's health (100): `health` (`sid`, `hp`, `by`) to everyone; at 0 `down` (`sid`, `by`, `weapon`), and 5 s later `up` (`sid`) and `health` 100 (the game puts itself back at its camp or the start). Errors (`missed`, `too fast`, `already down`, …) go to the shooter only, shown to nobody |
+| `arm` | `weapon` (`fists` `pistol` `ak47` `sniper`) | what's in your hands — kept here (your hits are checked against it), told to the others as `armed` (and to whoever joins later) |
+| `shot` | `weapon`, `x y z`, `dx dy dz` | a shot left: relayed to the others as `shot` to draw; counted, at most its fire rate (a bucket of 2, one more every `fireTicks`) |
+| `hit` | `sid` (the player hit), `weapon`, `zone` (`head` `body` `limb`), `dist` | **the fight** below |
 
 Building, shaping and paving: the player within 40 m of their claim's edge. Taking things: within reach of them
 (the trailer's own pose for `trailer`).
@@ -104,11 +104,18 @@ Building, shaping and paving: the player within 40 m of their claim's edge. Taki
 `left`, `chat`, `tree_cut`, `tree_back`, `drop`, `drop_gone`, `node`, `node_back`, `inv` (yours), `claim`,
 `claim_gone`, `stock`, `guard` `{claim, on}`, `raid` `{claim, owner, by, by_name, bag}`, `piece`, `piece_gone`,
 `cells` `{claim, cells: [[i, j, cm]]}` (the 2 m grid's cell, its height change from the map's), `pave`, `pond`,
-`pond_gone`, `ok`, `err`, `pong`, `ride`, `dent`, and the weapons' `armed`, `shot`, `health`, `down`, `up`.
+`pond_gone`, `ok`, `err`, `pong`, `ride`, `armed` `{sid, weapon}`, `shot` `{sid, weapon, x…dz}`,
+`health` `{sid, hp, by, weapon, zone}`, `down` `{sid, by, by_name, weapon}`, `up` `{sid}`, `dent` `{sid, px…dv, kind}`.
 
-**The weapons between players** (`weapons.rs`, docs/WEAPONS.md "Co-op"): the shooter's game flies the bullet and says
-what it hit; the server checks the claim and owns everyone's health — this session's only (a reconnect is whole), never
-stored. The numbers are `proto/weapons.json`, the game's own (one file, read by both).
+**The fight** (`weapons.rs`, by the numbers in `proto/weapons.json` — the specs' — docs/WEAPONS.md): each player has
+100 health, kept here. A `hit` is taken only if both are on foot and the target is standing; the weapon is in the
+shooter's hands; one of its `shot`s from the last 60 ticks is spent on it (no shot, no hit); the distance said is
+within the gun's range and agrees with the two poses (± 3 m + 2 %). The damage is worked out here —
+`damage × zone × max(floor, e^(−2·drag·dist))` — never taken from the client; fists don't hurt other players; everyone gets
+`health`; at 0 `down`, and 100 ticks (5 s) later `up` (the player's game puts them back at their camp, else by their
+car). The ammunition isn't checked (a magazine's rounds and reloads are the client's).
+A player who leaves hurt or down and comes back within 10 minutes (a reload, a dropped line) comes back as they were
+— told their own `health` / `down` after the welcome — not whole; the weapon in their hands starts as fists again.
 
 **The guard**: a claim is guarded while its owner is inside it (within its radius + 2 m). With the world rule
 `offline_guard`, also while they're offline (off by default: the user's rule — "if we are out they can steal").

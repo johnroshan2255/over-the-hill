@@ -1,65 +1,33 @@
-//! THE WEAPONS BETWEEN PLAYERS (docs/WEAPONS.md, "The rules they share"; docs/NEXT_companion.md §1): the shooter's game
-//! flies the bullet and says what it hit; the server checks the claim and owns everyone's health.
+//! THE WEAPONS between players (docs/WEAPONS.md, "The rules they share"): the shooter's game flies the bullet and says
+//! what it hit; the server checks the claim against the weapons' own numbers — proto/weapons.json, made from the spec
+//! files (docs/weapons/*.md) and read by the game too — and owns everyone's health.
 //!
-//! The numbers are the game's own, `proto/weapons.json` (made from the specs by `scripts/oth/weapons.mjs`), read here as
-//! `wire.rs` reads `wire.json` — one file, so the two sides can't disagree on a weapon's damage or its fire interval.
-//!
-//! A `hit` is taken only if: the shooter is up and holds that weapon; the target is another player, up, on foot; the
-//! weapon's fire interval allows it (a bucket that fills one hit per `fireTicks` and holds two — two hits a tick apart
-//! can arrive in one TCP read); the distance said is within the weapon's range; and the target's last pose is within
-//! `distance ± SLACK` of the shooter's. The damage is worked out HERE from the spec — `damage × zone × max(floor,
-//! e^(−2·drag·distance))` — never taken from the client.
+//! A HIT is taken only if: that gun is in the shooter's hands (`arm`); a shot of it left in the last `SHOT_LIFE` ticks
+//! and isn't spent yet (each `shot` is rate-limited by the gun's `fireTicks`: a bucket of 2 filled one every
+//! `fireTicks` — the network bunches two now and then, never more in the long run); the distance said is within the
+//! gun's range and agrees with the two players' last poses (± 3 m and 2 %). The DAMAGE is worked out here from the
+//! spec — `damage × zone × max(floor, e^(−2·drag·distance))` — never taken from the client.
+//! (A katana with two blades and their abilities was here till 2026-11-21: removed from the game whole.)
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::sync::OnceLock;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-static WEAPONS: &str = include_str!("../../proto/weapons.json");
+static DATA: &str = include_str!("../../proto/weapons.json");
 
-/// The player's health when whole.
-pub const HEALTH: f32 = 100.0;
-/// A player at 0 is down this long (ms), then back with full health (the spec: 5 s).
-pub const DOWN_MS: u64 = 5000;
-/// How far the target may be from where the shooter said (m): poses are ~50–150 ms old on both sides.
-pub const SLACK: f32 = 3.0;
-
-#[derive(Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Spec {
-    pub damage: f32,
-    pub head: f32,
-    pub limb: f32,
-    pub floor: f32,
-    pub drag: f32,
-    pub range: f32,
-    pub fire_ticks: u32,
+/// What's in the hands (`fists`: nothing) — in a hit, what did it.
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Weapon {
+    #[default]
+    Fists,
+    Pistol,
+    Ak47,
+    Sniper,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct File {
-    tick_hz: u32,
-    weapons: HashMap<String, Spec>,
-}
-
-pub struct Table {
-    pub tick_ms: f32,
-    pub weapons: HashMap<String, Spec>,
-}
-
-pub fn table() -> &'static Table {
-    static T: OnceLock<Table> = OnceLock::new();
-    T.get_or_init(|| {
-        let f: File = serde_json::from_str(WEAPONS).expect("proto/weapons.json");
-        Table { tick_ms: 1000.0 / f.tick_hz as f32, weapons: f.weapons }
-    })
-}
-
-pub fn spec(id: &str) -> Option<&'static Spec> {
-    table().weapons.get(id)
-}
-
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Zone {
     Head,
@@ -67,51 +35,144 @@ pub enum Zone {
     Limb,
 }
 
-/// What a hit takes, by the spec: the zone's multiplier and the energy the bullet keeps over `dist`.
-pub fn damage(s: &Spec, zone: Zone, dist: f32) -> f32 {
-    let z = match zone {
-        Zone::Head => s.head,
-        Zone::Body => 1.0,
-        Zone::Limb => s.limb,
-    };
-    s.damage * z * s.floor.max((-2.0 * s.drag * dist.max(0.0)).exp())
+pub struct Gun {
+    pub fire_ticks: u32,
+    pub range: f32,
+    pub damage: f32,
+    pub head: f32,
+    pub limb: f32,
+    pub floor: f32,
+    pub drag: f32,
 }
 
-/// A player's side of the fight: what's in their hands, their health, when they may land the next hit.
-#[derive(Debug, Clone)]
-pub struct Fighter {
-    /// The weapon in their hands ("" — fists / nothing).
-    pub armed: String,
+pub struct Specs {
+    pub health: f32,
+    pub pistol: Gun,
+    pub ak47: Gun,
+    pub sniper: Gun,
+}
+
+/// A gun's shots live this long (ticks) waiting for their hit: the sniper's bullet takes 1.6 s to fly its 1000 m.
+pub const SHOT_LIFE: u32 = 60;
+/// Down this long (ticks) — then back, whole (the spec: out for 5 s).
+pub const DOWN_TICKS: u32 = 100;
+
+fn f(v: &Value) -> f32 {
+    v.as_f64().unwrap_or_else(|| panic!("proto/weapons.json: a number, not {v}")) as f32
+}
+fn u(v: &Value) -> u32 {
+    v.as_u64().unwrap_or_else(|| panic!("proto/weapons.json: a whole number, not {v}")) as u32
+}
+
+fn gun(w: &Value) -> Gun {
+    Gun { fire_ticks: u(&w["fireTicks"]).max(1), range: f(&w["range"]), damage: f(&w["damage"]), head: f(&w["head"]), limb: f(&w["limb"]), floor: f(&w["floor"]), drag: f(&w["drag"]) }
+}
+
+pub fn specs() -> &'static Specs {
+    static S: OnceLock<Specs> = OnceLock::new();
+    S.get_or_init(|| {
+        let d: Value = serde_json::from_str(DATA).expect("proto/weapons.json");
+        let w = &d["weapons"];
+        Specs { health: f(&d["health"]), pistol: gun(&w["pistol"]), ak47: gun(&w["ak47"]), sniper: gun(&w["sniper"]) }
+    })
+}
+
+impl Specs {
+    pub fn gun(&self, w: Weapon) -> Option<&Gun> {
+        match w {
+            Weapon::Pistol => Some(&self.pistol),
+            Weapon::Ak47 => Some(&self.ak47),
+            Weapon::Sniper => Some(&self.sniper),
+            Weapon::Fists => None,
+        }
+    }
+}
+
+/// A player's side of the fight: their health, what's in their hands, the shots in the air.
+#[derive(Default)]
+pub struct Fight {
     pub hp: f32,
-    /// Down until (ms since the epoch); 0 — up.
-    pub down_until: u64,
-    /// Hits in hand (the fire interval's bucket: one more each `fireTicks`, two at most) and when it was last filled.
-    pub bucket: f32,
-    pub bucket_at: u64,
+    pub weapon: Weapon,
+    /// The shot bucket: how many may leave now (≤ 2), and the tick it was last filled.
+    tokens: f32,
+    filled: u32,
+    /// The ticks of the gun's shots not yet matched by a hit.
+    shots: Vec<u32>,
+    /// Back up at this tick (None: standing).
+    pub down_until: Option<u32>,
 }
 
-impl Default for Fighter {
-    fn default() -> Self {
-        Fighter { armed: String::new(), hp: HEALTH, down_until: 0, bucket: 2.0, bucket_at: 0 }
-    }
+/// What a hit did: the damage.
+pub struct Struck {
+    pub damage: f32,
 }
 
-impl Fighter {
-    pub fn down(&self) -> bool {
-        self.down_until != 0
+type R<T> = Result<T, String>;
+
+impl Fight {
+    pub fn new() -> Fight {
+        Fight { hp: specs().health, tokens: 1.0, ..Default::default() }
     }
-    /// One hit spent from the bucket of the weapon armed — false: too soon after the last.
-    pub fn spend(&mut self, s: &Spec, now: u64) -> bool {
-        let every = (s.fire_ticks.max(1) as f32) * table().tick_ms;
-        if self.bucket_at != 0 {
-            self.bucket = (self.bucket + now.saturating_sub(self.bucket_at) as f32 / every).min(2.0);
+
+    /// Into the hands (`fists`: nothing).
+    pub fn arm(&mut self, weapon: Weapon, now: u32) {
+        if weapon != self.weapon {
+            self.tokens = 1.0;
+            self.filled = now;
+            self.shots.clear();
         }
-        self.bucket_at = now;
-        if self.bucket < 1.0 {
-            return false;
+        self.weapon = weapon;
+    }
+
+    /// A shot: counted, its rate held.
+    pub fn shot(&mut self, weapon: Weapon, now: u32) -> R<()> {
+        if self.down_until.is_some() {
+            return Err("you're down".into());
         }
-        self.bucket -= 1.0;
-        true
+        if weapon != self.weapon {
+            return Err("that isn't in your hands".into());
+        }
+        let g = specs().gun(weapon).ok_or("fists don't shoot")?;
+        self.tokens = (self.tokens + now.wrapping_sub(self.filled) as f32 / g.fire_ticks as f32).min(2.0);
+        self.filled = now;
+        if self.tokens < 1.0 {
+            return Err("too fast".into());
+        }
+        self.tokens -= 1.0;
+        self.shots.retain(|t| now.wrapping_sub(*t) <= SHOT_LIFE);
+        if self.shots.len() < 64 {
+            self.shots.push(now);
+        }
+        Ok(())
+    }
+
+    /// The shooter's claim that `weapon` hit someone in `zone`, `dist` m away (`real`: the distance between their last
+    /// poses) — what it does, or why not.
+    pub fn hit(&mut self, weapon: Weapon, zone: Zone, dist: f32, real: f32, now: u32) -> R<Struck> {
+        if self.down_until.is_some() {
+            return Err("you're down".into());
+        }
+        if !dist.is_finite() || dist < 0.0 || (real - dist).abs() > 3.0 + dist * 0.02 {
+            return Err("they weren't there".into());
+        }
+        let g = specs().gun(weapon).ok_or("fists don't count here")?;
+        if self.weapon != weapon {
+            return Err("that isn't in your hands".into());
+        }
+        if dist > g.range {
+            return Err("out of range".into());
+        }
+        self.shots.retain(|t| now.wrapping_sub(*t) <= SHOT_LIFE);
+        if self.shots.is_empty() {
+            return Err("no shot to hit with".into());
+        }
+        self.shots.remove(0);
+        let z = match zone {
+            Zone::Head => g.head,
+            Zone::Limb => g.limb,
+            Zone::Body => 1.0,
+        };
+        Ok(Struck { damage: g.damage * z * (-2.0 * g.drag * dist).exp().max(g.floor) })
     }
 }
 
@@ -120,33 +181,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_specs_load() {
-        for id in ["pistol", "ak47", "sniper"] {
-            let s = spec(id).expect(id);
-            assert!(s.damage > 0.0 && s.range > 0.0 && s.fire_ticks > 0);
+    fn the_numbers_are_the_specs() {
+        let s = specs();
+        assert_eq!(s.health, 100.0);
+        assert_eq!(s.ak47.fire_ticks, 2, "600 a minute at 20 Hz");
+        assert!(s.sniper.range > s.ak47.range);
+    }
+
+    #[test]
+    fn a_gun_hits_only_with_its_shots_and_its_rate() {
+        let mut f = Fight::new();
+        f.arm(Weapon::Ak47, 0);
+        // no shot yet: no hit
+        assert!(f.hit(Weapon::Ak47, Zone::Body, 20.0, 20.0, 1).is_err());
+        // a full-auto run: one every 2 ticks is taken; two in the same tick only from a full bucket
+        f.shot(Weapon::Ak47, 10).unwrap();
+        f.shot(Weapon::Ak47, 10).unwrap();
+        assert!(f.shot(Weapon::Ak47, 10).is_err(), "a third in the same tick");
+        for k in 1..=10 {
+            f.shot(Weapon::Ak47, 10 + 2 * k).unwrap();
         }
-        assert_eq!(table().tick_ms, 50.0);
-    }
-
-    #[test]
-    fn damage_falls_with_distance_to_the_floor() {
-        let s = spec("ak47").unwrap();
-        let near = damage(s, Zone::Body, 0.0);
-        assert!((near - s.damage).abs() < 1e-4);
-        assert!(damage(s, Zone::Body, 200.0) < near);
-        assert!((damage(s, Zone::Body, 1e6) - s.damage * s.floor).abs() < 1e-3);
-        assert!(damage(s, Zone::Head, 10.0) > damage(s, Zone::Body, 10.0));
-        assert!(damage(s, Zone::Limb, 10.0) < damage(s, Zone::Body, 10.0));
-    }
-
-    #[test]
-    fn the_fire_interval() {
-        let s = spec("sniper").unwrap(); // 30 ticks: 1.5 s
-        let mut f = Fighter::default();
-        assert!(f.spend(s, 1_000));
-        assert!(f.spend(s, 1_010)); // (the bucket's second: two arrived in one read)
-        assert!(!f.spend(s, 1_020));
-        assert!(!f.spend(s, 2_000));
-        assert!(f.spend(s, 2_600));
+        // each shot one hit, no more
+        let mut taken = 0;
+        while f.hit(Weapon::Ak47, Zone::Body, 20.0, 20.5, 31).is_ok() {
+            taken += 1;
+        }
+        assert_eq!(taken, 12);
+        // the damage from the spec: at the muzzle ×head in the head, less with the distance — never under the floor
+        let g = &specs().ak47;
+        f.shot(Weapon::Ak47, 40).unwrap();
+        let near = f.hit(Weapon::Ak47, Zone::Head, 1.0, 1.0, 41).unwrap().damage;
+        assert!((near - g.damage * g.head).abs() < 0.5, "{near}");
+        f.shot(Weapon::Ak47, 50).unwrap();
+        let far = f.hit(Weapon::Ak47, Zone::Body, g.range - 1.0, g.range - 1.0, 60).unwrap().damage;
+        assert!(far >= g.damage * g.floor - 0.01 && far < near, "the floor: {far}");
+        // beyond its range, the wrong gun, a distance that doesn't match the poses, fists
+        f.shot(Weapon::Ak47, 70).unwrap();
+        assert!(f.hit(Weapon::Ak47, Zone::Body, g.range + 1.0, g.range + 1.0, 71).is_err());
+        assert!(f.hit(Weapon::Sniper, Zone::Body, 50.0, 50.0, 71).is_err());
+        assert!(f.hit(Weapon::Ak47, Zone::Body, 50.0, 80.0, 71).is_err());
+        assert!(f.hit(Weapon::Fists, Zone::Body, 1.0, 1.0, 71).is_err());
+        // a shot too old to hit
+        assert!(f.hit(Weapon::Ak47, Zone::Body, 50.0, 50.0, 70 + SHOT_LIFE + 1).is_err());
+        // fists don't shoot; a gun not in the hands doesn't either
+        assert!(f.shot(Weapon::Pistol, 200).is_err());
+        f.arm(Weapon::Fists, 200);
+        assert!(f.shot(Weapon::Fists, 210).is_err());
     }
 }

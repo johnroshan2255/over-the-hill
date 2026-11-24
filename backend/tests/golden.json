@@ -439,66 +439,71 @@
       }
     },
     {
-      "hex": "380204616b3437",
+      "hex": "380203",
       "json": {
         "sid": 2,
         "t": "armed",
-        "weapon": "ak47"
+        "weapon": "sniper"
       }
     },
     {
-      "hex": "380200",
+      "hex": "380300",
       "json": {
-        "sid": 2,
+        "sid": 3,
         "t": "armed",
-        "weapon": ""
+        "weapon": "fists"
       }
     },
     {
-      "hex": "390206736e697065720000c03f00808c42000040c00000403f00000000000000bf",
+      "hex": "3902020000c03f00808c42000040c0000000009a99193fcdcc4cbf",
       "json": {
-        "dx": 0.75,
-        "dy": 0.0,
-        "dz": -0.5,
+        "dx": 0.0,
+        "dy": 0.6000000238418579,
+        "dz": -0.800000011920929,
         "sid": 2,
         "t": "shot",
-        "weapon": "sniper",
+        "weapon": "ak47",
         "x": 1.5,
         "y": 70.25,
         "z": -3.0
       }
     },
     {
-      "hex": "3aac024203",
+      "hex": "3a0300008442020300",
       "json": {
         "by": 2,
-        "hp": 66,
-        "sid": 300,
-        "t": "health"
+        "hp": 66.0,
+        "sid": 3,
+        "t": "health",
+        "weapon": "sniper",
+        "zone": "head"
       }
     },
     {
-      "hex": "3aac026400",
+      "hex": "3a0300004042020102",
       "json": {
-        "by": null,
-        "hp": 100,
-        "sid": 300,
-        "t": "health"
+        "by": 2,
+        "hp": 48.0,
+        "sid": 3,
+        "t": "health",
+        "weapon": "pistol",
+        "zone": "limb"
       }
     },
     {
-      "hex": "3bac020206706973746f6c",
+      "hex": "3b0302045261766902",
       "json": {
         "by": 2,
-        "sid": 300,
+        "by_name": "Ravi",
+        "sid": 3,
         "t": "down",
-        "weapon": "pistol"
+        "weapon": "ak47"
       }
     },
     {
-      "hex": "3cac02",
+      "hex": "3c03",
       "json": {
-        "sid": 300,
+        "sid": 3,
         "t": "up"
       }
     },
@@ -718,6 +723,47 @@
       }
     },
     {
+      "hex": "1b0003",
+      "json": {
+        "req": null,
+        "t": "arm",
+        "weapon": "sniper"
+      }
+    },
+    {
+      "hex": "1b0000",
+      "json": {
+        "req": null,
+        "t": "arm",
+        "weapon": "fists"
+      }
+    },
+    {
+      "hex": "1c00010000803f00008d42000000c00000803f0000000000000000",
+      "json": {
+        "dx": 1.0,
+        "dy": 0.0,
+        "dz": 0.0,
+        "req": null,
+        "t": "shot",
+        "weapon": "pistol",
+        "x": 1.0,
+        "y": 70.5,
+        "z": -2.0
+      }
+    },
+    {
+      "hex": "1d00ac02010200004841",
+      "json": {
+        "dist": 12.5,
+        "req": null,
+        "sid": 300,
+        "t": "hit",
+        "weapon": "pistol",
+        "zone": "limb"
+      }
+    },
+    {
       "hex": "19100001030100",
       "json": {
         "bag": {
@@ -729,39 +775,6 @@
         "req": 15,
         "t": "stow",
         "to": "trailer"
-      }
-    },
-    {
-      "hex": "1b0006736e69706572",
-      "json": {
-        "req": null,
-        "t": "arm",
-        "weapon": "sniper"
-      }
-    },
-    {
-      "hex": "1c0004616b34370000c03f00808c42000040c00000403f00000000000000bf",
-      "json": {
-        "dx": 0.75,
-        "dy": 0.0,
-        "dz": -0.5,
-        "req": null,
-        "t": "shot",
-        "weapon": "ak47",
-        "x": 1.5,
-        "y": 70.25,
-        "z": -3.0
-      }
-    },
-    {
-      "hex": "1d11ac0204616b34370000002a42",
-      "json": {
-        "dist": 42.5,
-        "req": 16,
-        "t": "hit",
-        "target": 300,
-        "weapon": "ak47",
-        "zone": "head"
       }
     },
     {

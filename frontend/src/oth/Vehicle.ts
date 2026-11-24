@@ -193,6 +193,21 @@ export class Vehicle {
   }
   /** (the harness) parked and still coming to rest. */
   get landing(): boolean { return this.parked && this.settling > 0 }
+  /** STRUCK WHERE IT STANDS (parked — the enemy's car on it as he runs you down): held, it was a kinematic thing that
+   *  another kinematic one passed through. Live again, braked, to take the blow about to be given it — its crash watch
+   *  told it stood still before (so that blow is a blow, and the dent is made) — and held again once it stands. */
+  knocked(): void {
+    if (!this.sim || !this.parked) return
+    const b = this.sim.body, R = this.physics.pw.R
+    if (b.bodyType() !== R.RigidBodyType.Dynamic) {
+      b.setBodyType(R.RigidBodyType.Dynamic, true)
+      const s = this.w0, t = b.translation()
+      s.vx = s.vy = s.vz = s.fx = s.fy = s.fz = s.wx = s.wy = s.wz = 0; s.px = t.x; s.py = t.y; s.pz = t.z
+      s.on = !!this.damage
+    }
+    this.settling = 4
+    this.restT = 0
+  }
   /** Back in: the body live again (placed at (x, z, heading) first, when given — the car brought to the rider). */
   unpark(at?: { x: number; z: number; heading: number }): void {
     if (!this.sim || !this.parked) return
@@ -210,7 +225,11 @@ export class Vehicle {
     this.sim.place(x, this.physics.surface(x, z, this.map.height(x, z)) + 0.6, z, heading)
     this.readPose(this.curP, this.curQ)
     this.prevP.copy(this.curP); this.prevQ.copy(this.curQ)
+    this.onPlaced?.()
   }
+  /** (main.ts) the car has just been put somewhere — in the air, to drop: what's hitched to it set down again once it
+   *  stands (the trailer). */
+  onPlaced?: () => void
   /** Its half width and half length (m): where a bike can stand beside it. */
   get half(): { x: number; z: number } { return this.model ? { x: this.model.half.x, z: this.model.half.z } : { x: 1, z: 2.2 } }
   /** ITS BODY'S OWN BOX in plan (car space: the middle's x and z from its root, the half width and length) — what
@@ -1230,12 +1249,6 @@ function beamMaterial(): GFX.ShaderMaterial {
   })
 }
 
-/**
- * (co-op) ANOTHER PLAYER'S CAR — the same model and the same paint shader as ours (this file's VERT / FRAG), posed from
- * the network (net/Session's smoothing — Remotes.ts); no physics, no keys. Their paint is their colour. The wheels roll
- * by the distance it moves and steer by how fast it turns; its contact shadow and, at night, its lamps' glow. Three
- * draws (body, glass, the wheels instanced) + the shadow, culled with its sphere and the hills.
- */
 /** WHAT IS SOLID OF A CAR NOT OURS (the enemy's — Companion.ts —, another player's — Remotes.ts): ITS OWN SHAPE, not the
  *  box round everything on it (its mirrors, its bars, its spare wheel: an invisible layer a hand or two off its panels —
  *  the user, 2026-11-21: "the collision must hit the car, not an invisible outer layer"). The exact body as a triangle
@@ -1261,9 +1274,8 @@ export function carSolid(R: typeof RAPIER, shape: { mesh: Float32Array; hulls: F
 }
 
 /** THE START: the map's first track where it passes nearest the spawn, along it (the desert's is its pass road — which
- *  runs on out over the crossing's gate line: not from its end). Where a new game puts the car, and where a player
- *  downed in co-op comes back without a camp. */
-export function startOf(map: MapData): { x: number; z: number; heading: number } {
+ *  runs on out over the crossing's gate line: not from its end). Where a new game puts the car. */
+function startOf(map: MapData): { x: number; z: number; heading: number } {
   const L = map.meta.trails.lines[0], sp = map.meta.spawn
   let k = 0
   for (let i = 1; i + 4 < L.length; i++) if ((L[i][0] - sp.x) ** 2 + (L[i][1] - sp.z) ** 2 < (L[k][0] - sp.x) ** 2 + (L[k][1] - sp.z) ** 2) k = i
@@ -1271,6 +1283,12 @@ export function startOf(map: MapData): { x: number; z: number; heading: number }
   return { x, z, heading: Math.atan2(-(x2 - x), -(z2 - z)) }
 }
 
+/**
+ * (co-op) ANOTHER PLAYER'S CAR — the same model and the same paint shader as ours (this file's VERT / FRAG), posed from
+ * the network (net/Session's smoothing — Remotes.ts); no physics, no keys. Their paint is their colour. The wheels roll
+ * by the distance it moves and steer by how fast it turns; its contact shadow and, at night, its lamps' glow. Three
+ * draws (body, glass, the wheels instanced) + the shadow, culled with its sphere and the hills.
+ */
 export class RemoteCar {
   readonly root = new GFX.Group()
   readonly shadow: GFX.Mesh

@@ -28,7 +28,15 @@ await p.evaluate(() => window.__oth.drive(true))
 // (a way for him to come along: 20 m of it driven — no further: flat out for longer it leaves the track —, then stopped)
 await p.keyboard.down('KeyW'); await sleep(2400); await p.keyboard.up('KeyW')
 await p.keyboard.down('Space'); await sleep(1300); await p.keyboard.up('Space')
-if (side) await p.evaluate(() => { const o = window.__oth, c = o.car, t = c.sim.body.translation(); c.placeAt(t.x, t.z, c.sim.heading + Math.PI / 2) })
+// (square across the way he comes along — its last 4 m —, not a quarter from your car's own heading: a braked stop
+//  that slid left the car askew to its way, and he met its end, not its side)
+if (side) await p.evaluate(() => {
+  const o = window.__oth, c = o.car, t = c.sim.body.translation(), m = o.companion, n = m.xs.length
+  let i = n - 1
+  while (i > 0 && Math.hypot(m.xs[n - 1] - m.xs[i], m.zs[n - 1] - m.zs[i]) < 4) i--
+  const way = n > 1 ? Math.atan2(-(m.xs[n - 1] - m.xs[i]), -(m.zs[n - 1] - m.zs[i])) : c.sim.heading
+  c.placeAt(t.x, t.z, way + Math.PI / 2)
+})
 await p.evaluate(() => {
   const o = window.__oth, pw = o.physics.pw, R = pw.R
   /** his nose from your body (m): the two shapes, as they stand in the physics */

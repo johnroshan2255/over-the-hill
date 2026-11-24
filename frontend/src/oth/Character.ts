@@ -603,13 +603,24 @@ export class Character {
     return true
   }
   get striking(): boolean { return this.rooted }
+  /** A STRIKE or a REACTION on a PUPPET (a co-op player, posed from their poses — no body of his own): the clip played
+   *  over the stride, then the stride again. False: he hasn't the clip, or he's down. */
+  puppetStrike(name: ClipName, rate = 1): boolean {
+    if (!this.clips.has(name) || this.down || this.state === 'hidden' || this.state === 'seated') return false
+    this.state = 'land'
+    this.rooted = true
+    this.play(name, { fade: 0.1, rate, restart: true, then: () => { this.rooted = false; this.state = 'move'; this.play('loco' as ClipName, { fade: 0.2 }) } })
+    return true
+  }
+  /** Up at once (co-op: the server said so — he's back, somewhere else). */
+  standUp(): void { if (this.down) this.rise() }
   get isDown(): boolean { return !!this.down }
   /** KNOCKED DOWN: he reels and falls on his back (the knockdown clip), lies `lie` s, gets up (getup_back, laid where
    *  he fell) — then free again, `then` called. His place follows the fall and the get-up. `clip`: another way down
    *  (die_back, die_fwd); `rise` false: he does not get up — `then` is called when the `lie` is over and he lies on
-   *  (till he is placed again: appear). */
+   *  (till he is placed again: appear). A puppet (a co-op player, no body of his own) is knocked down the same way. */
   knockdown(lie = 1, then?: () => void, clip: ClipName = 'knockdown', rise = true): boolean {
-    if (!this.clips.has(clip) || !this.body || this.down || (this.state !== 'move' && this.state !== 'land')) return false
+    if (!this.clips.has(clip) || this.down || (this.state !== 'move' && this.state !== 'land')) return false
     this.state = 'action'
     this.rooted = false
     this.speed = 0
@@ -1204,8 +1215,8 @@ export class Character {
     this.seat = null
     this.ride = null
     this.control = false
-    // (down: lying where they fell — the fall's last frame held)
-    if (this.puppetLies) { this.pos.set(x, y, z); this.speed = 0; return }
+    // (down: he lies where he fell, the fall and the get-up laid by downStep — not by the poses)
+    if (this.down) { this.root.visible = true; return }
     const turn = Math.atan2(Math.sin(heading - this.heading), Math.cos(heading - this.heading))
     this.heading = heading
     const k = Math.min(1, dt * 10)
@@ -1213,26 +1224,9 @@ export class Character {
     this.speed += (Math.min(9, speed) - this.speed) * Math.min(1, dt * 8)
     this.pos.set(x, y, z)
     this.grounded = true
-    if (this.state !== 'move') { this.state = 'move'; this.root.visible = true; this.play('loco' as ClipName, { fade: 0.2 }) }
+    // (a strike playing — puppetStrike — is left to end)
+    if (this.state !== 'move' && !(this.state === 'land' && this.rooted)) { this.state = 'move'; this.root.visible = true; this.play('loco' as ClipName, { fade: 0.2 }) }
   }
-
-  /** (co-op) ANOTHER PLAYER DOWN (the server's `down`): the fall played where they stand, held as they lie, till
-   *  `false` (their `up` — they come back at their camp: puppet() takes them on from there). Without the fight's clips
-   *  (Character.loadClips) the knockdown, else nothing to play: they stand on. */
-  puppetDown(on: boolean): void {
-    if (on === this.puppetLies) return
-    this.puppetLies = on
-    if (on) {
-      const clip: ClipName = this.clips.has('die_back') ? 'die_back' : 'knockdown'
-      if (!this.clips.has(clip)) { this.puppetLies = false; return }
-      this.state = 'action'
-      this.speed = 0
-      this.root.visible = true
-      this.play(clip, { fade: 0.08, restart: true })
-    } else if (this.state === 'action') this.state = 'land' // (puppet() next: back to the stride)
-  }
-  private puppetLies = false
-  get lying(): boolean { return this.puppetLies }
 
   /** Shown at a place without the controller (a scripted moment: getting in or out — main.ts moves it). */
   stage(x: number, y: number, z: number, heading: number): void {

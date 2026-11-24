@@ -18,8 +18,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::{Bag, Mat};
-pub use crate::weapons::Zone;
+use crate::{
+    catalog::{Bag, Mat},
+    weapons::{Weapon, Zone},
+};
 
 #[derive(Deserialize, Debug)]
 pub struct Envelope {
@@ -83,13 +85,13 @@ pub enum ClientMsg {
     Ping { n: u32 },
     /// Your own things between your hands and your trailer (by it).
     Stow { from: Store, to: Store, bag: Bag },
-    /// THE WEAPON IN YOUR HANDS (weapons.rs): its id in `proto/weapons.json`, "" for fists — relayed as `armed`.
-    Arm { weapon: String },
-    /// A shot left your gun at (x, y, z) along (dx, dy, dz) — relayed to the others as `shot` (their tracer, its flash).
-    Shot { weapon: String, x: f32, y: f32, z: f32, dx: f32, dy: f32, dz: f32 },
-    /// Your bullet hit player `target` (their sid) in `zone`, `dist` m from you: checked here (weapons.rs) — the damage
-    /// is the server's, from the spec.
-    Hit { target: u32, weapon: String, zone: Zone, dist: f32 },
+    /// THE WEAPONS (weapons.rs): what's in your hands (`fists`: nothing).
+    Arm { weapon: Weapon },
+    /// A shot left (a gun's: counted, its rate held) — or a cut (`part`: which), a wave of fire, a bolt called: told on
+    /// to the others, who draw it (where from, the way).
+    Shot { weapon: Weapon, x: f32, y: f32, z: f32, dx: f32, dy: f32, dz: f32 },
+    /// What your shot / cut / ability hit: the player (`sid`), the zone, how far — checked, then the damage worked out here.
+    Hit { sid: u32, weapon: Weapon, zone: Zone, dist: f32 },
     /// A BLOW TO YOUR CAR (the game's Damage.ts — `CarDamage.hit`, in the car's own space: where, the way it pushed, the
     /// change of velocity), or `repair`: relayed to the others as `dent`, so the car they draw of yours is dented too.
     Dent { px: f32, py: f32, pz: f32, dx: f32, dy: f32, dz: f32, dv: f32, kind: DentKind },
@@ -246,8 +248,11 @@ pub fn parse_poses(b: &[u8]) -> Option<(u32, PosesFrame)> {
     parse_poses_t(b).map(|(tick, v)| (tick, v.into_iter().map(|(s, _, e)| (s, e)).collect()))
 }
 
+/// (tests) one player's part of a poses frame: their sid, their clock, their entities.
+pub type Sent = (u16, u16, Vec<Entity>);
+
 /// … with each player's clock: (tick, [(sid, t, entities)]).
-pub fn parse_poses_t(b: &[u8]) -> Option<(u32, Vec<(u16, u16, Vec<Entity>)>)> {
+pub fn parse_poses_t(b: &[u8]) -> Option<(u32, Vec<Sent>)> {
     if b.len() < 6 || b[0] != TAG_POSES {
         return None;
     }

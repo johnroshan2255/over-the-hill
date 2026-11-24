@@ -36,7 +36,7 @@ import { Sky } from './Sky'
 import { TerrainShadow } from './TerrainShadow'
 import { TREE_STRIDE } from './Trees'
 import { TyreTracks } from './TyreTracks'
-import { startOf, Vehicle } from './Vehicle'
+import { Vehicle } from './Vehicle'
 import { Winch } from './Winch'
 import { ActionWheel, ICONS } from './Wheel'
 import { liveMap, World, type WorldEnv, type WorldId, WORLDS } from './World'
@@ -58,6 +58,7 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat'
 type RapierBody = RAPIER_NS.RigidBody
 import { Arsenal, FPP_ARMED_FOV, Pickups, type WeaponId } from './Weapons'
 import { aimLodEye, lodEye } from './LodEye'
+import type { WireWeapon } from '../net/wire'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -440,6 +441,14 @@ async function boot() {
   const coopLocal: Local = { kind: Kind.Jeep, p: new GFX.Vector3(), q: new GFX.Quaternion(), parked: null, trailer: null }
   /** Our trailer (Trailer.ts) — a co-op world's: hauling what's gathered. */
   let trailer: Trailer | null = null
+  /** THE TRAILER SET DOWN BEHIND THE CAR ONCE THE CAR STANDS (`trailerDue`, how long it has stood: `trailerStill`). The
+   *  car is placed in the air and drops (Vehicle.placeAt), and the tow ball is found from the ground under it
+   *  (Trailer.ensureBall): set down while the car still fell — the second player's, placed along the track as its
+   *  trailer loaded — the ball was 0.6 m low in the car, the coupler forced into the ground as it landed: the pair
+   *  thrown up a metre and the car rolled over, 2 joins in 5 (scripts/harness/spawnprobe.mjs, 2026-11-24 — "the
+   *  joiner's car rocks", MULTIPLAYER.md §7). Again whenever the car is put somewhere else hitched (it was dragged
+   *  there by the joint). */
+  let trailerDue: Trailer | null = null, trailerStill = 0
   /** THE HELPER BOT (Bot.ts — SETTINGS › CO-OP, ?bot=1): a second player from this tab, in a co-op world in the valley.
    *  (?botspeed=N: everything N times faster — the harness; ?botlog=1: what he does, in the console) */
   let bot: Bot | null = null
@@ -925,6 +934,14 @@ async function boot() {
         else b.applyImpulse({ x: dx * dv * m, y: 0, z: dz * dv * m }, true)
         if (spin) b.applyTorqueImpulse({ x: 0, y: spin * m * 1.5, z: 0 }, true)
       },
+      // (his car on a body that is not what you're on — your parked car: live again for it, the blow placed there for
+      //  its damage; anything else that can move: pushed)
+      knock: (b, dx, dz, dv, at, by) => {
+        if (car.sim && b.handle === car.sim.body.handle) { car.knocked(); car.hitHint(at.x, at.y, at.z, by) }
+        if (!b.isDynamic()) return
+        const m = b.mass(), c = b.worldCom()
+        b.applyImpulseAtPoint({ x: dx * dv * m, y: 0.06 * dv * m, z: dz * dv * m }, { x: at.x, y: c.y + (at.y - c.y) * 0.3, z: at.z }, true)
+      },
       vel: () => { const b = onFoot ? null : (ride.body as { linvel(): { x: number; y: number; z: number } } | undefined); return b ? b.linvel() : STILL },
       body: () => (onFoot ? null : ((ride.body as RapierBody | undefined) ?? null)),
     }, scene, map, physics, atmos, shadow, env.farGrid, charUrl, fightUrl, kind)
@@ -935,11 +952,10 @@ async function boot() {
   const arsenal = new Arsenal({
     onFoot: () => onFoot && !cut,
     playing: () => driving && !pause,
-    // (the enemy — solo; the other players on foot — co-op: their hits go to the server, Remotes.targets)
-    targets: () => coop ? coop.remotes.targets() : companion?.targets() ?? [],
-    // (co-op: what's in our hands and each shot told to the others — their walker holds it, their screen draws the tracer)
-    armed: (id) => coop?.session.arm(id ?? ''),
-    shot: (w, from, d) => coop?.session.shot(w, from.x, from.y, from.z, d.x, d.y, d.z),
+    // (co-op: the others on foot — a hit goes to the server; solo: the enemy)
+    targets: () => (coop && !coop.session.closed ? coop.remotes.targets(hero.pos) : companion?.targets() ?? []),
+    shot: (w, from, dir) => coop?.session.shot(w, from, dir),
+    armed: (id) => coop?.session.arm(id ?? 'fists'),
     kick: (up, side) => { if (fpp) { look.pitch = Math.max(-1.2, Math.min(1.5, look.pitch + up)); look.footYaw += side } else chase.kick(up, side) },
     fpp: () => fpp && onFoot && !cut,
     lookYaw: () => look.footYaw,
@@ -1057,6 +1073,47 @@ async function boot() {
   let spectate: { x: number; y: number; z: number; lookH: number } | null = null
   const specPos = new GFX.Vector3(), specQuat = new GFX.Quaternion(), specLook = new GFX.Vector3()
   let specOn = false
+  // CO-OP'S FIGHT (docs/WEAPONS.md — the server owns the health): ours shown, a hit staggers us, down — out 5 s — then
+  // back at our camp (or by our car, or the start) whole; the others' shots drawn (Arsenal.ghost); who downed whom told
+  // to everyone
+  const hpBar = document.createElement('div'), hpFill = document.createElement('div')
+  hpBar.style.cssText = 'position:fixed;left:24px;bottom:72px;width:200px;height:10px;background:rgba(8,8,8,0.72);border:1px solid rgba(255,255,255,0.18);z-index:4;display:none;pointer-events:none'
+  hpFill.style.cssText = 'height:100%;width:100%;background:#e0a040'
+  hpBar.appendChild(hpFill)
+  document.body.appendChild(hpBar)
+  const drawHp = (hp: number) => {
+    hpBar.style.display = hp < 100 ? 'block' : 'none'
+    hpFill.style.width = `${Math.max(0, hp)}%`
+    hpFill.style.background = hp < 30 ? '#d04030' : '#e0a040'
+  }
+  const WHAT: Record<WireWeapon, string> = { fists: '', pistol: 'the pistol', ak47: 'an AK-47', sniper: 'the sniper rifle' }
+  const fightOn = (session: Session) => {
+    if (arsenal.current) session.arm(arsenal.current)
+    void hero.loadClips(fightUrl)
+    session.on((e) => {
+      const me = session.me.sid
+      if (e.t === 'shot') { if (e.sid !== me) arsenal.ghost(e.weapon, new GFX.Vector3(e.x, e.y, e.z), new GFX.Vector3(e.dx, e.dy, e.dz)) }
+      else if (e.t === 'health' && e.sid === me) {
+        drawHp(e.hp)
+        if (e.hp > 0 && onFoot && !cut && !hero.isDown) hero.strike(e.zone === 'head' ? 'hit_head' : 'hit_body', { force: true })
+      } else if (e.t === 'down') {
+        const w = WHAT[e.weapon], with_ = w ? ` with ${w}` : ''
+        if (e.sid === me) { drawHp(0); arsenal.press('fire', false); if (onFoot && !cut) hero.knockdown(600); if (e.by) toast(`${e.by_name} downed you${with_} — back in 5 s`, 5000) }
+        else if (e.by) toast(`${e.by === me ? 'You' : e.by_name} downed ${session.remotes.get(e.sid)?.name ?? 'someone'}${with_}`, 3500)
+      } else if (e.t === 'up' && e.sid === me) {
+        drawHp(100)
+        if (!onFoot || cut) return
+        // (back at the camp — beside the tent; no camp: beside your car, where you left it; else the start)
+        const c = myCamp, s = map.meta.spawn, cp = car.sim ? car.pos : null, ch = car.sim?.heading ?? 0, hx = car.half.x + 0.8
+        const by = cp ? besides(cp.x, cp.z, ch, [[-hx, 0], [hx, 0], [0, car.half.z + 1.2]], 0.4) ?? { x: cp.x - Math.cos(ch) * hx, z: cp.z + Math.sin(ch) * hx } : null
+        if (c) hero.appear(c.x + Math.cos(c.rot) * 4, c.z - Math.sin(c.rot) * 4, c.rot)
+        else if (by && cp) hero.appear(by.x, by.z, ch, undefined, cp.y + 1.5)
+        else hero.appear(s.x, s.z, s.yaw)
+        footCam()
+        toast(c ? 'Back at your camp' : by ? 'Back by your car' : 'Back at the start', 3000)
+      }
+    })
+  }
   /** The view for what's in the hands: over the shoulder with a gun (third person), through the glass in the scope. */
   let gunView = false, scopedWas = false, fppBefore = false
   const weaponView = () => {
@@ -1470,6 +1527,19 @@ async function boot() {
     if (coop && car.damage && !car.damage.onHit) coopTellDamage?.()
     if (coopSpread > 0 && (coopSpread -= dt) <= 0) spreadOut()
     coop?.frame(dt, localNow())
+    if (trailerDue && car.sim) {
+      // (stood a moment: every wheel on the ground, not dropping, not rolling — placed, the car is held in the air a
+      //  while as the ground under it is made: still, and a tow ball found then was as low as before)
+      const sim = car.sim, onWheels = sim.wheels.every((w) => w.contact)
+      trailerStill = onWheels && Math.abs(sim.body.linvel().y) < 0.2 && car.speedKmh < 1 ? trailerStill + dt : 0
+      if (trailerStill > 0.4) {
+        const t = trailerDue
+        trailerDue = null
+        if (!t.model.root.parent) scene.add(t.model.root)
+        trailer = t
+        t.spawnBehind()
+      }
+    }
     trailer?.update(dt)
     // (towing: the chase camera further back and higher — the trailer in view behind the car, not filling it)
     const towing = !!trailer?.hitched && !onFoot && !riding && driving
@@ -1644,9 +1714,6 @@ async function boot() {
       if (!acct) throw new Error('no account here — open CO-OP on the title screen')
       const session = await Session.connect(acct, coopWorld)
       coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl, fight: fightUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
-      // THE WEAPONS BETWEEN PLAYERS (docs/WEAPONS.md, "Co-op"): what we hold told; their shots drawn; down by a hit —
-      // the fall, lying till the server says we're up (5 s), then back at our camp (or the spawn) with full health
-      session.arm(arsenal.current ?? '')
       // (our car's blows and its repair, told: the others dent the car they draw of ours)
       const tellDamage = () => {
         const dm = car.damage
@@ -1656,8 +1723,6 @@ async function boot() {
       }
       tellDamage()
       coopTellDamage = tellDamage
-      void hero.loadClips(fightUrl).catch(() => {})
-      coop.onShot = (w, x, y, z, dx, dy, dz) => arsenal.ghostShot(w, x, y, z, dx, dy, dz)
       // (ours, for the others' solids: theirs is made only once it's clear of our car and of us — Remotes.clear)
       const ourBox = { x: 0, z: 0, h: 0, hx: 1, hz: 2.3 }
       coop.remotes.ours = () => {
@@ -1670,19 +1735,8 @@ async function boot() {
         return { car: cb, me: onFoot ? hero.pos : riding ? two.pos : null }
       }
       coopSpread = 2.5
-      coop.onDown = () => {
-        arsenal.press('fire', false)
-        if (onFoot && !cut) hero.knockdown(60, undefined, hero.has('die_back') ? 'die_back' : 'knockdown', false)
-      }
-      coop.onUp = () => {
-        if (!onFoot || cut) return
-        // (beside the camp; else the start — by the track, 4 m off it)
-        const st = startOf(map), at = myCamp ? { x: myCamp.x + 2, z: myCamp.z + 2, h: myCamp.rot } : { x: st.x + Math.cos(st.heading) * 4, z: st.z - Math.sin(st.heading) * 4, h: st.heading }
-        hero.appear(at.x, at.z, at.h)
-        footCam()
-        toast(myCamp ? 'Back at your camp' : 'Back at the start', 2500)
-      }
       coop.build.onToggle = (on) => { chase.aerial = on }
+      fightOn(session)
       coop.worldParts = () => ({ rocks: world.rocks, grass: world.grass })
       coop.build.obstacle = (x, z) => (world.trees.nearest(x, z, 4.5) ? 'Too close to a tree — its branches would hide your flag' : world.rocks.biggestNear(x, z, 1.5) ? 'Not on a boulder' : '')
       gather = new Gather(session, () => ({ id: world.id, map: world.map, trees: world.trees, rocks: world.rocks, grass: world.grass }), physics, hero, atmos, shadow, env.farGrid, toast,
@@ -1704,7 +1758,9 @@ async function boot() {
       // THE TRAILER (Trailer.ts): behind the car, hitched, from the start
       const tr = new Trailer(physics, () => world.map, car)
       tr.onMessage = (m) => toast(m, 2200)
-      void tr.load(atmos, shadow, env.farGrid).then(() => { scene.add(tr.model.root); trailer = tr; tr.spawnBehind() })      // (each player 12 m on from the one before, along the start's track — back along it where it goes back, else on
+      // (held asleep till the car stands — then set down behind it, hitched: the frame's `trailerDue`)
+      void tr.load(atmos, shadow, env.farGrid).then(() => { tr.body?.sleep(); trailerDue = tr; trailerStill = 0 })
+      car.onPlaced = () => { if (trailer?.hitched) { trailer.unhitch(true); trailerDue = trailer; trailerStill = 0 } }      // (each player 12 m on from the one before, along the start's track — back along it where it goes back, else on
       //  ahead (the valley's start is the track's first point) — never all on the one spot; facing along the track)
       const k = (session.me.sid - 1) % 8
       if (k && car.sim && !onFoot && !riding) {

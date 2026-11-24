@@ -45,11 +45,19 @@ await sleep(1500)
 const g0 = await gap(), t0 = await tpos()
 console.log('gap at rest:', g0.toFixed(2))
 // drive: ahead, then a turn
-await pa.keyboard.down('KeyW'); await sleep(3500)
+// (at a towing pace, ~20 km/h — the throttle let off above it: held down 5 s it's 50 km/h and off the track, through the
+//  fence; it crawled at 10 before 2026-11-24 only because the tow ball was in the ground — main.ts `trailerDue`)
+const pace = async (ms, keys = []) => {
+  for (const k of keys) await pa.keyboard.down(k)
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) { const v = await pa.evaluate(() => window.__oth.car.speedKmh); if (v < 20) await pa.keyboard.down('KeyW'); else await pa.keyboard.up('KeyW'); await sleep(80) }
+  for (const k of keys) await pa.keyboard.up(k)
+}
+await pace(3500)
 await pa.screenshot({ path: `${out}/1_towing.png` })
-await pa.keyboard.down('KeyA'); await sleep(1600)
+await pace(1600, ['KeyA'])
 await pa.screenshot({ path: `${out}/2_turning.png` })
-await pa.keyboard.up('KeyA'); await sleep(800); await pa.keyboard.up('KeyW')
+await pace(800); await pa.keyboard.up('KeyW')
 await sleep(2500)
 const t1 = await tpos(), g1 = await gap()
 console.log('trailer moved', Math.hypot(t1[0] - t0[0], t1[2] - t0[2]).toFixed(1), 'm; gap', g1.toFixed(2))

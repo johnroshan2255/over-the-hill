@@ -6,32 +6,25 @@
 > weapons are **the pistol, the AK-47, the sniper rifle** — and fists. What is written of the katana below (the first
 > request, rounds 2 and 3) is the record of what was asked and done, not of what is in the game.
 
-## Co-op (2026-11-24) — the weapons between players
+## Co-op (2026-11-24) — the two builds merged
 
-The rule as "The rules they share" has it: **the shooter's game flies the bullet and says what it hit; the server checks
-the claim and owns everyone's health.** Built on the wire (`proto/wire.json`), the server (`backend/src/weapons.rs`,
-`world.rs`) and the game (`Remotes.ts`, `Coop.ts`, `Weapons.ts`, `main.ts`).
+Step 8 had been built twice — on the PC (2026-11-19, brought onto round 4 on 2026-11-21: "The order of work", step 8
+below) and again on the Mac (2026-11-24). **The PC's weapons were kept**, as the stricter: a hit must spend one of the
+gun's `shot`s from the last 60 ticks, the weapon is an enum on the wire, `down` carries the shooter's name, the hit
+marker, the stagger on the puppet (`backend/README.md`, "The fight"). From the Mac's build, what the PC's lacked:
 
 | | how |
 |---|---|
-| what you hold, seen | `arm` (the weapon in your hands, `""` fists) → everyone's `armed`; said again to whoever joins (as `ride` is). Their walker holds it by **the same code as yours**: the third-person hold and the hands lifted out of `Arsenal` (`holdThird`, `handsOn` — moved, not changed) and used by `RemoteHold` too |
-| aimed, seen | your pose's **bit 7** (`FLAG_AIM`, on foot): the gun up; the aim's pitch rides in the pose's rotation (the heading as before, the pitch about its x). Their game raises it at that pitch, the chest turned for a rifle |
-| a shot, seen | `shot` (weapon, muzzle, way) → the others: the flash at their muzzle, the kick, and its tracer flown in your world against the land and the solid things only (`Arsenal.ghostShot`: it hits nobody — their game decided that) with the dust where it stops |
-| a hit | each other player on foot is a `Target` (`Remotes.targets`) — the bullet meets their drawn capsule as it meets the enemy — whose `hit` sends `hit` (their sid, the weapon, the zone, the distance flown). **The server** takes it only if: you're up and hold that weapon; they're another player, up, on foot; the fire interval allows it (a bucket: one hit per `fireTicks`, two at most — two a tick apart can arrive in one read); the distance is within the weapon's range and within ±3 m of your two poses' distance. The damage is worked out there from `proto/weapons.json` — `damage × zone × max(floor, e^(−2·drag·distance))` — never sent by the game |
-| health | 100, the server's, this session's only. `health` (sid, hp, by) to everyone: your bar (bottom middle, shown below full; red at 30) and a red edge as a hit lands |
-| down | at 0: `down` (sid, by, weapon) — the toast "Asha downed Ravi · AK-47"; you fall (the fight's `die_back`) and lie; your trigger is let go; they see you fall and lie (`Character.puppetDown`); further hits are refused ("already down") |
-| up | 5 s later `up` and `health` 100: you're back beside your camp — or by the start (the first track nearest the spawn: `Vehicle.startOf`, where a new game begins), whole, weapons kept |
-| the helper bot | a player like any other: he can be shot; down, he lies where he fell till he's up (`Bot.tick`) |
+| aimed, seen | your pose's **bit 7** (`FLAG_AIM`, on foot): the gun up; the aim's pitch rides in the pose's rotation (the heading as before, the pitch about its x). Their game raises the gun (`holdOther`) while it's set, at that pitch — not only for a second after a shot |
+| health across a reload | the server keeps a player's fight 10 minutes after they leave hurt or down (`World.lost`); back, they're told their own `health` / `down` — a reload no longer healed you and got you up at once |
+| a newcomer | told each player's car and its dents too (`ride`, `dent` — docs/NEXT_damage.md §7), besides what's in their hands and who's hurt or down |
 
-Checked by `scripts/harness/coopfight.mjs` (two Chrome profiles, one world): B sees the AK-47 in A's hands and raised;
-A fires at B 14 m off — B is told of every shot, the server takes B's health in 4 hits, B lies down (on both screens),
-5 s on B is up, whole, at the start; A's hands empty again seen. The server's checks: `world::tests::shots_between_players`
-(not armed, a weapon that isn't, where they aren't, out of range, yourself, the fire interval, down / up, not on
-foot, a shot relayed only for the weapon held) and `weapons::tests`.
+Checked by `scripts/harness/coopfight.mjs` (the PC's, 17 checks) and `syncchecks.mjs` (three players and a late
+joiner: MULTIPLAYER.md §7); the server's: `world::tests::a_shoots_b_down_and_b_gets_up`,
+`a_newcomer_is_told_and_health_survives_a_reload`, `weapons::tests`.
 
-Not yet: no sound (nothing in the game has one-shot sounds); a newcomer doesn't know who is down till they're up; a
-bullet on another player's car does nothing to it (their game owns their car's damage — it dents only from their own
-crashes, told by `dent`: docs/NEXT_damage.md); the zone is by height on a standing capsule (a man down is not hit).
+Not yet: no sound; a bullet on another player's car does nothing to it (their game owns their car's damage — it dents
+only from their own crashes, told by `dent`); the zone is by height on a standing capsule.
 
 ## Round 4 (2026-11-21, the same day — from the phone again)
 
@@ -156,10 +149,13 @@ script.
   PUNCH, AIM (stays on till pressed again) · SCOPE · KICK, RELOAD by the right thumb.
 - **Found in the ruins** — ten of them, each marked on the map and the minimap by what lies there: walk up to it, `E` takes it. A
   weapon is yours for good (kept with the save); its site gives ammunition again every 5 minutes.
-- **Co-op**: everyone sees what you hold and your shots. A hit is an intent to the server (`hit`: who, which weapon,
-  the zone, the distance); the server takes it only if that weapon's fire interval has passed since your last, the
-  distance is within its range and the target's pose is within 3 m of where you said — then it takes the health off,
-  tells everyone, and counts the kill. Solo: the same rules against the enemy (`Companion.ts`).
+- **Co-op**: everyone sees what you hold (`arm` → `armed`) and your shots (`shot`). A hit is an intent to the server
+  (`hit`: who, which weapon, the cut / the blow, the zone, the distance); the server (`backend/src/weapons.rs`) takes it
+  only if that weapon is in your hands, a shot of it is in the air (each `shot` held to its fire rate — a bucket of two,
+  one more every `fireTicks`: the network bunches two, never more), a cut's or a blow's gap on that target has passed,
+  and the distance is within its range and agrees with the two poses (± 3 m) — then it works out the damage from the
+  spec, takes it off, tells everyone (`health`), and at 0 `down` / 5 s later `up`. The rules in `backend/README.md`
+  ("The fight"). Solo: the same numbers against the enemy (`Companion.ts`).
 
 ## The order of work, and where it stands (2026-11-19, the evening)
 
@@ -172,7 +168,7 @@ script.
 | 5 | ~~the katana's abilities~~ | removed with the katana (round 4) |
 | 6 | the pick-ups in the ruins, on the map and the minimap (`Weapons.ts` `Pickups`) | **done** — `scripts/harness/pickups.mjs`; kept in `localStorage` (`overhill.weapons.v1`, `overhill.weaponsites.v1`) |
 | 7 | the wheel's two buttons (`Wheel.ts`: keys 1 / 2 too); the phone's buttons (FIRE / AIM · SCOPE / RELOAD; PUNCH / KICK) | **done** — laid out by `phonepads.mjs` on three emulated phones; not tried on a real one by me |
-| 8 | co-op: the wire (`proto/wire.json`), the server's check, health, kills, the others seen armed | **not started** |
+| 8 | co-op: the wire (`proto/wire.json`), the server's check, health, kills, the others seen armed | **done** (2026-11-19, the night; 2026-11-21 onto round 4, guns only) — `scripts/harness/coopfight.mjs` (two players), `cargo test` (`weapons::tests`, `world::tests::a_shoots_b_down_and_b_gets_up`) |
 | 9 | each step's cost per tier | measured on the PC only — below |
 
 ### How it's made (for whoever goes on)
@@ -207,10 +203,15 @@ posed by distance as the co-op players' are; the fight's clips and the weapons' 
 
 ### What's left, and what bites
 
-- **Co-op (step 8)**: built 2026-11-24 — "Co-op" at the top. (What follows was the plan.) A `hit` intent the server checks
-  against `proto/weapons.json` (the fire interval in ticks, the range, the target's pose), health and kills as events,
-  the weapon held as part of `ride`-like state so `Remotes.ts` can draw it (`weaponModel` + the same `placeGun`).
-  `proto/wire.json` changes must pass `cargo test --test golden` and `npm run test:wire`.
+- **Co-op (step 8)** is in: `arm` / `shot` / `hit` → `armed` / `shot` / `health` / `down` / `up` (guns only: the
+  katana's `blade`, `awake`, `part` and `stun` went with it, 2026-11-21). How it's drawn: each player's gun in their
+  hands by third person's own hold, lifted out of `Arsenal` (`holdOther` — Weapons.ts: carried, GTA's; up for a second
+  after each shot, and while their pose says they aim — `FLAG_AIM`, at its pitch); their staggers as clips on the puppet
+  (`Character.puppetStrike`), down a knockdown held till `up`; their shots flown as ghosts (`Arsenal.ghost`: tracers —
+  hitting nobody, though a round that stops on your car still holes it); their health a bar under their name; yours
+  bottom left; a hit of yours turns the cross red for a moment. Left of it: the
+  server doesn't count rounds or reloads; fists don't hurt other players; no kill count is kept; no health comes back
+  but by going down.
 - **No sound** for any of it (shots, hits, blows) — `Audio.ts` has no one-shot voice yet.
 - **Third person's aim** has no clip of its own for the legs (the hips turned, the stride reversed — round 2): a side
   step is the forward run turned up to 65°; past that the feet slide a little.

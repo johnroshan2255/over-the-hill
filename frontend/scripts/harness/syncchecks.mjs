@@ -11,7 +11,7 @@ export async function checks({ pa, pb, pc, open, accts, world, check, sleep, out
     if (S.me.name === n) {
       const dm = window.__oth.car.damage
       let sum = 0; if (dm) for (const m of dm.meshes) for (let i = 0; i < m.dmg.length; i++) sum += m.dmg[i]
-      return { hp: S.hp, down: S.down, weapon: window.__oth.arsenal.current ?? '', dmg: +sum.toFixed(1), car: window.__oth.car.id }
+      return { hp: S.hp, down: S.down, weapon: window.__oth.arsenal.current ?? 'fists', dmg: +sum.toFixed(1), car: window.__oth.car.id }
     }
     for (const r of S.remotes.values()) if (r.name === n) {
       const a = c.remotes['avatars'].get(r.sid), dm = a?.car.damage
@@ -34,6 +34,11 @@ export async function checks({ pa, pb, pc, open, accts, world, check, sleep, out
     if (await p.evaluate(() => window.__oth.onFoot)) continue
     // (C rides: off the bike — back into the car — then out of it)
     if (await p.evaluate(() => window.__oth.riding)) { await p.evaluate(() => window.__oth.ride()); await sleep(1500) }
+    // (the car stopped first — the handbrake held: A's drive ends reversing, and at more than 5 km/h it's "Stop the car
+    //  to get out")
+    await p.keyboard.down('Space')
+    for (let i = 0; i < 30; i++) { if ((await p.evaluate(() => window.__oth.car.speedKmh)) < 2) break; await sleep(200) }
+    await p.keyboard.up('Space')
     await p.evaluate(() => window.__oth.foot())
     await sleep(500)
   }
@@ -98,6 +103,7 @@ export async function checks({ pa, pb, pc, open, accts, world, check, sleep, out
   const cl = await Promise.all([pa, pb, pc].map((p) => p.evaluate(() => [...window.__oth.coop.session.claims.values()].map((c) => c.owner_name).join(','))))
   chk(cl.every((c) => c === cl[0] && c.includes('Chen')), `C's land is on every screen (${JSON.stringify(cl)})`)
   // A's car takes a blow (parked where A got out): all three see the same dent
+  console.log('A before the blow:', JSON.stringify(await pa.evaluate(() => { const o = window.__oth, c = o.car; return { damage: !!c.damage, onFoot: o.onFoot, parked: c.parked, id: c.id, kmh: +c.speedKmh.toFixed(1) } })))
   await pa.evaluate(() => window.__oth.car.damage?.hit(0.4, 0.7, -2.0, 0, 0, 1, 14, 'crash'))
   await sleep(1200)
   g = await agree('Asha', 'dmg')
@@ -125,10 +131,15 @@ export async function checks({ pa, pb, pc, open, accts, world, check, sleep, out
   chk(dv.B?.down === true || dv.B?.hp === 100, `D (late) sees B down — or already up (${JSON.stringify(dv.B)})`)
   // B up again; B RELOADS: the others see them go and come back; they're as hurt as they were
   for (let i = 0; i < 30; i++) { await sleep(300); if (!(await pb.evaluate(() => window.__oth.coop.session.down))) break }
+  // (B, up again, is back by B's own car: put on the open ground again, 12 m before A — a car between takes the bullets)
+  await pa.evaluate((a) => window.__oth.hero.appear(a.x, a.z, a.h), A0)
+  await pb.evaluate((a) => window.__oth.hero.appear(a.x - Math.sin(a.h) * 12, a.z - Math.cos(a.h) * 12, a.h + Math.PI), A0)
+  await posted(pb, A0.x - Math.sin(A0.h) * 12, A0.z - Math.cos(A0.h) * 12)
   await pa.evaluate(() => { window.__oth.arsenal.equip('pistol'); window.__oth.arsenal.ammo.pistol = [17, 68] })
   for (let k = 0; k < 8; k++) { await aimAt(pa, 'Ravi'); await tap(pa); await sleep(400); if ((await view(pb, 'Ravi')).hp < 100) break }
   await sleep(400)
   const hpBefore = await pb.evaluate(() => window.__oth.coop.session.hp)
+  console.log('A shot at B before the reload:', JSON.stringify(await stats(pa)), 'refused:', JSON.stringify(await pa.evaluate(() => window.__no)), 'B:', JSON.stringify(await pb.evaluate(() => ({ onFoot: window.__oth.onFoot, down: window.__oth.coop.session.down, hp: window.__oth.coop.session.hp }))))
   await pb.reload({ waitUntil: 'load' })
   await pb.waitForFunction(() => window.__oth?.ready && window.__oth.coop, { timeout: 180_000, polling: 250 })
   await sleep(2500)

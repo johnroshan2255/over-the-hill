@@ -166,6 +166,10 @@ export class Trailer {
   spawnBehind(): void {
     const b = this.car.sim?.body
     if (!b || !this.body) return
+    // (the ball found again, the car standing now — main.ts waits for that: found as it fell from where it was placed,
+    //  it was 0.6 m low in the car for good)
+    this.ballCar = ''
+    this.body.wakeUp()
     const h = this.car.sim!.heading
     const B = this.ballWorld(new GFX.Vector3())!
     const fwd = new GFX.Vector3(-Math.sin(h), 0, -Math.cos(h))

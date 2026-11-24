@@ -48,16 +48,25 @@ gameplay off by default"; on is my reading of "add damage … like a normal car 
    at your car's inner solid pieces, 3 cm short, and those stand further in at the corners and are cut away at the
    arches. Trying his nose against your exact mesh is right to a centimetre and costs 2.7 ms a step on the Mac —
    too much for a phone. A cheaper exact answer: wheel-sized pieces in the arches, and the mesh only in the last step.
-4. **His own driving at you on foot** (`runDown`) does not try his nose against anything: he drives through your
-   parked car.
+4. ~~**His own driving at you on foot** (`runDown`) does not try his nose against anything: he drives through your
+   parked car.~~ **Done (2026-11-21, the evening)**: a parked car, once it stands, is HELD — a kinematic body, as his
+   is, and two of those pass through each other. Now each step of his run casts his nose (`Companion.blocked`) against
+   whatever is solid — your car's inner pieces, trees, rocks, walls, props; not the land, the roads' ribbons, the
+   bridges' decks, you, a wheel's guard. Met at more than 2 m/s: a blow — your parked car is made live for it
+   (`Vehicle.knocked`, its crash watch told it stood still) and takes half, his car the other half through your car's
+   crash (main.ts, as a ram's); a tree or a wall gives his car the lot. Either way the run is over: he gets out.
+   `scripts/harness/rundown.mjs` (his car 25 m behind yours at 8 m/s, you beyond it: he reaches 13 m/s, stops 7 cm
+   off your car's solid pieces, it is shoved 4.6 m, both are damaged, he gets out).
 5. **A door torn off** when it stands open in a blow (GTA IV's). Not built.
 6. **Saved**: the damage is the session's — a reload, or another car from the garage, is whole.
 7. **Co-op** — done 2026-11-24: each blow your car takes (`CarDamage.hit`, in the car's own space) and its repair go on
    the wire as `dent`; the others put the same blow on the car they draw of yours (`Remotes.dent`), with its smoke,
    fire and pieces (`DamageFx.car`); and their car is solid as **its own shape** (`Vehicle.carSolid` — the enemy's
-   builder, shared), not the box. Left: a newcomer sees your car whole till its next blow; a bullet on another player's
+   builder, shared), not the box, made only within 120 m of you. A newcomer is told every car's dents. Left: a bullet on another player's
    car does nothing (their game owns their car). (`CarDamage` has no randomness: the same blows in the same order make
    the same dents on every screen.)
+   (The solid's numbers, from the PC: a ray at the other's door stops at 0.795 m from its middle, the box stood at
+   1.141 — `coopfight.mjs`. A friend's shots that stop on your car hole it: `Arsenal.ghost`.)
 8. **Per-car numbers** (GTA IV's `handling.dat` multipliers): one table for every car; the engine is taken to be at
    the front; the bike takes no damage.
 9. **Deeper**: the collider does not crumple with the shell; a flat tyre does not come off its rim with speed; nobody
@@ -85,9 +94,11 @@ gameplay off by default"; on is my reading of "add damage … like a normal car 
 - **The harnesses that drive blind.** Flat out for more than ~2.5 s from the spawn the car leaves the track and goes
   nose-first into a bank at 75 km/h — a real crash, and with damage on it now wrecks the run (`companion.mjs` asks
   to get out till it is out; `ramtest.mjs` and `damagetest.mjs` drive 2.2–2.4 s).
-- **Failing now and then, cause not found**: `enemy.mjs` — "his blows land (0)" (from before this work), and once
-  after it "back in the cars, his joins your way" with him still on foot (his car may have been dead: not looked
-  at). `weapons.mjs` failed every run until it held him off before walking clear — he is on you sooner now.
+- **Failing now and then**: `enemy.mjs` — "his blows land (0)" (from before this work, cause not found); "back in
+  the cars, his joins your way" with him on foot — found (2026-11-21, the evening): it was YOU still on foot, the
+  fight had drifted 20 m and more from your car and F only gets you in within 3.2 m of its door; the harness puts you
+  by it now. `ramtest.mjs`'s "it met your car on its flank" — he met its end: your car was turned a quarter from its
+  own heading after a braked stop that had slid askew to its way; it is turned square to the way's last 4 m now. `weapons.mjs` failed every run until it held him off before walking clear — he is on you sooner now.
 - Editing `src/` while a harness runs reloads its page (Vite) — and the user's phone.
 
 ## 4. Running it

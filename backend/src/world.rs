@@ -29,7 +29,7 @@ use crate::{
     map::{Ground, Maps},
     proto::{self, ClientMsg, Entity, Envelope, ShapeOp, Store},
     util::{finite, now_ms, rand_id},
-    weapons::{self, Fighter, Zone},
+    weapons::{self, Fight, Weapon, Zone},
     wire,
 };
 
@@ -257,11 +257,6 @@ pub enum Ev<'a> {
     Left { sid: u32 },
     Chat { sid: u32, name: &'a str, text: &'a str },
     Ride { sid: u32, car: &'a str },
-    Armed { sid: u32, weapon: &'a str },
-    Shot { sid: u32, weapon: &'a str, x: f32, y: f32, z: f32, dx: f32, dy: f32, dz: f32 },
-    Health { sid: u32, hp: u32, by: Option<u32> },
-    Down { sid: u32, by: u32, weapon: &'a str },
-    Up { sid: u32 },
     Dent { sid: u32, px: f32, py: f32, pz: f32, dx: f32, dy: f32, dz: f32, dv: f32, kind: proto::DentKind },
     TreeCut { tree: u32, x: f32, z: f32, by: u32 },
     TreeBack { tree: u32 },
@@ -284,6 +279,12 @@ pub enum Ev<'a> {
     Ok { req: u32 },
     Err { req: Option<u32>, msg: &'a str },
     Pong { n: u32 },
+    Armed { sid: u32, weapon: Weapon },
+    Shot { sid: u32, weapon: Weapon, x: f32, y: f32, z: f32, dx: f32, dy: f32, dz: f32 },
+    /// A player's health now — the hit that took it (`by` 0 and `fists`: none, it came back).
+    Health { sid: u32, hp: f32, by: u32, weapon: Weapon, zone: Zone },
+    Down { sid: u32, by: u32, by_name: &'a str, weapon: Weapon },
+    Up { sid: u32 },
 }
 
 pub enum Out {
@@ -319,15 +320,17 @@ struct Member {
     seen: HashMap<u32, u32>,
     /// Their clock when they took the pose `ents` (ms, mod 65 536 — proto.rs), relayed with it.
     t: u16,
-    /// The weapon in their hands, their health, down or up (weapons.rs) — this session's only, never stored.
-    fight: Fighter,
+    /// Their health, what's in their hands, their shots in the air (weapons.rs) — kept a while after they leave (`lost`).
+    fight: Fight,
     /// The car they drive (`ride`) and the blows it has taken since it was whole (`dent`, at most DENTS) — told again to
     /// whoever joins after (a newcomer saw everyone's car whole, and fists in every hand: 2026-11-24).
     car: String,
-    dents: Vec<(f32, f32, f32, f32, f32, f32, f32, proto::DentKind)>,
+    dents: Vec<Dent>,
 }
 
 type R = Result<(), String>;
+/// A blow to a car as its game told it (proto.rs `Dent`): where, the way, the change of velocity, what kind.
+type Dent = (f32, f32, f32, f32, f32, f32, f32, proto::DentKind);
 
 pub struct World {
     info: WorldInfo,
@@ -352,7 +355,7 @@ pub struct World {
     kicks: RefCell<Vec<u32>>,
     /// The health of those who left lately (by player id; LOST_FOR): coming back — a reload, a dropped line — they are
     /// as they were, not whole (a reload healed you, and got you up at once).
-    lost: HashMap<String, (Fighter, Instant)>,
+    lost: HashMap<String, (Fight, Instant)>,
 }
 
 impl World {
@@ -413,7 +416,7 @@ impl World {
                     Some(c) => self.handle(c),
                     None => break,
                 },
-                _ = poses.tick() => { self.revive(now_ms()); self.send_poses() },
+                _ = poses.tick() => self.send_poses(),
                 _ = slow.tick() => self.regrow(now_ms()),
             }
             self.apply_kicks();
@@ -444,12 +447,15 @@ impl World {
                 }
                 self.next_sid = sid % 65535 + 1;
                 let now = Instant::now();
-                // (back within LOST_FOR: their health as it was — down still, if they were; the weapon in their hands is
+                // (back within LOST_FOR: their health as it was — down still, if they were — up at once if their time is over (`get_up`); the weapon in their hands is
                 //  told again by their game)
                 self.lost.retain(|_, (_, at)| now.duration_since(*at) < LOST_FOR);
                 let fight = match self.lost.remove(&pid) {
-                    Some((f, _)) => Fighter { armed: String::new(), ..f },
-                    None => Fighter::default(),
+                    Some((mut f, _)) => {
+                        f.arm(Weapon::Fists, self.tick);
+                        f
+                    }
+                    None => Fight::new(),
                 };
                 self.members.insert(sid, Member { pid, name, tx, ents: vec![], last: None, budget: MSG_BURST, budget_at: now, ver: 0, seen: HashMap::new(), t: 0, fight, car: String::new(), dents: vec![] });
                 self.online.store(self.members.len() as u32, Ordering::Relaxed);
@@ -464,11 +470,10 @@ impl World {
                 // (their own health, if they came back hurt or down)
                 {
                     let f = &self.members[&sid].fight;
-                    if f.hp < weapons::HEALTH {
-                        self.to(sid, &Ev::Health { sid, hp: f.hp.ceil() as u32, by: None });
-                    }
-                    if f.down() {
-                        self.to(sid, &Ev::Down { sid, by: sid, weapon: "" });
+                    if f.down_until.is_some() {
+                        self.to(sid, &Ev::Down { sid, by: 0, by_name: "", weapon: Weapon::Fists });
+                    } else if f.hp < weapons::specs().health {
+                        self.to(sid, &Ev::Health { sid, hp: f.hp, by: 0, weapon: Weapon::Fists, zone: Zone::Body });
                     }
                 }
                 // (what the welcome's state doesn't hold, the newcomer told now: each one's car, its dents, the weapon
@@ -483,14 +488,14 @@ impl World {
                     for &(px, py, pz, dx, dy, dz, dv, kind) in &om.dents {
                         self.to(sid, &Ev::Dent { sid: *o, px, py, pz, dx, dy, dz, dv, kind });
                     }
-                    if !om.fight.armed.is_empty() {
-                        self.to(sid, &Ev::Armed { sid: *o, weapon: &om.fight.armed });
+                    let f = &om.fight;
+                    if f.weapon != Weapon::Fists {
+                        self.to(sid, &Ev::Armed { sid: *o, weapon: f.weapon });
                     }
-                    if om.fight.hp < weapons::HEALTH {
-                        self.to(sid, &Ev::Health { sid: *o, hp: om.fight.hp.ceil() as u32, by: None });
-                    }
-                    if om.fight.down() {
-                        self.to(sid, &Ev::Down { sid: *o, by: *o, weapon: "" });
+                    if f.down_until.is_some() {
+                        self.to(sid, &Ev::Down { sid: *o, by: 0, by_name: "", weapon: Weapon::Fists });
+                    } else if f.hp < weapons::specs().health {
+                        self.to(sid, &Ev::Health { sid: *o, hp: f.hp, by: 0, weapon: Weapon::Fists, zone: Zone::Body });
                     }
                 }
                 let m = &self.members[&sid];
@@ -523,7 +528,7 @@ impl World {
 
     fn leave(&mut self, sid: u32) {
         if let Some(m) = self.members.remove(&sid) {
-            if m.fight.hp < weapons::HEALTH || m.fight.down() {
+            if m.fight.hp < weapons::specs().health || m.fight.down_until.is_some() {
                 self.lost.insert(m.pid, (m.fight, Instant::now()));
             }
             self.online.store(self.members.len() as u32, Ordering::Relaxed);
@@ -617,6 +622,7 @@ impl World {
     /// it stopped: what was last sent is remembered per player, `seen`). Nobody moved: no frame at all.
     fn send_poses(&mut self) {
         self.tick = self.tick.wrapping_add(1);
+        self.get_up();
         let far_tick = self.tick.is_multiple_of(FAR_EVERY);
         let mut b: Vec<u8> = Vec::with_capacity(512);
         let sids: Vec<u32> = self.members.keys().copied().collect();
@@ -846,13 +852,26 @@ impl World {
                 }
                 Ok(())
             }
+            ClientMsg::Arm { weapon } => {
+                let now = self.tick;
+                self.members.get_mut(&sid).ok_or("who?")?.fight.arm(weapon, now);
+                self.others(sid, &Ev::Armed { sid, weapon });
+                Ok(())
+            }
+            ClientMsg::Shot { weapon, x, y, z, dx, dy, dz } => {
+                if ![x, y, z, dx, dy, dz].iter().all(|v| v.is_finite()) {
+                    return Err("bad shot".into());
+                }
+                let now = self.tick;
+                self.members.get_mut(&sid).ok_or("who?")?.fight.shot(weapon, now)?;
+                self.others(sid, &Ev::Shot { sid, weapon, x, y, z, dx, dy, dz });
+                Ok(())
+            }
+            ClientMsg::Hit { sid: target, weapon, zone, dist } => self.hit(sid, target, weapon, zone, dist),
             ClientMsg::Ping { n } => {
                 self.to(sid, &Ev::Pong { n });
                 Ok(())
             }
-            ClientMsg::Arm { weapon } => self.arm(sid, weapon),
-            ClientMsg::Shot { weapon, x, y, z, dx, dy, dz } => self.shot(sid, &weapon, [x, y, z], [dx, dy, dz]),
-            ClientMsg::Hit { target, weapon, zone, dist } => self.hit(sid, target, &weapon, zone, dist, now_ms()),
             ClientMsg::Dent { px, py, pz, dx, dy, dz, dv, kind } => {
                 // (in the car's space: within a car's size, a unit-ish way, a change of velocity a crash can make)
                 let ok = [px, py, pz, dx, dy, dz, dv].iter().all(|v| v.is_finite()) && px.abs() < 12.0 && py.abs() < 12.0 && pz.abs() < 12.0 && (0.0..=300.0).contains(&dv);
@@ -874,82 +893,45 @@ impl World {
 
     // ---- the weapons between players (weapons.rs)
 
-    fn arm(&mut self, sid: u32, weapon: String) -> R {
-        if !weapon.is_empty() && weapons::spec(&weapon).is_none() {
-            return Err("no such weapon".into());
-        }
-        let Some(m) = self.members.get_mut(&sid) else { return Ok(()) };
-        if m.fight.armed == weapon {
-            return Ok(());
-        }
-        m.fight.armed = weapon;
-        // (a new weapon starts with a full bucket: its own interval, not the last one's)
-        m.fight.bucket = 2.0;
-        m.fight.bucket_at = 0;
-        let ev = Ev::Armed { sid, weapon: &self.members[&sid].fight.armed };
-        self.others(sid, &ev);
-        Ok(())
-    }
-
-    fn shot(&mut self, sid: u32, weapon: &str, p: [f32; 3], d: [f32; 3]) -> R {
-        let Some(m) = self.members.get(&sid) else { return Ok(()) };
-        if m.fight.down() || m.fight.armed != weapon || !p.iter().chain(d.iter()).all(|v| v.is_finite()) {
-            return Err("not armed".into());
-        }
-        let ev = Ev::Shot { sid, weapon, x: p[0], y: p[1], z: p[2], dx: d[0], dy: d[1], dz: d[2] };
-        self.others(sid, &ev);
-        Ok(())
-    }
-
-    fn hit(&mut self, sid: u32, target: u32, weapon: &str, zone: Zone, dist: f32, now: u64) -> R {
+    /// `sid`'s claim that they hit `target` (weapons.rs checks it): both on foot and standing, the distance as their
+    /// poses have it; the health taken, told to everyone; none left: down, back in DOWN_TICKS (`get_up`).
+    fn hit(&mut self, sid: u32, target: u32, weapon: Weapon, zone: Zone, dist: f32) -> R {
         if target == sid {
-            return Err("not yourself".into());
+            return Err("that's you".into());
         }
-        let Some(spec) = weapons::spec(weapon) else { return Err("no such weapon".into()) };
-        if !dist.is_finite() || dist < 0.0 || dist > spec.range {
-            return Err("out of range".into());
+        let on_foot = |w: &World, s: u32| w.ent(s, 0).filter(|e| e.kind == proto::KIND_FOOT).map(|e| e.p);
+        let (Some(a), Some(b)) = (on_foot(self, sid), on_foot(self, target)) else { return Err("on foot only".into()) };
+        let t = self.members.get(&target).ok_or("nobody there")?;
+        if t.fight.down_until.is_some() {
+            return Err("they're down".into());
         }
-        let (Some(me), Some(them)) = (self.members.get(&sid), self.members.get(&target)) else { return Err("nobody there".into()) };
-        if me.fight.down() || me.fight.armed != weapon {
-            return Err("not armed".into());
+        let real = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+        let now = self.tick;
+        let s = self.members.get_mut(&sid).ok_or("who?")?.fight.hit(weapon, zone, dist, real, now)?;
+        let t = &mut self.members.get_mut(&target).expect("there").fight;
+        t.hp = (t.hp - s.damage).max(0.0);
+        let hp = t.hp;
+        if hp <= 0.0 {
+            t.down_until = Some(now + weapons::DOWN_TICKS);
         }
-        if them.fight.down() {
-            return Err("already down".into());
-        }
-        let (Some(a), Some(b)) = (self.ent(sid, 0), self.ent(target, 0)) else { return Err("nobody there".into()) };
-        if b.kind != proto::KIND_FOOT {
-            return Err("not on foot".into());
-        }
-        let real = ((a.p[0] - b.p[0]).powi(2) + (a.p[1] - b.p[1]).powi(2) + (a.p[2] - b.p[2]).powi(2)).sqrt();
-        if (real - dist).abs() > weapons::SLACK {
-            return Err("missed".into());
-        }
-        if !self.members.get_mut(&sid).is_some_and(|m| m.fight.spend(spec, now)) {
-            return Err("too fast".into());
-        }
-        let dmg = weapons::damage(spec, zone, dist);
-        let t = self.members.get_mut(&target).expect("target");
-        t.fight.hp = (t.fight.hp - dmg).max(0.0);
-        let hp = t.fight.hp.ceil() as u32;
-        self.all(&Ev::Health { sid: target, hp, by: Some(sid) });
-        if hp == 0 {
-            let t = self.members.get_mut(&target).expect("target");
-            t.fight.down_until = now + weapons::DOWN_MS;
-            self.all(&Ev::Down { sid: target, by: sid, weapon });
+        self.all(&Ev::Health { sid: target, hp, by: sid, weapon, zone });
+        if hp <= 0.0 {
+            let by_name = self.members.get(&sid).map(|m| m.name.as_str()).unwrap_or("");
+            self.all(&Ev::Down { sid: target, by: sid, by_name, weapon });
         }
         Ok(())
     }
 
-    /// Those down long enough are back, whole (each client puts itself at its camp or the spawn: `up`).
-    fn revive(&mut self, now: u64) {
-        let back: Vec<u32> = self.members.iter().filter(|(_, m)| m.fight.down_until != 0 && m.fight.down_until <= now).map(|(s, _)| *s).collect();
-        for sid in back {
+    /// (each tick) the downed whose time is up: whole again, back (their game puts them at their camp).
+    fn get_up(&mut self) {
+        let now = self.tick;
+        let up: Vec<u32> = self.members.iter().filter(|(_, m)| m.fight.down_until.is_some_and(|t| now.wrapping_sub(t) < u32::MAX / 2)).map(|(s, _)| *s).collect();
+        for sid in up {
             if let Some(m) = self.members.get_mut(&sid) {
-                m.fight.down_until = 0;
-                m.fight.hp = weapons::HEALTH;
+                m.fight.down_until = None;
+                m.fight.hp = weapons::specs().health;
             }
             self.all(&Ev::Up { sid });
-            self.all(&Ev::Health { sid, hp: weapons::HEALTH as u32, by: None });
         }
     }
 
@@ -1511,48 +1493,6 @@ mod tests {
         w.handle(Cmd::Pose { sid, t: 0, ents: vec![Entity::new(0, proto::KIND_FOOT, proto::FLAG_TELEPORT, [x, 0.0, z], [0.0, 0.0, 0.0, 1.0])] });
     }
 
-    #[test]
-    fn shots_between_players() {
-        let mut w = world();
-        let (a, _ra) = join(&mut w, "a");
-        let (b, mut rb) = join(&mut w, "b");
-        on_foot(&mut w, a, 0.0, 0.0);
-        on_foot(&mut w, b, 30.0, 0.0);
-        let hit = |w: &mut World, weapon: &str, zone: Zone, dist: f32, now: u64| w.hit(a, b, weapon, zone, dist, now);
-        // not armed with it; a weapon that doesn't exist
-        assert!(hit(&mut w, "ak47", Zone::Body, 30.0, 1_000).is_err());
-        assert!(act(&mut w, a, ClientMsg::Arm { weapon: "katana".into() }).is_err());
-        act(&mut w, a, ClientMsg::Arm { weapon: "ak47".into() }).unwrap();
-        // where they aren't (said 10 m, they're 30 m off); out of its range; yourself
-        assert_eq!(hit(&mut w, "ak47", Zone::Body, 10.0, 1_000).unwrap_err(), "missed");
-        assert!(hit(&mut w, "ak47", Zone::Body, 500.0, 1_000).is_err());
-        assert!(w.hit(a, a, "ak47", Zone::Body, 0.0, 1_000).is_err());
-        // a body hit at 30 m: the spec's damage, less what the bullet lost
-        while rb.try_recv().is_ok() {}
-        hit(&mut w, "ak47", Zone::Body, 30.0, 1_000).unwrap();
-        let want = weapons::damage(weapons::spec("ak47").unwrap(), Zone::Body, 30.0);
-        assert!((w.members[&b].fight.hp - (100.0 - want)).abs() < 1e-3);
-        assert!(rb.try_recv().is_ok(), "the target is told its health");
-        // the fire interval: the bucket's second at once, a third refused, then one 100 ms (2 ticks) on
-        hit(&mut w, "ak47", Zone::Body, 30.0, 1_001).unwrap();
-        assert_eq!(hit(&mut w, "ak47", Zone::Body, 30.0, 1_002).unwrap_err(), "too fast");
-        hit(&mut w, "ak47", Zone::Head, 30.0, 1_102).unwrap();
-        // three body hits and a head shot: down; no more hits on them; back after 5 s, whole
-        assert!(w.members[&b].fight.down(), "hp {}", w.members[&b].fight.hp);
-        assert_eq!(hit(&mut w, "ak47", Zone::Body, 30.0, 2_000).unwrap_err(), "already down");
-        w.revive(1_102 + weapons::DOWN_MS - 1);
-        assert!(w.members[&b].fight.down());
-        w.revive(1_102 + weapons::DOWN_MS);
-        assert!(!w.members[&b].fight.down());
-        assert_eq!(w.members[&b].fight.hp, weapons::HEALTH);
-        // not in a car
-        at(&mut w, b, 30.0, 0.0, false);
-        assert_eq!(hit(&mut w, "ak47", Zone::Body, 30.0, 9_000).unwrap_err(), "not on foot");
-        // a shot is relayed only for the weapon in the hands
-        assert!(act(&mut w, a, ClientMsg::Shot { weapon: "pistol".into(), x: 0.0, y: 1.5, z: 0.0, dx: 1.0, dy: 0.0, dz: 0.0 }).is_err());
-        act(&mut w, a, ClientMsg::Shot { weapon: "ak47".into(), x: 0.0, y: 1.5, z: 0.0, dx: 1.0, dy: 0.0, dz: 0.0 }).unwrap();
-    }
-
     /// Every event a receiver has, by its tag name.
     fn names(rx: &mut mpsc::Receiver<Out>) -> Vec<String> {
         let mut out = vec![];
@@ -1575,8 +1515,10 @@ mod tests {
         on_foot(&mut w, b, 20.0, 0.0);
         act(&mut w, a, ClientMsg::Ride { car: "steppe".into() }).unwrap();
         act(&mut w, a, ClientMsg::Dent { px: 0.5, py: 0.5, pz: -2.0, dx: 0.0, dy: 0.0, dz: 1.0, dv: 12.0, kind: proto::DentKind::Crash }).unwrap();
-        act(&mut w, a, ClientMsg::Arm { weapon: "pistol".into() }).unwrap();
-        w.hit(a, b, "pistol", Zone::Body, 20.0, 1_000).unwrap();
+        act(&mut w, a, ClientMsg::Arm { weapon: Weapon::Pistol }).unwrap();
+        w.tick = 10;
+        act(&mut w, a, ClientMsg::Shot { weapon: Weapon::Pistol, x: 0.0, y: 1.5, z: 0.0, dx: 1.0, dy: 0.0, dz: 0.0 }).unwrap();
+        act(&mut w, a, ClientMsg::Hit { sid: b, weapon: Weapon::Pistol, zone: Zone::Body, dist: 20.0 }).unwrap();
         let hp = w.members[&b].fight.hp;
         assert!(hp < 100.0);
         // C comes: told A's car, its dent, A's pistol, B's health
@@ -1664,6 +1606,77 @@ mod tests {
         // (flat ground: the water 25 cm under the rim, the bowl's bottom its depth under that)
         assert!((p.level + 0.25).abs() < 0.01, "the waterline");
         assert!((w.edit_at(&cid, 0.0, 0.0) - (p.level - 2.0)).abs() < 0.01, "the bowl's bottom");
+    }
+
+    /// The events `rx` got since last asked, as JSON.
+    fn events(rx: &mut mpsc::Receiver<Out>) -> Vec<serde_json::Value> {
+        let mut out = vec![];
+        while let Ok(o) = rx.try_recv() {
+            if let Out::Event(b) = o {
+                out.push(wire::decode_ev(&b).expect("an event"));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_shoots_b_down_and_b_gets_up() {
+        let mut w = world();
+        let (a, mut ra) = join(&mut w, "a");
+        let (b, mut rb) = join(&mut w, "b");
+        on_foot(&mut w, a, 0.0, 0.0);
+        on_foot(&mut w, b, 30.0, 0.0);
+        let shot = |weapon| ClientMsg::Shot { weapon, x: 0.0, y: 1.5, z: 0.0, dx: 1.0, dy: 0.0, dz: 0.0 };
+        let hit = |zone, dist| ClientMsg::Hit { sid: b, weapon: Weapon::Pistol, zone, dist };
+        // nothing in the hands: no shot, no hit
+        assert!(act(&mut w, a, shot(Weapon::Pistol)).is_err());
+        assert!(act(&mut w, a, hit(Zone::Body, 30.0)).is_err());
+        act(&mut w, a, ClientMsg::Arm { weapon: Weapon::Pistol }).unwrap();
+        assert!(events(&mut rb).iter().any(|e| e["t"] == "armed" && e["sid"] == a && e["weapon"] == "pistol"), "b sees the pistol");
+        // a newcomer hears what a holds
+        let (c, mut rc) = join(&mut w, "c");
+        assert!(events(&mut rc).iter().any(|e| e["t"] == "armed" && e["sid"] == a));
+        // a hit says b was 80 m off — b's pose is 30 m away: refused
+        w.tick = 10;
+        act(&mut w, a, shot(Weapon::Pistol)).unwrap();
+        assert!(events(&mut rb).iter().any(|e| e["t"] == "shot" && e["sid"] == a), "b sees the shot");
+        assert!(act(&mut w, a, hit(Zone::Body, 80.0)).is_err());
+        // shots to the head, a pistol's rate apart, until b is down
+        let mut hp = 100.0f32;
+        for k in 0..10 {
+            w.tick = 20 + k * 3;
+            act(&mut w, a, shot(Weapon::Pistol)).unwrap();
+            act(&mut w, a, hit(Zone::Head, 30.0)).unwrap();
+            let ev = events(&mut rb);
+            let h = ev.iter().find(|e| e["t"] == "health").expect("health");
+            assert!(h["hp"].as_f64().unwrap() < hp as f64);
+            hp = h["hp"].as_f64().unwrap() as f32;
+            if hp <= 0.0 {
+                assert!(ev.iter().any(|e| e["t"] == "down" && e["sid"] == b && e["by"] == a && e["by_name"] == "A"));
+                break;
+            }
+        }
+        assert_eq!(hp, 0.0, "down at last");
+        let at = w.tick;
+        // down: not hit again, can't shoot
+        w.tick += 3;
+        act(&mut w, a, shot(Weapon::Pistol)).unwrap();
+        assert!(act(&mut w, a, hit(Zone::Body, 30.0)).unwrap_err().contains("down"));
+        act(&mut w, b, ClientMsg::Arm { weapon: Weapon::Ak47 }).unwrap();
+        assert!(act(&mut w, b, shot(Weapon::Ak47)).is_err());
+        // 5 s later: up, whole
+        w.tick = at + weapons::DOWN_TICKS - 2; // (send_poses moves the clock on a tick first)
+        w.send_poses();
+        assert!(!events(&mut ra).iter().any(|e| e["t"] == "up"));
+        w.send_poses();
+        assert!(events(&mut ra).iter().any(|e| e["t"] == "up" && e["sid"] == b));
+        assert_eq!(w.members[&b].fight.hp, 100.0);
+        // in a car: no hit
+        w.handle(Cmd::Pose { sid: b, t: 0, ents: vec![Entity::new(0, 1, 0, [30.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])] });
+        w.tick += 5;
+        act(&mut w, a, shot(Weapon::Pistol)).unwrap();
+        assert!(act(&mut w, a, hit(Zone::Body, 30.0)).unwrap_err().contains("on foot"));
+        let _ = c;
     }
 
     #[test]
