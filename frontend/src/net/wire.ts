@@ -63,11 +63,16 @@ export type Ev =
   | { t: 'down'; sid: number; by: number; by_name: string; weapon: WireWeapon }
   | { t: 'up'; sid: number }
   | { t: 'dent'; sid: number; px: number; py: number; pz: number; dx: number; dy: number; dz: number; dv: number; kind: DentKind }
+  | { t: 'sky'; hour: number; weather: Weather; spell: Weather; left: number; cloud: number; rain: number; wet: number }
+  | { t: 'rope'; sid: number; state: RopeState; to: number; point: number; len: number; reel: boolean; x: number; y: number; z: number }
 
 export type Store = 'carry' | 'trailer'
 export type Zone = 'head' | 'body' | 'limb'
 /** A blow to a car (Damage.ts — in its own space), or its repair. */
-export type DentKind = 'crash' | 'shot' | 'repair'
+export type DentKind = 'crash' | 'shot' | 'repair' | 'land' | 'blast'
+export type Weather = 'auto' | 'clear' | 'cloudy' | 'rain'
+export type SkySet = 'keep' | Weather
+export type RopeState = 'none' | 'hand' | 'hooked'
 export type Intent =
   | { t: 'chat'; text: string }
   | { t: 'ride'; car: string }
@@ -90,6 +95,8 @@ export type Intent =
   | { t: 'shot'; weapon: WireWeapon; x: number; y: number; z: number; dx: number; dy: number; dz: number }
   | { t: 'hit'; sid: number; weapon: WireWeapon; zone: WireZone; dist: number }
   | { t: 'dent'; px: number; py: number; pz: number; dx: number; dy: number; dz: number; dv: number; kind: DentKind }
+  | { t: 'sky'; hour: number | null; weather: SkySet; wait: boolean }
+  | { t: 'rope'; state: RopeState; to: number; point: number; len: number; reel: boolean; x: number; y: number; z: number }
 
 // ---- the schema, compiled once
 type Ty =

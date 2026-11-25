@@ -60,11 +60,28 @@ will not start) and it is gunfire that sets a car alight — which is how fire i
 
 ## 3. What a blow does
 
-1. **The shell crumples** — the car's own body and glass vertices (each car's own merged copy; the driver's door
-   gets its own) pushed along the blow inside a radius, deepest at the middle, creased (folds a hand's width apart
-   and each vertex's own share, by where it began: a seam's two vertices move as one); never further than `maxDepth`
-   from where a vertex began, never into the cabin's cell (the middle half of the length, `cabinCell` of the width,
-   four fifths of the height). The moved vertices' normals are made again from their faces. **The dent is the car's
+1. **The shell crumples — as metal does, not as rubber** (made again 2026-11-25; the user: "some parts get stretched
+   out like elastic — it must be like real-world car damage"). The car's own body and glass vertices (each car's own
+   merged copy; the driver's door gets its own) are moved by one SMOOTH field of where they are — so what lies
+   together moves together: a door's skin and the body round it, a panel's outer and inner layers, a seam's two
+   vertices. (The first cut gave each vertex its own random share and a random shove sideways: neighbours went
+   different ways — spikes, the door torn from the body in black holes, an inner layer through the outer, a
+   windscreen's two triangles drawn out into a shard; `scripts/harness/dentshot.mjs` measured edges 33–67× their
+   length after one crash.) Two parts:
+   - **the push**: along the blow, deepest at the middle and easing to nothing at its radius (smooth: its slope is
+     at most ~0.4, a few per cent of stretch), never further than `maxDepth` from where a vertex began, eased out to
+     nothing at the cabin's cell (the middle half of the length, `cabinCell` of the width, four fifths of the height);
+   - **the creases**: where the push shortens a panel that lies along the blow (a bonnet hit on the nose, a flank on
+     the tail) the metal can't shrink — it folds. Each vertex keeps how far its panel has been squashed (`maxSquash`
+     at most), and the fold's height is what keeps the panel's length: a wave of `wavelength` (m) across the blow,
+     height (λ / π)·√squash × `amp`, out along the panel's own outward face (both layers of a panel the same way).
+   - **glass doesn't bend**: a pane whose frame has been pushed more than `glassBends` (m) out of shape bursts.
+   - **measured** (`scripts/harness/dentshot.mjs`: a crash's run of blows — a hard corner, a side swipe, six knocks in a
+     scrape, the corner again, the tail, a round): every edge of the shell against the works'. Before → after: the
+     worst edge 67× its length → +40 % (the off-roader), 33× → +33 % (the E30); the G500 now +37 %; edges stretched
+     visibly (> 2 cm and > 30 %) 5 000–6 000 → 0–2. A blow costs 0.2–4 ms (the first a car takes 6–7 ms: its facing
+     made); the facing ~0.6 MB a damaged car. Synced as before — the same blows, the same field on every machine
+     (`skysync.mjs`: every pane, lamp, wheel, the crush, alike on four pages). The moved vertices' normals are made again from their faces. **The dent is the car's
    own colour** — the light falls on it another way and nothing else changes; what is torn off (the scraps, the
    trim) is the car's colour too. (The first cut scraped the paint to steel there; the user, the same day: "the
    crashed and broken thing will have the same colour, the dent and all".) Only a burnt-out car changes: soot.
@@ -111,7 +128,8 @@ Times in the server's 20 Hz ticks. Speeds in m/s.
     "depthPerDv": 0.022,
     "maxPerHit": 0.45,
     "maxDepth": 0.6,
-    "crumple": 0.35,
+    "buckle": { "wavelength": 0.22, "amp": 1.0, "maxSquash": 0.55 },
+    "glassBends": 0.05,
     "cabinCell": 0.72
   },
   "glass": { "crackDv": 2.5, "shatterDv": 5.0, "radius": 0.9 },
@@ -190,7 +208,7 @@ the crash.
 - **The phone**: play it there; time a blow's frame on the Snapdragon.
 - **A door torn off** when it stands open in a blow (GTA IV's): not built.
 - **Saved**: the damage is the session's — a reload, or another car from the garage, is whole.
-- **Co-op**: your car takes damage; the others' cars are not shown damaged and nothing of it is on the wire.
+- **Co-op**: done (2026-11-24/25) — every blow, a hard landing, the car going up, the repair: on the wire (`dent`), the others' copy of your car the same to the vertex (`scripts/harness/skysync.mjs` compares the crush, every pane, lamp, wheel, the engine on every page, a late joiner's too). Not shared: a blow while your door stands open (it misses the door here, not there).
 - **The bike**: takes none.
 - **The trailer**: its hitch pulls on the car through the solver — a hard jerk could read as a blow. Not tried.
 - **Per-car numbers** (GTA IV's `handling.dat` multipliers): one table for every car now; the engine's bay is taken

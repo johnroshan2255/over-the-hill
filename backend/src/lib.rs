@@ -5,6 +5,7 @@ pub mod db;
 pub mod http;
 pub mod map;
 pub mod proto;
+pub mod sky;
 pub mod util;
 pub mod weapons;
 pub mod wire;

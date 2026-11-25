@@ -36,7 +36,9 @@ const RIDE_LEAN = 0
 const FPP_SIT_UP = -0.4
 
 export type HandPose = 'open' | 'relaxed' | 'grip' | 'fist'
-export type ClipName = 'idle' | 'walk' | 'run' | 'sprint' | 'jump' | 'jump_run' | 'fall' | 'land' | 'pickup' | 'grab_ledge' | 'climb_ledge' | 'open_door' | 'car_enter' | 'car_exit' | 'sit_drive' | 'turn_left' | 'turn_right' | 'getup_back' | 'getup_front' | 'chop' | 'mine' | 'carry' | FightClip
+/** THE TOW ROPE's clips (rope.glb — scripts/oth/fight.py SET=rope, made in Blender; Winch.ts). */
+export type RopeClip = 'hook_take' | 'hook_attach' | 'hook_detach' | 'hook_stow'
+export type ClipName = RopeClip | 'idle' | 'walk' | 'run' | 'sprint' | 'jump' | 'jump_run' | 'fall' | 'land' | 'pickup' | 'grab_ledge' | 'climb_ledge' | 'open_door' | 'car_enter' | 'car_exit' | 'sit_drive' | 'turn_left' | 'turn_right' | 'getup_back' | 'getup_front' | 'chop' | 'mine' | 'carry' | FightClip
 /** THE FIGHT's clips (fight.glb — scripts/oth/fight.py, made in Blender; Character.loadClips). */
 export type FightClip = 'guard' | 'jab' | 'cross' | 'hook' | 'uppercut' | 'body_hook' | 'knee' | 'kick_front' | 'kick_round' | 'kick_low'
   | 'block' | 'block_hit' | 'dodge' | 'duck' | 'hit_head' | 'hit_head_l' | 'hit_head_r' | 'hit_body' | 'hit_leg' | 'stagger'

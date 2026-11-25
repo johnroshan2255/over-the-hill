@@ -95,10 +95,16 @@ out vec2 vUv;
 out vec3 vCol;
 out float vPaint;
 void main() {
-  vec4 w = modelMatrix * vec4(position, 1.0);
+  // (instanced — the cars' tow eyes, Winch.ts: one draw for all of them)
+#ifdef USE_INSTANCING
+  mat4 mm = modelMatrix * instanceMatrix;
+#else
+  mat4 mm = modelMatrix;
+#endif
+  vec4 w = mm * vec4(position, 1.0);
   vWorld = w.xyz;
   vLocal = position;
-  vN = normalize(mat3(modelMatrix) * normal);
+  vN = normalize(mat3(mm) * normal);
   vUv = uv;
 #ifdef USE_COLOR
   vCol = color;

@@ -28,6 +28,7 @@ use crate::{
     db::Db,
     map::{Ground, Maps},
     proto::{self, ClientMsg, Entity, Envelope, ShapeOp, Store},
+    sky::{self, Sky, Weather},
     util::{finite, now_ms, rand_id},
     weapons::{self, Fight, Weapon, Zone},
     wire,
@@ -53,8 +54,8 @@ const MSG_RATE: f32 = 30.0;
 const MSG_BURST: f32 = 60.0;
 /// Poses: players within NEAR m of each other every tick (20 Hz); beyond, every FAR_EVERY ticks (5 Hz).
 const NEAR: f32 = 300.0;
-/// The blows to a player's car kept for whoever joins after (a wreck is a few dozen).
-const DENTS: usize = 64;
+/// The blows to a player's car kept for whoever joins after (a wreck is a few dozen; the hard landings count too).
+const DENTS: usize = 160;
 /// How long a player's health is kept after they leave.
 const LOST_FOR: Duration = Duration::from_secs(600);
 const FAR_EVERY: u32 = 4;
@@ -285,6 +286,8 @@ pub enum Ev<'a> {
     Health { sid: u32, hp: f32, by: u32, weapon: Weapon, zone: Zone },
     Down { sid: u32, by: u32, by_name: &'a str, weapon: Weapon },
     Up { sid: u32 },
+    Sky { hour: f32, weather: Weather, spell: Weather, left: f32, cloud: f32, rain: f32, wet: f32 },
+    Rope { sid: u32, state: proto::RopeState, to: u32, point: u8, len: f32, reel: bool, x: f32, y: f32, z: f32 },
 }
 
 pub enum Out {
@@ -326,9 +329,15 @@ struct Member {
     /// whoever joins after (a newcomer saw everyone's car whole, and fists in every hand: 2026-11-24).
     car: String,
     dents: Vec<Dent>,
+    /// Their tow rope as last told (none: on its drum).
+    rope: Option<proto::Rope>,
 }
 
 type R = Result<(), String>;
+fn rope_ev(sid: u32, r: &proto::Rope) -> Ev<'static> {
+    Ev::Rope { sid, state: r.state, to: r.to, point: r.point, len: r.len, reel: r.reel, x: r.x, y: r.y, z: r.z }
+}
+
 /// A blow to a car as its game told it (proto.rs `Dent`): where, the way, the change of velocity, what kind.
 type Dent = (f32, f32, f32, f32, f32, f32, f32, proto::DentKind);
 
@@ -356,6 +365,8 @@ pub struct World {
     /// The health of those who left lately (by player id; LOST_FOR): coming back — a reload, a dropped line — they are
     /// as they were, not whole (a reload healed you, and got you up at once).
     lost: HashMap<String, (Fight, Instant)>,
+    /// The hour and the weather (sky.rs): the world's, run here, told to everyone.
+    sky: Sky,
 }
 
 impl World {
@@ -368,6 +379,7 @@ impl World {
             members: HashMap::new(),
             next_sid: 1,
             tick: 0,
+            sky: Sky::new(now_ms() as u32),
             claims: HashMap::new(),
             cells: HashMap::new(),
             paint: HashMap::new(),
@@ -457,7 +469,7 @@ impl World {
                     }
                     None => Fight::new(),
                 };
-                self.members.insert(sid, Member { pid, name, tx, ents: vec![], last: None, budget: MSG_BURST, budget_at: now, ver: 0, seen: HashMap::new(), t: 0, fight, car: String::new(), dents: vec![] });
+                self.members.insert(sid, Member { pid, name, tx, ents: vec![], last: None, budget: MSG_BURST, budget_at: now, ver: 0, seen: HashMap::new(), t: 0, fight, car: String::new(), dents: vec![], rope: None });
                 self.online.store(self.members.len() as u32, Ordering::Relaxed);
                 let m = &self.members[&sid];
                 let welcome = Ev::Welcome {
@@ -467,6 +479,8 @@ impl World {
                     inv: self.invs.get(&m.pid).unwrap_or(&EMPTY_INV),
                 };
                 self.to(sid, &welcome);
+                // (the hour and the weather: the world's, not the newcomer's own)
+                self.to(sid, &self.sky_ev());
                 // (their own health, if they came back hurt or down)
                 {
                     let f = &self.members[&sid].fight;
@@ -487,6 +501,9 @@ impl World {
                     }
                     for &(px, py, pz, dx, dy, dz, dv, kind) in &om.dents {
                         self.to(sid, &Ev::Dent { sid: *o, px, py, pz, dx, dy, dz, dv, kind });
+                    }
+                    if let Some(r) = om.rope {
+                        self.to(sid, &rope_ev(*o, &r));
                     }
                     let f = &om.fight;
                     if f.weapon != Weapon::Fists {
@@ -537,6 +554,8 @@ impl World {
                 m.seen.remove(&sid);
             }
             self.all(&Ev::Left { sid });
+            // (the ropes hooked to their car: off it — the hook back in the hand of whoever hooked it)
+            self.unhook(sid);
             self.refresh_guards(None);
         }
     }
@@ -566,6 +585,31 @@ impl World {
         }
         m.budget -= 1.0;
         true
+    }
+
+    /// The ropes hooked to `sid`'s car let go of it (they left, they changed cars): told to everyone, the hook back in
+    /// its owner's hand.
+    fn unhook(&mut self, sid: u32) {
+        let mut evs = vec![];
+        for (o, m) in self.members.iter_mut() {
+            if let Some(r) = m.rope.as_mut()
+                && r.state == proto::RopeState::Hooked
+                && r.to == sid
+            {
+                r.state = proto::RopeState::Hand;
+                r.to = 0;
+                r.reel = false;
+                evs.push(rope_ev(*o, r));
+            }
+        }
+        for e in &evs {
+            self.all(e);
+        }
+    }
+
+    fn sky_ev(&self) -> Ev<'static> {
+        let s = &self.sky;
+        Ev::Sky { hour: s.hour, weather: s.weather, spell: s.spell, left: s.left, cloud: s.cloud, rain: s.rain, wet: s.wet }
     }
 
     fn state_view(&self) -> StateView<'_> {
@@ -623,6 +667,10 @@ impl World {
     fn send_poses(&mut self) {
         self.tick = self.tick.wrapping_add(1);
         self.get_up();
+        // (the sky on by a tick — told when a spell begins, and every SKY_EVERY ticks so no game's clock wanders)
+        if self.sky.tick(0.05) || self.tick.is_multiple_of(sky::SKY_EVERY) {
+            self.all(&self.sky_ev());
+        }
         let far_tick = self.tick.is_multiple_of(FAR_EVERY);
         let mut b: Vec<u8> = Vec::with_capacity(512);
         let sids: Vec<u32> = self.members.keys().copied().collect();
@@ -849,6 +897,8 @@ impl World {
                 {
                     m.car = car;
                     m.dents.clear();
+                    // (another car: the ropes hooked to the last one are off it)
+                    self.unhook(sid);
                 }
                 Ok(())
             }
@@ -870,6 +920,43 @@ impl World {
             ClientMsg::Hit { sid: target, weapon, zone, dist } => self.hit(sid, target, weapon, zone, dist),
             ClientMsg::Ping { n } => {
                 self.to(sid, &Ev::Pong { n });
+                Ok(())
+            }
+            ClientMsg::Sky { hour, weather, wait } => {
+                if hour.is_some_and(|h| !h.is_finite() || !(0.0..=24.0).contains(&h)) {
+                    return Err("bad hour".into());
+                }
+                self.sky.set(hour, weather.weather(), wait);
+                self.all(&self.sky_ev());
+                Ok(())
+            }
+            ClientMsg::Rope { state, to, point, len, reel, x, y, z } => {
+                if ![len, x, y, z].iter().all(|v| v.is_finite()) || !(0.0..=proto::ROPE_MAX + 5.0).contains(&len) || point >= proto::ROPE_POINTS {
+                    return Err("bad rope".into());
+                }
+                if state == proto::RopeState::Hooked && to != 0 {
+                    if to == sid || !self.members.contains_key(&to) {
+                        return Err("no such car".into());
+                    }
+                    // (one hook a point — the others' ropes on it)
+                    let taken = self.members.iter().any(|(s, m)| *s != sid && m.rope.is_some_and(|r| r.state == proto::RopeState::Hooked && r.to == to && r.point == point));
+                    if taken {
+                        return Err("That hook point is taken".into());
+                    }
+                    // (within a line's length of where you are — their car, driven or parked)
+                    if let Some(me) = self.ent(sid, 0) {
+                        let p = me.p;
+                        let ok = self.members[&to].ents.iter().filter(|e| e.slot <= 1).any(|e| (e.p[0] - p[0]).hypot(e.p[2] - p[2]) <= proto::ROPE_MAX + 12.0);
+                        if !ok && !self.members[&to].ents.is_empty() {
+                            return Err("too far away".into());
+                        }
+                    }
+                }
+                let r = proto::Rope { state, to, point, len, reel, x, y, z };
+                if let Some(m) = self.members.get_mut(&sid) {
+                    m.rope = if state == proto::RopeState::None { None } else { Some(r) };
+                }
+                self.others(sid, &rope_ev(sid, &r));
                 Ok(())
             }
             ClientMsg::Dent { px, py, pz, dx, dy, dz, dv, kind } => {
@@ -1504,6 +1591,73 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn tow_ropes_between_cars() {
+        let mut w = world();
+        let (a, mut ra) = join(&mut w, "a");
+        let (b, mut rb) = join(&mut w, "b");
+        let (c, mut rc) = join(&mut w, "c");
+        on_foot(&mut w, a, 0.0, 0.0);
+        on_foot(&mut w, b, 10.0, 0.0);
+        on_foot(&mut w, c, 0.0, 12.0);
+        let hook = |to, point| ClientMsg::Rope { state: proto::RopeState::Hooked, to, point, len: 9.0, reel: false, x: 0.0, y: 0.0, z: 0.0 };
+        // a hooks b's front left: b and c are told
+        act(&mut w, a, hook(b, 0)).unwrap();
+        for r in [&mut rb, &mut rc] {
+            assert!(events(r).iter().any(|e| e["t"] == "rope" && e["sid"] == a && e["to"] == b && e["state"] == "hooked" && e["point"] == 0));
+        }
+        // one hook a point: c can't have the same one — the other front shackle, yes
+        assert!(act(&mut w, c, hook(b, 0)).is_err());
+        act(&mut w, c, hook(b, 1)).unwrap();
+        // not your own car, nor a point a car hasn't
+        assert!(act(&mut w, b, hook(b, 2)).is_err());
+        assert!(act(&mut w, a, hook(c, 3)).is_err());
+        // a newcomer is told both ropes
+        let (_d, mut rd) = join(&mut w, "d");
+        let ropes: Vec<_> = events(&mut rd).into_iter().filter(|e| e["t"] == "rope").collect();
+        assert_eq!(ropes.len(), 2);
+        // a reels in: told
+        act(&mut w, a, ClientMsg::Rope { state: proto::RopeState::Hooked, to: b, point: 0, len: 6.5, reel: true, x: 0.0, y: 0.0, z: 0.0 }).unwrap();
+        assert!(events(&mut rc).iter().any(|e| e["t"] == "rope" && e["sid"] == a && e["reel"] == true));
+        // b leaves: both hooks come off b's car — back in a's and c's hands
+        let _ = events(&mut ra);
+        w.handle(Cmd::Leave { sid: b });
+        let ev = events(&mut ra);
+        assert!(ev.iter().any(|e| e["t"] == "rope" && e["sid"] == a && e["state"] == "hand"));
+        assert!(ev.iter().any(|e| e["t"] == "rope" && e["sid"] == c && e["state"] == "hand"));
+        // too far: a hook on a car 80 m off is refused
+        let (e2, _re) = join(&mut w, "e");
+        on_foot(&mut w, e2, 80.0, 80.0);
+        assert!(act(&mut w, a, hook(e2, 2)).is_err());
+    }
+
+    #[test]
+    fn the_sky_is_the_worlds() {
+        let mut w = world();
+        let (a, mut ra) = join(&mut w, "a");
+        let sky_of = |evs: &[serde_json::Value]| evs.iter().rev().find(|e| e["t"] == "sky").cloned();
+        assert!(sky_of(&events(&mut ra)).is_some(), "told the sky on joining");
+        // a rests until sunrise and waits out the weather: everyone hears it — a newcomer too
+        let (_b, mut rb) = join(&mut w, "b");
+        let _ = events(&mut ra);
+        act(&mut w, a, ClientMsg::Sky { hour: Some(6.5), weather: proto::SkySet::Keep, wait: true }).unwrap();
+        for r in [&mut ra, &mut rb] {
+            let s = sky_of(&events(r)).expect("told the change");
+            assert!((s["hour"].as_f64().unwrap() - 6.5).abs() < 1e-4 && s["rain"] == 0.0, "{s}");
+        }
+        act(&mut w, a, ClientMsg::Sky { hour: None, weather: proto::SkySet::Rain, wait: false }).unwrap();
+        let (_c, mut rc) = join(&mut w, "c");
+        let s = sky_of(&events(&mut rc)).unwrap();
+        assert_eq!(s["weather"], "rain");
+        assert!(act(&mut w, a, ClientMsg::Sky { hour: Some(f32::NAN), weather: proto::SkySet::Keep, wait: false }).is_err());
+        // and it is told again every SKY_EVERY ticks, so no game's clock wanders
+        let _ = events(&mut rb);
+        for _ in 0..sky::SKY_EVERY {
+            w.send_poses();
+        }
+        assert!(sky_of(&events(&mut rb)).is_some());
     }
 
     #[test]

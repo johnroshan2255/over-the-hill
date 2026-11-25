@@ -536,6 +536,34 @@
         "sid": 2,
         "t": "dent"
       }
+    },
+    {
+      "hex": "3e000078410003008036430000403f0000803e0000003f",
+      "json": {
+        "cloud": 0.75,
+        "hour": 15.5,
+        "left": 182.5,
+        "rain": 0.25,
+        "spell": "rain",
+        "t": "sky",
+        "weather": "auto",
+        "wet": 0.5
+      }
+    },
+    {
+      "hex": "3f030202010000484101000000000000000000000000",
+      "json": {
+        "len": 12.5,
+        "point": 1,
+        "reel": true,
+        "sid": 3,
+        "state": "hooked",
+        "t": "rope",
+        "to": 2,
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      }
     }
   ],
   "intents": [
@@ -790,6 +818,41 @@
         "pz": 2.25,
         "req": null,
         "t": "dent"
+      }
+    },
+    {
+      "hex": "08050000d0400001",
+      "json": {
+        "hour": 6.5,
+        "req": 4,
+        "t": "sky",
+        "wait": true,
+        "weather": "keep"
+      }
+    },
+    {
+      "hex": "08000000c07f0300",
+      "json": {
+        "hour": null,
+        "req": null,
+        "t": "sky",
+        "wait": false,
+        "weather": "cloudy"
+      }
+    },
+    {
+      "hex": "07000100000000904000000000000000000000000000",
+      "json": {
+        "len": 4.5,
+        "point": 0,
+        "reel": false,
+        "req": null,
+        "state": "hand",
+        "t": "rope",
+        "to": 0,
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
       }
     }
   ],

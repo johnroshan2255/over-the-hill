@@ -14,7 +14,12 @@
     "depthPerDv": 0.022,
     "maxPerHit": 0.45,
     "maxDepth": 0.6,
-    "crumple": 0.35,
+    "buckle": {
+      "wavelength": 0.22,
+      "amp": 1,
+      "maxSquash": 0.55
+    },
+    "glassBends": 0.05,
     "cabinCell": 0.72
   },
   "glass": {

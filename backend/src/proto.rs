@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     catalog::{Bag, Mat},
+    sky::Weather,
     weapons::{Weapon, Zone},
 };
 
@@ -95,6 +96,63 @@ pub enum ClientMsg {
     /// A BLOW TO YOUR CAR (the game's Damage.ts — `CarDamage.hit`, in the car's own space: where, the way it pushed, the
     /// change of velocity), or `repair`: relayed to the others as `dent`, so the car they draw of yours is dented too.
     Dent { px: f32, py: f32, pz: f32, dx: f32, dy: f32, dz: f32, dv: f32, kind: DentKind },
+    /// THE SKY changed (sky.rs): the hour set (a rest at camp, G), the weather pinned / back to `auto` (`keep`: as it
+    /// is), the weather waited out (a rest) — the world's, told to everyone.
+    Sky { hour: Option<f32>, weather: SkySet, wait: bool },
+    /// THE TOW ROPE (the game's Tow.ts): your winch's line — `none` (on its drum), `hand` (its hook carried, the line
+    /// paid out `len` m behind you), `hooked` onto player `to`'s car at its recovery point `point` (0 front left, 1
+    /// front right, 2 the rear) — or, `to` 0, onto a fixed thing at x y z (a vault's keystone); `reel`: the winch
+    /// pulling in. Relayed to everyone as `rope`: they draw it, and the car it's hooked to is pulled in their game.
+    Rope { state: RopeState, to: u32, point: u8, len: f32, reel: bool, x: f32, y: f32, z: f32 },
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RopeState {
+    None,
+    Hand,
+    Hooked,
+}
+
+/// A player's tow rope as last told (proto `rope`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rope {
+    pub state: RopeState,
+    pub to: u32,
+    pub point: u8,
+    pub len: f32,
+    pub reel: bool,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+/// A car's recovery points (a hook each — like a real 4×4: two shackles in front, the hitch at the back).
+pub const ROPE_POINTS: u8 = 3;
+/// A winch's line (m).
+pub const ROPE_MAX: f32 = 25.0;
+
+/// The weather a `sky` intent asks for: `keep` it, or pin it (`auto`: back to the spells).
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SkySet {
+    Keep,
+    Auto,
+    Clear,
+    Cloudy,
+    Rain,
+}
+
+impl SkySet {
+    pub fn weather(self) -> Option<Weather> {
+        match self {
+            SkySet::Keep => None,
+            SkySet::Auto => Some(Weather::Auto),
+            SkySet::Clear => Some(Weather::Clear),
+            SkySet::Cloudy => Some(Weather::Cloudy),
+            SkySet::Rain => Some(Weather::Rain),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,6 +161,11 @@ pub enum DentKind {
     Crash,
     Shot,
     Repair,
+    /// A hard landing on a wheel (`px`: which, 0–3; `dv`: how fast it came down on its stops — Damage.ts `landing`).
+    Land,
+    /// It went up (Damage.ts `explode`): a newcomer told the blows that set it alight sees a burnt shell, not a fire
+    /// that starts again and goes up a second time.
+    Blast,
 }
 
 pub const ENTITY_BYTES: usize = 17;

@@ -1,6 +1,6 @@
 import { type Account, socketUrl } from './api'
 import { type Ent, FLAG_TELEPORT, Kind, poseFrame, readPoses } from './pose'
-import { type Claim, decodeEv, encodeIntent, type Ev, type Intent, type Inv, type Loose, type Piece, type PlayerView, type Pond, type Stroke, type WireWeapon, type WireZone, type WorldInfo, type DentKind } from './wire'
+import { type Claim, decodeEv, encodeIntent, type Ev, type Intent, type Inv, type Loose, type Piece, type PlayerView, type Pond, type Stroke, type WireWeapon, type WireZone, type WorldInfo, type DentKind, type SkySet, type RopeState } from './wire'
 
 /**
  * A CO-OP SESSION — one world's WebSocket (backend/README.md): the world as the server says it is (players, claims and
@@ -90,6 +90,9 @@ const newClock = (): Clock => ({ base: 0, last16: -1, off: NaN, gap: TICK_MS, la
 export interface Remote {
   sid: number; id: string; name: string; colour: string; car: string; tracks: Map<number, Track>; clock: Clock
   weapon: WireWeapon; hp: number; down: boolean
+  /** Their TOW ROPE as last told (Tow.ts): null — on its drum; `at` when it was told (performance.now: the reel's
+   *  length run on between their word). */
+  rope: { state: RopeState; to: number; point: number; len: number; reel: boolean; x: number; y: number; z: number; at: number } | null
 }
 
 /** A player's colour (their car's paint, their name tag, their flag) — from their id, the same on every screen. */
@@ -123,6 +126,8 @@ export class Session {
   down = false
   /** The round trip (ms), from the pings. */
   rtt = 0
+  /** The world's hour and weather as last told (sky.rs) — joining, it comes right after the welcome. */
+  sky: Extract<Ev, { t: 'sky' }> | null = null
   /** Bytes in / out (the HUD's debug line). */
   bytesIn = 0
   bytesOut = 0
@@ -262,6 +267,14 @@ export class Session {
   dent(px: number, py: number, pz: number, dx: number, dy: number, dz: number, dv: number, kind: DentKind): void {
     if (!this.closed) this.send(encodeIntent({ t: 'dent', px, py, pz, dx, dy, dz, dv, kind }))
   }
+  /** OUR TOW ROPE (Tow.ts): its state, where it's hooked, the line out, the winch pulling — told to everyone. */
+  rope(state: RopeState, to: number, point: number, len: number, reel: boolean, x = 0, y = 0, z = 0): void {
+    if (!this.closed) this.send(encodeIntent({ t: 'rope', state, to, point, len, reel, x, y, z }))
+  }
+  /** THE SKY changed here (a rest at camp, G / Shift + G): the world's — the server tells everyone (`sky`). */
+  setSky(hour: number | null, weather: SkySet = 'keep', wait = false): void {
+    if (!this.closed) this.send(encodeIntent({ t: 'sky', hour, weather, wait }))
+  }
   /** What our shot hit — the server checks it and takes the health. */
   hit(sid: number, weapon: WireWeapon, zone: WireZone, dist: number): void {
     if (!this.closed) this.send(encodeIntent({ t: 'hit', sid, weapon, zone, dist }))
@@ -276,7 +289,7 @@ export class Session {
   }
 
   private addPlayer(sid: number, id: string, name: string): void {
-    this.remotes.set(sid, { sid, id, name, colour: colourOf(id), car: '', tracks: new Map(), clock: newClock(), weapon: 'fists', hp: 100, down: false })
+    this.remotes.set(sid, { sid, id, name, colour: colourOf(id), car: '', tracks: new Map(), clock: newClock(), weapon: 'fists', hp: 100, down: false, rope: null })
   }
 
   private message(b: Uint8Array): void {
@@ -333,6 +346,13 @@ export class Session {
       case 'down': { if (e.sid === this.me.sid) { this.hp = 0; this.down = true } const r = this.remotes.get(e.sid); if (r) { r.hp = 0; r.down = true } break }
       case 'up': { if (e.sid === this.me.sid) { this.hp = 100; this.down = false } const r = this.remotes.get(e.sid); if (r) { r.hp = 100; r.down = false } break }
       case 'left': this.remotes.delete(e.sid); break
+      case 'sky': this.sky = e; break
+      case 'rope': {
+        if (e.sid === this.me.sid) break // (ours, changed by the server — their car gone: Tow.ts hears it)
+        const r = this.remotes.get(e.sid)
+        if (r) r.rope = e.state === 'none' ? null : { state: e.state, to: e.to, point: e.point, len: e.len, reel: e.reel, x: e.x, y: e.y, z: e.z, at: performance.now() }
+        break
+      }
       case 'ok': { const p = this.pending.get(e.req); this.pending.delete(e.req); p?.ok(); break }
       case 'err': { if (e.req !== null) { const p = this.pending.get(e.req); this.pending.delete(e.req); p?.fail(e.msg) } break }
       case 'pong': this.rtt = Math.max(0, (performance.now() * 10 - e.n) / 10); break

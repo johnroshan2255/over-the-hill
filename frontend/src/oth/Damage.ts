@@ -73,19 +73,14 @@ interface DMesh {
   gone: Uint8Array | null
   /** vertices of RUBBER (the spare wheel on the tail): they give and come back — next to no dent */
   soft: Uint8Array | null
+  /** (made at the first blow) the CREASES' part of each vertex's move (xyz), and how far its panel has been squashed
+   *  (0 … maxSquash) — the push's part is what is left: pos − rest − buck */
+  buck: Float32Array | null
+  squash: Float32Array | null
   dirty: boolean
 }
 interface Pane { m: DMesh; verts: Uint32Array; x: number; y: number; z: number; r: number; dmg: number; shots: number; state: 0 | 1 | 2 }
 export interface WheelDamage { bend: number; flat: boolean; off: boolean; jam: boolean }
-
-/** 32 bits of a place (to the millimetre): the same for the two vertices of a seam — no sines (a blow's pass runs
- *  over ten thousand vertices in its frame). */
-const hash32 = (x: number, y: number, z: number): number => {
-  let h = (Math.imul(Math.round(x * 997), 73856093) ^ Math.imul(Math.round(y * 997), 19349663) ^ Math.imul(Math.round(z * 997), 83492791)) >>> 0
-  h = Math.imul(h ^ (h >>> 15), 2246822519) >>> 0
-  h = Math.imul(h ^ (h >>> 13), 3266489917) >>> 0
-  return (h ^ (h >>> 16)) >>> 0
-}
 
 export class CarDamage {
   /** The engine's health (proto: 1000 whole … 0 dead). */
@@ -146,7 +141,7 @@ export class CarDamage {
     const dmg = new Float32Array(P.count)
     geo.setAttribute('dmg', new GFX.BufferAttribute(dmg, 1))
     const m: DMesh = { geo, pos: P.array as Float32Array, nor: N.array as Float32Array, dmg, idx: geo.index ? (geo.index.array as ArrayLike<number>) : null,
-      ox: at ? at[0] : 0, oy: at ? at[1] : 0, oz: at ? at[2] : 0, glass, door: !!at, rest: null, nor0: null, acc: null, moved: null, gone: null, soft: null, dirty: false }
+      ox: at ? at[0] : 0, oy: at ? at[1] : 0, oz: at ? at[2] : 0, glass, door: !!at, rest: null, nor0: null, acc: null, moved: null, gone: null, soft: null, buck: null, squash: null, dirty: false }
     this.meshes.push(m)
     if (glass) this.findPanes(m)
     else if (!at && !this.spare) this.findSpare(m)
@@ -271,6 +266,15 @@ export class CarDamage {
       for (const m of this.meshes) if (!m.door || this.doorShut) this.dent(m, px, py, pz, dx, dy, dz, R, depth)
       this.crush += depth
       this.ev('dent', px, py, pz, eff, dx, dy, dz)
+      // (GLASS DOESN'T BEND: a pane whose frame has been pushed out of shape bursts — drawn out with it, a windscreen of
+      //  two triangles became a long shard)
+      for (const p of this.panes) {
+        if (p.state === 2 || !p.m.rest) continue
+        const P = p.m.pos, Rs = p.m.rest
+        let worst = 0
+        for (const i of p.verts) { const j = i * 3; worst = Math.max(worst, Math.abs(P[j] - Rs[j]) + Math.abs(P[j + 1] - Rs[j + 1]) + Math.abs(P[j + 2] - Rs[j + 2])) }
+        if (worst > C.deform.glassBends) this.shatter(p)
+      }
     }
     // 2. the glass: a pane takes what reaches it; cracked, then out
     for (const p of this.panes) {
@@ -346,6 +350,7 @@ export class CarDamage {
   landing(k: number, sv: number): void {
     const w = this.wheels[k], L = C.landing, W = C.wheel
     if (w.off || sv < L.bendFrom) return
+    this.onLand?.(k, sv)
     const h = this.hub[k], was = w.bend
     w.bend = Math.min(W.maxCamber * 1.25, w.bend + L.bendPerMs * (sv - L.bendFrom))
     if (!w.flat && sv >= L.burstFrom) { w.flat = true; this.ev('tyre', h[0], h[1], h[2], k) }
@@ -418,6 +423,7 @@ export class CarDamage {
   /** IT GOES UP: a burnt shell — every pane out, every lamp, every tyre; the engine gone. */
   explode(): void {
     if (this.wrecked) return
+    this.onBlast?.()
     this.wrecked = true
     this.burn = 0
     this.engine = 0
@@ -448,50 +454,142 @@ export class CarDamage {
   }
 
   /** (the first blow: the mesh as it left the works kept, the scratch made) */
+  /** THE PANELS' FACING, a field over the car (made at the first blow): which way the shell faces, outer side out, on
+   *  a 10 cm grid — every face's normal (by its area) laid into the cells round it — and sampled between the cells:
+   *  smooth by its making, so a crease out along it moves what lies together as one (a flat-shaded corner's copies,
+   *  a small bevel, the door's skin and the body, a panel's two layers). Its length (0 … 1): how much the faces
+   *  there agree — none where they don't (a panel's edge, a tangle of trim): no crease there. */
+  private face: { x0: number; y0: number; z0: number; nx: number; ny: number; nz: number; v: Float32Array } | null = null
+  private static readonly CELL = 0.1
+  private facing(): NonNullable<CarDamage['face']> {
+    if (this.face) return this.face
+    const M = this.model, S = CarDamage.CELL, pad = 0.3
+    const x0 = -M.half.x - pad, y0 = M.bottom - pad, z0 = M.front - pad
+    const nx = Math.ceil((2 * M.half.x + 2 * pad) / S) + 1, ny = Math.ceil((M.half.y * 2 + 2 * pad + 0.6) / S) + 1, nz = Math.ceil((M.rear - M.front + 2 * pad) / S) + 1
+    const v = new Float32Array(nx * ny * nz * 4), mid = this.mid
+    for (const m of this.meshes) {
+      const P = m.rest ?? m.pos, idx = m.idx, n = idx ? idx.length : P.length / 3
+      for (let t = 0; t + 2 < n; t += 3) {
+        const a = idx ? idx[t] : t, b = idx ? idx[t + 1] : t + 1, c = idx ? idx[t + 2] : t + 2
+        const ax = P[a * 3], ay = P[a * 3 + 1], az = P[a * 3 + 2]
+        const ux = P[b * 3] - ax, uy = P[b * 3 + 1] - ay, uz = P[b * 3 + 2] - az, vx = P[c * 3] - ax, vy = P[c * 3 + 1] - ay, vz = P[c * 3 + 2] - az
+        let fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx
+        const area = Math.sqrt(fx * fx + fy * fy + fz * fz)
+        if (area < 1e-9) continue
+        const cx = (ax + P[b * 3] + P[c * 3]) / 3 + m.ox, cy = (ay + P[b * 3 + 1] + P[c * 3 + 1]) / 3 + m.oy, cz = (az + P[b * 3 + 2] + P[c * 3 + 2]) / 3 + m.oz
+        // (the outer side out)
+        if (fx * (cx - mid.x) + fy * (cy - mid.y) + fz * (cz - mid.z) < 0) { fx = -fx; fy = -fy; fz = -fz }
+        // (into the 8 cells round its middle, by how near)
+        const gx = (cx - x0) / S, gy = (cy - y0) / S, gz = (cz - z0) / S
+        const ix = Math.floor(gx), iy = Math.floor(gy), iz = Math.floor(gz), tx = gx - ix, ty = gy - iy, tz = gz - iz
+        for (let k = 0; k < 8; k++) {
+          const X = ix + (k & 1), Y = iy + ((k >> 1) & 1), Z = iz + (k >> 2)
+          if (X < 0 || Y < 0 || Z < 0 || X >= nx || Y >= ny || Z >= nz) continue
+          const w = (k & 1 ? tx : 1 - tx) * ((k >> 1) & 1 ? ty : 1 - ty) * (k >> 2 ? tz : 1 - tz)
+          const o = ((Z * ny + Y) * nx + X) * 4
+          v[o] += fx * w; v[o + 1] += fy * w; v[o + 2] += fz * w; v[o + 3] += area * w
+        }
+      }
+    }
+    return (this.face = { x0, y0, z0, nx, ny, nz, v })
+  }
+  /** The facing at a point of the car (into `out`: the way, its length how much the faces there agree). */
+  private faceAt(x: number, y: number, z: number, out: Float32Array): void {
+    const F = this.facing(), S = CarDamage.CELL
+    const gx = (x - F.x0) / S, gy = (y - F.y0) / S, gz = (z - F.z0) / S
+    const ix = Math.floor(gx), iy = Math.floor(gy), iz = Math.floor(gz), tx = gx - ix, ty = gy - iy, tz = gz - iz
+    let ax = 0, ay = 0, az = 0, aw = 0
+    for (let k = 0; k < 8; k++) {
+      const X = ix + (k & 1), Y = iy + ((k >> 1) & 1), Z = iz + (k >> 2)
+      if (X < 0 || Y < 0 || Z < 0 || X >= F.nx || Y >= F.ny || Z >= F.nz) continue
+      const w = (k & 1 ? tx : 1 - tx) * ((k >> 1) & 1 ? ty : 1 - ty) * (k >> 2 ? tz : 1 - tz), o = ((Z * F.ny + Y) * F.nx + X) * 4
+      ax += F.v[o] * w; ay += F.v[o + 1] * w; az += F.v[o + 2] * w; aw += F.v[o + 3] * w
+    }
+    const l = Math.sqrt(ax * ax + ay * ay + az * az)
+    if (l < 1e-9 || aw < 1e-9) { out[0] = out[1] = out[2] = 0; return }
+    const k = Math.min(1, l / aw) / l
+    out[0] = ax * k; out[1] = ay * k; out[2] = az * k
+  }
+  private readonly fa = new Float32Array(3)
+
   private lazy(m: DMesh): void {
     if (m.rest) return
     const n = m.pos.length / 3
     m.rest = m.pos.slice(); m.nor0 = m.nor.slice()
     m.acc = new Float32Array(n * 3); m.moved = new Uint8Array(n); m.gone = new Uint8Array(n)
+    m.buck = new Float32Array(n * 3); m.squash = new Float32Array(n)
   }
 
-  /** The shell pushed in: every vertex within R of the blow, by `depth` at its middle — creased, never further than
-   *  the spec's limit from where it began, never into the cabin's cell. Then the moved vertices' normals. */
+  /** THE SHELL PUSHED IN — as metal goes, not rubber (2026-11-25, docs/DAMAGE.md §3.1): every vertex within R of the
+   *  blow moved by one SMOOTH field of where it is (what lies together moves together — a door's skin and the body
+   *  round it, a panel's two layers, a seam's two vertices): the PUSH along the blow, deepest at its middle; and where
+   *  that push shortens a panel lying along the blow, the CREASES the metal folds into rather than shrink — their
+   *  height what keeps the panel's length. Then the moved vertices' normals. */
   private dent(m: DMesh, px: number, py: number, pz: number, dx: number, dy: number, dz: number, R: number, depth: number): void {
-    const pos = m.pos, n = pos.length / 3, R2 = R * R, D = C.deform, cell = this.cell
+    const pos = m.pos, n = pos.length / 3, R2 = R * R, D = C.deform, B = D.buckle, cell = this.cell
     this.lazy(m)
-    const rest = m.rest!, moved = m.moved!, gone = m.gone!, soft = m.soft, give = C.spare.give, ox = m.ox, oy = m.oy, oz = m.oz
-    const inCell = (x: number, y: number, z: number) => Math.abs(x) < cell.hx && y < cell.y1 && z > cell.z0 && z < cell.z1
+    const rest = m.rest!, moved = m.moved!, gone = m.gone!, buck = m.buck!, squash = m.squash!
+    const give = C.spare.give, sp = this.spare, ox = m.ox, oy = m.oy, oz = m.oz, maxD = D.maxDepth, lam = B.wavelength, K = (2 * Math.PI) / lam
+    // (THE CABIN'S CELL, the safety cage: what is in it never moves; what is outside it closes at most CLOSE of its own
+    //  gap to it — so a door's skin, further out, always stays outside the trim behind it: pushed flat against the
+    //  cell's face, the skin and the black trim lay in one place and the trim showed through in holes)
+    const CLOSE = 0.65
+    const outside = (x: number, y: number, z: number) => Math.max(Math.abs(x) - cell.hx, y - cell.y1, cell.z0 - z, z - cell.z1)
+    const amp = (e: number) => (lam / Math.PI) * Math.sqrt(e) * B.amp
     let any = false
     for (let i = 0; i < n; i++) {
       const j = i * 3
+      if (gone[i]) continue
       const x = pos[j] + ox, y = pos[j + 1] + oy, z = pos[j + 2] + oz
       const ex = x - px, ey = y - py, ez = z - pz, r2 = ex * ex + ey * ey + ez * ez
-      if (r2 >= R2 || gone[i]) continue
+      if (r2 >= R2) continue
       const rx = rest[j] + ox, ry = rest[j + 1] + oy, rz = rest[j + 2] + oz
-      if (inCell(rx, ry, rz)) continue
-      // (rubber — the spare wheel: it gives and comes back, a little of the dent stays)
-      const w = (1 - r2 / R2) * (1 - r2 / R2) * (soft && soft[i] ? give : 1)
-      // THE CREASES: folds a hand's width apart, and each vertex's own share — by where it began (a seam's two
-      // vertices at one place move as one)
-      const fold = Math.sin(rx * 23.1 + rz * 17.3) * Math.sin(ry * 19.7 + rz * 11.9 + 1.3), hh = hash32(rx, ry, rz)
-      const h = (hh & 1023) / 1023, h2 = ((hh >>> 10) & 1023) / 1023, h3 = (hh >>> 20) / 4095
-      const k = depth * w * (1 + D.crumple * (1.2 * fold + 0.8 * (h * 2 - 1)))
-      const side = depth * w * D.crumple * 0.5
-      let nx = x + dx * k + (h2 - 0.5) * side, ny = y + dy * k + (h3 - 0.5) * side, nz = z + dz * k + (h - 0.5) * side
-      // (no further than maxDepth from where it began)
-      let qx = nx - rx, qy = ny - ry, qz = nz - rz
-      const q = Math.sqrt(qx * qx + qy * qy + qz * qz)
-      if (q > D.maxDepth) { const s = D.maxDepth / q; qx *= s; qy *= s; qz *= s; nx = rx + qx; ny = ry + qy; nz = rz + qz }
-      // (not into the cell: back out the way it came, to the cell's face)
-      if (inCell(nx, ny, nz)) {
-        let t = Infinity
-        if (dx !== 0) { const f = dx > 0 ? -cell.hx : cell.hx, tt = (nx - f) / dx; if (tt >= 0 && tt < t) t = tt }
-        if (dy < 0) { const tt = (ny - cell.y1) / dy; if (tt >= 0 && tt < t) t = tt }
-        if (dz !== 0) { const f = dz > 0 ? cell.z0 : cell.z1, tt = (nz - f) / dz; if (tt >= 0 && tt < t) t = tt }
-        if (t === Infinity) continue
-        nx -= dx * t; ny -= dy * t; nz -= dz * t
+      const gap = outside(rx, ry, rz)
+      if (gap <= 0) continue
+      const cellK = 1
+      // (rubber — the spare wheel: it gives and comes back, a little of the dent stays. Its round and what is just
+      //  behind it, eased in over its rim — not vertex by vertex: the tyre went 12 cm and the metal 1 cm from it 2 cm)
+      let rub = 1
+      if (sp) {
+        const a = Math.min(1, Math.max(0, (sp.r * 1.3 - Math.hypot(rx - sp.x, ry - sp.y)) / (sp.r * 0.8)))
+        const b = Math.min(1, Math.max(0, (rz - (sp.z0 - 0.4)) / 0.35))
+        rub = 1 - (1 - give) * a * b
       }
+      const q = 1 - r2 / R2, k = cellK * rub, push = depth * q * q * k
+      // THE PUSH: added to what earlier blows pushed, never further than maxDepth from where it began
+      const u0x = pos[j] - rest[j] - buck[j], u0y = pos[j + 1] - rest[j + 1] - buck[j + 1], u0z = pos[j + 2] - rest[j + 2] - buck[j + 2]
+      let ux = u0x + dx * push, uy = u0y + dy * push, uz = u0z + dz * push
+      // (… and no more than CLOSE of its own gap to the cell: smooth in where it is — a back-out to the cell's face
+      //  along the blow chose one face or another near the cell's corners, and two points 7 cm apart went 17 cm)
+      const ul = Math.sqrt(ux * ux + uy * uy + uz * uz), um = Math.min(maxD, CLOSE * gap)
+      if (ul > um) { const f = um / ul; ux *= f; uy *= f; uz *= f }
+      // THE CREASES: how much this blow squashed the panel here — the push falls off behind the point of the blow, so
+      // what lies behind it along the blow comes closer to what lies ahead (−∂push/∂s, s along the blow)
+      const sAlong = ex * dx + ey * dy + ez * dz
+      // (by the push it really got: held at maxDepth or at the cell, a point goes no further — nor is it squashed)
+      const got = push > 1e-6 ? Math.max(0, Math.min(1, ((ux - u0x) * dx + (uy - u0y) * dy + (uz - u0z) * dz) / push)) : 0
+      const e0 = squash[i], e1 = sAlong > 0 ? Math.min(B.maxSquash, e0 + (depth * 4 * q * sAlong * k * got) / R2) : e0
+      if (e1 > e0) {
+        squash[i] = e1
+        // OUT OF THE PANEL — along the panels' facing here (`facing`: smooth over the car, the outer side out, so what
+        // lies together folds as one), less what of it lies along the blow: a face square to the blow (a bumper's front)
+        // isn't squashed along itself — no crease. (Each vertex's own normal split a flat-shaded corner's copies; out
+        // from the car's middle slid a bonnet's creases sideways in its own plane)
+        this.faceAt(rx, ry, rz, this.fa)
+        let mx = this.fa[0], my = this.fa[1], mz = this.fa[2]
+        const nd = mx * dx + my * dy + mz * dz
+        mx -= nd * dx; my -= nd * dy; mz -= nd * dz
+        const ml = Math.sqrt(mx * mx + my * my + mz * mz)
+        if (ml > 0.05) {
+          mx /= ml; my /= ml; mz /= ml
+          // (the folds run across the blow, a little wandering — by where the metal began, so every game folds it alike)
+          const along = rx * dx + ry * dy + rz * dz
+          const wave = Math.sin(K * along + 1.7 * Math.sin(rx * 4.1 + ry * 2.3) + 1.3 * Math.sin(rz * 3.7 - ry * 2.9)) * (0.8 + 0.2 * Math.sin(rx * 7.3 + rz * 5.1))
+          const da = (amp(e1) - amp(e0)) * ml * wave * Math.min(1, gap / 0.1) // (eased out at the cell, as the push is)
+          buck[j] += mx * da; buck[j + 1] += my * da; buck[j + 2] += mz * da
+        }
+      }
+      const nx = rest[j] + ux + buck[j] + ox, ny = rest[j + 1] + uy + buck[j + 1] + oy, nz = rest[j + 2] + uz + buck[j + 2] + oz
       pos[j] = nx - ox; pos[j + 1] = ny - oy; pos[j + 2] = nz - oz
       moved[i] = 1
       any = true
@@ -524,11 +622,15 @@ export class CarDamage {
    *  draw of ours the same way. */
   onHit: ((px: number, py: number, pz: number, dx: number, dy: number, dz: number, dv: number, kind: 'crash' | 'shot') => void) | null = null
   onRepair: (() => void) | null = null
+  /** (co-op) a hard landing that bent or burst something (`landing`), and the car going up (`explode`) — told too: the
+   *  others' copy lands the same blow, and a newcomer sees the shell, not the fire that led to it. */
+  onLand: ((k: number, sv: number) => void) | null = null
+  onBlast: (() => void) | null = null
   /** MENDED: as it left the works. */
   repair(): void {
     this.onRepair?.()
     for (const m of this.meshes) {
-      if (m.rest) { m.pos.set(m.rest); m.nor.set(m.nor0!); m.gone!.fill(0) }
+      if (m.rest) { m.pos.set(m.rest); m.nor.set(m.nor0!); m.gone!.fill(0); m.buck!.fill(0); m.squash!.fill(0) }
       m.dmg.fill(0)
       m.dirty = true
     }

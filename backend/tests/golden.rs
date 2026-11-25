@@ -78,6 +78,8 @@ fn events() -> Vec<Value> {
         Ev::Up { sid: 3 },
         Ev::Dent { sid: 2, px: 0.75, py: 0.5, pz: -2.25, dx: 0.0, dy: 0.0, dz: 1.0, dv: 9.5, kind: overhill_server::proto::DentKind::Crash },
         Ev::Dent { sid: 2, px: 0.0, py: 0.0, pz: 0.0, dx: 0.0, dy: 0.0, dz: 0.0, dv: 0.0, kind: overhill_server::proto::DentKind::Repair },
+        Ev::Sky { hour: 15.5, weather: overhill_server::sky::Weather::Auto, spell: overhill_server::sky::Weather::Rain, left: 182.5, cloud: 0.75, rain: 0.25, wet: 0.5 },
+        Ev::Rope { sid: 3, state: overhill_server::proto::RopeState::Hooked, to: 2, point: 1, len: 12.5, reel: true, x: 0.0, y: 0.0, z: 0.0 },
     ];
     evs.iter().map(|e| json!({ "hex": hex(&wire::encode_ev(e)), "json": serde_json::to_value(e).unwrap() })).collect()
 }
@@ -107,6 +109,9 @@ fn intents() -> Vec<Value> {
         json!({ "t": "hit", "req": null, "sid": 300, "weapon": "pistol", "zone": "limb", "dist": 12.5 }),
         json!({ "t": "stow", "req": 15, "from": "carry", "to": "trailer", "bag": { "wood": 3, "stone": 1, "metal": 0 } }),
         json!({ "t": "dent", "req": null, "px": -0.75, "py": 0.5, "pz": 2.25, "dx": 0.0, "dy": 0.0, "dz": -1.0, "dv": 12.5, "kind": "shot" }),
+        json!({ "t": "sky", "req": 4, "hour": 6.5, "weather": "keep", "wait": true }),
+        json!({ "t": "sky", "req": null, "hour": null, "weather": "cloudy", "wait": false }),
+        json!({ "t": "rope", "req": null, "state": "hand", "to": 0, "point": 0, "len": 4.5, "reel": false, "x": 0.0, "y": 0.0, "z": 0.0 }),
     ];
     v.into_iter().map(|j| json!({ "hex": hex(&wire::encode_intent(&j).unwrap_or_else(|e| panic!("{j}: {e}"))), "json": j })).collect()
 }

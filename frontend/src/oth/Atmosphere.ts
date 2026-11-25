@@ -136,18 +136,50 @@ export class Atmosphere {
     this.uniforms.uNoise.value = noise
   }
 
+  /** CO-OP (2026-11-25): the hour and the weather are the world's — the server runs this same clock and weather
+   *  (backend/src/sky.rs) and tells them (`follow`); this copy runs on between its word, smooth, but rolls no spell of
+   *  its own (the server's comes), and a small difference in the hour is eased out over ~2 s, not jumped. */
+  followed = false
+  private hourFix = 0
+
   /** Advance the clock and the weather by dt real seconds. */
   tick(dt: number): void {
     this.tickWeather(dt)
+    if (this.hourFix !== 0) {
+      const k = Math.abs(this.hourFix) < 1e-5 ? this.hourFix : this.hourFix * Math.min(1, dt * 1.5)
+      this.hour = (this.hour + k + 24) % 24
+      this.hourFix -= k
+    }
     if (this.dayMinutes <= 0) return
     const night = this.hour < 6 || this.hour > 18.6
     this.hour = (this.hour + (dt * 12 * (night ? 3 : 1)) / (this.dayMinutes * 60)) % 24
   }
 
-  private tickWeather(dt: number): void {
+  /** The world's sky as the server tells it (co-op): the spell and its clock, the cloud / rain / wet as they are there
+   *  (set: they ease the same way here, so they differ only by a frame's time), the hour eased to it — jumped when far
+   *  off (joining, a rest: behind the fade) or `snap`. */
+  follow(s: { hour: number; weather: 'auto' | 'clear' | 'cloudy' | 'rain'; spell: 'auto' | 'clear' | 'cloudy' | 'rain'; left: number; cloud: number; rain: number; wet: number }, snap = false): void {
+    const first = !this.followed
+    this.followed = true
+    this.dayMinutes = 24 // (the server's: sky.rs DAY_MINUTES)
+    this.weather = s.weather
+    this.spell = s.spell === 'auto' ? 'clear' : s.spell
+    this.spellLeft = s.left
+    const u = this.uniforms
+    u.uCloud.value = s.cloud
+    u.uRain.value = s.rain
+    u.uWet.value = s.wet
+    const d = ((s.hour - this.hour + 36) % 24) - 12
+    if (first || snap || Math.abs(d) > 0.25) { this.hour = s.hour; this.hourFix = 0 }
+    else this.hourFix = d
+  }
+
+  private tickWeather(dt: number, clock = true): void {
     const u = this.uniforms
     let kind = this.weather === 'auto' ? this.spell : this.weather
-    if (this.weather === 'auto' && (this.spellLeft -= dt) <= 0) {
+    // (`clock` false: settling — the spell's clock stands, or settling ran it 400 s on and a wait at camp could roll
+    //  rain at once; followed: the server rolls the spells)
+    if (this.weather === 'auto' && clock && !this.followed && (this.spellLeft -= dt) <= 0) {
       this.wseed = (Math.imul(this.wseed, 1103515245) + 12345) >>> 0
       const r = (this.wseed >>> 8) / 16777216
       this.spell = kind = r < 0.45 ? 'clear' : r < 0.75 ? 'cloudy' : 'rain'
@@ -171,7 +203,7 @@ export class Atmosphere {
 
   /** Snap the weather to its target (the shot harness, a forced change). */
   settleWeather(): void {
-    for (let i = 0; i < 400; i++) this.tickWeather(1)
+    for (let i = 0; i < 400; i++) this.tickWeather(1, false)
   }
 
   /** K: clear → cloudy → rain → auto. */

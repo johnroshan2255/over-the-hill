@@ -5,17 +5,19 @@ export async function checks({ pa, pb, pc, open, accts, world, check, sleep, out
   const chk = (c, w) => { check(c, w); if (!c) ok = false }
   const all = { A: pa, B: pb, C: pc }
   const sidOf = (p, name) => p.evaluate((n) => { for (const r of window.__oth.coop.session.remotes.values()) if (r.name === n) return r.sid; return -1 }, name)
-  /** What page p believes of player `name` (null: them themselves → its own session). */
+  /** What page p believes of player `name` (null: them themselves → its own session). `dmg`: their car's crush (×100)
+   *  and its panes' states (cracked 1, out 2) — the glass's marks alone read 0 once a pane is out (2026-11-25: a car
+   *  that had crashed on its own showed no dent from the blow below). */
   const view = (p, name) => p.evaluate((n) => {
     const c = window.__oth.coop, S = c.session
     if (S.me.name === n) {
       const dm = window.__oth.car.damage
-      let sum = 0; if (dm) for (const m of dm.meshes) for (let i = 0; i < m.dmg.length; i++) sum += m.dmg[i]
+      const sum = dm ? dm.crush * 100 + dm.panes.reduce((k, q) => k + q.state, 0) : 0
       return { hp: S.hp, down: S.down, weapon: window.__oth.arsenal.current ?? 'fists', dmg: +sum.toFixed(1), car: window.__oth.car.id }
     }
     for (const r of S.remotes.values()) if (r.name === n) {
       const a = c.remotes['avatars'].get(r.sid), dm = a?.car.damage
-      let sum = 0; if (dm) for (const m of dm.meshes) for (let i = 0; i < m.dmg.length; i++) sum += m.dmg[i]
+      const sum = dm ? dm.crush * 100 + dm.panes.reduce((k, q) => k + q.state, 0) : 0
       return { hp: r.hp, down: r.down, weapon: r.weapon, dmg: +sum.toFixed(1), car: r.car || a?.car.id }
     }
     return null
@@ -106,6 +108,7 @@ export async function checks({ pa, pb, pc, open, accts, world, check, sleep, out
   console.log('A before the blow:', JSON.stringify(await pa.evaluate(() => { const o = window.__oth, c = o.car; return { damage: !!c.damage, onFoot: o.onFoot, parked: c.parked, id: c.id, kmh: +c.speedKmh.toFixed(1) } })))
   await pa.evaluate(() => window.__oth.car.damage?.hit(0.4, 0.7, -2.0, 0, 0, 1, 14, 'crash'))
   await sleep(1200)
+  console.log('A after the blow:', JSON.stringify(await pa.evaluate(() => { const dm = window.__oth.car.damage; return dm && { crush: +dm.crush.toFixed(3), panes: dm.panes.map((q) => q.state).join(''), doorShut: dm.doorShut } })))
   g = await agree('Asha', 'dmg')
   chk(g.same && g.vals.A > 0, `all agree on A's car's dents (${JSON.stringify(g.vals)})`)
   // C and A both fire at B at once: B goes down; all agree, B's health 0

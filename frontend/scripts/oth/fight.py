@@ -16,6 +16,12 @@
 #   (30 a second), its turn from the rest pose applied to the game's rest pose — so it does not matter how Blender
 #   orients its bones — and written as each bone's own rotation (+ the hips' place).
 #
+# SET=rope (2026-11-25): THE TOW ROPE's clips instead, to src/assets/models/human/rope.glb — standing, not the guard:
+#   hook_take (the winch's hook taken off your own bumper and the line drawn out), hook_attach (down on a knee at another
+#   car's recovery point, the hook clipped on, a tug to try it, up again), hook_detach (the same, unclipped and taken
+#   back), hook_stow (hung back on your own winch). Each ends where the next begins: CARRY (the hook in the right
+#   hand before the hip) or STAND. `build_rope`, below.
+#
 # THE CLIPS (each starts and ends in the guard, so they chain): guard (loop); the punches — jab, cross, hook,
 # uppercut, body_hook; the legs — knee, kick_front, kick_round, kick_low; the defence — block, block_hit, dodge, duck;
 # a blow taken — hit_head, hit_head_l, hit_head_r, hit_body, hit_leg, stagger; down — knockdown (ends on his back: the
@@ -28,7 +34,8 @@ kw = dict(a.split('=', 1) for a in argv if '=' in a)
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 SRC = os.path.join(ROOT, 'src', 'assets', 'models', 'human', 'character.glb')
-OUT = kw.get('OUT', os.path.join(ROOT, 'src', 'assets', 'models', 'human', 'fight.glb'))
+ROPE = kw.get('SET') == 'rope'
+OUT = kw.get('OUT', os.path.join(ROOT, 'src', 'assets', 'models', 'human', 'rope.glb' if ROPE else 'fight.glb'))
 PREVIEW = kw.get('PREVIEW')
 FPS = 30
 PFX = 'mixamorig:'
@@ -440,9 +447,55 @@ def build():
     anim('taunt', G, [(0, {}), (7, wide, 'out'), (13, wide2, 's'), (19, wide, 's'), (25, wide2, 's'), (31, wide, 's'), (41, {}, 's')], lag=dict(LAG, lh=0.8, rh=0.8))
 
 
+def build_rope():
+    # STANDING (not the guard): the weight on both feet, a little apart and turned out, the arms hanging, the chin level
+    S = dict(hips=(0.0, 0.0, -0.012), yaw=0, lean=3, roll=0, spine=(0, 2, 0), head=(0, 5), headroll=0,
+             lh=(-0.235, -0.045, 0.905), rh=(0.235, -0.045, 0.905), lpole=(-0.25, -1, -0.15), rpole=(0.25, -1, -0.15),
+             lf=(-0.105, 0.0, A), rf=(0.105, 0.0, A), lfyaw=7, rfyaw=-7, lfpitch=0, rfpitch=0, lknee=(-0.05, 1, 0.05), rknee=(0.05, 1, 0.05))
+    # CARRYING THE HOOK (made again 2026-11-25 — the user: "the hook carried looks really bad, it must be like real
+    # life"): its eye in the right fist, the arm hanging at his side a little bent with its weight, the hook hanging by
+    # his thigh; the left arm hangs. The game bends his arm to this same hold as he walks (Winch.ts carryHold)
+    C = dict(S, rh=(0.215, 0.045, 0.915), rpole=(0.25, -1, -0.1), spine=(0, 3, 0), head=(0, 6))
+    # (the hook on your own bumper: 0.55 m before your feet, at 0.75 m — the game stands you there)
+    # TAKE IT: a lean in from the hips, the knees giving — both hands on the hook, a pull to free it, a step back
+    # drawing the line out against the drum's drag, the hook turned up into the right hand, the left lets go of it
+    reach = dict(hips=(0.0, -0.09, -0.05), lean=27, spine=(0, 10, 0), head=(0, 16), lknee=(-0.05, 1, 0.05), rknee=(0.05, 1, 0.05),
+                 rh=(0.07, 0.52, 0.775), lh=(-0.07, 0.505, 0.79), rpole=(0.8, -0.4, -0.5), lpole=(-0.8, -0.4, -0.5))
+    grip = dict(reach, rh=(0.055, 0.50, 0.76), lh=(-0.085, 0.49, 0.775), hips=(0.0, -0.10, -0.06), lean=28)
+    free = dict(grip, rh=(0.08, 0.40, 0.81), lh=(-0.06, 0.39, 0.825), hips=(0.0, -0.13, -0.05), lean=20, spine=(0, 8, 0))
+    back = dict(S, hips=(0.0, -0.19, -0.06), lean=6, spine=(0, 4, 0), head=(0, 10), rf=(0.13, -0.27, A), rfpitch=0, lf=(-0.105, 0.02, A + 0.01), lfpitch=-4,
+                rh=(0.15, 0.24, 0.93), lh=(-0.03, 0.30, 0.92), rpole=(0.6, -0.8, -0.4), lpole=(-0.7, -0.6, -0.4))
+    turnup = dict(back, rh=(0.21, 0.10, 0.93), lh=(-0.22, -0.02, 0.91), lpole=(-0.25, -1, -0.15), rpole=(0.3, -1, -0.15), hips=(0.0, -0.21, -0.03), lean=3, head=(0, 6))
+    anim('hook_take', S, [(0, {}), (9, reach, 'out'), (14, grip, 's'), (19, free, 'in'), (29, back, 'out'), (37, turnup, 's'), (46, dict(C, hips=(0.0, -0.21, -0.012)), 's')], lag=LAG)
+
+    # CLIP IT ON (the recovery point 0.6 m before your feet, at 0.5–0.6 m — the game stands you there): a step in on
+    # the left foot, down onto the right knee; the hook brought in with both hands, its throat pushed over the point,
+    # the latch thumbed; a tug back to try it; the hands off, up again off the front leg
+    stepin = dict(C, hips=(0.0, 0.07, -0.16), lean=14, spine=(0, 8, 0), head=(0, 14), lf=(-0.13, 0.30, A), lfyaw=4, rf=(0.12, -0.18, A + 0.05), rfpitch=22, lknee=(-0.05, 1, 0.3),
+                  rh=(0.17, 0.30, 0.86), lh=(-0.12, 0.26, 0.86), lpole=(-0.6, -0.8, -0.4))
+    kneel = dict(hips=(0.02, 0.0, -0.475), lean=17, roll=0, spine=(0, 14, 0), head=(0, 24), lf=(-0.14, 0.30, A), lfyaw=4, lfpitch=0, lknee=(-0.05, 1, 0.6),
+                 rf=(0.13, -0.47, 0.105), rfpitch=72, rfyaw=-4, rknee=(0.1, 1, -0.2),
+                 rh=(0.06, 0.53, 0.575), lh=(-0.07, 0.51, 0.595), rpole=(0.8, -0.3, -0.5), lpole=(-0.8, -0.3, -0.5))
+    push = dict(kneel, rh=(0.035, 0.585, 0.55), lh=(-0.08, 0.57, 0.575), lean=21, spine=(0, 17, 0), head=(0, 30))
+    latch = dict(push, rh=(0.03, 0.595, 0.545), lh=(-0.045, 0.58, 0.565), head=(-4, 32))
+    tug = dict(kneel, rh=(0.05, 0.47, 0.565), lh=(-0.08, 0.46, 0.585), lean=11, spine=(0, 9, 0), hips=(0.02, -0.04, -0.47), head=(0, 22))
+    off = dict(tug, rh=(0.20, 0.36, 0.66), lh=(-0.19, 0.35, 0.67), rpole=(0.4, -1, -0.3), lpole=(-0.4, -1, -0.3), head=(0, 16))
+    rise = dict(stepin, rh=(0.235, 0.05, 0.89), lh=(-0.235, 0.05, 0.89), rpole=(0.25, -1, -0.15), lpole=(-0.25, -1, -0.15), hips=(0.0, 0.05, -0.14), lean=10)
+    anim('hook_attach', C, [(0, {}), (8, stepin, 'out'), (18, kneel, 's'), (25, push, 'in'), (30, latch, 's'), (37, tug, 'out'), (43, tug, 's'), (49, off, 's'), (60, rise, 's'), (70, S, 's')], lag=LAG)
+    # TAKE IT OFF: down the same way, the latch thumbed open, the hook worked off the point, up with it in the hand
+    anim('hook_detach', S, [(0, {}), (10, dict(stepin, rh=(0.20, 0.25, 0.84), lh=(-0.16, 0.24, 0.85)), 'out'), (20, dict(off, rh=(0.08, 0.50, 0.60), lh=(-0.09, 0.49, 0.61)), 's'),
+                            (27, latch, 'in'), (33, push, 's'), (40, dict(tug, rh=(0.07, 0.44, 0.58), lh=(-0.10, 0.43, 0.60)), 'out'), (49, dict(rise, rh=(0.20, 0.22, 0.88), lh=(-0.18, 0.12, 0.88)), 's'), (60, C, 's')], lag=LAG)
+    # HUNG BACK ON YOUR WINCH: the lean in, both hands lay the hook on the fairlead, the right hand lets go, up
+    lay = dict(grip, rh=(0.06, 0.52, 0.765), lh=(-0.08, 0.50, 0.78))
+    anim('hook_stow', C, [(0, {}), (10, dict(free, rh=(0.12, 0.40, 0.84), lh=(-0.10, 0.38, 0.85)), 'out'), (18, lay, 's'), (24, dict(lay, rh=(0.06, 0.53, 0.755)), 'in'),
+                          (31, dict(reach, rh=(0.16, 0.40, 0.80), lh=(-0.16, 0.39, 0.81)), 'out'), (42, S, 's')], lag=LAG)
+
+
 if kw.get('FROM'):
     meta = json.loads(arm.get('fight_clips', '{}'))
     CLIPS.update(meta)
+elif ROPE:
+    build_rope()
 else:
     build()
     arm['fight_clips'] = json.dumps(CLIPS)
@@ -602,4 +655,4 @@ with open(OUT, 'wb') as f:
     f.write(struct.pack('<III', 0x46546C67, 2, 12 + 8 + len(js) + 8 + len(blob)))
     f.write(struct.pack('<II', len(js), 0x4E4F534A)); f.write(js)
     f.write(struct.pack('<II', len(blob), 0x004E4942)); f.write(bytes(blob))
-print('FIGHT CLIPS:', ', '.join(f"{n} {info[n]['frames'] / FPS:.2f}s" for n in info), '->', OUT, f'({(20 + len(js) + 8 + len(blob)) / 1024:.0f} kB)')
+print('ROPE CLIPS:' if ROPE else 'FIGHT CLIPS:', ', '.join(f"{n} {info[n]['frames'] / FPS:.2f}s" for n in info), '->', OUT, f'({(20 + len(js) + 8 + len(blob)) / 1024:.0f} kB)')

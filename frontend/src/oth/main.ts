@@ -14,6 +14,7 @@ import { MotoSim } from '../gameplay/vehicle/MotoSim'
 import { Character, type ClipName } from './Character'
 import charUrl from '../assets/models/human/character.glb?url'
 import fightUrl from '../assets/models/human/fight.glb?url'
+import ropeUrl from '../assets/models/human/rope.glb?url'
 import { OthAudio } from './Audio'
 import { Dust } from './Dust'
 import DAMAGE from '../../../proto/damage.json'
@@ -37,7 +38,7 @@ import { TerrainShadow } from './TerrainShadow'
 import { TREE_STRIDE } from './Trees'
 import { TyreTracks } from './TyreTracks'
 import { Vehicle } from './Vehicle'
-import { Winch } from './Winch'
+import { type TowCar, Winch } from './Winch'
 import { ActionWheel, ICONS } from './Wheel'
 import { liveMap, World, type WorldEnv, type WorldId, WORLDS } from './World'
 import { caveUniforms } from './Sites'
@@ -56,9 +57,9 @@ import { Session } from '../net/Session'
 import { Companion, type CompanionKind } from './Companion'
 import type RAPIER_NS from '@dimforge/rapier3d-compat'
 type RapierBody = RAPIER_NS.RigidBody
-import { Arsenal, FPP_ARMED_FOV, Pickups, type WeaponId } from './Weapons'
+import { Arsenal, FPP_ARMED_FOV, Pickups, type WeaponId, weaponMaterial } from './Weapons'
 import { aimLodEye, lodEye } from './LodEye'
-import type { WireWeapon } from '../net/wire'
+import type { SkySet, WireWeapon } from '../net/wire'
 
 /**
  * OVERHILL — the game: its own world and renderer. Boot: tier → map data → paint texture → atmosphere, terrain, grass,
@@ -127,18 +128,22 @@ async function boot() {
   const FREEZE = q.get('freeze') === '1'
   const runMinutes = num('day', 24)
   if (atmos.dayMinutes) atmos.dayMinutes = runMinutes
+  // (co-op: the hour and the weather are the world's — a change here is told to the server, which tells everyone;
+  //  set once joined: `skyNet.set`)
+  const skyNet: { set?: (hour: number | null, weather: SkySet, wait: boolean) => void } = {}
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'BracketRight') atmos.hour = (atmos.hour + 1) % 24
-    if (e.code === 'BracketLeft') atmos.hour = (atmos.hour + 23) % 24
-    if (e.code === 'KeyT') atmos.dayMinutes = atmos.dayMinutes ? 0 : runMinutes
-    if (e.code === 'KeyK') toast(`Weather: ${atmos.stepWeather()}`)
+    if (e.code === 'BracketRight') { atmos.hour = (atmos.hour + 1) % 24; skyNet.set?.(atmos.hour, 'keep', false) }
+    if (e.code === 'BracketLeft') { atmos.hour = (atmos.hour + 23) % 24; skyNet.set?.(atmos.hour, 'keep', false) }
+    if (e.code === 'KeyT') { if (atmos.followed) toast('The clock is the world\'s in co-op'); else atmos.dayMinutes = atmos.dayMinutes ? 0 : runMinutes }
+    if (e.code === 'KeyK') { toast(`Weather: ${atmos.stepWeather()}`); skyNet.set?.(null, atmos.weather, false) }
     // G: the next time of day (morning → noon → evening → night); Shift + G: the next weather (2026-11-02, the user)
     if (e.code === 'KeyG') {
-      if (e.shiftKey) toast(`Weather: ${atmos.stepWeather()}`)
+      if (e.shiftKey) { toast(`Weather: ${atmos.stepWeather()}`); skyNet.set?.(null, atmos.weather, false) }
       else {
         const P: [number, string][] = [[6.5, 'Morning'], [12, 'Noon'], [17.5, 'Evening'], [21.5, 'Night']]
         const next = P.find(([t]) => t > atmos.hour + 0.25) ?? P[0]
         atmos.hour = next[0]
+        skyNet.set?.(atmos.hour, 'keep', false)
         toast(`Time · ${next[1]}`)
       }
     }
@@ -483,10 +488,19 @@ async function boot() {
   const damageFx = DAMAGE_ON ? new DamageFx(scene, map, atmos, shadow, env.farGrid, dust) : null
   const tyreTracks = new TyreTracks(map, tier, atmos)
   scene.add(tyreTracks.mesh)
-  const winch = new Winch(map, car, world.trees, world.rocks)
-  winch.onMessage = (m) => toast(m)
-  // THE SEALED VAULTS' KEYSTONES (Wardens.ts): what else the winch takes — pulled out, the vault's door falls
-  winch.extra = () => (world.wardens?.keystones() ?? []).filter((k) => (k.x - car.root.position.x) ** 2 + (k.z - car.root.position.z) ** 2 < 60 * 60).map((k) => ({
+  // THE WINCH AND ITS TOW ROPE (Winch.ts — 2026-11-25: by hand, onto another player's car; no more onto trees)
+  let coopWinch: { carOf: (sid: number) => TowCar | null; walkerOf: (sid: number) => Character | null } | null = null
+  const winch = new Winch({
+    hero, car, map: () => world.map,
+    onFoot: () => onFoot && !riding && !cut && !pause && driving,
+    inCar: () => driving && !onFoot && !riding && !cut && !!car.sim,
+    getOut: (then) => getOut(then),
+    session: () => (coop && !coop.session.closed ? coop.session : null),
+    carOf: (sid) => coopWinch?.carOf(sid) ?? null,
+    walkerOf: (sid) => coopWinch?.walkerOf(sid) ?? null,
+    toast: (m) => toast(m),
+    // THE SEALED VAULTS' KEYSTONES (Wardens.ts): what else the hook goes on — pulled out, the vault's door falls
+    extra: () => (world.wardens?.keystones() ?? []).filter((k) => (k.x - car.root.position.x) ** 2 + (k.z - car.root.position.z) ** 2 < 60 * 60).map((k) => ({
     x: k.x, y: k.y, z: k.z, what: 'the keystone',
     onPulled: () => {
       const w = world.wardens
@@ -499,8 +513,10 @@ async function boot() {
       toast(`The keystone comes free — ${k.name} stands open   +${pay} ◆   ${n} / ${all}`, 6000)
       audio.chime('place')
     },
-  }))
-  scene.add(winch.mesh)
+  })),
+  }, ropeUrl)
+  winch.setLook(weaponMaterial(atmos, shadow, env.farGrid))
+  scene.add(winch.group)
   // THE MAP, THE RADAR and THE GPS (Nav.ts: the waypoint and the fastest way there — it lasts across worlds; the
   // chart, the map and the radar are each world's)
   const guide = new Guide()
@@ -649,7 +665,6 @@ async function boot() {
       const h = car.sim.heading, p = car.pos, half = car.half
       const at = besides(p.x, p.z, h, [[half.x + 1.1, 0], [-(half.x + 1.1), 0], [0, half.z + 1.6], [0, -(half.z + 1.6)]], 0.9)
       if (!at) { toast(`No room here for the ${NAME(which)}`); return }
-      if (winch.attached) winch.toggle() // (the line lets go)
       car.park()
       hero.hide() // (out of the driver's seat: the bike has its own rider)
       which.mount(at.x, at.z, h)
@@ -675,7 +690,7 @@ async function boot() {
   const rot = (x: number, z: number, h: number): [number, number] => [x * Math.cos(h) + z * Math.sin(h), -x * Math.sin(h) + z * Math.cos(h)]
   const footCam = () => { chase.frame(4.2, 1.45); chase.snap(); look.footYaw = hero.heading }
   /** F: OUT of the car (stopped — the driver's door opens, the character climbs out) or off the bike (parked there). */
-  const getOut = () => {
+  const getOut = (then?: () => void) => {
     if (cut || onFoot || !car.sim) return
     if (riding) {
       if (two.speedKmh > 8) { toast('Slow down to get off'); return }
@@ -686,17 +701,17 @@ async function boot() {
       hero.appear(at.x, at.z, h, undefined, p.y + 1.5)
       onFoot = true
       footCam()
+      then?.()
       return
     }
     if (car.speedKmh > 5) { toast('Stop the car to get out'); return }
-    if (winch.attached) winch.toggle()
     car.park()
     winch.keysOn = false
     const d = car.driverDoor, h = car.sim.heading
     if (!d || !hero.has('car_exit')) {
       const p = car.pos, half = car.half
       const at = besides(p.x, p.z, h, [[-(half.x + 0.8), 0], [half.x + 0.8, 0]], 0.4) ?? { x: p.x - Math.cos(h) * (half.x + 0.8), z: p.z + Math.sin(h) * (half.x + 0.8) }
-      hero.appear(at.x, at.z, h, undefined, p.y + 1.5); onFoot = true; footCam(); return
+      hero.appear(at.x, at.z, h, undefined, p.y + 1.5); onFoot = true; footCam(); then?.(); return
     }
     // the clip starts seated: its hips put on the driver's seat; it climbs out to the left (out of the door)
     const seat = toWorld(d.seat), [hx, hy, hz] = hero.hipsAt('car_exit', 0)
@@ -714,7 +729,7 @@ async function boot() {
       cut = (dt) => {
         let dh = h - hero.heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh))
         hero.heading += Math.max(-dt * 7, Math.min(dt * 7, dh))
-        if (Math.abs(dh) < 0.02) cut = null
+        if (Math.abs(dh) < 0.02) { cut = null; then?.() }
       }
     } })
     // IN STEP WITH THE CLIP (the left hand's path in it — 2026-11-05, the user: "the door and the animation aren't
@@ -729,6 +744,7 @@ async function boot() {
   /** F on foot: onto a parked bike close by, else INTO the car from its driver's door (walk up to it). */
   const getIn = () => {
     if (cut || !onFoot || hero.state !== 'move' || !car.sim) return
+    winch.letGo() // (the hook in your hand: let go, wound back in)
     const fb = fallenNear()
     if (fb) { pickUp(fb); return }
     for (const b of twos) if (b.parkedAt && Math.hypot(b.parkedAt.x - hero.pos.x, b.parkedAt.z - hero.pos.z) < 2.3) { clearFallen(); toggleRide(b); return }
@@ -1006,7 +1022,6 @@ async function boot() {
   /** THROWN OUT of your car as it goes up: on the ground beside it, down. */
   const blownOut = () => {
     if (onFoot || riding || cut || !car.sim) return
-    if (winch.attached) winch.toggle()
     car.park()
     winch.keysOn = false
     const p = car.pos, h = car.sim.heading, half = car.half
@@ -1071,6 +1086,8 @@ async function boot() {
   /** (a harness's eye — scripts/harness/weaponshots.mjs) the frame drawn from [right, up, back] m off what's followed,
    *  in its own frame, looking `lookH` over its feet — while the game plays on with its own camera; null: off. */
   let spectate: { x: number; y: number; z: number; lookH: number } | null = null
+  /** (the harness) a camera put anywhere for a frame's draw — from (px py pz) at (tx ty tz) — the play unchanged. */
+  let specAt: [number, number, number, number, number, number] | null = null
   const specPos = new GFX.Vector3(), specQuat = new GFX.Quaternion(), specLook = new GFX.Vector3()
   let specOn = false
   // CO-OP'S FIGHT (docs/WEAPONS.md — the server owns the health): ours shown, a hit staggers us, down — out 5 s — then
@@ -1317,7 +1334,7 @@ async function boot() {
       { id: 'map', label: 'Map', icon: ICONS.map, key: 'Tab', run: () => mapView.toggle() },
       ...(radar ? [{ id: 'radar', label: 'Minimap', icon: ICONS.radar, key: 'N', run: toggleRadar, on: () => radarOn }] : []),
 
-      { id: 'winch', label: 'Winch', icon: ICONS.winch, key: 'E', run: press('KeyE'), show: () => driving && !riding && !onFoot },
+      { id: 'winch', label: () => winch.label(), icon: ICONS.winch, key: 'E', run: () => winch.button(), show: () => driving && !riding && !cut },
       { id: 'autopilot', label: () => (autopilot.on ? 'Autopilot off' : 'Autopilot'), icon: ICONS.pilot, key: 'O', run: toggleAutopilot, on: () => autopilot.on, show: () => driving && !riding && !onFoot },
       { id: 'reset', label: 'Reset', icon: ICONS.reset, key: 'R', run: () => { if (riding) two.reset(); else car.reset() }, show: () => driving && !onFoot },
       // (car damage — Damage.ts: shown once there is something to mend)
@@ -1360,9 +1377,10 @@ async function boot() {
     clock.getDelta()
     last = performance.now()
   }
-  const rest = (apply: () => void) => {
+  const rest = (apply: () => void, waitOut = false) => {
     closeMenu()
-    fadeThrough(() => { apply(); car.damage?.repair(); atmos.update(camera.position, clock.elapsedTime); save(); toast('Rested · progress saved') })
+    // (co-op: the rest moves the world's clock — everyone's — and a wait clears everyone's sky)
+    fadeThrough(() => { apply(); skyNet.set?.(waitOut ? null : atmos.hour, 'keep', waitOut); car.damage?.repair(); atmos.update(camera.position, clock.elapsedTime); save(); toast('Rested · progress saved') })
   }
   const openCamp = () => {
     if (pause || !canCamp()) return
@@ -1386,7 +1404,7 @@ async function boot() {
         { label: 'Rest until noon', note: '12:00', go: () => rest(() => (atmos.hour = 12)) },
         { label: 'Rest until evening', note: '17:30', go: () => rest(() => (atmos.hour = 17.5)) },
         { label: 'Rest until night', note: '21:30', go: () => rest(() => (atmos.hour = 21.5)) },
-        ...(wet ? [{ label: 'Wait out the weather', note: 'clear skies', go: () => rest(() => atmos.clearSky()) }] : []),
+        ...(wet ? [{ label: 'Wait out the weather', note: 'clear skies', go: () => rest(() => atmos.clearSky(), true) }] : []),
         ...(here.own ? [{ label: 'Pack up camp', go: () => { myCamp = null; world.props.pitch(null); save(); closeMenu(); toast('Camp packed up') } }] : []),
         { label: 'Back on the road', go: closeMenu },
       ],
@@ -1521,6 +1539,7 @@ async function boot() {
     moto.update(physics.pw.alpha, dt)
     hero.update(dt)
     arsenal.update(dt)
+    winch.hands()
     pickups?.update(dt)
     weaponView()
     companion?.animate(dt)
@@ -1570,9 +1589,15 @@ async function boot() {
     // the HUD's slow parts (4× a second): the signpost, the camp prompt
     if ((hudTick += dt) > 0.25) {
       hudTick = 0; signHud(); noteHud(); apHud()
-      const c = canCamp() ? campHere() : null, act = actionNow()
+      const act = actionNow() // (was: const c = canCamp() ? campHere() : null — the camp's prompt, below)
       // (on foot by a vehicle: "F Get in" — GTA's; else the camp's)
-      readouts.prompt(onFoot && act ? ['F', act] : gather?.prompt ?? (canCamp() ? ['C', c ? `Rest at ${c.name}` : 'Pitch camp'] : null))
+      // (the camp's prompt and its CAMP button no longer come up whenever the car stops — commented out at the user's
+      //  word, 2026-11-25: "when we stop car or human moving it show camp here btn appears, comment that"; C still opens
+      //  the camp)
+      // readouts.prompt(onFoot && act ? ['F', act] : gather?.prompt ?? (canCamp() ? ['C', c ? `Rest at ${c.name}` : 'Pitch camp'] : null))
+      // (the rope's prompt TAPPABLE — a phone has no E: tapped, it does what it says)
+      const wp = onFoot && act ? null : winch.prompt()
+      readouts.prompt(onFoot && act ? ['F', act] : wp ?? gather?.prompt ?? null, wp ? () => winch.press() : null)
       ui.action(act)
     }
     dust.update(dt, car)
@@ -1662,14 +1687,19 @@ async function boot() {
     }
     mapView.update(dt)
     radar?.update(dt, radarOn && driving && !mapView.isOpen, ride.speedKmh)
-    winch.update(camera)
+    winch.update(dt, camera)
     shadow.update(atmos.uniforms.uSunDir.value)
     // (the trees' see-through round what the camera follows — Trees.seeThrough: the car, the bike, the walker; off in
     //  first person, on the map, in the free camera)
     world.trees.seeThrough(ride.pos, driving && !inFpp && !mapView.isOpen ? (onFoot ? 1.1 : riding ? 1.5 : 2.8) : 0)
     const t0 = performance.now()
     // (a harness's eye: this frame drawn from beside what's followed — the game's own camera put back after the render)
-    if (spectate) {
+    if (specAt) {
+      specPos.copy(camera.position); specQuat.copy(camera.quaternion); specOn = true
+      camera.position.set(specAt[0], specAt[1], specAt[2])
+      camera.lookAt(specLook.set(specAt[3], specAt[4], specAt[5]))
+      camera.updateMatrixWorld()
+    } else if (spectate) {
       const s = spectate, h = ride.heading, p = ride.pos
       specPos.copy(camera.position); specQuat.copy(camera.quaternion); specOn = true
       camera.position.set(p.x + Math.cos(h) * s.x + Math.sin(h) * s.z, p.y + s.y, p.z - Math.sin(h) * s.x + Math.cos(h) * s.z)
@@ -1713,13 +1743,22 @@ async function boot() {
     try {
       if (!acct) throw new Error('no account here — open CO-OP on the title screen')
       const session = await Session.connect(acct, coopWorld)
-      coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl, fight: fightUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
+      coop = new Coop(session, scene, () => world.map, physics, atmos, shadow, env.farGrid, { char: charUrl, moto: motoUrl, rider: riderUrl, fight: fightUrl, rope: ropeUrl }, toast, tier, camera, renderer.domElement, () => ride.pos)
+      // (the tow ropes: the others' cars and walkers, ours told)
+      { const R = coop.remotes; coopWinch = { carOf: (sid) => R.towCar(sid), walkerOf: (sid) => R.walker(sid) } }
+      winch.joined(session)
+      // THE SKY (sky.rs): the world's hour and weather, followed — told on joining, every 5 s, at once on a change
+      if (session.sky) atmos.follow(session.sky, true)
+      session.on((e) => { if (e.t === 'sky') atmos.follow(e) })
+      skyNet.set = (h, w, wait) => session.setSky(h, w, wait)
       // (our car's blows and its repair, told: the others dent the car they draw of ours)
       const tellDamage = () => {
         const dm = car.damage
         if (!dm) return
         dm.onHit = (px, py, pz, dx, dy, dz, dv, kind) => session.dent(px, py, pz, dx, dy, dz, dv, kind)
         dm.onRepair = () => session.dent(0, 0, 0, 0, 0, 0, 0, 'repair')
+        dm.onLand = (k, sv) => session.dent(k, 0, 0, 0, 0, 0, sv, 'land')
+        dm.onBlast = () => session.dent(0, 0, 0, 0, 0, 0, 0, 'blast')
       }
       tellDamage()
       coopTellDamage = tellDamage
@@ -1740,7 +1779,7 @@ async function boot() {
       coop.worldParts = () => ({ rocks: world.rocks, grass: world.grass })
       coop.build.obstacle = (x, z) => (world.trees.nearest(x, z, 4.5) ? 'Too close to a tree — its branches would hide your flag' : world.rocks.biggestNear(x, z, 1.5) ? 'Not on a boulder' : '')
       gather = new Gather(session, () => ({ id: world.id, map: world.map, trees: world.trees, rocks: world.rocks, grass: world.grass }), physics, hero, atmos, shadow, env.farGrid, toast,
-        () => onFoot && driving && !cut && !pause && !coop?.build.on, () => trailer)
+        () => onFoot && driving && !cut && !pause && !coop?.build.on && !winch.wantsE(), () => trailer)
       scene.add(gather.group)
       // THE CLAIMS' GROUND (GroundEdits.ts — step 5: shaped, paved, ponds)
       ground = new GroundEdits(session, () => world, physics)
@@ -1831,6 +1870,8 @@ async function boot() {
     get companion() { return companion },
     /** (a harness's eye — weaponshots.mjs) */
     spectate: (x?: number, y = 1.2, z = 0, lookH = 1.1) => { spectate = x === undefined ? null : { x, y, z, lookH } },
+    /** (the harness) the camera from (px py pz) at (tx ty tz) for the draws to come — none: back to play's */
+    camAt: (c?: [number, number, number, number, number, number]) => { specAt = c ?? null },
     /** (a harness's: the companion made / changed / sent away — scripts/harness/weaponcost.mjs) */
     setCompanion: (kind: string | null) => setCompanion(companionKind(kind)),
     /** (the weapons — scripts/harness/weapons.mjs) */
@@ -1965,6 +2006,8 @@ function gameHud(coins0: number) {
   campBtn.textContent = 'CAMP'
   document.body.append(coins, sign, note, prompt, campBtn)
   let signKey = '', promptText: string | null = 'x', noteKey = ''
+  let promptTap: (() => void) | null = null
+  prompt.addEventListener('pointerdown', (e) => { if (!promptTap) return; e.preventDefault(); e.stopPropagation(); promptTap() })
   const ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
   return {
     coins(n: number, delta: number) {
@@ -1992,7 +2035,9 @@ function gameHud(coins0: number) {
       if (n) note.innerHTML = html
       note.classList.toggle('on', !!n)
     },
-    prompt(p: [string, string] | null) {
+    prompt(p: [string, string] | null, tap: (() => void) | null = null) {
+      promptTap = tap
+      prompt.classList.toggle('tap', !!tap)
       const text = p ? p.join(' ') : null
       if (text === promptText) return
       promptText = text

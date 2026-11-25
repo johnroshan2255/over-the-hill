@@ -1,20 +1,29 @@
 import { TRAILER, TrailerModel } from './Trailer'
 import * as GFX from './gfx'
 import type { Atmosphere } from './Atmosphere'
-import { Character } from './Character'
+import { Character, type RopeClip } from './Character'
 import type { Horizon } from './Horizon'
 import type { MapData } from './MapData'
 import type { OthPhysics } from './Physics'
 import { MotoBike } from './Bike'
 import type { TerrainShadow } from './TerrainShadow'
 import { carSolid, RemoteCar } from './Vehicle'
-import { DAMAGE_ON } from './Damage'
+import { carryHold, type TowCar } from './Winch'
+import { type CarDamage, DAMAGE_ON } from './Damage'
 import { FLAG_AIM, FLAG_HITCHED, Kind, Slot } from '../net/pose'
 import { group, Groups } from '../physics/PhysicsWorld'
 import type RAPIER from '@dimforge/rapier3d-compat'
 import type { Remote, Session } from '../net/Session'
 import { holdOther, isGun, type Model, standOther, type Target, type WeaponId, type Zone, weaponMaterial, weaponModel } from './Weapons'
-import type { DentKind, WireWeapon } from '../net/wire'
+import type { DentKind, RopeState, WireWeapon } from '../net/wire'
+
+/** A blow told of their car (`dent`), done to the copy we draw: a crash, a round, a hard landing, its going up, the repair. */
+function blow(dm: CarDamage, px: number, py: number, pz: number, dx: number, dy: number, dz: number, dv: number, kind: DentKind): void {
+  if (kind === 'repair') dm.repair()
+  else if (kind === 'land') dm.landing(Math.max(0, Math.min(3, Math.round(px))), dv)
+  else if (kind === 'blast') dm.explode()
+  else dm.hit(px, py, pz, dx, dy, dz, dv, kind)
+}
 
 /**
  * THE OTHER PLAYERS (co-op — docs/MULTIPLAYER.md): each drawn as they are — in their car (the same models as ours, in
@@ -69,6 +78,10 @@ interface Avatar {
   target: Target
   hpBar: HTMLElement
   hpShown: number
+  /** Their rope's state as last drawn (its moves played as it changes), their walker's rope clips loaded, the carry. */
+  ropeWas: RopeState
+  ropeClips: boolean
+  carry: () => void
 }
 
 const TAG_FAR = 900 // m: no tag beyond
@@ -98,7 +111,7 @@ export class Remotes {
     private readonly atmos: Atmosphere,
     private readonly shadow: TerrainShadow,
     private readonly farGrid: GFX.Vector4,
-    private readonly urls: { char: string; moto: string; rider: string; fight: string },
+    private readonly urls: { char: string; moto: string; rider: string; fight: string; rope?: string },
   ) {
     this.layer = document.createElement('div')
     this.layer.className = 'oth-tags'
@@ -140,6 +153,15 @@ export class Remotes {
     return out
   }
 
+  /** THE TOW ROPES (Winch.ts): a player's car as drawn here — driven or parked — with its sizes; null if not drawn. */
+  towCar(sid: number): TowCar | null {
+    const a = this.avatars.get(sid), m = a?.car.model
+    if (!a || !m || !a.car.root.userData.on) return null
+    return { root: a.car.root, dims: m, name: `${a.r.name}'s` }
+  }
+  /** A player's walker (on foot, drawn), for the hook in their hand. */
+  walker(sid: number): Character | null { const h = this.avatars.get(sid)?.hero; return h?.visible ? h : null }
+
   /** Everyone else, for the map and the radar. */
   get list(): { x: number; z: number; heading: number; colour: string; name: string }[] {
     const out = []
@@ -176,7 +198,7 @@ export class Remotes {
     const arms: Avatar['arms'] = { models: new Map(), w: null, recoil: 0, pitch: 0, shotAt: -1e9, k: 0, clips: false, posed: false, gunL: new GFX.Matrix4(), ik: () => {} }
     // (asked as their walker is posed: the gun's place in his space, his hands on it)
     arms.ik = () => { const h = this.avatars.get(r.sid)?.hero; if (h && arms.w) { holdOther(h, arms.w, arms.pitch, arms.k, arms.recoil, arms.gunL); arms.posed = true } }
-    return { hpBar, hpShown: 100, target, arms, r, car, hero: null, moto: null, loading: false, tag, name, dist, kind: -1, pos: new GFX.Vector3(), heading: 0, shown: false, solidCar: null, solidMe: null, trailer: null, trailerLoading: false, solidTr: null, trailerAt: new GFX.Vector3(NaN, 0, 0), camDist: 0, inView: true, animDt: 0, animN: 0 }
+    return { hpBar, hpShown: 100, target, arms, r, car, hero: null, moto: null, loading: false, tag, name, dist, kind: -1, pos: new GFX.Vector3(), heading: 0, shown: false, solidCar: null, solidMe: null, trailer: null, trailerLoading: false, solidTr: null, trailerAt: new GFX.Vector3(NaN, 0, 0), camDist: 0, inView: true, animDt: 0, animN: 0, ropeWas: 'none', ropeClips: false, carry: () => { const h = this.avatars.get(r.sid)?.hero; if (h) carryHold(h) } }
   }
 
   /** Dents told before their car was in (a newcomer hears them all at once). */
@@ -185,9 +207,8 @@ export class Remotes {
   dent(sid: number, px: number, py: number, pz: number, dx: number, dy: number, dz: number, dv: number, kind: DentKind): void {
     const dm = this.avatars.get(sid)?.car.damage
     // (their car not loaded yet — a newcomer is told every dent at once: kept till it is)
-    if (!dm) { const q = this.pendingDents.get(sid) ?? []; if (kind === 'repair') q.length = 0; else if (q.length < 64) q.push([px, py, pz, dx, dy, dz, dv, kind]); this.pendingDents.set(sid, q); return }
-    if (kind === 'repair') dm.repair()
-    else dm.hit(px, py, pz, dx, dy, dz, dv, kind)
+    if (!dm) { const q = this.pendingDents.get(sid) ?? []; if (kind === 'repair') q.length = 0; else if (q.length < 160) q.push([px, py, pz, dx, dy, dz, dv, kind]); this.pendingDents.set(sid, q); return }
+    blow(dm, px, py, pz, dx, dy, dz, dv, kind)
   }
   /** Their cars with damage on them, as drawn (main.ts: the smoke, the fire, the pieces — DamageFx). */
   *damaged(): Generator<{ car: RemoteCar; vx: number; vz: number }> {
@@ -320,6 +341,21 @@ export class Remotes {
     standOther(h, A.w, A.pitch, A.k)
     h.handIK = A.w ? A.ik : null
     if (!A.w) A.posed = false
+    // THEIR TOW ROPE (Winch.ts): its hook carried in the right hand; its moves played as its state changes — taken,
+    // hooked on, taken off, hung back
+    const rs = r.rope?.state ?? 'none'
+    if (rs !== a.ropeWas) {
+      const was = a.ropeWas
+      a.ropeWas = rs
+      // (put down — back on its drum — by their bumper: hung back; anywhere else it was let go: no move)
+      const atBumper = () => { const c = this.towCar(r.sid); if (!c) return false; const dx = h.pos.x - c.root.position.x, dz = h.pos.z - c.root.position.z; return Math.hypot(dx, dz) < Math.abs(c.dims.front) + 2.2 }
+      const clip: RopeClip | null = was === 'none' && rs === 'hand' ? 'hook_take' : was === 'hand' && rs === 'hooked' ? 'hook_attach' : was === 'hooked' && rs === 'hand' ? 'hook_detach' : was === 'hand' && rs === 'none' && atBumper() ? 'hook_stow' : null
+      if (clip && this.urls.rope && a.kind === Kind.Foot) {
+        const load = a.ropeClips ? Promise.resolve() : h.loadClips(this.urls.rope).then(() => { a.ropeClips = true })
+        void load.then(() => { if (a.hero && !a.hero.isDown) a.hero.puppetStrike(clip) })
+      }
+    }
+    if (!A.w && rs === 'hand' && a.kind === Kind.Foot && !h.striking) { h.handIK = a.carry; h.holdPose = 'grip' }
   }
   /** (after) the gun where his hands hold it: his matrix × its place in his space, as he was last posed. */
   private armAfter(a: Avatar): void {
@@ -369,7 +405,7 @@ export class Remotes {
       }
       a.car.root.userData.on = kind === Kind.Jeep || kind === Kind.E30 || !!parked?.last
       { const q = this.pendingDents.get(r.sid), dm = a.car.damage
-        if (q && dm) { for (const d of q) dm.hit(d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7] === 'shot' ? 'shot' : 'crash'); this.pendingDents.delete(r.sid) } }
+        if (q && dm) { for (const d of q) blow(dm, ...d); this.pendingDents.delete(r.sid) } }
       // (their car's own shape — its panels, not the box round its mirrors and bars: Vehicle.carSolid, as the enemy's)
       const shape = a.car.shape, box = a.car.box, R = this.physics.pw.R
       const cd = this.ourDist(a.car.root.position.x, a.car.root.position.z)

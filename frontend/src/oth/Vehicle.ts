@@ -191,6 +191,16 @@ export class Vehicle {
     b.setBodyType(this.physics.pw.R.RigidBodyType.KinematicPositionBased, true)
     this.w0.on = false
   }
+  /** UNDER TOW (Winch.ts — another player's line on it, taut): a parked car is let off its brakes and rolls — live
+   *  while the line pulls, held again once it stands. Each step the line is taut. */
+  tow(): void {
+    if (!this.sim || !this.parked) return
+    this.towT = 0.4
+    const b = this.sim.body, R = this.physics.pw.R
+    if (b.bodyType() !== R.RigidBodyType.Dynamic) { this.knocked(); this.towT = 0.4 }
+    this.settling = Math.max(this.settling, 0.5)
+  }
+  private towT = 0
   /** (the harness) parked and still coming to rest. */
   get landing(): boolean { return this.parked && this.settling > 0 }
   /** STRUCK WHERE IT STANDS (parked — the enemy's car on it as he runs you down): held, it was a kinematic thing that
@@ -469,14 +479,17 @@ export class Vehicle {
       // then held; whatever it is doing after 4 s, held (the ground under it goes with its driver)
       if (this.settling <= 0) return
       const c = this.sim.controls, t0 = this.sim.body.translation()
-      c.throttle = 0; c.steer = 0; c.brake = true; c.handbrake = true; c.boost = false; c.footBrake = 0; c.lift = 0; c.parked = true
+      // (under tow: off the brakes — in neutral, rolling where the line takes it)
+      const towed = (this.towT -= dt) > 0
+      c.throttle = 0; c.steer = 0; c.brake = !towed; c.handbrake = !towed; c.boost = false; c.footBrake = 0; c.lift = 0; c.parked = !towed
       this.crashWatch(dt)
       this.readPose(this.prevP, this.prevQ)
       this.sim.step(dt)
       this.sim.keepAbove(this.map.height(t0.x, t0.z))
       this.watchEnd()
       this.restT = this.atRest() ? this.restT + dt : 0
-      if ((this.settling -= dt) <= 0 || this.restT > 0.3) this.holdStill()
+      if (towed) this.settling = Math.max(this.settling, 0.5)
+      if (!towed && ((this.settling -= dt) <= 0 || this.restT > 0.3)) this.holdStill()
       return
     }
     const k = this.keys
@@ -1295,7 +1308,8 @@ export class RemoteCar {
   id = ''
   private readonly uniforms: Record<string, GFX.IUniform>
   private wheelMesh: GFX.InstancedMesh | null = null
-  private model: TruckModel | null = null
+  /** Its model (its sizes: the winch's points — Winch.ts). */
+  model: TruckModel | null = null
   private readonly wheel = new GFX.Object3D()
   private readonly e = new GFX.Euler()
   private readonly shadowBase: Float32Array

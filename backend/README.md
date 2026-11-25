@@ -67,7 +67,7 @@ on their own clock, 0.8–3.8 cm. And the game sent 13–16 poses a second at 60
 and three frames came to a hair under 50 ms.)
 
 **A newcomer is told** what the welcome's state doesn't hold, at once after it: each player's car (`ride`), the blows
-it has taken since it was whole (`dent`, up to 64; a new car clears them), the weapon in their hands (`armed`), their
+it has taken since it was whole (`dent`, up to 160; a new car clears them), the world's hour and weather (`sky`), the weapon in their hands (`armed`), their
 health if it's below full, who is down. **Health outlives a reload**: a player who leaves hurt or down and comes back
 within 10 minutes is as they were (and told so) — a reload healed you, and got you up at once.
 
@@ -92,7 +92,9 @@ within 10 minutes is as they were (and told so) — a reload healed you, and got
 | `ride` | `car`: the garage's id of the car the player drives (≤ 24 letters / digits / `_` `-`) — relayed to everyone as the `ride` event (`sid`, `car`); the server keeps none of it: the game says it again when someone joins | — |
 | `pond` | `x`, `z`, `r` (3–15), `depth` (0.5–3) | inside your claim; 4 each |
 | `ping` | `n` | answered at once with `pong {n}` (the round trip) |
-| `dent` | `px py pz` (in the car's own space), `dx dy dz` (the way it pushed), `dv` (m/s), `kind`: `crash` \| `shot` \| `repair` | a blow to the sender's car (the game's `CarDamage.hit`) or its repair, relayed as `dent` (`sid`, …): the others dent the car they draw of theirs the same way; kept for newcomers |
+| `dent` | `px py pz` (in the car's own space), `dx dy dz` (the way it pushed), `dv` (m/s), `kind`: `crash` \| `shot` \| `repair` \| `land` (a hard landing: `px` the wheel 0–3, `dv` how fast it came down) \| `blast` (it went up) | a blow to the sender's car (the game's `CarDamage.hit` / `landing` / `explode`) or its repair, relayed as `dent` (`sid`, …): the others dent the car they draw of theirs the same way; kept for newcomers |
+| `rope` | `state`: `none` \| `hand` \| `hooked`, `to` (the player whose car; 0: a fixed thing at `x y z`), `point` (0 front left, 1 front right, 2 the rear), `len` (m, ≤ 30: the line is 25), `reel` | your tow rope (the game's Winch.ts): relayed as `rope` (`sid`, …) — the others draw it and pull their car when it's on the end; one hook a point (`That hook point is taken`), not your own car, within the line's reach; a car's player leaving or changing car takes every hook off it; told to newcomers |
+| `sky` | `hour` (0–24, or null: as it is), `weather`: `keep` \| `auto` \| `clear` \| `cloudy` \| `rain`, `wait` (a rest at camp: waited out — a clear spell, settled at once) | **the sky** below: the world's, changed for everyone, told to all as `sky` |
 | `arm` | `weapon` (`fists` `pistol` `ak47` `sniper`) | what's in your hands — kept here (your hits are checked against it), told to the others as `armed` (and to whoever joins later) |
 | `shot` | `weapon`, `x y z`, `dx dy dz` | a shot left: relayed to the others as `shot` to draw; counted, at most its fire rate (a bucket of 2, one more every `fireTicks`) |
 | `hit` | `sid` (the player hit), `weapon`, `zone` (`head` `body` `limb`), `dist` | **the fight** below |
@@ -105,7 +107,14 @@ Building, shaping and paving: the player within 40 m of their claim's edge. Taki
 `claim_gone`, `stock`, `guard` `{claim, on}`, `raid` `{claim, owner, by, by_name, bag}`, `piece`, `piece_gone`,
 `cells` `{claim, cells: [[i, j, cm]]}` (the 2 m grid's cell, its height change from the map's), `pave`, `pond`,
 `pond_gone`, `ok`, `err`, `pong`, `ride`, `armed` `{sid, weapon}`, `shot` `{sid, weapon, x…dz}`,
-`health` `{sid, hp, by, weapon, zone}`, `down` `{sid, by, by_name, weapon}`, `up` `{sid}`, `dent` `{sid, px…dv, kind}`.
+`health` `{sid, hp, by, weapon, zone}`, `down` `{sid, by, by_name, weapon}`, `up` `{sid}`, `dent` `{sid, px…dv, kind}`, `sky` `{hour, weather, spell, left, cloud, rain, wet}`, `rope` `{sid, state, to, point, len, reel, x, y, z}`.
+
+**The sky** (`sky.rs`, 2026-11-25): the hour and the weather are the world's. The server runs the very clock and
+weather the game's `Atmosphere` runs — a daytime of 24 real minutes, the night 3× faster; spells of clear / cloudy /
+rain of 3–7 minutes, the cloud, the rain and the wet easing between them — and tells everyone `sky` on joining, every
+5 s (100 ticks) and at once when a spell begins or someone changes it (`sky` intent: a rest at camp, G / Shift + G).
+Each game runs its own copy between, rolling no spell of its own, the hour eased to the server's word (jumped when
+more than a quarter-hour off). Kept in memory only: a restarted server starts at 15:30, clear.
 
 **The fight** (`weapons.rs`, by the numbers in `proto/weapons.json` — the specs' — docs/WEAPONS.md): each player has
 100 health, kept here. A `hit` is taken only if both are on foot and the target is standing; the weapon is in the

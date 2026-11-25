@@ -7,7 +7,10 @@
     "pave": ["stone", "gravel", "planks", "dirt", "erase"],
     "weapon": ["fists", "pistol", "ak47", "sniper"],
     "zone": ["head", "body", "limb"],
-    "dent": ["crash", "shot", "repair"]
+    "dent": ["crash", "shot", "repair", "land", "blast"],
+    "weather": ["auto", "clear", "cloudy", "rain"],
+    "sky_set": ["keep", "auto", "clear", "cloudy", "rain"],
+    "rope": ["none", "hand", "hooked"]
   },
   "types": {
     "bag": { "obj": [["wood", "var"], ["stone", "var"], ["metal", "var"]] },
@@ -68,7 +71,9 @@
     "health": [58, [["sid", "var"], ["hp", "f32"], ["by", "var"], ["weapon", "weapon"], ["zone", "zone"]]],
     "down": [59, [["sid", "var"], ["by", "var"], ["by_name", "str"], ["weapon", "weapon"]]],
     "up": [60, [["sid", "var"]]],
-    "dent": [61, [["sid", "var"], ["px", "f32"], ["py", "f32"], ["pz", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"], ["dv", "f32"], ["kind", "dent"]]]
+    "dent": [61, [["sid", "var"], ["px", "f32"], ["py", "f32"], ["pz", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"], ["dv", "f32"], ["kind", "dent"]]],
+    "sky": [62, [["hour", "f32"], ["weather", "weather"], ["spell", "weather"], ["left", "f32"], ["cloud", "f32"], ["rain", "f32"], ["wet", "f32"]]],
+    "rope": [63, [["sid", "var"], ["state", "rope"], ["to", "var"], ["point", "u8"], ["len", "f32"], ["reel", "bool"], ["x", "f32"], ["y", "f32"], ["z", "f32"]]]
   },
   "intents": {
     "chat": [10, [["text", "str"]]],
@@ -90,6 +95,8 @@
     "arm": [27, [["weapon", "weapon"]]],
     "shot": [28, [["weapon", "weapon"], ["x", "f32"], ["y", "f32"], ["z", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"]]],
     "hit": [29, [["sid", "var"], ["weapon", "weapon"], ["zone", "zone"], ["dist", "f32"]]],
-    "dent": [9, [["px", "f32"], ["py", "f32"], ["pz", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"], ["dv", "f32"], ["kind", "dent"]]]
+    "dent": [9, [["px", "f32"], ["py", "f32"], ["pz", "f32"], ["dx", "f32"], ["dy", "f32"], ["dz", "f32"], ["dv", "f32"], ["kind", "dent"]]],
+    "sky": [8, [["hour", "f32n"], ["weather", "sky_set"], ["wait", "bool"]]],
+    "rope": [7, [["state", "rope"], ["to", "var"], ["point", "u8"], ["len", "f32"], ["reel", "bool"], ["x", "f32"], ["y", "f32"], ["z", "f32"]]]
   }
 }

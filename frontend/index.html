@@ -193,6 +193,7 @@
       /* the camp prompt (keyboard) and button (touch) */
       .oth-prompt { position: fixed; left: 50%; bottom: 66px; transform: translateX(-50%); padding: 5px 12px 4px; background: rgba(8, 8, 10, .62); color: #f4efe6; font: 700 15px 'Barlow Condensed', system-ui; letter-spacing: .12em; text-transform: uppercase; pointer-events: none; z-index: 4; display: none; }
       .oth-prompt.on { display: block; }
+      .oth-prompt.tap { pointer-events: auto; cursor: pointer; border-left: 3px solid #e0a040; }
       /* (in the car's first person the dials are where it sits — 2026-11-16, NEXT_garage §3.2: under the compass, past the toast) */
       body.oth-fpp .oth-prompt { bottom: auto; top: 104px; }
       .oth-prompt kbd { margin-right: 8px; padding: 0 6px; background: #f4efe6; color: #0b0b0d; font: 700 13px 'Barlow Condensed', system-ui; }

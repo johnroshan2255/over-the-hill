@@ -161,3 +161,129 @@ weapons kept (docs/WEAPONS.md "Co-op"). Played again, three things more were fou
 - The two in the table above (a still player's spacing; off the bike).
 
 Not tried on phones or over a real network (everything here is one machine: a round trip of ~1 ms).
+
+## 8. The sky and the cars' damage, minute by minute (2026-11-25)
+
+The user: "check whether weather change and day light are properly synced with all multiplayers, and car damage
+also … check every minute this is synced in all multiplayer users with no lags or jittering."
+
+**The sky was not shared at all.** Every game ran its own clock (from its save or `?hour=`) and rolled its own weather
+spells from its own seed: two players stood at different hours under different skies. Now the world owns them
+(`backend/src/sky.rs`): the server runs the very clock and weather `Atmosphere.ts` runs and tells everyone `sky` on
+joining, every 5 s and at once on a change; each game runs its copy between (smooth, no spell of its own), the hour
+eased to the server's word. A change anywhere is the world's: G (the time), Shift + G / K (the weather), a rest at
+camp (the hour you rest to, or the weather waited out) — `Session.setSky`, told to all. T (stop the clock) does
+nothing in co-op. Found on the way, solo too: **"Wait out the weather" could bring rain** — settling the sky ran the
+spell's own clock 400 s on, so a new spell (45 % clear) rolled at once; settling no longer runs it.
+
+**Car damage: three blows never reached the others.** The crashes, rounds and repairs were on the wire (`dent`); not
+a **hard landing** (`CarDamage.landing` — the bent axle, the burst tyre from a jump), nor the car **going up** (a
+newcomer, replayed the blows that lit it, saw it burn again and go up a second time). Both are `dent` kinds now
+(`land`, `blast`); a newcomer is told up to 160 blows (64 before — a wreck with its landings is more).
+
+**`scripts/harness/skysync.mjs`** — three players for 5 minutes, each in their own browser; each page asks for a
+different hour on the URL (the world's must win). Each minute one thing changes, then every page is checked, sampled
+at once: the hour, the weather, the cloud / rain / wet; A's car on every page (the crush, each pane by where it is,
+each lamp, each wheel's bend / flat / jam / off, the engine, burning, a shell); no camp prompt; 12 s of all three
+moving (the lag and jitter of each pair, as `syncplay.mjs`). Minute 1 B presses G, 2 C pins rain, 3 A's car takes
+crashes, a round and a hard landing, 4 D joins late, 5 A's car catches fire and goes up, then is mended. 46 of 46:
+
+| minute | hour | weather | cloud | rain | lag (ms) | jitter (m RMS) | differences between the pages |
+|---|---|---|---|---|---|---|---|
+| 1 | 17.63 | auto | 0.22 | 0.00 | 120 | 0.037 | hour < 0.01 game-min, the rest 0 |
+| 2 | 18.13 | rain | 0.48 | 0.00 | 100 | 0.009 | 0 |
+| 3 | 18.67 | rain | 0.95 | 1.00 | 100 | 0.008 | 0 |
+| 4 | 20.57 | rain | 0.95 | 1.00 | 145 | 0.030 | 0 (D's too) |
+| 5 | 21.75 | rain | 0.95 | 1.00 | 85 | 0.022 | 0 |
+
+A's car the same on every page each minute — in the first run A crashed on its own driving and the copies matched
+that too. (The first run "failed" on the panes: compared by their order in the list — your own car's driver's door is
+its own piece, so its pane comes last; the copy the others draw has every door in the body. Compared by where they
+are, the same.) `syncchecks.mjs`'s dent check measured the cracked glass's marks, which read 0 once a pane is out — a
+car that had already crashed showed "no dent" on every page; it measures the crush and the panes' states now.
+
+**The camp prompt** (C · Pitch camp / Rest at …, and its CAMP button) no longer comes up whenever you stop —
+commented out at the user's word (`main.ts`, the HUD's slow parts); C still opens the camp.
+
+Not shared: a blow while your own door stands open (it misses the door here, not on the others' copy). The sky is
+kept in memory only: a restarted server starts at 15:30, clear.
+
+## 9. The tow rope between players (2026-11-25)
+
+The user: "connect the grappling hook to other users' vehicles so that when any user is stuck we can pull them … how
+many hooks to a car like the real world … no more connect to a tree — connect to a car, manually: click the button, the
+rope comes, the human takes it in his hand and goes and connects it to the other player's car … create the animation
+in Blender, smooth."
+
+**The winch, by hand** (`frontend/src/oth/Winch.ts`, rewritten — it hooked the nearest tree or boulder ahead from the
+driver's seat; trees and boulders are no longer anchors). Every car has a winch behind its front bumper (its fairlead)
+and **three recovery points, one hook each** — two shackles at the front (left, right) and the hitch at the back, as a
+real 4×4 — so a stuck car can take three lines at once, from three helpers. WINCH (the wheel) / E:
+
+| you | WINCH / E does |
+|---|---|
+| in the car, the hook on its bumper | out of the car, to the bumper, the hook taken off it — `hook_take` |
+| on foot with the hook | by a free recovery point (≤ 2.4 m): to it, down on a knee, clipped on — `hook_attach`; by your bumper: hung back — `hook_stow`; anywhere else: let go (wound back in) |
+| hooked, on foot | at the hook: taken off — `hook_detach`; away from it: the winch runs / stops (a winch's remote) |
+| hooked, in the car | the winch runs / stops |
+
+The wheel's WINCH button runs the winch when hooked wherever you stand (E at the hook takes it off). Carried, the line
+pays off the drum behind you and lies on the ground — 25 m of it (the user's length, 2026-11-25); at its end you're held. Into your car with the hook
+in your hand: it's let go. The vault keystones (Wardens.ts) take the hook too — carried to the ring, clipped on, winched.
+
+**The pull.** Taut, the line is a stiff spring (60 kN/m, damped by each end's own speed along it) up to **42 kN** (a
+9 500 lb winch), applied at BOTH ends — each car in its own player's game: yours toward their point, theirs (told the
+rope) toward your fairlead, both from the poses as drawn there. The drum pulls in at 0.9 m/s and stalls where it would
+have to pull harder than it can. A parked car under tow is let off its brakes and rolls (`Vehicle.tow`), held again
+once the line slackens and it stands; your own car parked is held where it stands — an anchor. Drive away from them
+instead and you tow them.
+
+**On the wire**: `rope` (intent 7, event 63) — `state` none | hand | hooked, `to` (whose car; 0: a fixed thing at x y z),
+`point` (0–2), `len`, `reel`. Told on every change, 5 a second while the line runs in, 2 while it pays out; a hook
+onto a car is ASKED (another may have taken that point a moment before — then it's back in your hand, "That hook point
+is taken"). The server (`world.rs`): one hook a point, not your own car, within the line's reach of you; a newcomer is
+told every rope; a car's player leaving or changing car takes every hook off it (back in the owners' hands).
+
+**The moves** (made in Blender: `scripts/oth/fight.py SET=rope` → `src/assets/models/human/rope.glb`, 101 kB, the same
+pose-by-pose making as the fight's — every frame worked out, the body leading the hands): `hook_take` (a lean in from
+the hips, both hands on the hook, a pull to free it, a step back drawing the line out against the drum, the hook turned
+up into the right hand), `hook_attach` (a step in on the left foot, down onto the right knee, the hook brought in with
+both hands and pushed over the point, the latch thumbed, a tug back to try it, up off the front leg), `hook_detach`,
+`hook_stow`. Carrying: the right arm bent to the hook before the hip as he walks (the hand IK the guns use — Winch
+`carryHold`), the hook (made in code: a forged hook, red, its latch steel — its eye, shank, bowl) in his fist; on a
+point it hangs from it, its eye up the line. The others see all of it: their walker plays each move as the rope's
+state changes (Remotes), the hook in their hand, every line drawn from its owner's fairlead.
+
+**`scripts/harness/towtest.mjs`** — three players; B's car parked (the stuck one). 25 of 25: A presses WINCH in the
+car → out, the hook taken (on B's and C's screens, in A's hand, the line drawn); A at B's car → "E Hook onto Ravi's car
+— front left", the line paid out 14 m, clipped on — B sees A's walker play it; C isn't offered the taken point, the
+server refuses it ("That hook point is taken"), C hooks B's rear hitch: two lines on B's car; A winches: **B's car pulled
+7.3 m toward A's in B's own game**, the gap 15.8 → 8.6 m, A's parked car 0.00 m; C sees B's car 0.09 m from where B's
+game has it; A unhooks, hangs the hook back: no rope drawn anywhere. `ropeclips.mjs` films each move as the game plays it
+(CARRY=1: from the carry, as in play) — it found the carry's arm hold left on through a move: kneeling, his right wrist
+was held where a man standing carries it — up by his head. `wardens.mjs VAULT=1`: the keystone hooked by hand, winched
+— the vault opens after 1.5 s.
+
+**Its cost**: a line is one draw (38 vertices rewritten a frame), a hook one (its own little mesh, the weapons'
+material); nothing at all while no line is out. Not A/B-measured per tier (one or two draws).
+
+**Round 2 — looked at close, in co-op, till it read as real** (2026-11-25, the user: "the animation and the hook carried
+in the hand look really bad — it must be perfect, like real life; why does the rope go under the terrain; max 25 m").
+`scripts/harness/towlook.mjs` films A from all round (A's page) and as B sees A (B's page) — the take, standing with it
+from four sides, walking, running, the hand close, the clip-on, the hook on the point close, the unhook — and measures
+the rope against the ground every 10 cm. Gone over picture by picture; what was wrong and what it is now:
+
+| what | was | now |
+|---|---|---|
+| the hook carried | held out flat before his belly, pinched, the forearm level — pointing with it | its eye in his right fist, the arm hanging at his side a little bent with its weight, the hook hanging straight down by his thigh; it swings with the stride (a runner's bent-elbow swing when running) — the clips' end pose made the same in Blender |
+| the line | a flat black ribbon 3 cm wide, unlit | a round 12 mm rope, lit as the world is, dark grey; carried, it drops off the fist to the ground within a metre and lies along it |
+| under the ground | it lay on the map's height — the terrain is DRAWN as flat triangles over a 2 m grid (every tier's finest level): in a hollow the drawn ground is above the true one, and the rope went into it | laid on the ground as drawn: the higher of both ways each 2 m square can be cut, never under the map's height (`Winch.drawnGround`); 0 of 288 / 216 samples under on both pages |
+| the hook through a move | hanging from his fist the whole clip, then jumping onto the car at its moment | carried by the hands: blended from where it was to where it goes over the stretch of the clip the hands carry it — off the fairlead into the fist, the fist onto the point, back |
+| the others' view of a move | told at its moment — they saw the hook on the car before the knee went down | each move told as it STARTS: their walker of you kneels with you; a walker out of view shows its rope as it stands |
+| the hook stowed | not drawn (it came out of nowhere) | on every car's winch, hanging from the fairlead before the bumper |
+| where it hooks | in the air by the bumper (the models have no tow points) | a forged steel TOW EYE at each of a car's three points (one instanced draw for every car) |
+| the take | a deep squat at a waist-high bumper | a hinge at the hips over soft knees |
+| the colours | toy red, a white latch, a pale rope | forged deep red, dull spring steel, dark rope, dark steel eyes |
+
+Not done: a snatch strap (a line between two cars without a winch); the line doesn't wrap round things in its way (it
+goes straight through a tree); a winch on the motorbike; tried only on one machine, not on phones.
