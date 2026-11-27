@@ -54,8 +54,6 @@ export interface WorldEnv {
   farGrid: GFX.Vector4
   birds: boolean
   occlusion: boolean
-  /** The supply crates already picked up (the journal). */
-  crates: number[]
 }
 
 /** About how many steps a world's build reports (World.build's progress: distinct step labels). */
@@ -147,8 +145,8 @@ export class World {
     await sliced('placing trees', placeTrees(map, rocks, treeData))
     const bushData: number[] = []
     await sliced('placing bushes', placeBushes(map, rocks, bushData))
-    // THE SMALL THINGS (Places.ts picks where, seeded) — from the trees' places alone (the same as ever: every crate's id
-    // kept), then THE NEW PLACES (Sites.ts — 2026-11-06) clear of all of it; the trees, bushes and stones on the new
+    // THE SMALL THINGS (Places.ts picks where, seeded) — from the trees' places alone (the same as ever),
+    // then THE NEW PLACES (Sites.ts — 2026-11-06) clear of all of it; the trees, bushes and stones on the new
     // places' ground taken out before the trees and bushes are built
     let treeAll = new Float32Array(treeData)
     const placed = await step('places', () => placeThings(map, rocks, { data: treeAll, count: treeAll.length / TREE_STRIDE } as unknown as Trees))
@@ -174,7 +172,7 @@ export class World {
     { const ps = map.meta.paths; if (ps) rocks.removeWithin(ps.lines.flatMap((L, i) => (ps.kind[i] === 'alley' ? L.map(([x, z]) => [x, z, 2.6] as [number, number, number]) : []))) }
     // (the cave's hill: the land round it raised into its long flanks — before anything is placed on it)
     { const cs = plan.sites.find((l) => l.kind === 'cave'); if (cs && caveMeta && gameParams().get('caveflanks') === '1') CaveWorld.spreadFoot(map, cs, caveMeta) } // (off: it made walls and creases — 2026-11-08)
-    // (and the small things on it: pebbles, logs, stumps — never a crate, a sign, a camp's)
+    // (and the small things on it: pebbles, logs, stumps — never a sign, a camp's)
     placed.props = placed.props.filter((p) => !['stones', 'log', 'stump', 'logs'].includes(p.kind) || open(p.x, p.z))
     // (… and the outland's cairns — Places.ts, the outland as the valley: one in a ruin's ground taken off)
     placed.props = placed.props.filter((p) => p.kind !== 'cairn' || (Math.abs(p.x) < map.half && Math.abs(p.z) < map.half) || open(p.x, p.z))
@@ -215,7 +213,7 @@ export class World {
     }
     rocks.footprint.needsUpdate = map.trailTex.needsUpdate = true
     terrain.setPaved(landmarks.paved) // (the places' flagstones laid square to each)
-    const props = await step('props', () => new Props(placed.props, [...places, ...wplan.fires], placed.swarms, atmos, shadow, tier, env.farGrid, env.crates, rocks.footprint, map.inner))
+    const props = await step('props', () => new Props(placed.props, [...places, ...wplan.fires], placed.swarms, atmos, shadow, tier, env.farGrid, rocks.footprint, map.inner))
     landmarks.horizon = bridges.horizon = falls.horizon = props.horizon = horizon
     // the outland's wonders (the World Tree, the stone arch): drawn, and run into, as the landmarks are
     const wonders = await step('wonders', () => new Wonders(map, atmos, shadow, tier, env.farGrid))

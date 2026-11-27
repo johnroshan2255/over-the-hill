@@ -198,8 +198,7 @@ export class Rocks {
   }
 
   /** THE VERGES' STONES (place: picked, held back) join the rocks once the trees and the small things stand (World.build):
-   *  placed with the rest, they moved every tree and log pile after them — and with a log pile every supply crate's id
-   *  (the journal keeps them). Each keeps clear of the trees (`treeData`, `stride` numbers a tree: x, y, z first) and of
+   *  placed with the rest, they moved every tree and log pile after them. Each keeps clear of the trees (`treeData`, `stride` numbers a tree: x, y, z first) and of
    *  the props (x, z); the kept ones join `all`, the grid and the footprint. */
   settleVerge(treeData: Float32Array, stride: number, props: { x: number; z: number }[], keep: [number, number, number][] = []): void {
     // (the kept discs by 64 m cell — 2026-11-17, the load: the Wardens' thousands of discs asked by each of ~40 k stones

@@ -56,7 +56,7 @@ export interface CompanionHost {
   /** Your vehicle SHOVED (his car rams it, pushes it): along (dx, dz) by `dv` m/s, spun by `spin` rad/s; `at`: where
    *  his car met it (the world's), `by`: his car's body — a ram's (the damage is put there: Vehicle.hitHint). */
   shove(dx: number, dz: number, dv: number, spin: number, at?: GFX.Vector3, by?: RAPIER.RigidBody | null): void
-  /** A BODY THAT IS NOT YOUR VEHICLE struck by his car (you on foot: your parked car — made live for it —, a crate…):
+  /** A BODY THAT IS NOT YOUR VEHICLE struck by his car (you on foot: your parked car — made live for it — …):
    *  along (dx, dz) by `dv` m/s, at `at` (the world's), by his car's body. */
   knock?(b: RAPIER.RigidBody, dx: number, dz: number, dv: number, at: GFX.Vector3, by: RAPIER.RigidBody | null): void
   /** How your vehicle moves (the world's, m/s; nothing on foot) and its body in the physics (null on foot). */

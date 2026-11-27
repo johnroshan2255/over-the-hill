@@ -20,7 +20,7 @@ memory): no sub-agents, test with `?save=0`, measure every change per tier (`abq
 
 | what | why / how |
 |---|---|
-| **The secrets' rewards** | a court / a vale pays a place + a note + a writing; a vault 4 places. Nothing to carry away: a chest of ◆ (the supply crates' way), a part for the garage, a paint |
+| **The secrets' rewards** | a court / a vale pays a place + a note + a writing; a vault 4 places. Nothing to carry away: a chest of ◆, a part for the garage, a paint |
 | **A vault's inside isn't dark** | lit as the open air (the terrain's shade knows no roof). The caves' dark has three slots, all taken (`Sites.caveUniforms`): a fourth, or a box test in the Wardens' material |
 | **The sites in the lakes: the car** | the stepping stones are a walk (the car falls between); the drowned temple's steps go under water and nothing says how deep is too deep |
 | **The beacons' chain** | lit ones are counted, nothing joins them: a line of sparks from each lit tower to its nearest lit neighbour at night |

@@ -327,18 +327,15 @@ export class Menu {
     const pr = this.progress, t = this.j.totals ?? {}
     const found = (w: string) => { try { return (JSON.parse(localStorage.getItem(`oth.found.${w}`) ?? '[]') as number[]).length } catch { return 0 } }
     const hrs = (pr?.playSeconds ?? 0) / 3600
-    // (the valley's crates: ids under 100000 — the desert's, removed 2026-11-18, were from there on)
-    const crates = () => this.j.crates.filter((id) => id < 100000).length
     const of = (n: number, total?: number) => (total ? `${n} / ${total}` : `${n}`)
     const rows: [string, string][] = [
       ['Coins', `${this.j.coins} ◆`],
-      ['Supply crates', of(crates(), t.valley?.crates)],
       ['Places found', of(found('valley'), t.valley?.places)],
       ['Distance driven', `${((pr?.travelled ?? 0) / 1000).toFixed(1)} km`],
       ['Time on the road', hrs >= 1 ? `${Math.floor(hrs)} h ${Math.round((hrs % 1) * 60)} min` : `${Math.round(hrs * 60)} min`],
     ]
     return [el('div', 'oh-list', rows.map(([l, v]) => el('div', 'oh-row', [el('span', '', [l]), el('span', 'oh-val', [el('b', '', [v])])]))),
-      el('div', 'oh-side', [el('h4', '', ['The Valley']), el('p', '', ['Supply crates hide behind the landmarks, at the ends of the trails, by the river and out in the meadows. Signposts at the junctions name where the trails go. Camps let you rest, wait out the rain and save.'])])]
+      el('div', 'oh-side', [el('h4', '', ['The Valley']), el('p', '', ['Signposts at the junctions name where the trails go. Camps let you rest, wait out the rain and save.'])])]
   }
 
   // ---------------------------------------------------------------------------------------------------- co-op

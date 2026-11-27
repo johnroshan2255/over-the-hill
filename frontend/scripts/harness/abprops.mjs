@@ -46,7 +46,7 @@ for (const [vn, v] of Object.entries(views)) {
   const info = await p.evaluate(() => `${window.__oth.stats().draws} draws`)
   console.log(`${tier.padEnd(6)} ${vn.padEnd(13)} shown ${(on / 5).toFixed(3)} ms (${(5000 / on).toFixed(0)} fps)  hidden ${(off / 5).toFixed(3)} ms (${(5000 / off).toFixed(0)} fps)  cost ${((on - off) / 5).toFixed(3)} ms ${info}`)
 }
-// CPU: a forced rebuild of the visible list (as when driving: every 6 m or turn), the fire light, the crate check
+// CPU: a forced rebuild of the visible list (as when driving: every 6 m or turn), the fire light
 const cpu = await p.evaluate(() => {
   const o = window.__oth, pr = o.props, cam = o.camera
   const sp = o.map.meta.spawn
@@ -59,11 +59,8 @@ const cpu = await p.evaluate(() => {
   t = performance.now()
   for (let i = 0; i < 5000; i++) pr.fireLight(cam.position, i * 0.016, 1, out)
   const fire = (performance.now() - t) / 5000
-  t = performance.now()
-  for (let i = 0; i < 5000; i++) { pr.pickT = 0; pr.pickUp(0.016, sp.x + i * 0.01, 0, sp.z) }
-  const pick = (performance.now() - t) / 5000
-  return { upd, fire, pick }
+  return { upd, fire }
 })
-console.log(`${tier.padEnd(6)} CPU  rebuild ${(cpu.upd * 1000).toFixed(1)} µs  fireLight ${(cpu.fire * 1000).toFixed(2)} µs  pickUp ${(cpu.pick * 1000).toFixed(2)} µs`)
+console.log(`${tier.padEnd(6)} CPU  rebuild ${(cpu.upd * 1000).toFixed(1)} µs  fireLight ${(cpu.fire * 1000).toFixed(2)} µs`)
 console.log('errors:', errs.length ? errs : 'none')
 await b.close()

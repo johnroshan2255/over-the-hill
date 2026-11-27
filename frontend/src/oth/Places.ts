@@ -5,8 +5,7 @@ import { TREE_STRIDE, type Trees } from './Trees'
 
 /**
  * THE VALLEY'S SMALL THINGS (2026-11-02, "make the valley great": something every 30–60 s of driving): where they stand,
- * picked once at load from the map's own data — seeded, so every session puts them in the same places (a crate's id
- * is stable: the journal keeps which were found).
+ * picked once at load from the map's own data — seeded, so every session puts them in the same places.
  *
  *   sign    a SIGNPOST at every trail junction (its board names the places the trails lead to — the HUD reads it)
  *   table   a PICNIC TABLE at each viewpoint
@@ -18,8 +17,6 @@ import { TREE_STRIDE, type Trees } from './Trees'
  *   shed    a TOOL SHED by each cabin and along the forest tracks
  *   outhouse  by the cabins and some camps
  *   ruin    an old homestead's RUIN (a stone chimney among low foundation walls) out in the meadows (~6)
- *   crate   SUPPLY CRATES (~70) to find: behind the landmarks, in the hidden places, at the trails' dead ends, on the
- *           river banks — and out in the open meadows, away from the tracks (they pull you off them)
  *   camps   CAMPSITES (Landmarks.ts kind 'camp': a tent, a fire ring, log seats, a lantern) at the scenic flat spots —
  *           the hidden basins, the Flower Hollow, the lake shore, the river's bends, the larger ponds
  *   log     FALLEN TRUNKS and stump  STUMPS along the tracks' verges (the forest's edge the most) — the ring the chase
@@ -27,8 +24,7 @@ import { TREE_STRIDE, type Trees } from './Trees'
  *   swarms  wild FIREFLIES at night (2026-11-02, the user: "near some trees and random places"): by trees at a
  *           grove's edge, round the ponds, along the streams, in the Flower Hollow and the open meadows (~40)
  *
- * THE DESERT'S (2026-11-02, NEXT.md 5): the same signposts, crates (their ids from 100000: the journal keeps both
- * worlds'), stones (sandstone) and camps — at the oasis: by the lagoon and along the river — and its own: a stone WELL
+ * THE DESERT'S (2026-11-02, NEXT.md 5): the same signposts, stones (sandstone) and camps — at the oasis: by the lagoon and along the river — and its own: a stone WELL
  * by each oasis camp, at the ksar and along the oasis road; Bedouin TENTS by the camps and a nomads' camp on the plain;
  * sandstone RUINS out on the sand; an abandoned truck by the ksar. No log piles, sheds, outhouses or meadow fireflies
  * (the fireflies keep to the palms).
@@ -36,8 +32,8 @@ import { TREE_STRIDE, type Trees } from './Trees'
  * Every spot is checked against the water, the tracks, the slope, the rocks and the trees (spatial hashes: ~10 ms for
  * the whole valley).
  */
-export type PropKind = 'sign' | 'table' | 'fence' | 'logs' | 'cairn' | 'truck' | 'crate' | 'stones' | 'shed' | 'outhouse' | 'ruin' | 'well' | 'tent' | 'log' | 'stump'
-export const PROP_KINDS: PropKind[] = ['sign', 'table', 'fence', 'logs', 'cairn', 'truck', 'crate', 'stones', 'shed', 'outhouse', 'ruin', 'well', 'tent', 'log', 'stump']
+export type PropKind = 'sign' | 'table' | 'fence' | 'logs' | 'cairn' | 'truck' | 'stones' | 'shed' | 'outhouse' | 'ruin' | 'well' | 'tent' | 'log' | 'stump'
+export const PROP_KINDS: PropKind[] = ['sign', 'table', 'fence', 'logs', 'cairn', 'truck', 'stones', 'shed', 'outhouse', 'ruin', 'well', 'tent', 'log', 'stump']
 
 /** A thing's place: on the ground at (x, y, z), turned `rot` about +y, scaled `s` (default 1). */
 export interface Prop { kind: PropKind; id: number; x: number; y: number; z: number; rot: number; s?: number }
@@ -327,47 +323,6 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
     cluster(riv.x[i] - (dz / l) * off * side, riv.z[i] + (dx / l) * off * side, 2, 1.6)
   }
 
-  // ---- SUPPLY CRATES
-  const crateOk = (x: number, z: number) => free(x, z, { clear: 1.1, maxSlope: 0.45, offTrack: hw + 1.2, spacing: 120, kind: 'crate' }) &&
-    !allPads.some((l) => (l.x - x) ** 2 + (l.z - z) ** 2 < (l.r + 4) ** 2)
-  const crate = (x: number, z: number) => { add('crate', x, z, rnd() * 6.283); return true }
-  // behind every landmark and camp
-  for (const l of allPads) {
-    const s = ring(l.x, l.z, l.r + 8 + rnd() * 8, l.rot + Math.PI * (0.6 + rnd() * 0.8), 10, crateOk)
-    if (s) crate(s[0], s[1])
-  }
-  // in the hidden places (two each)
-  for (const h of meta.hidden ?? []) {
-    let n = 0
-    for (let t = 0; t < 30 && n < 2; t++) {
-      const a = rnd() * 6.283, r = h.r * (0.25 + rnd() * 0.5), x = h.x + Math.cos(a) * r, z = h.z + Math.sin(a) * r
-      if (crateOk(x, z)) { crate(x, z); n++ }
-    }
-  }
-  // the trails' dead ends (an end that meets no other trail)
-  lines.forEach((L, li) => {
-    for (const pi of [0, L.length - 1]) {
-      const [x, z] = L[pi]
-      if (junctions.some(([jx, jz]) => (jx - x) ** 2 + (jz - z) ** 2 < 30 * 30)) continue
-      if (pts.some(x, z, 12, (v) => (v >> 16) !== li)) continue
-      const s = ring(x, z, hw + 4 + rnd() * 6, rnd() * 6.283, 10, crateOk)
-      if (s) crate(s[0], s[1])
-    }
-  })
-  // the river's banks
-  for (let i = 20; i < riv.x.length - 20; i += 23) {
-    const dx = riv.x[i + 1] - riv.x[i - 1], dz = riv.z[i + 1] - riv.z[i - 1], l = Math.hypot(dx, dz) || 1, side = rnd() < 0.5 ? 1 : -1
-    const off = riv.hw[i] * 1.75 + 6 + rnd() * 8, x = riv.x[i] - (dz / l) * off * side, z = riv.z[i] + (dx / l) * off * side
-    if (crateOk(x, z)) crate(x, z)
-  }
-  // out in the open, away from the tracks, until there are ~70
-  let n = props.filter((p) => p.kind === 'crate').length
-  for (let t = 0; t < 12000 && n < 72; t++) {
-    // (trackDist: metres to the nearest track, ≤ 48 — trailDist only reads 8 m out)
-    const x = (rnd() * 2 - 1) * (half - 100), z = (rnd() * 2 - 1) * (half - 100)
-    if (map.trackDist(x, z) < 32) continue
-    if (crateOk(x, z)) { crate(x, z); n++ }
-  }
   // ---- wild FIREFLIES: at a grove's edge (a tree with open ground beside it), by the ponds and streams, in meadows
   const swarms: [number, number, number][] = []
   const dryOpen = (x: number, z: number) => Math.abs(x) < half - 80 && Math.abs(z) < half - 80 && map.waterLevel(x, z) === null && map.trailDist(x, z) > hw + 3 &&
@@ -388,7 +343,7 @@ export function placeThings(map: MapData, rocks: Rocks, trees: Trees): PlacesOut
   }
   // ---- THE VERGES (2026-11-06, the user: "why does our world feel empty, especially the valley"): fallen trunks and
   // stumps along both edges of every track, by the trees mostly (the stones there are the rocks': Rocks.ts). LAST,
-  // from their own seed: every crate's id and every thing above stays where it was. ?verge=0: without them (the A/B)
+  // from their own seed: every thing above stays where it was. ?verge=0: without them (the A/B)
   if (gameParams().get('verge') !== '0') {
     const vr = rng(0x7e46e5)
     for (const L of lines) {

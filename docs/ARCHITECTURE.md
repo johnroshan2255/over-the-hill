@@ -675,13 +675,18 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
 ## Make the Valley great — stage 1: things to find, places to stop (2026-11-02)
 
 - **Places** `oth/Places.ts` `placeThings(map, rocks, trees)` → `{ props, camps, swarms }`, seeded (the same valley
-  every time: a crate's id is stable, so the journal can keep it) and ~10 ms at load. Everything goes through `free()`:
+  every time) and ~10 ms at load. Everything goes through `free()`:
   in the box, dry, off bridges / mud / steep ground / rock (unless it sits ON rock: cairns), clear of the tracks
   (`map.trackDist` beyond 7.5 m — `trailDist` caps at 8 m), of landmark pads (not the AREA ones: falls, meadow), of
   rocks and trees, and spaced from its own kind (a spatial hash). What's there (last count): 9 CAMPSITES (falls pools,
   meadow, lake / river / pond shores) · 39 SIGNPOSTS at the junctions · tables at view points and shores · fences by
   cabins · 2 abandoned trucks · log piles in the forest · 14 cairns on rough trail tops · sheds, outhouses (every third
-  camp) · 6 stone RUINS · ~520 stone clusters (tracks, camps, river banks) · 72 SUPPLY CRATES · ~44 wild firefly swarms.
+  camp) · 6 stone RUINS · ~520 stone clusters (tracks, camps, river banks) · ~44 wild firefly swarms. (The 72 SUPPLY CRATES — drive into one
+  for 25 ◆ — were taken out of the game 2026-11-27, the user: "we need things to do in places; remove the crate
+  finding, all the crates and what goes with them": their placing, their model, the pick-up, the toast and chime, the
+  journal's list and the menu's count. The fireflies, picked after them from the same seed, stand elsewhere now;
+  nothing else moved. The wooden crates that DRESS a place — the mine, the dock, the wreck, the forts' camps, the
+  caves — are scenery and stay.)
 - **Sizes are real** (Landmarks.ts SCALE): the G500 4×4² is 4.7 m long and 1.9 m tall; the kit's cabin (5.2 × 4.2 m,
   walls 2.4 m) is drawn ×1.3 and the sawmill's shed (12 × 6 m) ×1.25 — a trapper's cabin is ~7 × 5.5 m — and the
   abandoned truck ×1.15: nothing is car-sized that isn't.
@@ -690,9 +695,10 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   is rebuilt only when the camera moves 6 m or turns (15 µs), and only the matrices in use are uploaded. Colliders
   (140) stream into Rapier within 70 m (Physics.addPropColliders). Each prop clears the grass round it (the rocks'
   footprint texture: no extra pass).
-- **Crates & the journal** `src/journal.ts` (localStorage `overhill.journal.v1`): drive within 4.5 m of a crate → +25
-  coins, a chime, the toast (checked 10× a second from a 64 m hash: 0.02 µs). A place discovered +60, a camp +30. Coins
-  buy paints in the garage (the classics are free; the rest 100 + 25 per step down the list).
+- **The journal** `src/journal.ts` (localStorage `overhill.journal.v1`): the coins. A place discovered +60, a camp
+  +30, a vault of the Wardens' 4 places', the last beacon 10 (the supply crates' +25 each: gone, 2026-11-27 — an old
+  save's list of them is dropped, its coins kept). Coins pay for the car's repair (docs/DAMAGE.md); the paints are
+  free since 2026-11-16.
 - **Signposts**: within 15 m the HUD shows the board — the 4 nearest places, their distance and an arrow relative to
   the car.
 - **Camping**: C (or the CAMP button) — at a campsite (22 m), your own camp (25 m), or anywhere dry and flat with the car
@@ -712,7 +718,7 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   weather.
 - **Cost** (uncapped 1080p, all of it shown vs hidden, interleaved ×5, a trimmed mean): ultra +0.03 ms at the spawn,
   +0.14 ms beside a lit camp at night (343 vs 361 fps), +0.07 ms at a cabin at dusk, +0.04 ms from the air; LOW
-  +0.02–0.08 ms. CPU: the rebuild 15 µs (when moving), the fire light 0.2 µs, the crate check 0.02 µs.
+  +0.02–0.08 ms. CPU: the rebuild 15 µs (when moving), the fire light 0.2 µs.
 - **Birds** `oth/Birds.ts` (2026-11-02, ULTRA on a PC only for now; `?birds=1|0` forces them): seen from far below, so
   low things — 8 triangles a bird (head, tail, two wings bent at the elbow), dark silhouettes in the haze. 7 FLOCKS
   (a V of 7–11, or a loose band of 4–10) crossing the sky weaving, 6 LONE birds of prey circling (banked, gliding, a
@@ -912,7 +918,7 @@ of theirs moves. `?groves=0`: none (A/B: no measurable cost — ~1 070 trees on 
   `OTH_DESERT` / `OTH_STACK` / `SAND` shader branches, `MapData.desert` and every branch on it, the map's desert tab
   and route-via-the-pass, the sandstorm (`uDust`). The cliff and its road stay; the valley's picture is unchanged
   (pixcmp vs the commit before: within ±2 at every view; only the compass's ⇑ for the gate gone). Old saves: a journey
-  saved in the desert starts in the valley; crates with ids ≥ 100 000 (the desert's) are not counted.
+  saved in the desert starts in the valley.
 
 ## The GPS: waypoint, route, radar (2026-11-03 — the user: "like GTA 5: mark a destination on the map and it shows the fastest route like Google Maps"; "I don't know how to get to the other map")
 

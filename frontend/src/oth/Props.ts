@@ -11,14 +11,14 @@ import type { TerrainShadow } from './TerrainShadow'
 
 /**
  * THE VALLEY'S SMALL THINGS, DRAWN (Places.ts picks where): signposts, picnic tables, fences, log piles, cairns, the
- * logging trucks, the supply crates — and the FLAMES of every camp's fire, and the PLAYER'S OWN CAMP (pitched with C).
+ * logging trucks — and the FLAMES of every camp's fire, and the PLAYER'S OWN CAMP (pitched with C).
  *
  * Cheap by construction:
  *   ONE DRAW PER KIND: an InstancedMesh each, the one wood material (Bridges.ts: vertex colours, no textures, the night
  *     glow), every prop's matrix computed once at load and copied in.
  *   CULLED like the rocks: per 128 m cell — the kind's reach (× the tier's), the view (the cell's box against the
  *     frustum), the hills (Horizon), and per prop a SMALL-FEATURE cut (under ~2 px tall: not drawn). The lists are
- *     rebuilt only when the camera has moved 6 m or turned (or a crate was picked up), never per frame.
+ *     rebuilt only when the camera has moved 6 m or turned, never per frame.
  *   CAMPFIRES (2026-11-02, the user: "a cheap fire effect that looks real, with light at night"): per fire three
  *     FLAME tongues (upright quads, their edges torn by the paint noise scrolling up, a white-hot core), SPARKS rising
  *     and fading (brighter at night), a thin SMOKE wisp drifting with the wind (by day), a warm halo at the base and
@@ -40,7 +40,7 @@ const box = (b: Builder, cx: number, cy: number, cz: number, hx: number, hy: num
 const STONE: RGB = [0.24, 0.245, 0.26]
 
 /** Each kind's model (local: on the ground, facing +z), how far it's drawn (m, before the tier's factor), its height
- *  (m, for the small-feature cut) and its collider (centre y, half sizes; none for the crate — you drive into it). */
+ *  (m, for the small-feature cut) and its collider (centre y, half sizes; null: none). */
 /** `more`: extra collider boxes, off the centre ([x, y, z offset, then half sizes], local). */
 const TIN: RGB = [0.4, 0.26, 0.17]
 /** A ruin's broken foundation walls: [x0, x1, z0, z1, height] (local m; the chimney at the origin). */
@@ -242,22 +242,12 @@ const KINDS: Record<PropKind, { build: (b: Builder) => void; reach: number; size
       }
     },
   },
-  crate: {
-    reach: 260, size: 0.7, col: null,
-    build(b) {
-      box(b, 0, 0.33, 0, 0.46, 0.3, 0.32, b.wood(1.15))
-      for (const x of [-0.46, 0.46]) box(b, x, 0.33, 0, 0.02, 0.32, 0.34, b.wood(0.75))
-      b.setGlow(0.2) // (the band catches the eye — and glows a little at night)
-      box(b, 0, 0.36, 0, 0.475, 0.07, 0.335, [0.85, 0.5, 0.06])
-      b.setGlow(0)
-    },
-  },
 }
 
 const CELL = 128
 /** The grass cleared round each kind (m; a fence: three spots along it). */
 // (a ruin's 2 m: its ground is the paving's — World.build pavePatch, 2026-11-08; it was a bare 5.5 m disc)
-const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, crate: 1.8, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 2.0, well: 1.8, tent: 4.0, log: 1.1, stump: 0.9 }
+const CLEAR: Record<PropKind, number> = { sign: 0.9, table: 2.4, fence: 1.0, logs: 2.6, cairn: 1.3, truck: 5.2, stones: 0.9, shed: 3.0, outhouse: 1.4, ruin: 2.0, well: 1.8, tent: 4.0, log: 1.1, stump: 0.9 }
 
 export interface PropCollider { x: number; y: number; z: number; rot: number; hx: number; hy: number; hz: number
   /** (not there for now — a vault's door once it has fallen, the fallen slab until it has: Wardens.ts; then
@@ -277,8 +267,6 @@ export class Props {
   private readonly meshes = new Map<PropKind, GFX.InstancedMesh>()
   private readonly matrices: Float32Array
   private readonly cells = new Map<number, { idx: number[]; y0: number; y1: number }>()
-  private readonly pick = new Map<number, number[]>()
-  private readonly collected = new Set<number>()
   private readonly reachK: number
   private dirty = true
   /** How many of each kind the last rebuild uploaded. */
@@ -305,14 +293,12 @@ export class Props {
   private readonly halos: GFX.Mesh
   private readonly flyAttr: GFX.InstancedBufferAttribute
   private readonly haloAttr: GFX.InstancedBufferAttribute
-  private pickT = 0
 
-  constructor(readonly props: Prop[], landmarks: Landmark[], wild: [number, number, number][], atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4, collected: number[],
+  constructor(readonly props: Prop[], landmarks: Landmark[], wild: [number, number, number][], atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4,
     footprint: GFX.DataTexture, private readonly grid: { n: number; step: number; origin: number }) {
     // (2026-11-06: any place with a FIRE burns one — the camps but the abandoned, the tunnel's alcove, the grotto, the
     //  river shelters — and any with LIGHTS glows at its windows / lanterns from dusk: Landmarks.ts sets both)
     const camps = landmarks.filter((l) => l.fire), lit = landmarks.filter((l) => l.lights?.length)
-    for (const id of collected) this.collected.add(id)
     this.reachK = (tier.rockReach / 900) * LOOK_REACH
     const mat = woodMaterial(atmos, shadow, tier, farGrid)
     // the models, one InstancedMesh per kind
@@ -328,7 +314,7 @@ export class Props {
       this.meshes.set(kind, mesh)
       this.group.add(mesh)
     }
-    // every prop's matrix, once; its cell; its collider; the crates' pick-up hash
+    // every prop's matrix, once; its cell; its collider
     this.matrices = new Float32Array(props.length * 16)
     const m = new GFX.Matrix4(), q = new GFX.Quaternion()
     props.forEach((p, i) => {
@@ -344,12 +330,6 @@ export class Props {
       if (col) this.colliders.push({ x: p.x, y: p.y + col[0], z: p.z, rot: p.rot, hx: col[1], hy: col[2], hz: col[3] })
       const cs = Math.cos(p.rot), sn = Math.sin(p.rot)
       for (const [ox, oy, oz, hx, hy, hz] of KINDS[p.kind].more ?? []) this.colliders.push({ x: p.x + ox * cs + oz * sn, y: p.y + oy, z: p.z - ox * sn + oz * cs, rot: p.rot, hx, hy, hz })
-      if (p.kind === 'crate') {
-        const pk = this.key(Math.floor(p.x / 64), Math.floor(p.z / 64))
-        const l = this.pick.get(pk)
-        if (l) l.push(i)
-        else this.pick.set(pk, [i])
-      }
     })
     // the camps' fires, then a slot for the player's
     for (const c of camps) {
@@ -425,8 +405,6 @@ export class Props {
 
   private key(i: number, j: number): number { return (i + 4096) * 8192 + (j + 4096) }
 
-  get crateCount(): number { return this.props.filter((p) => p.kind === 'crate').length }
-
   private lodRev = 0
   /** Re-pick what's drawn when the camera has moved 6 m or turned (or something changed). */
   update(camera: GFX.PerspectiveCamera): void {
@@ -456,7 +434,6 @@ export class Props {
       if (this.horizon?.hiddenBox(this.cellBox)) continue
       for (const k of c.idx) {
         const p = this.props[k], K = KINDS[p.kind]
-        if (p.kind === 'crate' && this.collected.has(p.id)) continue
         const away2 = (p.x - cx) ** 2 + (p.z - cz) ** 2, d2 = lens ? E.d2(p.x, p.z) : away2, reach = K.reach * this.reachK, size = K.size * (p.s ?? 1)
         if (d2 > reach * reach || size * size < minRatio * minRatio * away2) continue
         const mesh = this.meshes.get(p.kind)!
@@ -485,24 +462,6 @@ export class Props {
       const v = Math.round(255 * Math.min(1, Math.max(0, (1.15 - d) / 0.3)))
       if (v > data[j * g.n + i]) data[j * g.n + i] = v
     }
-  }
-
-  /** Crates the car (x, y, z) has reached since the last call (checked 10× a second): their ids. */
-  pickUp(dt: number, x: number, y: number, z: number): number[] {
-    if ((this.pickT -= dt) > 0) return EMPTY
-    this.pickT = 0.1
-    let got: number[] | null = null
-    const i0 = Math.floor((x - 6) / 64), i1 = Math.floor((x + 6) / 64), j0 = Math.floor((z - 6) / 64), j1 = Math.floor((z + 6) / 64)
-    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-      for (const k of this.pick.get(this.key(i, j)) ?? EMPTY) {
-        const p = this.props[k]
-        if (this.collected.has(p.id) || (p.x - x) ** 2 + (p.z - z) ** 2 > 4.5 * 4.5 || Math.abs(p.y - y) > 4) continue
-        this.collected.add(p.id)
-        ;(got ??= []).push(p.id)
-        this.dirty = true
-      }
-    }
-    return got ?? EMPTY
   }
 
   /** The signpost within r m of (x, z), if any (the HUD reads its boards). */
@@ -570,7 +529,6 @@ export class Props {
   }
 }
 
-const EMPTY: number[] = []
 /** Fireflies per swarm; a camp lantern's place (campKit). */
 const FLIES = 36
 const LANTERN = { x: -0.6, y: 1.72, z: 1.42 } as const

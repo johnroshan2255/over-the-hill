@@ -169,7 +169,6 @@ async function boot() {
     birds: q.get('birds') === '1' || (q.get('birds') !== '0' && tier.name === 'ultra' && !isMobileDevice()),
     // OCCLUSION CULLING: what the hills hide is skipped; ?occlusion=0 turns it off
     occlusion: q.get('occlusion') !== '0',
-    crates: journal.crates,
   }
   let world = await World.build(startId, env, undefined, (f) => loading(0.4 + 0.4 * f), first)
   // what lasts across worlds reads the current one's map through this
@@ -182,14 +181,14 @@ async function boot() {
       keepJournal()
       readouts.coins(journal.coins, pay)
       toast(`${SECRET.has(l.style ?? '') ? 'Secret place found' : 'Discovered'} · ${l.name}   +${pay} ◆   ${n} / ${total}`, 4200)
-      audio.chime('place')
+      audio.chime()
       // A BEACON reached: its crystal wakes (Wardens.light) — "light the chain"; the last one pays for them all
       if (l.kind === 'warden' && l.style === 'tower' && w.wardens) {
         w.wardens.light([l.id])
         const [lit, all] = w.wardens.beacons()
         setTimeout(() => {
           toast(lit < all ? `Beacon lit · ${lit} / ${all}` : `The last beacon burns — the chain is whole   +${REWARD.place * 10} ◆`, 5200)
-          audio.chime('place')
+          audio.chime()
           if (lit === all) { journal.coins += REWARD.place * 10; keepJournal(); readouts.coins(journal.coins, REWARD.place * 10) }
         }, 4400)
       }
@@ -199,7 +198,7 @@ async function boot() {
     // (a pinned ?weather= settled at once)
     if (wq && !settled) { settled = true; atmos.settleWeather() }
     // (each world's own counts: the title screen's journal shows both)
-    journal.totals = { ...journal.totals, [w.id]: { crates: w.props.crateCount, places: w.places.length } }
+    journal.totals = { ...journal.totals, [w.id]: { places: w.places.length } }
     keepJournal()
     scene.add(w.group)
   }
@@ -511,7 +510,7 @@ async function boot() {
       keepJournal()
       readouts.coins(journal.coins, pay)
       toast(`The keystone comes free — ${k.name} stands open   +${pay} ◆   ${n} / ${all}`, 6000)
-      audio.chime('place')
+      audio.chime()
     },
   })),
   }, ropeUrl)
@@ -531,7 +530,7 @@ async function boot() {
     return o
   }
   guide.setWorld(world.id, world.map, obstacles(world))
-  guide.onArrive = (w) => { toast(`Arrived · ${w.name}`, 3200); audio.chime('place') }
+  guide.onArrive = (w) => { toast(`Arrived · ${w.name}`, 3200); audio.chime() }
   // THE AUTOPILOT (Autopilot.ts — 2026-11-11, the user: "an option to turn on autopilot and off, so it will safely go
   // there"): it drives the 4×4 along the GPS's route; O, the action wheel, the button over the speed. The player's
   // hands on the controls take it back
@@ -1452,7 +1451,7 @@ async function boot() {
       readouts.coins(journal.coins, 10)
       const taught = plain ? '' : lettersTaught(seen.size)
       toast(`Warden writing read · ${seen.size} / ${world.wardens?.textCount ?? 0}${taught ? ` · learned ${taught}` : ''}`, 3600)
-      if (!plain && lettersKnown(seen.size) >= 26 && lettersKnown(seen.size - 1) < 26) setTimeout(() => { toast('You can read the Wardens\' script now', 5200); audio.chime('place') }, 3800)
+      if (!plain && lettersKnown(seen.size) >= 26 && lettersKnown(seen.size - 1) < 26) setTimeout(() => { toast('You can read the Wardens\' script now', 5200); audio.chime() }, 3800)
       return
     }
     readouts.note(l?.note ? { place: l.name, ...l.note } : null)
@@ -1575,17 +1574,6 @@ async function boot() {
     lastPos.copy(ride.pos)
     if (ride.sim && ride.grounded() && map.waterAt(ride.pos.x, ride.pos.z) === null) { safe.x = ride.pos.x; safe.z = ride.pos.z; safe.heading = ride.heading }
     if ((saveT += dt) > 20) { saveT = 0; save() }
-    // the supply crates the car reaches
-    const got = world.props.pickUp(dt, ride.pos.x, ride.pos.y, ride.pos.z)
-    if (got.length) {
-      for (const id of got) journal.crates.push(id)
-      journal.coins += REWARD.crate * got.length
-      keepJournal()
-      readouts.coins(journal.coins, REWARD.crate * got.length)
-      const here = journal.crates.filter((id) => id < 100000).length // (≥ 100 000: the desert's, removed — an old save's)
-      toast(`Supply crate · +${REWARD.crate * got.length} ◆   ${here} / ${world.props.crateCount}`)
-      audio.chime('crate')
-    }
     // the HUD's slow parts (4× a second): the signpost, the camp prompt
     if ((hudTick += dt) > 0.25) {
       hudTick = 0; signHud(); noteHud(); apHud()

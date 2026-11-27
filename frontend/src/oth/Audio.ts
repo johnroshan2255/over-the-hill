@@ -98,13 +98,13 @@ export class OthAudio {
   private master!: GainNode
   /** the rain's hiss, its level (eased here: the parameter set only when it's moved — setParam) */
   private rainLevel = 0
-  /** A short CHIME for a find (a crate: two notes; a place / a camp: three, rising) — oscillators through the master
+  /** A short CHIME for a find (a place, a camp: three notes, rising) — oscillators through the master
    *  gain, ~0.5 s, nothing loaded. */
-  chime(kind: 'crate' | 'place'): void {
+  chime(): void {
     const ctx = this.ctx
     if (!ctx || this.muted) return
     const t = ctx.currentTime
-    ;(kind === 'crate' ? [880, 1318.5] : [659.3, 987.8, 1318.5]).forEach((f, i) => {
+    ;[659.3, 987.8, 1318.5].forEach((f, i) => {
       const o = ctx.createOscillator(), g = ctx.createGain(), t0 = t + i * 0.09
       o.type = 'triangle'
       o.frequency.value = f

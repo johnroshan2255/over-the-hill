@@ -224,7 +224,7 @@ RTX 4050), 700+ on the Mac mini, 100+ on a Chromebook / small phone — never at
 - **Drive into every cave with the car and the bike.** The colliders are boxes: the walls, the hill's bulk by rows, and a lid over each roof. Check that nothing snags at the mouths and that the floors are drivable (the skylight's mound especially). `scripts/harness/rockdrive.mjs` / `trackdrive.mjs` are a start.
 - **Phone.** Measure the caves with `PHONE=1` (`absites.mjs` has the phone viewport; `cavecost.mjs` doesn't yet).
 - **Notes.** Sky Hollow and Bear's Den have none (`NOTES` in `Sites.ts`, keyed by name). The Ranger Station's note mentions "the grotto"; keep the story consistent.
-- **Crate ids.** After the data changes, re-check that every crate keeps its id with `?sites=0` vs `1` (it held at 72 before).
+- ~~**Crate ids.** After the data changes, re-check that every crate keeps its id with `?sites=0` vs `1`.~~ (No longer: the supply crates were taken out of the game 2026-11-27.)
 - **Commit** the caves' round 2 when the user has seen it.
 
 ## Where things are
