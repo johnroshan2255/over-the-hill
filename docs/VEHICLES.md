@@ -195,7 +195,9 @@ Every model gets the off-roader's set (its loader: `assets/loadModels.ts`): a **
 linings (`cab_*`); **every door cut** as its own part with a `hinge` (the driver's swings in play); the **steering wheel**,
 the **pedals** (+ a **clutch** on the manuals), the **gear lever** and the **wipers** on their pivots; **four wheels**
 each at its hub, its `rim` ratio; the **beam axles, diffs, springs and dampers** underneath (leaf packs where it has leaves,
-coils where coils, the Mammoth's portal boxes); lamp lenses named for the loader; the paint panels on `CarPaint`. Its
+coils where coils, the Mammoth's portal boxes); lamp lenses named for the loader (the materials `lamp_lens` — the head lamps' glass — and `glows` — the tail
+lamps' red: the game lights THOSE FACES and nothing else, `oth/Lamps.ts`; a new car without them has no lights —
+`scripts/harness/lampshot.mjs` says so); the paint panels on `CarPaint`. Its
 look: the Over the Hill feel the user asked for (its cars — not its designs) — crisp edges, the paint's grain, dark glass,
 pale steel wheels, a little worn.
 

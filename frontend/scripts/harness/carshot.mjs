@@ -26,7 +26,7 @@ const look = (from, at) => p.evaluate(([from, at]) => {
   const a = V(from), t = V(at)
   o.view(a.x, a.z, a.y - o.world.map.height(a.x, a.z), Math.atan2(-(t.x - a.x), -(t.z - a.z)), Math.atan2(t.y - a.y, Math.hypot(t.x - a.x, t.z - a.z)))
 }, [from, at])
-const info = await p.evaluate(() => { const c = window.__oth.car, m = c.model; return { id: c.id, doors: m.doors.map((d) => ({ side: d.side, hinge: d.hinge.map((v) => +v.toFixed(2)), length: +d.length.toFixed(2) })), wheelPos: m.wheelPos.map((w) => w.map((v) => +v.toFixed(3))), r: +m.wheelRadius.toFixed(3), half: m.half, front: m.front, rear: m.rear, bottom: m.bottom, steer: m.steeringPivot.map((v) => +v.toFixed(2)), axis: m.steeringAxis.map((v) => +v.toFixed(2)), controls: m.controls.map((k) => k.kind), cabin: !!m.cabin, lamps: m.lamps, hulls: m.hulls.length } })
+const info = await p.evaluate(() => { const c = window.__oth.car, m = c.model; return { id: c.id, doors: m.doors.map((d) => ({ side: d.side, hinge: d.hinge.map((v) => +v.toFixed(2)), length: +d.length.toFixed(2) })), wheelPos: m.wheelPos.map((w) => w.map((v) => +v.toFixed(3))), r: +m.wheelRadius.toFixed(3), half: m.half, front: m.front, rear: m.rear, bottom: m.bottom, steer: m.steeringPivot.map((v) => +v.toFixed(2)), axis: m.steeringAxis.map((v) => +v.toFixed(2)), controls: m.controls.map((k) => k.kind), cabin: !!m.cabin, lamps: Object.fromEntries(['head', 'tail'].map((k) => [k, m.lamps[k] && m.lamps[k].map((l) => ({ c: l.c.map((v) => +v.toFixed(3)), w: +l.w.toFixed(3), h: +l.h.toFixed(3), round: l.round, lenses: l.lenses.length }))])), hulls: m.hulls.length } })
 console.log(JSON.stringify(info))
 await look([-3.6, 1.7, -4.6], [0, 1.0, 0]); await shot('a_front_34')
 await look([-6.5, 1.3, 0], [0, 1.0, 0]); await shot('b_side')

@@ -9,6 +9,7 @@ import { ATMOS_GLSL, FRAG_OUT, LOOK, type Atmosphere } from './Atmosphere'
 import { CockpitAnim, dialMaterial, dialTexture, type CockpitState } from './Cockpit'
 import DAMAGE from '../../../proto/damage.json'
 import { CarDamage, crackU, DAMAGE_ON } from './Damage'
+import { CarLamps } from './Lamps'
 import type { Horizon } from './Horizon'
 import type { MapData } from './MapData'
 import type { OthPhysics } from './Physics'
@@ -349,7 +350,8 @@ export class Vehicle {
 
   private buildMeshes(truck: TruckModel, paint: string): void {
     for (const c of [...this.root.children]) this.root.remove(c)
-    this.lampMesh = this.tailMesh = null
+    this.lamps?.dispose()
+    this.lamps = null
     this.wheels.length = 0
     const u = this.uniforms
     u.uMap.value = truck.map
@@ -388,6 +390,12 @@ export class Vehicle {
     b.frustumCulled = g.frustumCulled = false
     g.renderOrder = 3 // (transparent: after the cabin behind it)
     this.root.add(b, g)
+    // THE LAMPS (Lamps.ts): the lenses' own faces lit, their halos; the head lamps' beams in the air
+    this.shell = { body: bodyGeo, glass: glassGeo }
+    const lamps = (this.lamps = new CarLamps(truck))
+    this.root.add(lamps.mesh)
+    this.beams = lamps.beams ? new GFX.Mesh(lamps.beams, this.beamMat) : null
+    if (this.beams) { this.beams.frustumCulled = false; this.beams.renderOrder = 3; this.beams.visible = false; this.root.add(this.beams) }
     this.doorPivot?.removeFromParent()
     this.doorPivot = null
     if (driver) {
@@ -804,21 +812,27 @@ export class Vehicle {
     }
     this.coat += gain - (dt / 80) * u.uRain.value
   }
-  private lampMesh: GFX.InstancedMesh | null = null
-  private tailMesh: GFX.InstancedMesh | null = null
+  private lamps: CarLamps | null = null
+  /** This car's own shell (its body, its glass — what Damage crumples): the lamps' lit faces follow it. */
+  private shell: { body: GFX.BufferGeometry; glass: GFX.BufferGeometry } | null = null
   private beams: GFX.Mesh | null = null
-  private readonly lampMat = glowMaterial(new GFX.Color(1, 0.9, 0.72))
-  private readonly tailMat = glowMaterial(new GFX.Color(1, 0.07, 0.03))
   private readonly beamMat = beamMaterial()
   private brakeK = 0
   private readonly lampL = new GFX.Vector3()
   private readonly lampR = new GFX.Vector3()
+  private readonly tailAt = new GFX.Vector3()
+  /** (a harness's — scripts/harness/lampshot.mjs) the brake lights held on. */
+  brakeHeld = false
   /** The car's lights (2026-10-27, the user: "the headlight comes from the centre of the front, not the headlamps; the
    *  back light should light when we brake; use a light like paint"): the shared uniforms put a painted BEAM from each
-   *  lamp on every surface (Atmosphere `headlight()`) and the brake lights' red pool behind; the lenses GLOW (soft
-   *  painted halos, above white: the bloom takes them), at night a faint painted cone of light in the air ahead. The
-   *  BRAKE LIGHTS burn whenever the brake is on while rolling forward (S / BRAKE; S at a standstill is reverse) or the
-   *  handbrake is pulled, day or night; with the headlights on the tail lamps glow dim. */
+   *  lamp on every surface (Atmosphere `headlight()`) and the brake lights' red pool behind; the lenses GLOW, at night
+   *  a faint painted cone of light in the air ahead. The BRAKE LIGHTS burn whenever the brake is on while rolling
+   *  forward (S / BRAKE; S at a standstill is reverse) or the handbrake is pulled, day or night; with the headlights
+   *  on the tail lamps glow dim.
+   *  EVERY LIGHT FROM ITS LAMP (2026-11-27, the user: "exactly from the car's brake light and headlight — not a
+   *  nanometre off; a round lamp's light round" — Lamps.ts): what glows is the model's own lens faces; each beam on the
+   *  world starts at the middle of its lens, on its face; the red pool behind at the middle of the tail lamps still
+   *  whole (one broken: at the other). */
   lights(atmos: Atmosphere, dt = 1 / 60): void {
     if (!this.sim || !this.model) return
     // (on by themselves at night)
@@ -826,10 +840,16 @@ export class Vehicle {
     //  and the tail lamps' red behind: on from the sun ~12° up, down through the dusk)
     const dusk = LOOK > 0 && atmos.sunY < 0.21
     const on = this.lightMode === 'on' || (this.lightMode === 'auto' && (atmos.uniforms.uNight.value > 0.25 || dusk))
-    const u = atmos.uniforms, head = this.model.lamps.head, tail = this.model.lamps.tail, hz = this.model.half, q = this.root.quaternion
-    const h = head ? head.c : [hz.x * 0.7, 0.9, -hz.z], t = tail ? tail.c : [hz.x * 0.75, 0.9, hz.z]
-    this.lampL.set(-Math.abs(h[0]), h[1], h[2] - 0.05).applyQuaternion(q).add(this.root.position)
-    this.lampR.set(Math.abs(h[0]), h[1], h[2] - 0.05).applyQuaternion(q).add(this.root.position)
+    const u = atmos.uniforms, L = this.lamps, hz = this.model.half, q = this.root.quaternion, P = this.root.position
+    // (the lenses moved with a dent, back with the repair)
+    const rev = this.damage ? this.damage.sim.rev : 0
+    if (L && this.shell && rev !== this.lampRev) {
+      this.lampRev = rev
+      if (this.damage) L.follow(this.shell.body.attributes.position.array, this.shell.glass.attributes.position?.array ?? null)
+    }
+    // (a model with no lamp known — none of the garage's: its beams from the nose's corners, no glow)
+    const at = (k: number, v: GFX.Vector3) => (L?.at[k] ? v.copy(L.at[k]!) : v.set((k & 1 ? 1 : -1) * hz.x * (k < 2 ? 0.7 : 0.75), 0.9, k < 2 ? this.model!.front : this.model!.rear)).applyQuaternion(q).add(P)
+    at(0, this.lampL); at(1, this.lampR)
     // (a BROKEN lamp — Damage.ts: no beam from it — its place put far under the ground —, no glow; both: dark)
     const out = this.damage ? this.damage.lamps : NO_LAMPS
     if (out[0]) this.lampL.y -= 1e4
@@ -839,48 +859,55 @@ export class Vehicle {
     u.uHeadR.value.copy(this.lampR)
     u.uHeadDir.value.set(0, 0, -1).applyQuaternion(q)
     u.uHeadUp.value.set(0, 1, 0).applyQuaternion(q)
-    const c = this.sim.controls, braking = (c.brake && this.sim.speed > 0.4) || c.handbrake
+    const c = this.sim.controls, braking = (c.brake && this.sim.speed > 0.4) || c.handbrake || this.brakeHeld
     this.brakeK = braking ? Math.min(1, this.brakeK + dt / 0.06) : Math.max(0, this.brakeK - dt / 0.12)
-    const tc = new GFX.Vector3(0, t[1], t[2] + 0.1).applyQuaternion(q).add(this.root.position)
+    // (the red pool: from between the two tail lamps — from the one left when the other is broken)
     const tailsLeft = (out[2] ? 0 : 0.5) + (out[3] ? 0 : 0.5)
-    u.uTail.value.set(tc.x, tc.y, tc.z, Math.max(this.brakeK, on && LOOK ? 0.4 : 0) * tailsLeft)   // (the look: the lit tail lamps' own dim pool)
-    if (!this.lampMesh) {
-      const g = new GFX.PlaneGeometry(2, 2)
-      this.lampMesh = new GFX.InstancedMesh(g, this.lampMat, 2)
-      this.tailMesh = new GFX.InstancedMesh(g, this.tailMat, 2)
-      this.lampMesh.frustumCulled = this.tailMesh.frustumCulled = false
-      this.lampMesh.renderOrder = this.tailMesh.renderOrder = 2
-      this.beams = new GFX.Mesh(beamGeometry(Math.abs(h[0]), h[1], h[2] - 0.05), this.beamMat)
-      this.beams.frustumCulled = false
-      this.beams.renderOrder = 3
-      this.root.add(this.lampMesh, this.tailMesh, this.beams)
-      this.lampRev = -1
+    if (out[2] && !out[3]) at(3, this.tailAt)
+    else if (out[3] && !out[2]) at(2, this.tailAt)
+    else { at(2, this.tailAt); this.tailAt.add(at(3, this.tailV)).multiplyScalar(0.5) }
+    u.uTail.value.set(this.tailAt.x, this.tailAt.y, this.tailAt.z, Math.max(this.brakeK, on && LOOK ? 0.4 : 0) * tailsLeft)   // (the look: the lit tail lamps' own dim pool)
+    if (!L) return
+    const tailK = 5.0 * Math.max(on ? 0.3 : 0, this.brakeK)
+    L.set(on && !out[0] ? 5.5 : 0, on && !out[1] ? 5.5 : 0, out[2] ? 0 : tailK, out[3] ? 0 : tailK)
+    if (this.beams) {
+      this.beams.visible = on && !out[0] && !out[1] && (u.uNight.value > 0.05 || dusk)
+      this.beamMat.uniforms.uK.value = Math.max(u.uNight.value, dusk ? 0.35 : 0)
     }
-    // (the glows' places — set again when a lamp breaks or is mended: a broken one has no size)
-    const rev = this.damage ? this.damage.sim.rev : 0
-    if (rev !== this.lampRev) {
-      this.lampRev = rev
-      const m = new GFX.Matrix4(), back = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), Math.PI)
-      for (let k = 0; k < 2; k++) {
-        const sx = k ? 1 : -1
-        // (each glow 3× its lens: the lens a bright core, round it a soft halo)
-        const hr = out[k] ? 0 : (head ? Math.max(0.06, Math.min(head.w, head.h)) : 0.1) * 3
-        m.compose(new GFX.Vector3(Math.abs(h[0]) * sx, h[1], h[2] - 0.03), back, new GFX.Vector3(hr, hr, 1))
-        this.lampMesh.setMatrixAt(k, m)
-        const tr = out[2 + k] ? 0 : (tail ? Math.max(0.05, Math.min(tail.w, tail.h)) : 0.08) * 3
-        m.compose(new GFX.Vector3(Math.abs(t[0]) * sx, t[1], t[2] + 0.03), new GFX.Quaternion(), new GFX.Vector3(tr, tr, 1))
-        this.tailMesh!.setMatrixAt(k, m)
-      }
-      this.lampMesh.instanceMatrix.needsUpdate = true
-      this.tailMesh!.instanceMatrix.needsUpdate = true
+  }
+  private readonly tailV = new GFX.Vector3()
+
+  /** (scripts/harness/lampshot.mjs) THIS CAR'S LAMPS, CHECKED: each lamp's lenses (where, how big, the shape, how many
+   *  of the model's own vertices), and what fails — a lamp missing, a lens not the model's own (`measured`: the E30's),
+   *  a lit vertex off its lens's, a beam or the pool not at its lamp. */
+  lampCheck(atmos: Atmosphere, measured = false): Record<string, unknown> {
+    const m = this.model, L = this.lamps, fails: string[] = []
+    if (!m || !L || !this.shell) return { id: this.id, fails: ['no car'] }
+    const r = (v: number) => +v.toFixed(4)
+    const names = ['headL', 'headR', 'tailL', 'tailR']
+    const lamps = Object.fromEntries(L.lamps.map((l, k) => [names[k], l && l.lenses.map((q) => ({ c: q.c.map(r), w: r(q.w), h: r(q.h), shape: q.round ? 'round' : 'square', verts: q.verts ? q.verts.length : 0, of: q.verts ? (q.ofGlass ? 'glass' : 'body') : 'measured' }))]))
+    L.lamps.forEach((l, k) => {
+      if (!l) { fails.push(`${names[k]}: none`); return }
+      if (!measured && l.lenses.some((q) => !q.verts)) fails.push(`${names[k]}: not the model's own lens`)
+    })
+    // (the two sides the same lamp, across the car)
+    for (const k of [0, 2]) {
+      const a = L.lamps[k], b = L.lamps[k + 1]
+      if (a && b && (Math.abs(a.c[0] + b.c[0]) > 1e-3 || Math.abs(a.c[1] - b.c[1]) > 1e-3 || Math.abs(a.c[2] - b.c[2]) > 1e-3 || a.round !== b.round)) fails.push(`${names[k]} / ${names[k + 1]}: not a pair`)
     }
-    this.lampMesh.visible = beamOn
-    this.lampMat.uniforms.uK.value = 5.5
-    const tailK = Math.max(on ? 0.3 : 0, this.brakeK) * (tailsLeft > 0 ? 1 : 0)
-    this.tailMesh!.visible = tailK > 0.01
-    this.tailMat.uniforms.uK.value = 5.0 * tailK
-    this.beams!.visible = on && !out[0] && !out[1] && (u.uNight.value > 0.05 || dusk)
-    this.beamMat.uniforms.uK.value = Math.max(u.uNight.value, dusk ? 0.35 : 0)
+    const chk = L.check(this.shell.body.attributes.position.array, this.shell.glass.attributes.position?.array ?? null)
+    if (chk.off !== 0) fails.push(`a lit vertex ${chk.off} m off its lens's`)
+    // (the beams' starts and the pool: at the lamps, in the world — single-precision uniforms: under 0.01 mm)
+    const u = atmos.uniforms, w = new GFX.Vector3(), q = this.root.quaternion, P = this.root.position
+    const world = (k: number) => w.copy(L.at[k]!).applyQuaternion(q).add(P)
+    const out = this.damage ? this.damage.lamps : NO_LAMPS
+    let beamOff = 0
+    if (L.at[0] && L.at[1] && !out[0] && !out[1]) beamOff = Math.max(world(0).distanceTo(new GFX.Vector3(u.uHeadL.value.x, u.uHeadL.value.y, u.uHeadL.value.z)), world(1).distanceTo(u.uHeadR.value))
+    let poolOff = 0
+    if (L.at[2] && L.at[3] && !out[2] && !out[3]) poolOff = world(2).add(new GFX.Vector3().copy(L.at[3]!).applyQuaternion(q).add(P)).multiplyScalar(0.5).distanceTo(new GFX.Vector3(u.uTail.value.x, u.uTail.value.y, u.uTail.value.z))
+    if (beamOff > 1e-5) fails.push(`a beam starts ${beamOff} m off its lamp`)
+    if (poolOff > 1e-5) fails.push(`the brake lights' pool ${poolOff} m off the lamps`)
+    return { id: this.id, lamps, litOff: chk.off, own: chk.own, drawn: chk.drawn, beamOff: +beamOff.toExponential(1), poolOff: +poolOff.toExponential(1), fails }
   }
 
   get speedKmh(): number { return this.sim ? Math.abs(this.sim.speed) * 3.6 : 0 }
@@ -1179,58 +1206,6 @@ void main() {
 }
 `
 
-/** A lamp's GLOW: a camera-side quad, a bright core (the lens) and a soft painted halo round it, added above white
- *  (the bloom spreads it). uK: brightness (0 = off). */
-function glowMaterial(color: GFX.Color): GFX.ShaderMaterial {
-  return new GFX.ShaderMaterial({
-    uniforms: { uColor: { value: color }, uK: { value: 0 } },
-    vertexShader: /* glsl */ `
-      varying vec2 vUv;
-      void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uColor;
-      uniform float uK;
-      varying vec2 vUv;
-      void main() {
-        float d = length(vUv - 0.5) * 2.0;
-        float core = 1.0 - smoothstep(0.26, 0.34, d), halo = pow(max(1.0 - d, 0.0), 2.2) * 0.32;
-        gl_FragColor = vec4(uColor * uK * (core + halo), 1.0);
-      }`,
-    blending: GFX.AdditiveBlending,
-    depthWrite: false,
-    transparent: true,
-    toneMapped: false,
-  })
-}
-
-/** The headlights' BEAMS in the air: an open cone from each lamp (wide, low, 12 m), car space. Its `t` attribute: 0 at
- *  the lamp … 1 at the far rim. */
-function beamGeometry(x: number, y: number, z: number): GFX.BufferGeometry {
-  const pos: number[] = [], tt: number[] = [], idx: number[] = []
-  const S = 14, R = 12, Lb = 12
-  for (const sx of [-1, 1]) {
-    const base = pos.length / 3
-    for (let i = 0; i <= R; i++) {
-      const f = i / R
-      for (let k = 0; k < S; k++) {
-        const a = (k / S) * Math.PI * 2, along = f * Lb
-        pos.push(x * sx + Math.cos(a) * along * 0.4, y - along * 0.07 + Math.sin(a) * along * 0.17, z - along)
-        tt.push(f)
-      }
-    }
-    for (let i = 0; i < R; i++) for (let k = 0; k < S; k++) {
-      const a0 = base + i * S + k, a1 = base + i * S + ((k + 1) % S), b0 = a0 + S, b1 = a1 + S
-      idx.push(a0, b0, a1, a1, b0, b1)
-    }
-  }
-  const g = new GFX.BufferGeometry()
-  g.setAttribute('position', new GFX.Float32BufferAttribute(pos, 3))
-  g.setAttribute('t', new GFX.Float32BufferAttribute(tt, 1))
-  g.setIndex(idx)
-  g.computeVertexNormals()
-  return g
-}
-
 /** The beams' look: warm light painted in the air — strongest by the lamp, gone by 12 m, soft at the cone's silhouette
  *  (faces seen edge-on fade), only at night (uK = the night). */
 function beamMaterial(): GFX.ShaderMaterial {
@@ -1317,8 +1292,8 @@ export class RemoteCar {
   private spin = 0
   private steer = 0
   private lastYaw = NaN
-  private lamps: GFX.InstancedMesh | null = null
-  private readonly lampMat = glowMaterial(new GFX.Color(1, 0.9, 0.72))
+  private lamps: CarLamps | null = null
+  private shell: { body: GFX.BufferGeometry; glass: GFX.BufferGeometry } | null = null
   private readonly viewSphere = new GFX.Sphere(new GFX.Vector3(), 6)
   private readonly v = new GFX.Vector3()
   /** The body's box in car space (centre, half size) — null until its model is in. */
@@ -1329,8 +1304,6 @@ export class RemoteCar {
   damage: CarDamage | null = null
   private readonly charU = { value: 0 }
   private lampRev = -1
-  private lampR = 0.3
-  private readonly lampAt = [0, 0, 0]
   /** Its wheel's mesh (a torn-off one rolls away — DamageFx), its paint. */
   get wheelPart(): { geo: GFX.BufferGeometry; mat: GFX.Material; r: number } | null { return this.wheelMesh && this.model ? { geo: this.model.wheel, mat: this.wheelMesh.material as GFX.Material, r: this.model.wheelRadius } : null }
   get paintColor(): GFX.Color { return this.uniforms.uPaint.value as GFX.Color }
@@ -1403,34 +1376,17 @@ export class RemoteCar {
     this.wheelMesh = new GFX.InstancedMesh(truck.wheel, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) }), 4)
     this.wheelMesh.frustumCulled = false
     this.wheelMesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
-    // (the headlamps' glow — at night)
-    const head = truck.lamps.head, hz = truck.half
-    const h = head ? head.c : [hz.x * 0.7, 0.9, -hz.z]
-    this.lamps = new GFX.InstancedMesh(new GFX.PlaneGeometry(2, 2), this.lampMat, 2)
-    this.lamps.frustumCulled = false
-    this.lamps.renderOrder = 2
-    this.lampR = (head ? Math.max(0.06, Math.min(head.w, head.h)) : 0.1) * 3
-    this.lampAt[0] = Math.abs(h[0]); this.lampAt[1] = h[1]; this.lampAt[2] = h[2] - 0.03
-    this.placeLamps()
-    this.root.add(body, glass, this.wheelMesh, this.lamps)
+    // (its lamps — Lamps.ts: the lenses' own faces lit, at night)
+    this.lamps?.dispose()
+    this.lamps = new CarLamps(truck)
+    this.shell = { body: bodyGeo, glass: glassGeo }
+    this.root.add(body, glass, this.wheelMesh, this.lamps.mesh)
     this.shadowSize.set(truck.half.x * 2 + 1.0, 1, truck.half.z * 2 + 1.2)
     this.viewSphere.radius = Math.hypot(truck.half.x, truck.half.z) + 1.5
     // (its solid box for the others' physics — Remotes.ts: the body's bounds, car space)
     bodyGeo.computeBoundingBox()
     const bb = bodyGeo.boundingBox!
     this.box = { c: bb.getCenter(new GFX.Vector3()), h: bb.getSize(new GFX.Vector3()).multiplyScalar(0.5) }
-  }
-
-  /** The headlamps' glows at their lenses (a broken one — Damage.ts — has no size). */
-  private placeLamps(): void {
-    if (!this.lamps) return
-    const m = new GFX.Matrix4(), back = new GFX.Quaternion().setFromAxisAngle(new GFX.Vector3(0, 1, 0), Math.PI), L = this.lampAt
-    for (let k = 0; k < 2; k++) {
-      const hr = this.damage && this.damage.lamps[k] ? 0 : this.lampR
-      m.compose(new GFX.Vector3(L[0] * (k ? 1 : -1), L[1], L[2]), back, new GFX.Vector3(hr, hr, 1))
-      this.lamps.setMatrixAt(k, m)
-    }
-    this.lamps.instanceMatrix.needsUpdate = true
   }
 
   /** Posed at p, turned q (y up), moving at `speed` m/s; dt this frame. */
@@ -1453,7 +1409,7 @@ export class RemoteCar {
     const dm = this.damage
     if (dm) {
       dm.update(Math.min(0.1, dt))
-      if (dm.sim.rev !== this.lampRev) { this.lampRev = dm.sim.rev; this.placeLamps() }
+      if (dm.sim.rev !== this.lampRev && this.lamps && this.shell) { this.lampRev = dm.sim.rev; this.lamps.follow(this.shell.body.attributes.position.array, this.shell.glass.attributes.position?.array ?? null) }
     }
     tr.wheelPos.forEach(([x, y, z], k) => {
       const right = k === 1 || k === 3, front = k < 2
@@ -1471,7 +1427,11 @@ export class RemoteCar {
     this.wheelMesh.instanceMatrix.needsUpdate = true
     this.uniforms.uCarBase.value = this.map.height(p[0], p[2])
     const night = this.atmos.uniforms.uNight.value
-    if (this.lamps) { this.lamps.visible = night > 0.25; this.lampMat.uniforms.uK.value = 5.5 }
+    if (this.lamps) {
+      // (the head lamps on at night, the tail lamps dim with them — as ours; a broken one dark)
+      const lit = night > 0.25, out = dm ? dm.lamps : NO_LAMPS
+      this.lamps.set(lit && !out[0] ? 5.5 : 0, lit && !out[1] ? 5.5 : 0, lit && !out[2] ? 1.5 : 0, lit && !out[3] ? 1.5 : 0)
+    }
     // the contact shadow, laid on the ground under it (only while it's seen — last frame's cull)
     if (!this.root.visible) return
     const sp = this.shadow.geometry.attributes.position as GFX.BufferAttribute
@@ -1496,5 +1456,6 @@ export class RemoteCar {
     this.root.removeFromParent()
     this.shadow.removeFromParent()
     this.shadow.geometry.dispose()
+    this.lamps?.dispose()
   }
 }

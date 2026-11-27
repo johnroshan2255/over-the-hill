@@ -51,8 +51,10 @@ export interface TruckModel {
   /** Per-pixel paint mask for textured models (R = 1 on the body paint, 0 on rims, glass, trim, lights, rust),
    *  same UVs as `map`; null = the per-vertex `paintMask` alone decides (flat-coloured models). */
   paintMap: GFX.Texture | null
-  /** Lamp lenses found on the model (right side; the left mirrors it): centre + half size (m, truck space). */
-  lamps: { head: Lamp | null; tail: Lamp | null }
+  /** THE LAMPS (car space, m) — the left's then the right's of each: the head lamps, the tail (brake) lamps. Each is the
+   *  model's OWN LENS — its faces, where they are, how big, round or square (`lampsOf`): the light is drawn on those
+   *  faces and nowhere else (oth/Lamps.ts). null: the model has no such lamp. */
+  lamps: { head: [Lamp, Lamp] | null; tail: [Lamp, Lamp] | null }
   /** The doors cut out of the body in Blender (nodes `door_FL*` / `door_FR*` — and `door_RL*` / `door_RR*` — with a
    *  `hinge` extra): the left ones first. The DRIVER'S is `driverDoor(model)`. */
   doors: CarDoor[]
@@ -133,10 +135,25 @@ export function driverDoor(m: { doors: CarDoor[] }): CarDoor | null {
   return m.doors.filter((d) => d.side === -1).sort((a, b) => a.hinge[2] - b.hinge[2])[0] ?? null
 }
 
-export interface Lamp {
+/** ONE LENS of a lamp: the middle of its outline on its outermost plane, half its width and height, its shape. */
+export interface Lens {
   c: [number, number, number]
   w: number
   h: number
+  /** A round lens (its light a disc) — or a square one. */
+  round: boolean
+  /** ITS OWN FACES: the vertices, three a triangle, in the model's `body` (`ofGlass`: in its `glass`) — what is lit is
+   *  these, moved as the body is dented. null: none known (the game draws the disc / the square itself). */
+  verts: Uint32Array | null
+  ofGlass: boolean
+  /** A MEASURED lens (the catalogue's `lamps` — a model that names none): its faces are the body's own under its
+   *  outline — whole triangles, so lit only INSIDE the outline (Lamps.ts cuts them to it, to the pixel). */
+  clip: boolean
+}
+
+/** A LAMP: one side's — its lenses, the biggest first; `c`, `w`, `h`, `round` are that one's (the beam starts there). */
+export interface Lamp extends Lens {
+  lenses: Lens[]
 }
 
 /** RGBA pixels of a texture image, downscaled to ≤ `max` px (CPU analysis at load). */
@@ -213,13 +230,6 @@ function buildPaintMap(tex: GFX.Texture, white = false): GFX.Texture | null {
   return t
 }
 
-/**
- * LAMPS from the textured body. Headlights: among the faces in the front 18 % that look straight ahead at lamp
- * height, the brightest texel marks a lens — the lens is that face plus its neighbours within 15 cm of similar
- * brightness (a lens is often only light grey in the texture, as bright as the chrome bumper, so a fixed
- * threshold fails; a local cluster doesn't). Tail lights: the reddest rear-facing face and its red neighbours.
- * Both sides are folded onto +x; the area-weighted centre and extent give one lamp per side.
- */
 /** Lowest body point (m) ahead of the front tyres and behind the rear ones, within the frame's width (the same
  *  1.05 r gap the frame boxes leave around the wheels — the arches dip lower there). Missing = the frame height. */
 function overhangs(body: GFX.BufferGeometry, wheelPos: [number, number, number][], r: number, halfX: number): { front: number; rear: number } {
@@ -233,62 +243,6 @@ function overhangs(body: GFX.BufferGeometry, wheelPos: [number, number, number][
     else if (z > zr) rear = Math.min(rear, y)
   }
   return { front: Number.isFinite(front) ? front : 0.34, rear: Number.isFinite(rear) ? rear : 0.34 }
-}
-
-function findLamps(body: GFX.BufferGeometry, tex: GFX.Texture, front: number, rear: number): { head: Lamp | null; tail: Lamp | null } {
-  const px = readPixels(tex, 1024)
-  const uv = body.getAttribute('uv')
-  if (!px || !uv) return { head: null, tail: null }
-  const pos = body.getAttribute('position')
-  const len = rear - front
-  const a = new GFX.Vector3(), b = new GFX.Vector3(), c = new GFX.Vector3(), n = new GFX.Vector3(), e1 = new GFX.Vector3(), e2 = new GFX.Vector3()
-  type Cand = { x: number; y: number; z: number; area: number; score: number; pts: number[] }
-  const heads: Cand[] = [], tails: Cand[] = []
-  const texel = (u: number, v: number): [number, number, number] => {
-    const fu = u - Math.floor(u), fv = v - Math.floor(v)
-    const ix = Math.min(px.w - 1, Math.floor(fu * px.w)), iy = Math.min(px.h - 1, Math.floor((tex.flipY ? 1 - fv : fv) * px.h))
-    const o = (iy * px.w + ix) * 4
-    return [px.data[o] / 255, px.data[o + 1] / 255, px.data[o + 2] / 255]
-  }
-  for (let t = 0; t < pos.count; t += 3) {
-    a.fromBufferAttribute(pos, t); b.fromBufferAttribute(pos, t + 1); c.fromBufferAttribute(pos, t + 2)
-    n.crossVectors(e1.subVectors(b, a), e2.subVectors(c, a))
-    const area = n.length() / 2
-    if (area < 1e-6) continue
-    n.normalize()
-    const cx = Math.abs((a.x + b.x + c.x) / 3), cy = (a.y + b.y + c.y) / 3, cz = (a.z + b.z + c.z) / 3
-    const isFront = cz < front + len * 0.18 && Math.abs(n.z) > 0.85
-    const isRear = cz > rear - len * 0.18 && Math.abs(n.z) > 0.6
-    if ((!isFront && !isRear) || cy < 0.35 || cy > 1.6) continue
-    // Texel at the centroid and 3 points toward the corners: the face's brightest / reddest sample.
-    let bright = 0, red = 0
-    for (const w of [[1 / 3, 1 / 3, 1 / 3], [0.6, 0.2, 0.2], [0.2, 0.6, 0.2], [0.2, 0.2, 0.6]]) {
-      const u = uv.getX(t) * w[0] + uv.getX(t + 1) * w[1] + uv.getX(t + 2) * w[2]
-      const v = uv.getY(t) * w[0] + uv.getY(t + 1) * w[1] + uv.getY(t + 2) * w[2]
-      const [r, g, bl] = texel(u, v)
-      const [, sat, val] = hsv(r, g, bl)
-      if (sat < 0.25) bright = Math.max(bright, val)
-      red = Math.max(red, r - Math.max(g, bl) * 1.4)
-    }
-    const pts = [a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z]
-    if (isFront && cx > 0.15) heads.push({ x: cx, y: cy, z: cz, area, score: bright, pts })
-    if (isRear && cx > 0.15 && red > 0.12) tails.push({ x: cx, y: cy, z: cz, area, score: red, pts })
-  }
-  const cluster = (list: Cand[], tol: number, sign: number): Lamp | null => {
-    if (!list.length) return null
-    const best = list.reduce((p, q) => (q.score > p.score ? q : p))
-    let W = 0, X = 0, Y = 0, Z = 0, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9
-    for (const q of list) {
-      if (Math.hypot(q.x - best.x, q.y - best.y, q.z - best.z) > 0.15 || q.score < best.score - tol) continue
-      W += q.area; X += q.x * q.area; Y += q.y * q.area; Z += q.z * q.area
-      for (let k = 0; k < 9; k += 3) {
-        x0 = Math.min(x0, Math.abs(q.pts[k])); x1 = Math.max(x1, Math.abs(q.pts[k])); y0 = Math.min(y0, q.pts[k + 1]); y1 = Math.max(y1, q.pts[k + 1])
-      }
-    }
-    if (W < 0.002) return null // < ~20 cm² of lens: nothing reliable
-    return { c: [X / W, Y / W, Z / W + sign * 0.02], w: Math.min(0.3, Math.max(0.05, (x1 - x0) / 2)), h: Math.min(0.22, Math.max(0.04, (y1 - y0) / 2)) }
-  }
-  return { head: cluster(heads, 0.1, -1), tail: cluster(tails, 0.15, 1) }
 }
 
 export type VehicleModel = TruckModel
@@ -318,7 +272,7 @@ export function loadVehicle(id: string, onProgress?: (f: number) => void): Promi
     })
     p = Promise.all([car, loadHull()]).then(([g, hull]) => {
       const m = bakeVehicle(g.scene, def)
-      // (the paint mask and the lamps have read the full image: now the size this device draws)
+      // (the paint mask has read the full image: now the size this device draws)
       if (m.map && detail.maxTexture) m.map = downscaleTexture(m.map, detail.maxTexture)
       return { ...m, hull }
     })
@@ -449,7 +403,7 @@ function matColor(mat: GFX.Material): { color: GFX.Color; map: GFX.Texture | nul
 /**
  * REAL PAINT (catalogue `grade`): a model's texture painted in toy-bright colours is graded toward weathered real
  * paint — saturation × sat (around each texel's own luminance) and brightness × gain — keeping its rust, grime and
- * detail. In place, once at load (after the paint mask and lamps have read the original), full resolution.
+ * detail. In place, once at load (after the paint mask has read the original), full resolution.
  */
 function gradeTexture(tex: GFX.Texture, sat: number, gain: number): void {
   const img = tex.image as (CanvasImageSource & { width: number; height: number }) | undefined
@@ -499,49 +453,173 @@ function paintGeometry(g: GFX.BufferGeometry, color: GFX.Color, keepUv: boolean,
   return out
 }
 
+/** WHICH LAMP a part's faces are the lens of, by its names (the node's, its material's): the kit's and the off-roader's
+ *  `lamp_lens` (the head lamps' pale glass) and `glows` (the tail lamps' red), the G500's `glas_light` and its
+ *  `lights_brakes` (its other `glows` — the position and the reversing lamps — are not the brake lights). */
+function lensKind(name: string, mat: string): 'head' | 'brake' | 'tail' | null {
+  const s = `${name} ${mat}`
+  if (/reverse|position_front|indicator|turn|amber/i.test(s)) return null
+  if (/lamp_lens|glas_light|head_?(lamp|light)/i.test(s)) return 'head'
+  if (/lights?_brake|brake_?(lamp|light|glow)/i.test(s)) return 'brake'
+  if (/glow|tail_?(lamp|light)/i.test(s)) return 'tail'
+  return null
+}
+
 /**
- * LAMPS from named lamp parts (untextured models: lens glass and glow meshes, e.g. the G500's `glas_light` and
- * `lights_brakes`): front-facing pale parts in the front 20 % → headlights; rear-facing red parts in the rear
- * 20 % → tail lights. Seeded at the biggest qualifying face, clustered within 20 cm, both sides folded onto +x.
+ * THE LENSES among the faces named a lamp's (2026-11-27, the user: "the light must come exactly from the car's
+ * headlight and brake light — not a nanometre off; a round lamp's light round"): `ranges` are those faces' vertices in
+ * `geo` (three a triangle), `dir` the way the lamp looks (−1 ahead, 1 back). Each connected piece is a lens: its
+ * OUTLINE is its bounds across the car and up, its plane its outermost one, its SHAPE from the face that looks out —
+ * a disc fills π/4 of its square, a square all of it. A piece none of whose faces look out, or in the wrong half of
+ * the car, is not one. Per side (0 the left, 1 the right), the biggest first.
  */
-function findLampsInParts(parts: { geo: GFX.BufferGeometry; color: GFX.Color }[], front: number, rear: number): { head: Lamp | null; tail: Lamp | null } {
-  const len = rear - front
-  type Cand = { x: number; y: number; z: number; area: number; pts: number[] }
-  const heads: Cand[] = [], tails: Cand[] = []
+function lensesOf(geo: GFX.BufferGeometry, ranges: [start: number, count: number][], dir: -1 | 1, ofGlass: boolean): [Lens[], Lens[]] {
+  const out: [Lens[], Lens[]] = [[], []]
+  const pos = geo.getAttribute('position') as GFX.BufferAttribute | undefined, nor = geo.getAttribute('normal') as GFX.BufferAttribute | undefined
+  if (!pos || geo.index) return out
+  const P = pos.array as Float32Array
+  const tris: number[] = []
+  for (const [s0, n] of ranges) for (let i = 0; i + 2 < n; i += 3) tris.push(s0 + i)
+  if (!tris.length) return out
+  // the pieces: vertices at one place (to 0.1 mm) are one
+  const at = new Map<string, number>(), parent: number[] = []
+  const find = (a: number) => { while (parent[a] !== a) a = parent[a] = parent[parent[a]]; return a }
+  const node = (v: number) => {
+    const k = `${Math.round(P[v * 3] * 1e4)},${Math.round(P[v * 3 + 1] * 1e4)},${Math.round(P[v * 3 + 2] * 1e4)}`
+    let r = at.get(k)
+    if (r === undefined) { r = parent.length; parent.push(r); at.set(k, r) }
+    return r
+  }
+  const triNode = tris.map((t) => { const a = node(t), b = node(t + 1), c = node(t + 2); parent[find(b)] = find(a); parent[find(c)] = find(a); return a })
+  const pieces = new Map<number, number[]>()
+  tris.forEach((t, i) => { const r = find(triNode[i]); pieces.set(r, [...(pieces.get(r) ?? []), t]) })
   const a = new GFX.Vector3(), b = new GFX.Vector3(), c = new GFX.Vector3(), n = new GFX.Vector3(), e1 = new GFX.Vector3(), e2 = new GFX.Vector3()
-  for (const { geo, color } of parts) {
-    const pos = geo.getAttribute('position')
-    const [, sat, val] = hsv(color.r, color.g, color.b)
-    const red = color.r > 0.25 && color.g < color.r * 0.45 && color.b < color.r * 0.45
-    const pale = !red && (sat < 0.35 || val > 0.5)
-    for (let t = 0; t + 2 < pos.count; t += 3) {
+  const found: (Lens & { area: number })[] = []
+  for (const list of pieces.values()) {
+    const lo = [1e9, 1e9, 1e9], hi = [-1e9, -1e9, -1e9], clo = [1e9, 1e9], chi = [-1e9, -1e9]
+    const verts = new Uint32Array(list.length * 3)
+    let cap = 0, vi = 0
+    for (const t of list) {
+      verts[vi++] = t; verts[vi++] = t + 1; verts[vi++] = t + 2
       a.fromBufferAttribute(pos, t); b.fromBufferAttribute(pos, t + 1); c.fromBufferAttribute(pos, t + 2)
+      for (const v of [a, b, c]) { lo[0] = Math.min(lo[0], v.x); lo[1] = Math.min(lo[1], v.y); lo[2] = Math.min(lo[2], v.z); hi[0] = Math.max(hi[0], v.x); hi[1] = Math.max(hi[1], v.y); hi[2] = Math.max(hi[2], v.z) }
       n.crossVectors(e1.subVectors(b, a), e2.subVectors(c, a))
       const area = n.length() / 2
-      if (area < 1e-7) continue
-      n.normalize()
-      const cz = (a.z + b.z + c.z) / 3
-      const cand = { x: Math.abs((a.x + b.x + c.x) / 3), y: (a.y + b.y + c.y) / 3, z: cz, area, pts: [a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z] }
-      if (cand.x < 0.15) continue
-      if (pale && cz < front + len * 0.2 && n.z < -0.4) heads.push(cand)
-      if (red && cz > rear - len * 0.2 && n.z > 0.4) tails.push(cand)
-    }
-  }
-  const cluster = (list: Cand[], sign: number): Lamp | null => {
-    if (!list.length) return null
-    const best = list.reduce((p, q) => (q.area > p.area ? q : p))
-    let W = 0, X = 0, Y = 0, Z = 0, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9
-    for (const q of list) {
-      if (Math.hypot(q.x - best.x, q.y - best.y, q.z - best.z) > 0.2) continue
-      W += q.area; X += q.x * q.area; Y += q.y * q.area; Z += q.z * q.area
-      for (let k = 0; k < 9; k += 3) {
-        x0 = Math.min(x0, Math.abs(q.pts[k])); x1 = Math.max(x1, Math.abs(q.pts[k])); y0 = Math.min(y0, q.pts[k + 1]); y1 = Math.max(y1, q.pts[k + 1])
+      if (area < 1e-10) continue
+      // (which way the face looks: its own winding — set right by its vertices' normals where the two disagree: a
+      //  pane of glass is drawn from both sides and may be wound either way, the light is drawn from the front only)
+      let nz = n.z / (area * 2)
+      if (nor) {
+        e1.set(nor.getX(t) + nor.getX(t + 1) + nor.getX(t + 2), nor.getY(t) + nor.getY(t + 1) + nor.getY(t + 2), nor.getZ(t) + nor.getZ(t + 1) + nor.getZ(t + 2))
+        if (e1.dot(n) < 0) { nz = -nz; verts[vi - 2] = t + 2; verts[vi - 1] = t + 1 }
       }
+      if (nz * dir < 0.7) continue
+      cap += area
+      for (const v of [a, b, c]) { clo[0] = Math.min(clo[0], v.x); clo[1] = Math.min(clo[1], v.y); chi[0] = Math.max(chi[0], v.x); chi[1] = Math.max(chi[1], v.y) }
     }
-    if (W < 1e-4) return null
-    return { c: [X / W, Y / W, Z / W + sign * 0.02], w: Math.min(0.3, Math.max(0.05, (x1 - x0) / 2)), h: Math.min(0.22, Math.max(0.04, (y1 - y0) / 2)) }
+    const cz = (lo[2] + hi[2]) / 2
+    if (cap < 2e-4 || cz * dir < 0) continue                                     // (under 2 cm² looking out, or at the wrong end)
+    found.push({ c: [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, dir < 0 ? lo[2] : hi[2]], w: (hi[0] - lo[0]) / 2, h: (hi[1] - lo[1]) / 2,
+      round: cap / Math.max(1e-9, (chi[0] - clo[0]) * (chi[1] - clo[1])) < 0.89, verts, ofGlass, clip: false, area: cap })
   }
-  return { head: cluster(heads, -1), tail: cluster(tails, 1) }
+  found.sort((p, q) => q.area - p.area)
+  for (const { area: _area, ...l } of found) out[l.c[0] < 0 ? 0 : 1].push(l)
+  return out
+}
+
+/** The body's outermost surface at (x, y) looking `dir` (−1 the nose, 1 the tail): z there — a measured lamp is laid
+ *  on it. null: no face there. */
+function surfaceZ(body: GFX.BufferGeometry, x: number, y: number, dir: -1 | 1): number | null {
+  const P = (body.getAttribute('position') as GFX.BufferAttribute).array as Float32Array
+  let best: number | null = null
+  for (let t = 0; t + 8 < P.length; t += 9) {
+    const ax = P[t], ay = P[t + 1], bx = P[t + 3], by = P[t + 4], cx = P[t + 6], cy = P[t + 7]
+    if (Math.min(ax, bx, cx) > x || Math.max(ax, bx, cx) < x || Math.min(ay, by, cy) > y || Math.max(ay, by, cy) < y) continue
+    const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy)
+    if (Math.abs(d) < 1e-12) continue
+    const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, w = 1 - u - v
+    if (u < 0 || v < 0 || w < 0) continue
+    const z = u * P[t + 2] + v * P[t + 5] + w * P[t + 8]
+    if (best === null || z * dir > best * dir) best = z
+  }
+  return best
+}
+
+/** THE BODY'S OWN FACES UNDER A MEASURED LENS (its middle c, half its width and height, looking `dir`): every face
+ *  that looks out, reaches into the outline's box and lies within 15 cm behind the surface at its middle — the lens's
+ *  dome, its ribs, whatever the model has there; null: none. */
+function facesUnder(body: GFX.BufferGeometry, c: [number, number, number], w: number, h: number, dir: -1 | 1): Uint32Array | null {
+  const pos = body.getAttribute('position') as GFX.BufferAttribute, nor = body.getAttribute('normal') as GFX.BufferAttribute | undefined
+  const P = pos.array as Float32Array, out: number[] = []
+  for (let t = 0; t + 8 < P.length; t += 9) {
+    const ax = P[t], ay = P[t + 1], az = P[t + 2], bx = P[t + 3], by = P[t + 4], bz = P[t + 5], cx = P[t + 6], cy = P[t + 7], cz = P[t + 8]
+    if (Math.min(ax, bx, cx) > c[0] + w || Math.max(ax, bx, cx) < c[0] - w || Math.min(ay, by, cy) > c[1] + h || Math.max(ay, by, cy) < c[1] - h) continue
+    const zo = dir < 0 ? Math.min(az, bz, cz) : Math.max(az, bz, cz)
+    if ((zo - c[2]) * dir < -0.15 || (zo - c[2]) * dir > 0.03) continue
+    // (the face's own winding, set right by its vertices' normals — as a named lens's)
+    const nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay), ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az)
+    let nz = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+    const len = Math.hypot(nx, ny, nz)
+    if (len < 1e-10) continue
+    const v = t / 3
+    let flip = false
+    if (nor) flip = nx * (nor.getX(v) + nor.getX(v + 1) + nor.getX(v + 2)) + ny * (nor.getY(v) + nor.getY(v + 1) + nor.getY(v + 2)) + nz * (nor.getZ(v) + nor.getZ(v + 1) + nor.getZ(v + 2)) < 0
+    if (flip) nz = -nz
+    if ((nz / len) * dir < 0.15) continue
+    out.push(v, flip ? v + 2 : v + 1, flip ? v + 1 : v + 2)
+  }
+  return out.length ? Uint32Array.from(out) : null
+}
+
+/** A side's lamp of its lenses (the biggest first) — null with none. */
+function lampOf(lenses: Lens[]): Lamp | null {
+  return lenses.length ? { ...lenses[0], lenses } : null
+}
+
+/** The other side's lamp where a model has a lens on one side only: the same, across the car, drawn by the game. */
+function mirrored(l: Lamp): Lamp {
+  const lenses = l.lenses.map((q) => ({ ...q, c: [-q.c[0], q.c[1], q.c[2]] as [number, number, number], verts: null, clip: false }))
+  return { ...lenses[0], lenses }
+}
+
+/**
+ * A MODEL'S LAMPS. From its own LENS FACES where it names them (every car of the garage: `lensKind`) — the brake
+ * lights' own where it tells them from its other red lamps. Else from the catalogue's MEASURE (`lamps`: the E30, one
+ * painted skin with no lens named), each the body's own faces under its outline (`facesUnder`). Else none: no light is drawn where no
+ * lamp is known to be (the texture's brightest patch, guessed until 2026-11-27, was the bumper or the plate on most).
+ */
+function lampsOf(def: VehicleDef, body: GFX.BufferGeometry, glass: GFX.BufferGeometry, tags: { kind: 'head' | 'brake' | 'tail'; glass: boolean; start: number; count: number }[] | null): { head: [Lamp, Lamp] | null; tail: [Lamp, Lamp] | null } {
+  const sides = (kind: 'head' | 'brake' | 'tail', dir: -1 | 1): [Lens[], Lens[]] => {
+    const out: [Lens[], Lens[]] = [[], []]
+    if (!tags) return out
+    for (const ofGlass of [false, true]) {
+      const r = tags.filter((t) => t.kind === kind && t.glass === ofGlass).map((t) => [t.start, t.count] as [number, number])
+      const f = lensesOf(ofGlass ? glass : body, r, dir, ofGlass)
+      out[0].push(...f[0]); out[1].push(...f[1])
+    }
+    return out
+  }
+  const pair = (s: [Lens[], Lens[]]): [Lamp, Lamp] | null => {
+    const l = lampOf(s[0]), r = lampOf(s[1])
+    return l && r ? [l, r] : l ? [l, mirrored(l)] : r ? [mirrored(r), r] : null
+  }
+  let head = pair(sides('head', -1))
+  const brake = sides('brake', 1)
+  let tail = pair(brake[0].length || brake[1].length ? brake : sides('tail', 1))
+  const M = def.lamps
+  if (M && (!head || !tail)) {
+    const measured = (at: [number, number, number][], size: [number, number], round: boolean, dir: -1 | 1): [Lamp, Lamp] => {
+      const side = (sx: number): Lamp => lampOf(at.map((p) => {
+        const x = sx * Math.abs(p[0]), c: [number, number, number] = [x, p[1], surfaceZ(body, x, p[1], dir) ?? p[2]]
+        return { c, w: size[0], h: size[1], round, verts: facesUnder(body, c, size[0], size[1], dir), ofGlass: false, clip: true }
+      }))!
+      return [side(-1), side(1)]
+    }
+    head ??= measured(M.head2 ? [M.head, M.head2] : [M.head], M.headSize ?? [0.09, 0.09], (M.headShape ?? 'round') === 'round', -1)
+    tail ??= measured([M.tail], M.tailSize ?? [0.06, 0.1], M.tailShape === 'round', 1)
+  }
+  if (!head || !tail) console.warn(`${def.id}: no ${!head ? 'head' : 'tail'} lamp — no lens named in the model (lamp_lens / glows), none measured in the catalogue: no light is drawn there`)
+  return { head, tail }
 }
 
 /**
@@ -573,11 +651,13 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   // Untextured parts: on a textured model their UVs are pointed at a neutral texel once the map is known.
   const flat: GFX.BufferGeometry[] = []
   let map: GFX.Texture | null = null
-  // Lamp lenses / glows by name (untextured models place their lamps from these: findLampsInParts).
-  const lampParts: { geo: GFX.BufferGeometry; color: GFX.Color }[] = []
+  // THE LAMPS' LENSES by name (`lensKind`): which of the body's — or the glass's — vertices are theirs (the parts are
+  // joined in this order, none indexed: a part's faces keep their run). null once the body is cut up another way.
+  let lensTags: { kind: 'head' | 'brake' | 'tail'; glass: boolean; start: number; count: number }[] | null = []
+  let bodyVerts = 0, glassVerts = 0
   for (const m of meshes) {
     const { color, map: mm, glass } = matColor(m.mat)
-    if (/light|lamp|glow/i.test(m.name) || /light|lamp|glow/i.test(m.mat.name)) lampParts.push({ geo: m.geo.clone(), color })
+    const lens = lensKind(m.name, m.mat.name)
     const doorKey = /door_(FL|FR|RL|RR)/i.exec(m.name)?.[1].toUpperCase()
     let door = doorKey ? doorParts.get(doorKey) : undefined
     if (doorKey && !door) doorParts.set(doorKey, (door = { body: [], glass: [], hinge: (m.extras.hinge as number[]) ?? [0, 0, 0] }))
@@ -594,6 +674,11 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
       // (the car's glass material carries the tint: plain white here)
       const g = paintGeometry(m.geo, new GFX.Color(1, 1, 1), false, 0)
       ;(door ? door.glass : glasses).push(g)
+      if (!door) {
+        const count = g.getAttribute('position').count
+        if (lens) lensTags!.push({ kind: lens, glass: true, start: glassVerts, count })
+        glassVerts += count
+      }
       continue
     }
     const hookKey = /hook_(F|R)\b/i.exec(m.name)?.[1].toUpperCase() as 'F' | 'R' | undefined
@@ -628,7 +713,12 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
     else if (/^cab_/i.test(m.name)) cabParts.push(g)
     else if (door) door.body.push(g)
     else if (/steering_wheel/i.test(m.name)) steerParts.push(g)
-    else bodies.push(g)
+    else {
+      const count = g.getAttribute('position').count
+      if (lens) lensTags!.push({ kind: lens, glass: false, start: bodyVerts, count })
+      bodyVerts += count
+      bodies.push(g)
+    }
   }
   const neutral = map ? neutralTexel(map) : { uv: [0, 0] as [number, number], color: [1, 1, 1] as [number, number, number] }
   const neutralUv = neutral.uv
@@ -685,6 +775,7 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
     const isWheel = new Set(found.map((w) => w.id))
     wheels = found.map((w) => ({ c: w.c, r: w.r, geo: subset(body, (t) => triComp[t] === w.id) }))
     body = subset(body, (t) => !isWheel.has(triComp[t]))
+    lensTags = null
   }
   // Steering wheel: a named part, or (catalogue `steering`) the ring in front of the left seat, found in normalised space.
   let steeringWheel: GFX.BufferGeometry | null = null
@@ -704,6 +795,7 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
     if (steer.size) {
       steeringWheel = subset(body, (t) => steer.has(triComp[t])).applyMatrix4(norm)
       body = subset(body, (t) => !steer.has(triComp[t]))
+      lensTags = null
     }
   }
   if (steeringWheel) {
@@ -730,7 +822,6 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   const dials = dialParts.length ? mergeGeometries(dialParts, false)!.applyMatrix4(norm) : null
   const turn = new GFX.Matrix4().makeRotationY(rot)
   for (const c of controlParts) (c.geo.applyMatrix4(norm), c.pivot.applyMatrix4(norm), c.axis.applyMatrix4(turn).normalize(), c.col?.applyMatrix4(turn).normalize(), c.knob?.applyMatrix4(norm))
-  for (const l of lampParts) l.geo.applyMatrix4(norm)
   for (const w of wheels) (w.c.applyMatrix4(norm), (w.r *= k), w.geo.applyMatrix4(norm))
   for (const d of doorGeo) (d.body.applyMatrix4(norm), d.glass?.applyMatrix4(norm), d.hinge.applyMatrix4(norm))
   const brakeGeo = new Map([...brakeParts.entries()].map(([k, parts]) => [k, mergeGeometries(parts, false)!.applyMatrix4(norm)]))
@@ -758,7 +849,6 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   })
   if (cabin) (zeroTyre(cabin), cabin.computeBoundingSphere())
   dials?.computeBoundingSphere()
-  for (const l of lampParts) l.geo.applyMatrix4(shift)
   for (const w of wheels) (w.c.applyMatrix4(shift), w.geo.applyMatrix4(shift))
   for (const g of brakeGeo.values()) g.applyMatrix4(shift)
   const hook = (key: 'F' | 'R'): TowHook | null => {
@@ -826,13 +916,7 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   if (doors.length) bb.union(outline)
   if (map) map.colorSpace = GFX.SRGBColorSpace
   const paintMap = map ? buildPaintMap(map, !!def.whitePaint) : null
-  const lamps = map ? findLamps(body, map, bb.min.z, bb.max.z) : { head: null, tail: null }
-  if (lampParts.length) {
-    const fromParts = findLampsInParts(lampParts.map((l) => ({ geo: l.geo.index ? l.geo.toNonIndexed() : l.geo, color: l.color })), bb.min.z, bb.max.z)
-    lamps.head ??= fromParts.head
-    lamps.tail ??= fromParts.tail
-  }
-  lampParts.forEach((l) => l.geo.dispose())
+  const lamps = lampsOf(def, body, glass, lensTags)
   meshes.forEach((m) => m.geo.dispose())
   all.dispose()
   if (map && def.grade) gradeTexture(map, def.grade.sat, def.grade.gain)

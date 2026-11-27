@@ -482,6 +482,29 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
   - **Lights**: a painted beam from EACH headlamp (`headlight()`: ellipse in angle space, 3 value bands), soft lens
     glows, faint beams in the air at night; BRAKE lights on braking (any hour) + a red pool behind at night; nights
     much darker (the ambient floor gives way to the moon).
+    **EVERY LIGHT FROM ITS LAMP** (2026-11-27, the user: "the light must come exactly from the car's brake light and
+    headlight — not a nanometre of difference; a round lamp's light round" — `Lamps.ts`, `loadModels.ts` `lampsOf`).
+    Until then a head lamp's place was the texture's brightest patch near the nose — the bumper, the plate, the
+    grille's surround: off its lens on 20 of the 21 cars (measured across the nose: 3 cm on the Forty-Five, 19 – 54 cm
+    on the other nineteen — the off-roader's 43 cm inboard, eleven more than 25 cm too low; only the G500's was
+    right); the tail lamps were in place (the G500's 5 cm off, the E30 with none at all) — and every light a round
+    blob three lenses wide whatever the lamp, the tall square tail lamps' too. Now WHAT IS LIT IS THE
+    LENS: the model's own lens faces (the kit's and the off-roader's materials `lamp_lens` / `glows`, the G500's
+    `glas_light` / `lights_brakes`; each connected piece a lens — its outline its bounds, round or square by how much
+    of its square its outward face fills), drawn again on themselves in light: the same vertices (they follow a dent,
+    go dark with a broken lamp), the vertex shader the body's own sum term for term and 2 mm nearer the eye along
+    the sight line (the same pixel; no depth fight). Round each a HALO in its shape (a disc's round, a square lamp's
+    square with round corners). The beams on the world start at the middle of each lens's face, the beams in the air
+    as its outline, the red pool at the middle of the tail lamps still whole. The E30 (one painted skin, no lens
+    named) keeps the catalogue's measure: the body's own faces under each outline, cut to it per pixel. A model with
+    neither gets no light (and a warning) rather than one in the wrong place. Other players' and the companion's cars
+    the same (their tail lamps lit dim at night now). `scripts/harness/lampshot.mjs`: all 21, lamps off / on, nose
+    and tail, each lit vertex against its lens's (0 m), the beams' starts and the pool against the lamps (0 m); the
+    phones' models too (`Q=mobile=1`), WebGL2 and WebGPU. **Cost** (`lampcost.mjs`, 1080p uncapped, night, the car
+    filling the frame, lamps off ↔ on interleaved, an Apple M4): ONE draw for the four lamps where there were two
+    (3 → 2 with the beams); the lamps with their painted beams +0.17 / +0.16 / +0.12 ms from ahead and +0.06 / +0.07 /
+    +0.12 ms from behind at ULTRA / MEDIUM / LOW — before: +0.18 / +0.12 / +0.10 and +0.12 / +0.08 / +0.08 (the same
+    within the ±0.05 ms of the runs). Not yet on a phone.
 - **No post pass by default (2026-10-27, the user: "400+ fps at 1080p on the laptop so a small phone holds 60+";
   "even remove post-processing, but keep the ULTRA look")**: every tier draws straight to the canvas with its own MSAA
   (on a phone's tile GPU resolved on-chip); the bloom and god rays are painted FORWARD (Glow.ts): a sun GLARE sprite

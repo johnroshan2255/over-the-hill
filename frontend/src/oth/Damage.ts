@@ -121,8 +121,9 @@ export class CarDamage {
     loadCrack()
     charU.value = 0
     const m = model, hx = m.half.x, len = m.rear - m.front, H = m.half.y * 2
-    const head = m.lamps.head ? m.lamps.head.c : [hx * 0.7, 0.9, m.front], tail = m.lamps.tail ? m.lamps.tail.c : [hx * 0.75, 0.9, m.rear]
-    this.lampAt = [[-Math.abs(head[0]), head[1], head[2]], [Math.abs(head[0]), head[1], head[2]], [-Math.abs(tail[0]), tail[1], tail[2]], [Math.abs(tail[0]), tail[1], tail[2]]]
+    // (each lamp where its lens is — loadModels `lampsOf`: the left's, the right's; a model with none: the corners)
+    const head = m.lamps.head, tail = m.lamps.tail
+    this.lampAt = [head ? [...head[0].c] : [-hx * 0.7, 0.9, m.front], head ? [...head[1].c] : [hx * 0.7, 0.9, m.front], tail ? [...tail[0].c] : [-hx * 0.75, 0.9, m.rear], tail ? [...tail[1].c] : [hx * 0.75, 0.9, m.rear]]
     this.hub = m.wheelPos.map((p) => [p[0], p[1], p[2]])
     // THE ENGINE BAY: the front three tenths of the body, under the bonnet
     this.bay = { x0: -hx * 0.75, x1: hx * 0.75, y0: m.bottom, y1: m.bottom + H * 0.7, z0: m.front, z1: m.front + len * 0.3 }

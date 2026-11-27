@@ -81,11 +81,11 @@ export interface VehicleDef {
   paintRegex?: RegExp
   /** Look for an unnamed steering wheel to animate (a model without a `steering_wheel` part). */
   steering?: boolean
-  /** Lamp lenses (car space, the RIGHT side; mirrored to the left), measured on the model: they WIN over the lamps
-   *  found on the model at load (loadModels findLamps / findLampsInParts — a guess that put the G500's heads on its
-   *  bumper), then a body-box guess. `head2`: a second headlamp per side (the E30's quad lamps); sizes are half
-   *  extents (m). */
-  lamps?: { head: [number, number, number]; tail: [number, number, number]; head2?: [number, number, number]; headSize?: [number, number]; tailSize?: [number, number] }
+  /** THE LAMPS MEASURED (car space, the RIGHT side; the left mirrors it) — only for a model that names no lens of its
+   *  own (the E30: one painted skin): every other car's lamps are its own lens faces (loadModels `lampsOf`), which win.
+   *  `head2`: a second headlamp per side (the E30's quad lamps); sizes are half extents (m); the shapes — the head
+   *  lamps round, the tail lamps square, unless said. */
+  lamps?: { head: [number, number, number]; tail: [number, number, number]; head2?: [number, number, number]; headSize?: [number, number]; tailSize?: [number, number]; headShape?: 'round' | 'square'; tailShape?: 'round' | 'square' }
   /** The dash: 'twin' round speedo + tacho, 'single' speedo + lamp strip, 'screen' a wide twin screen (Cockpit). */
   dash: 'twin' | 'single' | 'screen'
   /** THE FACTORY COLOUR's name and a line about it (`stock.paint` is the colour itself): the real machine's own —
@@ -203,8 +203,6 @@ export const VEHICLES: VehicleDef[] = [
     //  texels take the garage's paint, the mud and the rust stay their own)
     whitePaint: true,
     cabin: { hip: 1.17, roof: 2.16, behind: 0.5 },
-    // the round headlamps in the grille's dark boxes, the tail lamps at the back corners
-    lamps: { head: [0.612, 1.205, -2.04], tail: [0.727, 1.07, 2.085], headSize: [0.1, 0.1], tailSize: [0.06, 0.083] },
     engine: { pitch: 0.8, gears: [0, 7, 14, 22, 31, 42, 70] },
     // one tailpipe under the back bumper, on the left
     exhaust: [{ at: [-0.45, 0.6, 2.15], dir: [0, 0, 1] }],
@@ -231,9 +229,6 @@ export const SHELVED: VehicleDef[] = [
     blurb: 'Portal axles, twin-turbo V8, 45 cm of ground clearance. The mountain goat.',
     url: g500Url, length: 4.68, forward: '+z', wheelRegex: /wheel_(FL|FR|RL|RR)/i, paintRegex: /CarPaint/i, bytes: 1_977_452, dash: 'screen',
     cabin: { hip: 1.35, roof: 2.2, behind: 0.49 },
-    // its two round headlamps in the wings (the lens parts `glas_light`, measured) and the tail lamps at the back
-    // corners — the old fallback [0.66, 1.08, −2.44] floated 30 cm ahead of the grille, at bumper height
-    lamps: { head: [0.597, 1.206, -2.13], tail: [0.7, 1.0, 2.29], headSize: [0.088, 0.088], tailSize: [0.07, 0.12] },
     engine: { pitch: 0.8, gears: [0, 7, 14, 22, 31, 42, 70] },
     // Side exits, as on the real 4×4²: twin tips each side under the sill just ahead of the rear wheels, angled
     // out and back (the model's own pipes; tip mouths measured, sides alternating).
