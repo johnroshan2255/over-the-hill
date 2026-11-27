@@ -24,9 +24,11 @@
 :where(.oh-front button) { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; touch-action: manipulation; }
 
 /* the key art, drifting slowly (a transform: no repaint) */
-.oh-art { position: absolute; inset: -3%; background-size: cover; background-position: 60% 50%; animation: oh-drift 38s ease-in-out infinite alternate; will-change: transform; }
-@keyframes oh-drift { from { transform: scale(1.02) translate3d(0, 0, 0); } to { transform: scale(1.08) translate3d(-1.5%, -1%, 0); } }
-.oh-shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(5, 5, 7, 0.86) 0%, rgba(5, 5, 7, 0.55) 34%, rgba(5, 5, 7, 0.05) 64%), linear-gradient(0deg, rgba(5, 5, 7, 0.7) 0%, rgba(5, 5, 7, 0) 30%); }
+/* (2026-11-27: a gentler drift — it was 6 % over the screen and zoomed to 8 % more: the picture drawn up to 1.4× its
+   size, soft; and a lighter shade — the picture's own colours to the middle of the screen) */
+.oh-art { position: absolute; inset: -1.5%; background-size: cover; background-position: 60% 50%; animation: oh-drift 38s ease-in-out infinite alternate; will-change: transform; }
+@keyframes oh-drift { from { transform: scale(1) translate3d(0, 0, 0); } to { transform: scale(1.03) translate3d(-0.8%, -0.5%, 0); } }
+.oh-shade { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(5, 5, 7, 0.72) 0%, rgba(5, 5, 7, 0.36) 30%, rgba(5, 5, 7, 0) 54%), linear-gradient(0deg, rgba(5, 5, 7, 0.55) 0%, rgba(5, 5, 7, 0) 24%); }
 .oh-pause .oh-art, .oh-pause .oh-shade { display: none; }
 
 /* the brand */

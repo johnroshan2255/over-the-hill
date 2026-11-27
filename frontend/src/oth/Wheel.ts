@@ -42,6 +42,8 @@ export const ICONS = {
   /** a steering wheel (the AUTOPILOT) */
   pilot: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18z M12 10a2 2 0 1 0 0 4a2 2 0 1 0 0-4z M3.5 11 10 12 M14 12l6.5-1 M12 14v6.8',
   lights: 'M11 5.5c-4.5 0-7 2.8-7 6.5s2.5 6.5 7 6.5h1v-13z M15.5 8h5.5 M15.5 12h5.5 M15.5 16h5.5',
+  // (the windscreen's arc, a blade across it from its pivot)
+  wipers: 'M2.5 15.5a11 11 0 0 1 19 0 M12 19.5L6.5 8.5 M10.6 19.5h2.8',
   time: 'M12 8a4 4 0 1 0 0.01 0z M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8',
   weather: 'M7 18.5h10a4 4 0 0 0 .6-8 6 6 0 0 0-11.6 1.6A3.4 3.4 0 0 0 7 18.5z',
   sound: 'M4 9v6h4l5 4V5L8 9z M16.5 8.5a5 5 0 0 1 0 7 M19 6a8.5 8.5 0 0 1 0 12',

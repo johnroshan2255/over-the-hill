@@ -44,6 +44,23 @@ export function isWeakGpu(force?: string | null): boolean {
   return weakRenderer(gpuName())
 }
 
+/**
+ * A HIGH-END PHONE's GPU (2026-11-27, the user: the rain's drops "on a PC or high-end, at ULTRA" — and they were on no
+ * phone at all): the flagships' chips — Apple's, Adreno 725 and up (and the older flagships' 650 / 660 / 680 / 690),
+ * Mali-G710 and up (and the G77 / G78), Immortalis, Xclipse. The 6-series Snapdragons' Adreno 61x / 710, the Mali-G5x /
+ * G6x, PowerVR, a name it cannot read: not — they keep every frame they have (SETTINGS › GRAPHICS › Rain on the car
+ * turns the drops on there all the same).
+ */
+export function strongPhoneGpu(r: string): boolean {
+  if (/Apple/i.test(r)) return true
+  if (/Immortalis|Xclipse/i.test(r)) return true
+  const a = /Adreno \(TM\) (\d{3})|Adreno[^0-9]{0,6}(\d{3})/i.exec(r)
+  if (a) { const n = Number(a[1] ?? a[2]); return n >= 725 || n === 650 || n === 660 || n === 680 || n === 685 || n === 690 }
+  const m = /Mali-G(\d{2,3})/i.exec(r)
+  if (m) { const n = Number(m[1]); return n >= 710 || n === 77 || n === 78 }
+  return false
+}
+
 /** (isWeakGpu's test on a GPU name — kept apart for DeviceProfile.test.ts) */
 export function weakRenderer(r: string): boolean {
   if (!r) return false

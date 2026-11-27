@@ -49,7 +49,7 @@ Over the Hill's screenshots were only looked at for reference — none are in th
 
 | Image | File | Source |
 |---|---|---|
-| Title-screen key art | `key-art.jpg` (1672 × 941), `key-art-sm.jpg` (960 × 540: screens under 900 px) | OURS since 2026-11-27: the user's picture, made with an AI image generator from this game's own description (the rust-red off-roader on a muddy track, the valley at dusk, the fort and its beacon) — "Overhill Wilderness Adventure.png", the more low-poly of two. The title painted into it was taken out here (the game draws its own in that place: the bright pixels of the letters and the stroke masked, filled from the dark cloud round them). It replaced DARK's landing image (a lime G500, the maker's star on its grille). |
+| Title-screen key art | `key-art.avif` (1672 × 941, as given), `key-art-lg.avif` (2508 × 1412: screens wider than the picture — Lanczos + a light sharpening, made here), `key-art-sm.avif` (960 × 540: under 900 px); `key-art.jpg` / `key-art-sm.jpg` for a browser with no AVIF. All 4:4:4 (2026-11-27: the first export — one JPEG, 4:2:0 at q 82 — smeared the reds; the user: "the image has no clarity") | OURS since 2026-11-27: the user's picture, made with an AI image generator from this game's own description (the rust-red off-roader on a muddy track, the valley at dusk, the fort and its beacon) — "Overhill Wilderness Adventure.png", the more low-poly of two. The title painted into it was taken out here (the game draws its own in that place: the bright pixels of the letters and the stroke masked, filled from the dark cloud round them). It replaced DARK's landing image (a lime G500, the maker's star on its grille). |
 
 ## Design references — `docs/reference/` (not shipped: targets to model toward)
 

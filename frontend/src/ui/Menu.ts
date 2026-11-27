@@ -1,5 +1,8 @@
 import keyArt from '../assets/ui/key-art.jpg'
 import keyArtSmall from '../assets/ui/key-art-sm.jpg'
+import keyArtAvif from '../assets/ui/key-art.avif'
+import keyArtLargeAvif from '../assets/ui/key-art-lg.avif'
+import keyArtSmallAvif from '../assets/ui/key-art-sm.avif'
 import { PAINTS, VEHICLES, vehicleDef, type VehicleDef } from '../gameplay/vehicle/catalogue'
 import { loadJournal, type Journal } from '../journal'
 import { loadProgress, type Progress } from '../save'
@@ -57,6 +60,7 @@ const GRAPHICS: Choice[] = [
   { key: 'antialias', label: 'Anti-aliasing', help: 'Smooth edges (MSAA). Off is faster on weak GPUs, with sharper stair-steps.', options: [{ v: 'auto', label: 'Auto' }, { v: 'off', label: 'Off' }] },
   { key: 'resolution', label: 'Resolution', help: 'Auto: full resolution (a phone lowers it only when it slows down). A fixed scale renders fewer pixels: faster, softer.', options: [{ v: 'auto', label: 'Auto' }, { v: '100', label: '100%' }, { v: '75', label: '75%' }, { v: '50', label: '50%' }] },
   { key: 'upscale', label: 'Upscaling (FSR)', help: 'AMD FSR 1: the world drawn at fewer pixels, then upscaled and sharpened. Helps when the GPU is the limit (phones, Chromebooks, 4K screens). Quality 77%, Balanced 67%, Performance 50%.', options: [{ v: 'off', label: 'Off' }, { v: 'quality', label: 'Quality' }, { v: 'balanced', label: 'Balanced' }, { v: 'performance', label: 'Perf' }] },
+  { key: 'rain', label: 'Rain on the car', help: 'Water drops on the car\'s glass and paint in the rain — running down the windows, cleared by the wipers (P). Auto: on a PC and on a high-end phone, at Ultra. On: on this device whatever it is (a slower phone loses some frames while it rains). Off: never. Mud washes off in the rain on every device either way.', options: [{ v: 'auto', label: 'Auto' }, { v: 'on', label: 'On' }, { v: 'off', label: 'Off' }] },
   { key: 'fpsOverlay', label: 'FPS overlay', help: 'Frame rate, frame time and draw counts in the corner (also F3 in game).', options: [{ v: false, label: 'Off' }, { v: true, label: 'On' }] },
 ] as Choice[]
 
@@ -117,7 +121,15 @@ export class Menu {
     if (mode === 'title') {
       const art = document.createElement('div')
       art.className = 'oh-art'
-      art.style.backgroundImage = `url(${matchMedia('(max-width: 900px)').matches ? keyArtSmall : keyArt})`
+      // THE PICTURE AT THE SCREEN'S SIZE (2026-11-27, the user: "the image has no clarity — I gave you a high quality
+      // one"): it was one 1672 px JPEG, its colour thinned (4:2:0, q 82: the truck's reds smeared), drawn ~1.4× its
+      // size on a 1080p screen. Now AVIF with all its colour (4:4:4) — the small one under 900 px, the picture as
+      // given, and for a screen wider than it a LARGE one (2508 px: Lanczos and a light sharpening, made once here —
+      // crisper than the browser's own stretch); a browser with no AVIF keeps the JPEG (the first line: the second is
+      // ignored there)
+      const small = matchMedia('(max-width: 900px)').matches, wide = innerWidth * Math.min(devicePixelRatio || 1, 2) > 1700
+      art.style.backgroundImage = `url(${small ? keyArtSmall : keyArt})`
+      art.style.backgroundImage = `image-set(url(${small ? keyArtSmallAvif : wide ? keyArtLargeAvif : keyArtAvif}) type("image/avif"), url(${small ? keyArtSmall : keyArt}) type("image/jpeg"))`
       const shade = document.createElement('div')
       shade.className = 'oh-shade'
       this.root.append(art, shade)
@@ -242,7 +254,7 @@ export class Menu {
     this.sel = Math.min(this.sel, rows.length - 1)
     const list = el('div', 'oh-list', rows.map((c, i) => this.row(c, i)))
     const c = rows[this.sel]
-    const side = el('div', 'oh-side', [el('h4', '', [c.label]), el('p', '', [c.help]), ...(this.mode === 'pause' ? [el('p', '', [c.key === 'quality' || c.key === 'antialias' ? 'Applies when you resume: the game restarts right here.' : 'Applies at once.'])] : [])])
+    const side = el('div', 'oh-side', [el('h4', '', [c.label]), el('p', '', [c.help]), ...(this.mode === 'pause' ? [el('p', '', [c.key === 'quality' || c.key === 'antialias' || c.key === 'rain' ? 'Applies when you resume: the game restarts right here.' : 'Applies at once.'])] : [])])
     return [list, side]
   }
 

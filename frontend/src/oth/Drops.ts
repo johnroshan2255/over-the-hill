@@ -1,6 +1,6 @@
 import * as GFX from './gfx'
 import type { TruckModel } from '../assets/loadModels'
-import { isMobileDevice } from '../rendering/quality/DeviceProfile'
+import { gpuName, isMobileDevice, strongPhoneGpu } from '../rendering/quality/DeviceProfile'
 import { gameParams } from '../settings'
 import type { Atmosphere } from './Atmosphere'
 import type { Tier } from './quality'
@@ -35,10 +35,13 @@ import type { Tier } from './quality'
 
 /** The drops are drawn (decided once, by the player's car: `dropsFor`). */
 let dropsOn = false
-/** ULTRA on a PC — not a phone, not a weak GPU; `?drops=1` anywhere, `?drops=0` nowhere. */
+/** At ULTRA, on a PC (not a weak GPU's — a Chromebook's, an Intel UHD) and on a HIGH-END PHONE (its GPU's name —
+ *  `strongPhoneGpu`; 2026-11-27: they were on no phone at all, and the user, on one, saw no rain on the car). SETTINGS ›
+ *  GRAPHICS › Rain on the car — On: anywhere (`?drops=1`), Off: nowhere (`?drops=0`); dry, they cost nothing anywhere
+ *  (Vehicle `RainShell`). */
 export function dropsFor(tier: Tier): boolean {
   const q = gameParams().get('drops'), mobile = gameParams().get('mobile') === '1' || (gameParams().get('mobile') !== '0' && isMobileDevice())
-  dropsOn = q === '1' || (q !== '0' && tier.name === 'ultra' && !tier.weakGpu && !mobile)
+  dropsOn = q === '1' || (q !== '0' && tier.name === 'ultra' && (mobile ? strongPhoneGpu(gpuName()) : !tier.weakGpu))
   return dropsOn
 }
 export function dropsDrawn(): boolean { return dropsOn }
@@ -83,14 +86,25 @@ export class CarRain {
   /** A car taken: its wipers' fans (each blade's pivot, the way it lies at rest, its reach — the model's own wiper,
    *  its geometry about its pivot), its mud's band; dry, as painted. */
   setCar(model: TruckModel): void {
-    const W = model.controls.filter((c) => c.kind.startsWith('wiper')).slice(0, 2)
+    // (a wiper is SEVERAL parts of the model — its arm, its blade: each its own piece on the one pivot. Taken by the
+    //  pivot: the first two parts were the LEFT wiper's two, and the right one's fan was never cleared — the user,
+    //  2026-11-27: "the left wiper wipes, the right doesn't")
+    const W: { pivot: [number, number, number]; axis: GFX.Vector3; parts: Float32Array[] }[] = []
+    for (const c of model.controls) {
+      if (!c.kind.startsWith('wiper')) continue
+      let w = W.find((q) => Math.hypot(q.pivot[0] - c.pivot[0], q.pivot[1] - c.pivot[1], q.pivot[2] - c.pivot[2]) < 0.01)
+      if (!w) W.push((w = { pivot: c.pivot, axis: new GFX.Vector3(...c.axis).normalize(), parts: [] }))
+      w.parts.push((c.geo.getAttribute('position') as GFX.BufferAttribute).array as Float32Array)
+    }
+    // (the left one first: the driver's)
+    W.sort((p, q) => p.pivot[0] - q.pivot[0])
     this.wipA.set(0, -1e4, 0, 0); this.wipB.set(0, -1e4, 0, 0); this.wipe.w = 0
-    W.forEach((c, k) => {
-      const axis = new GFX.Vector3(...c.axis).normalize(), p = (c.geo.getAttribute('position') as GFX.BufferAttribute).array as Float32Array
-      // (the blade's tip: the vertex furthest from the axis — the geometry is about the pivot)
+    W.slice(0, 2).forEach((c, k) => {
+      const axis = c.axis
+      // (the blade's tip: the vertex furthest from the axis, over all its parts — their geometry is about the pivot)
       const v = new GFX.Vector3(), tip = new GFX.Vector3()
       let far = 0
-      for (let i = 0; i < p.length; i += 3) {
+      for (const p of c.parts) for (let i = 0; i < p.length; i += 3) {
         v.set(p[i], p[i + 1], p[i + 2]).addScaledVector(axis, -(p[i] * axis.x + p[i + 1] * axis.y + p[i + 2] * axis.z))
         const d = v.lengthSq()
         if (d > far) { far = d; tip.copy(v) }
@@ -102,7 +116,6 @@ export class CarRain {
       if (!k) this.wipAxis.copy(axis)
       this.wipe.w = WIPE_SWEEP
     })
-    if (W.length === 1) this.wipB.set(0, -1e4, 0, 0)
     // (carkit paints it from the sills to half a metre up them)
     this.band = [model.bottom - 0.05, model.bottom + 0.65]
     this.wetU.value = 0
@@ -289,13 +302,13 @@ vec4 dropsOn(vec3 L, vec3 dlx, vec3 dly, vec3 wx, vec3 wy, float glass, out vec3
   float runN = runsN * (0.5 + 0.35 * glass), tR = t * (0.6 + 0.4 * glass);
   float wR = 1.0 - smoothstep(0.005, 0.009, px), wR2 = smoothstep(0.005, 0.009, px) * (1.0 - smoothstep(0.016, 0.024, px));
   if (!top && wR > 0.0) o = dropRuns(pr, tR, runN) * vec4(1.0, 1.0, wR, wR);
-  if (!top && wR2 > 0.0) { vec4 r2 = dropRuns(pr / 2.4 + 5.3, tR * 0.6, runN * 0.8) * vec4(1.0, 1.0, wR2, wR2); if (r2.z > o.z) o = r2; }
+  if (!top && wR2 > 0.0) { vec4 r2 = dropRuns(pr / 2.4 + 5.3, tR * 0.6, runN) * vec4(1.0, 1.0, wR2, wR2); if (r2.z > o.z) o = r2; }
   // (a run takes the beads in its way)
   float keep = 1.0 - o.w;
   float wF = (1.0 - smoothstep(0.0012, 0.0025, px)) * keep, wC = (1.0 - smoothstep(0.004, 0.007, px)) * keep;
   float wB = smoothstep(0.004, 0.007, px) * (1.0 - smoothstep(0.014, 0.022, px)) * keep;
   // (fewer on the paint than on a pane: it sheds them)
-  if (wB > 0.0) { vec3 b = dropBeads(p + 1.9, 10.0, t * 0.8, beadsN * (0.32 + 0.3 * glass)); b.z *= wB; if (b.z > o.z) o.xyz = b; }
+  if (wB > 0.0) { vec3 b = dropBeads(p + 1.9, 11.0, t * 0.8, beadsN * (0.5 + 0.35 * glass)); b.z *= wB; if (b.z > o.z) o.xyz = b; }
   if (wC > 0.0) { vec3 b = dropBeads(p, 26.0, t, beadsN * (0.4 + 0.3 * glass)); b.z *= wC; if (b.z > o.z) o.xyz = b; }
   if (wF > 0.0) { vec3 b = dropBeads(p + 3.7, 85.0, t * 1.3, beadsN * (0.35 + 0.2 * glass)); b.z *= wF; if (b.z > o.z) o.xyz = b; }
   // (the blade's own wet: fine arcs it leaves, gone in half a second)

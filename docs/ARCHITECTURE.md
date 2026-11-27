@@ -529,12 +529,37 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
     the seat — the windscreen across the whole frame (368 → 297 fps); the MUD's wash at LOW, the phones' way, +0.01
     to +0.07 ms (inside the runs' ±0.05). Not on a phone yet; under a cave's roof the car still wets (no roof is
     asked of the map).
+    **Where the drops are drawn** (the same day — the user, on a device that had none: "it's not on the car's
+    windows, not in first person, not in third"): they were off on EVERY phone and every weak GPU; in real play on the
+    M4 they were there (the title, PLAY, the weather stepped to rain — no test switch). Now `dropsFor`: at ULTRA on a
+    PC (not a weak GPU's) and on a HIGH-END PHONE by its GPU's name (`DeviceProfile.strongPhoneGpu`: Apple, Adreno
+    725+, Mali-G710+, Immortalis, Xclipse; `tests/gpuclass.test.ts`); SETTINGS › GRAPHICS › **Rain on the car** —
+    Auto / On / Off — puts them on any device or none. The big drops for the chase camera are more (they were hard to
+    find from there). The action wheel has WIPERS (a phone has no P). Checked as a phone has the game (the touch page,
+    WebGL2): a flagship's GPU with Auto and Off, a 6-series one's with Auto (none) and On.
+    **The right wiper** (the same day, the user: "the left wiper wipes, the right doesn't"): a wiper is two parts
+    of the model on one pivot (its arm, its blade), and `CarRain.setCar` took "the first two wiper parts" — the left
+    one's two; the right one's fan was never told to the shader. Taken by the pivot now, the left first.
     **… and nothing when it is dry** (the same day, the user: "make sure it all costs 0"): each look of the shell is
     its OWN shader on its own mesh over the same geometry (`RainShell`, Vehicle.ts) — as it always was / its mud
     washed / wet with the drops — and only the one that is so is drawn; the others are hidden and warmed at the load.
     A car dry and as painted is drawn by the very shader it had before. Before today's work against now
     (`abq.mjs "port=5201|" spawn,forest,lake 6` — the commit before the lamps, the crates, the rain and the clock, from
     a worktree): −0.010 / −0.033 / +0.043 ms: nothing (the runs' ±0.05).
+  - **The winch and the tow points on the car's own bumpers** (2026-11-27, the user: "the hook we pull vehicles with
+    is not connected to the cars — it's in the air; check all cars, it must be perfectly attached" — loadModels
+    `towOf` → `model.tow`, Winch.ts `fairlead` / `eyeBase` / `pointOf`). The fairlead and the three recovery points
+    were put by the body's BOX: its furthest z at the nose and the tail, at a height reckoned from the wheel — on a car
+    with a spare wheel on its back door, a bull bar, a taller bumper, the hook hung and the eyes stood in the air (the
+    Bronc's rear eye 15 cm behind its bumper; the eyes about 22 cm under the bumper on every kit car, 29 on the
+    off-roader). Now each is found ON THE MODEL: the
+    bumper's height from its face out at the side (the outermost thing in the 0.6 m over the body's underside there —
+    clear of a spare, a hoop, a plate), and at that height each point is the body's own surface (`surfaceZ`) — the
+    front pair at 55 % of the half width, the rear one and the fairlead in the middle (a step aside where something
+    stands before the bumper there: the off-roader's spare, the G500's winch). `scripts/harness/towshot.mjs`: all 21
+    — each of the four places 0 mm from the car's own triangles, the three eyes and the hook on its winch drawn at
+    them (to 0.03 mm), the nose and the tail shot; the hook taken off it by hand in solo play. (Hooking onto another
+    player's car — `towtest.mjs`, three players and the server — not run again.)
   - **The hour set by hand runs there** (2026-11-27, the user: "it changes so suddenly — and set to morning it shows
     noon first, then morning; make the day-night change work like Genshin Impact's" — `Atmosphere.sweepTo`,
     `TerrainShadow.update`, main.ts `timeTo` / `timeDial`). The hour was put where asked in one frame, and the land's

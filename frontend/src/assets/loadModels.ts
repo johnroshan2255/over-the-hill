@@ -51,6 +51,10 @@ export interface TruckModel {
   /** Per-pixel paint mask for textured models (R = 1 on the body paint, 0 on rims, glass, trim, lights, rust),
    *  same UVs as `map`; null = the per-vertex `paintMask` alone decides (flat-coloured models). */
   paintMap: GFX.Texture | null
+  /** WHERE THE WINCH'S LINE COMES OUT AND WHERE A HOOK GOES ON (car space, m — `towOf`): each ON the bumper's own
+   *  face, found on the model. `fairlead`: the middle of the front bumper; `points`: the two front recovery points
+   *  (left, right) and the rear one. null: no bumper found there (the winch falls back on the body's box). */
+  tow: TowPoints | null
   /** THE LAMPS (car space, m) — the left's then the right's of each: the head lamps, the tail (brake) lamps. Each is the
    *  model's OWN LENS — its faces, where they are, how big, round or square (`lampsOf`): the light is drawn on those
    *  faces and nowhere else (oth/Lamps.ts). null: the model has no such lamp. */
@@ -134,6 +138,9 @@ export interface CarDoor {
 export function driverDoor(m: { doors: CarDoor[] }): CarDoor | null {
   return m.doors.filter((d) => d.side === -1).sort((a, b) => a.hinge[2] - b.hinge[2])[0] ?? null
 }
+
+/** A car's winch and recovery points, each a place on its bumper's face (car space, m). */
+export interface TowPoints { fairlead: [number, number, number]; points: [[number, number, number], [number, number, number], [number, number, number]] }
 
 /** ONE LENS of a lamp: the middle of its outline on its outermost plane, half its width and height, its shape. */
 export interface Lens {
@@ -571,6 +578,56 @@ function facesUnder(body: GFX.BufferGeometry, c: [number, number, number], w: nu
   return out.length ? Uint32Array.from(out) : null
 }
 
+/** THE BUMPER'S FACE at x, looking `dir` (−1 the nose, 1 the tail): up from the body's underside there (`low`) for
+ *  0.6 m, the OUTERMOST thing — the lowest such, where two stand out alike — and the run of heights about it that is
+ *  its face (within 2 cm of it): its z, its bottom and its top. Taken OFF THE CAR'S MIDDLE (`towOf`: at the side —
+ *  clear of a spare wheel, a bull bar's hoop, a plate): there the bumper is what stands out furthest under the body's
+ *  panel; under it the chassis is far behind. null: nothing there. */
+function bumperFace(body: GFX.BufferGeometry, x: number, dir: -1 | 1, low: number): { z: number; y0: number; y1: number } | null {
+  const ys: number[] = [], zs: (number | null)[] = []
+  for (let y = low + 0.01; y <= low + 0.6; y += 0.01) { ys.push(y); zs.push(surfaceZ(body, x, y, dir)) }
+  let best = -1
+  for (let i = 0; i < zs.length; i++) if (zs[i] !== null && (best < 0 || zs[i]! * dir > zs[best]! * dir + 0.004)) best = i
+  if (best < 0) return null
+  let i0 = best, i1 = best
+  while (i0 > 0 && zs[i0 - 1] !== null && Math.abs(zs[i0 - 1]! - zs[best]!) < 0.02) i0--
+  while (i1 < zs.length - 1 && zs[i1 + 1] !== null && Math.abs(zs[i1 + 1]! - zs[best]!) < 0.02) i1++
+  return { z: zs[best]!, y0: ys[i0], y1: ys[i1] }
+}
+
+/**
+ * A CAR'S WINCH AND RECOVERY POINTS, ON ITS OWN BUMPERS (2026-11-27, the user: "the hook we pull vehicles with is not
+ * connected to the cars — it's in the air; check all cars, it must be perfectly attached"). They were put by the
+ * body's BOX — its nose's and its tail's furthest z, at a height reckoned from the wheel: on a car with a spare wheel
+ * on its back door (the Bronc's rear eye 15 cm behind its bumper and 22 cm under it), a bull bar, a bumper lower or
+ * higher than that, the hook hung and the eyes stood in the air. Now each is found ON THE MODEL: the bumper's height
+ * from its face out at the side (`bumperFace`, at 55 % of the half width — nearer the middle where it ends short), and
+ * at that height each point's place is the body's own surface there (`surfaceZ`: on the metal, to the float) — the
+ * two FRONT points on the face at the side, the REAR one and the FAIRLEAD in the middle (a step aside where a spare
+ * wheel or a bar stands before the bumper there), the fairlead near the face's top (the hook hangs down it).
+ */
+function towOf(body: GFX.BufferGeometry, halfX: number, overhang: { front: number; rear: number }): TowPoints | null {
+  const end = (dir: -1 | 1): { x: number; f: { z: number; y0: number; y1: number } } | null => {
+    for (const k of [0.55, 0.4, 0.25]) { const f = bumperFace(body, halfX * k, dir, dir < 0 ? overhang.front : overhang.rear); if (f) return { x: halfX * k, f } }
+    return null
+  }
+  // (a place on the bumper at height y, as near x as the bumper's own face is found: not on what stands before it)
+  const on = (x: number, y: number, dir: -1 | 1, face: number): [number, number, number] | null => {
+    for (const dx of [0, 0.06, -0.06, 0.12, -0.12, 0.2, -0.2, 0.3, -0.3]) {
+      const z = surfaceZ(body, x + dx, y, dir)
+      if (z !== null && Math.abs(z - face) < 0.06) return [x + dx, y, z]
+    }
+    return null
+  }
+  const F = end(-1), R = end(1)
+  if (!F || !R) return null
+  const fy = (F.f.y0 + F.f.y1) / 2, ry = (R.f.y0 + R.f.y1) / 2
+  const l = on(-F.x, fy, -1, F.f.z), r = on(F.x, fy, -1, F.f.z), back = on(0, ry, 1, R.f.z)
+  const lead = on(0, Math.max(fy, F.f.y1 - 0.03), -1, F.f.z) ?? on(0, fy, -1, F.f.z)
+  if (!l || !r || !back || !lead) return null
+  return { fairlead: lead, points: [l, r, back] }
+}
+
 /** A side's lamp of its lenses (the biggest first) — null with none. */
 function lampOf(lenses: Lens[]): Lamp | null {
   return lenses.length ? { ...lenses[0], lenses } : null
@@ -917,6 +974,7 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
   if (map) map.colorSpace = GFX.SRGBColorSpace
   const paintMap = map ? buildPaintMap(map, !!def.whitePaint) : null
   const lamps = lampsOf(def, body, glass, lensTags)
+  const overhang = overhangs(body, wheelPos, fl.r, (bb.max.x - bb.min.x) / 2)
   meshes.forEach((m) => m.geo.dispose())
   all.dispose()
   if (map && def.grade) gradeTexture(map, def.grade.sat, def.grade.gain)
@@ -929,7 +987,8 @@ function bakeVehicle(scene: GFX.Object3D, def: VehicleDef): Omit<VehicleModel, '
     bottom: bb.min.y,
     front: bb.min.z,
     rear: bb.max.z,
-    overhang: overhangs(body, wheelPos, fl.r, (bb.max.x - bb.min.x) / 2),
+    overhang,
+    tow: towOf(body, (bb.max.x - bb.min.x) / 2, overhang),
     tyreHalfWidth,
     // Built on first use (the car you drive), then kept with the model.
     get mesh() {

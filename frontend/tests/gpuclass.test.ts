@@ -2,7 +2,7 @@
  * THE WEAK GPU (src/rendering/quality/DeviceProfile.ts weakRenderer): real renderer strings as Chrome reports them —
  * the Chromebooks' and cheap laptops' chips drawn the phones' way (quality.ts), every other GPU as a PC.
  */
-import { weakRenderer } from '../src/rendering/quality/DeviceProfile'
+import { strongPhoneGpu, weakRenderer } from '../src/rendering/quality/DeviceProfile'
 
 let failures = 0
 const check = (r: string, weak: boolean) => {
@@ -31,4 +31,28 @@ check('ANGLE (Intel, Intel(R) Arc(TM) Graphics (0x00007D55) Direct3D11 vs_5_0 ps
 check('ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001681) Direct3D11 vs_5_0 ps_5_0, D3D11)', false)
 check('ANGLE (Qualcomm, Qualcomm(R) Adreno(TM) X1-85 GPU Direct3D11 vs_5_0 ps_5_0, D3D11)', false)
 check('', false)
+// A HIGH-END PHONE's GPU (strongPhoneGpu — the rain's drops on the car, oth/Drops.ts): the flagships' chips; the
+// 6-series Snapdragons', the Mali-G5x / G6x, PowerVR and a name it cannot read are not
+const phone = (r: string, strong: boolean) => {
+  const ok = strongPhoneGpu(r) === strong
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${strong ? 'high-end phone' : 'not'}  ${r}`)
+  if (!ok) failures++
+}
+phone('Apple GPU', true)
+phone('ANGLE (Qualcomm, Adreno (TM) 750, OpenGL ES 3.2)', true)
+phone('Adreno (TM) 740', true)
+phone('Adreno (TM) 730', true)
+phone('Adreno (TM) 660', true)
+phone('Mali-G715-Immortalis MC11', true)
+phone('ANGLE (ARM, Mali-G710 MC10, OpenGL ES 3.2)', true)
+phone('Mali-G78 MP14', true)
+phone('ANGLE (Samsung Electronics Co., Ltd., Samsung Xclipse 940, OpenGL ES 3.2)', true)
+phone('ANGLE (Qualcomm, Adreno (TM) 619, OpenGL ES 3.2)', false)
+phone('Adreno (TM) 610', false)
+phone('Adreno (TM) 710', false)
+phone('Mali-G57 MC2', false)
+phone('Mali-G610 MC4', false)
+phone('Mali-G68 MC4', false)
+phone('PowerVR Rogue GE8320', false)
+phone('', false)
 if (failures) { console.log(`${failures} FAILED`); process.exit(1) }

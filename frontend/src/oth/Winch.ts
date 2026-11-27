@@ -4,6 +4,7 @@ import type { MapData } from './MapData'
 import type { Vehicle } from './Vehicle'
 import type { Session } from '../net/Session'
 import type { RopeState } from '../net/wire'
+import type { TowPoints } from '../assets/loadModels'
 
 /**
  * THE WINCH AND ITS TOW ROPE, BY HAND (2026-11-25, the user: "connect the grappling hook to other users' vehicles so
@@ -43,19 +44,32 @@ export interface WinchAnchor { x: number; y: number; z: number; what: string; on
 /** The load on the line (in the car's weights × seconds) that pulls such a thing out. */
 const PULL = 1.5
 
-/** What a car's points are worked out from: its own model's sizes. */
-interface Dims { half: { x: number; y: number; z: number }; front: number; rear: number; wheelRadius: number }
+/** What a car's points are worked out from: its own model — where its bumpers' faces are (`tow`: loadModels `towOf`),
+ *  and its sizes (a model with no bumper found: by its box, as every car was till 2026-11-27 — in the air on most). */
+interface Dims { half: { x: number; y: number; z: number }; front: number; rear: number; wheelRadius: number; tow?: TowPoints | null }
+/** How far before the bumper's face a hook's bowl sits in its eye, and the line leaves the fairlead (m). */
+const OUT = 0.035, LEAD_OUT = 0.022
 /** A car in the world: where it is (its root) and its sizes. */
 export interface TowCar { root: GFX.Object3D; dims: Dims; name: string }
 const POINT_NAMES = ['front left', 'front right', 'rear']
 
 /** A car's FAIRLEAD (where its winch line comes out) in its own space. */
-function fairlead(d: Dims, out: GFX.Vector3): GFX.Vector3 { return out.set(0, d.wheelRadius + 0.32, d.front - 0.02) }
+function fairlead(d: Dims, out: GFX.Vector3): GFX.Vector3 {
+  const t = d.tow
+  return t ? out.set(t.fairlead[0], t.fairlead[1], t.fairlead[2] - LEAD_OUT) : out.set(0, d.wheelRadius + 0.32, d.front - 0.02)
+}
+/** A car's recovery point k where its tow eye stands ON the bumper (its own space). */
+function eyeBase(d: Dims, k: number, out: GFX.Vector3): GFX.Vector3 {
+  const t = d.tow
+  if (t) return out.set(t.points[k][0], t.points[k][1], t.points[k][2])
+  return k === 2 ? out.set(0, d.wheelRadius + 0.1, d.rear) : out.set((k === 0 ? -1 : 1) * d.half.x * 0.55, d.wheelRadius + 0.1, d.front)
+}
 /** A car's recovery point k (0 front left, 1 front right, 2 the rear hitch) in its own space. */
 function pointOf(d: Dims, k: number, out: GFX.Vector3): GFX.Vector3 {
-  // (where a hook's bowl sits: in the tow eye, out before the bumper)
-  const y = d.wheelRadius + 0.1
-  return k === 2 ? out.set(0, y, d.rear + 0.035) : out.set((k === 0 ? -1 : 1) * d.half.x * 0.55, y, d.front - 0.035)
+  // (where a hook's bowl sits: in the tow eye, out before the bumper's face)
+  eyeBase(d, k, out)
+  out.z += k === 2 ? OUT : -OUT
+  return out
 }
 const toWorld = (c: TowCar, v: GFX.Vector3) => v.applyMatrix4(c.root.matrixWorld)
 
@@ -719,8 +733,8 @@ export class Winch {
       let ne = 0
       const put = (c: TowCar) => {
         for (let k = 0; k < 3 && ne < 48; k++) {
-          const d = c.dims, y = d.wheelRadius + 0.1
-          this.eyeL.makeRotationY(k === 2 ? Math.PI : 0).setPosition(k === 2 ? 0 : (k === 0 ? -1 : 1) * d.half.x * 0.55, y, k === 2 ? d.rear : d.front)
+          // (standing ON the bumper's own face — `eyeBase`)
+          this.eyeL.makeRotationY(k === 2 ? Math.PI : 0).setPosition(eyeBase(c.dims, k, this.dTmp))
           this.eyeW.multiplyMatrices(c.root.matrixWorld, this.eyeL)
           this.eyes!.setMatrixAt(ne++, this.eyeW)
         }
@@ -765,7 +779,8 @@ export class Winch {
     const up = this.bUp.set(0, 1, 0).applyQuaternion(q), fw = this.bSide.set(0, 0, -1).applyQuaternion(q)
     const z = this.bZ.crossVectors(fw, up).normalize()
     out.makeBasis(fw, up, z)
-    const p = toWorld(c, fairlead(c.dims, this.dTmp).setZ(c.dims.front - 0.035))
+    // (its eye at the fairlead, a finger before the bumper's face: it hangs down the face)
+    const p = toWorld(c, fairlead(c.dims, this.dTmp))
     const ex = fw.x * EYE.x + up.x * EYE.y, ey = fw.y * EYE.x + up.y * EYE.y, ez = fw.z * EYE.x + up.z * EYE.y
     out.setPosition(p.x - ex, p.y - ey, p.z - ez)
   }

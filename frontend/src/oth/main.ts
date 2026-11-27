@@ -1321,7 +1321,7 @@ async function boot() {
       if (st.companion !== 'off' && (coop || coopWorld)) toast('The companion is for solo play — not in a co-op world', 3500)
       else if (!url.has('companion')) setCompanion(companionKind(st.companion))
     } else if (key === 'bot') { if (st.bot) { if (coop) startBot(); else toast('The bot joins in a co-op world — CO-OP on the title screen', 3500) } else stopBot() }
-    else if (key === 'quality' || key === 'antialias' || key === 'damage') restartPending = true
+    else if (key === 'quality' || key === 'antialias' || key === 'damage' || key === 'rain') restartPending = true
   }
   // MOUSE LOOK (mouseLook.ts): the lock lost to Esc pauses — the browser keeps that Esc, the keydown below never sees it
   initMouseLook(renderer.domElement, () => { if (!pause) setPaused(true) })
@@ -1349,6 +1349,8 @@ async function boot() {
       // (car damage — Damage.ts: shown once there is something to mend)
       { id: 'repair', label: () => `Repair · ${Math.min(car.damage?.cost ?? 0, journal.coins)} ◆`, icon: ICONS.repair, run: repairCar, show: () => driving && !riding && !!car.damage && !car.damage.whole },
       { id: 'lights', label: 'Lights', icon: ICONS.lights, key: 'L', run: press('KeyL'), show: () => !riding && !onFoot },
+      // (the wipers — the rain's drops on the windscreen, Drops.ts: a phone has no P)
+      { id: 'wipers', label: () => (car.wipers ? 'Wipers off' : 'Wipers'), icon: ICONS.wipers, key: 'P', run: press('KeyP'), on: () => car.wipers, show: () => driving && !riding && !onFoot },
       { id: 'build', label: 'Build', icon: ICONS.flag, key: 'B', run: () => { if (coop) coop.build.toggle(); else toast('Building needs a co-op world — CO-OP on the title screen', 3500) }, on: () => !!coop?.build.on },
       { id: 'time', label: 'Time', icon: ICONS.time, key: 'G', run: press('KeyG') },
       { id: 'weather', label: 'Weather', icon: ICONS.weather, key: 'Shift G', run: press('KeyG', true) },

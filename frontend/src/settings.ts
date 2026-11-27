@@ -28,6 +28,9 @@ export interface Settings {
   /** FSR 1 upscaling (oth/Fsr.ts): the world drawn at 77 / 67 / 50 % each way, upscaled and sharpened — 'off': none. */
   upscale: 'off' | 'quality' | 'balanced' | 'performance'
   fpsOverlay: boolean
+  /** THE RAIN ON THE CAR (oth/Drops.ts): the drops on its glass and its shell. 'auto': at ULTRA on a PC and a high-end
+   *  phone; 'on' / 'off': wherever / nowhere. (The mud's wash is every device's, whatever this says.) */
+  rain: 'auto' | 'on' | 'off'
   sound: boolean
   /** THE HELPER BOT (oth/Bot.ts): in a co-op world in the valley, a second player run from this tab who gathers,
    *  builds and moves on. */
@@ -52,6 +55,7 @@ export const DEFAULTS: Settings = {
   resolution: 'auto',
   upscale: 'off',
   fpsOverlay: false,
+  rain: 'auto',
   sound: true,
   bot: false,
   companion: 'off',
@@ -71,6 +75,7 @@ export function loadSettings(): Settings {
     delete (s as unknown as { paint?: unknown }).paint
     if (!s.paints || typeof s.paints !== 'object') s.paints = {}
     if (s.companion !== 'friend' && s.companion !== 'enemy') s.companion = 'off'
+    if (s.rain !== 'on' && s.rain !== 'off') s.rain = 'auto'
     return s
   } catch {
     return { ...DEFAULTS } // (private window / blocked storage: the defaults)
@@ -96,6 +101,7 @@ export function gameParams(): URLSearchParams {
   if (s.resolution !== 'auto') { p.set('dpr', 'fixed'); p.set('scale', s.resolution) }
   if (s.upscale !== 'off') p.set('fsr', { quality: '0.77', balanced: '0.67', performance: '0.5' }[s.upscale])
   if (s.fpsOverlay) p.set('stats', '1')
+  if (s.rain !== 'auto') p.set('drops', s.rain === 'on' ? '1' : '0')
   p.set('gearbox', s.gearbox)
   p.set('aids', s.aids)
   p.set('offroad', s.offroadAssist ? '1' : '0')
