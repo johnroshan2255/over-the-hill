@@ -29,7 +29,16 @@ export class TerrainShadow {
   private readonly boxN: number
   private busy = false
   private baked = new GFX.Vector3(0, -1, 0)
+  /** The sun the shadows now DRAWN were baked for (`baked`: the one asked of the worker — the same once it lands). */
+  private readonly shown = new GFX.Vector3(0, -1, 0)
   private id = 0
+  /** A bake is in (the hills'; the forests'); how much of the shadows is drawn (0 … 1 — `uShOn`, `uTreeShOn`); the
+   *  clock is being run to an hour (`update`): not drawn till that hour's own are in. */
+  private ready = false
+  private treeReady = false
+  private fade = 0
+  private hide = false
+  private show(): void { this.uniforms.uShOn.value = this.ready ? this.fade : 0; this.uniforms.uTreeShOn.value = this.treeReady ? this.fade : 0 }
 
   constructor(map: MapData) {
     this.boxN = (map.inner.n - 1) / 2 + 1 // 4 m
@@ -66,9 +75,13 @@ export class TerrainShadow {
       if (m.trees) {
         this.treeTex.image.data = m.trees
         this.treeTex.needsUpdate = true
-        this.uniforms.uTreeShOn.value = 1
+        this.treeReady = true
       }
-      this.uniforms.uShOn.value = 1
+      // (the first bake in: shown at once — unless the clock is being run to an hour: `update` brings them in)
+      if (!this.ready && !this.hide) this.fade = 1
+      this.ready = true
+      this.show()
+      this.shown.copy(this.baked)
       this.onBaked?.()
     }
   }
@@ -107,7 +120,9 @@ export class TerrainShadow {
     this.current = map
     this.worker.postMessage({ type: 'use', key: this.keys.get(map) })
     for (const t of [this.box, this.world, this.treeTex]) { (t.image.data as Uint8Array).fill(255); t.needsUpdate = true }
-    this.uniforms.uShOn.value = this.uniforms.uTreeShOn.value = 0
+    this.ready = this.treeReady = false
+    this.fade = 0
+    this.show()
     this.baked.set(0, -1, 0)
     this.busy = false
     this.id++
@@ -121,12 +136,28 @@ export class TerrainShadow {
   }
   private get treeGrid(): GFX.Vector4 { return this.uniforms.uTreeShGrid.value }
 
-  /** Call each frame with the sun's direction: re-bakes when it has moved. */
-  update(sun: GFX.Vector3): void {
-    if (this.busy || sun.angleTo(this.baked) < 0.026) return
+  /** (scripts/harness/timeshot.mjs) How far the drawn shadows are behind the sun (deg), whether one is being baked. */
+  state(sun: GFX.Vector3): { stale: number; busy: boolean; on: number } { return { stale: (sun.angleTo(this.shown) * 180) / Math.PI, busy: this.busy, on: this.uniforms.uShOn.value } }
+
+  /** Call each frame with the sun's direction: re-bakes when it has moved.
+   *  THE CLOCK RUN TO AN HOUR (`runTo`: the light's direction at the hour it is running to — Atmosphere.sweepTo,
+   *  2026-11-27): a bake takes about a second — the day goes by in two or three, so shadows baked along the way would
+   *  trail the sun by a quarter of the sky, and the last came a second after the hour: the old hour's shadows under the
+   *  new hour's light ("set to morning, it shows noon first"). So: as the run starts the shadows FADE OUT (a third of
+   *  a second) and the bake is asked for the hour it ENDS on, at once; they FADE IN (0.7 s) when the run is over and
+   *  that bake is in — never a shadow that is not the hour's own. */
+  update(sun: GFX.Vector3, dt = 0, runTo: GFX.Vector3 | null = null): void {
+    if (runTo) this.hide = true
+    else if (this.hide && sun.angleTo(this.shown) < 0.05) this.hide = false
+    if (this.ready) {
+      const want = this.hide ? 0 : 1
+      if (this.fade !== want) { this.fade = want > this.fade ? Math.min(1, this.fade + dt / 0.7) : Math.max(0, this.fade - dt / 0.35); this.show() }
+    }
+    const aim = runTo ?? sun
+    if (this.busy || aim.angleTo(this.baked) < 0.026) return
     this.busy = true
-    this.baked.copy(sun)
-    this.worker.postMessage({ type: 'bake', id: ++this.id, sun: [sun.x, sun.y, sun.z], boxN: this.boxN, boxStep: 4 })
+    this.baked.copy(aim)
+    this.worker.postMessage({ type: 'bake', id: ++this.id, sun: [aim.x, aim.y, aim.z], boxN: this.boxN, boxStep: 4 })
   }
 }
 
@@ -141,18 +172,22 @@ uniform vec4 uTreeShGrid;
 uniform float uTreeShOn;
 // the terrain's own shadow (the hills)
 float sunVisibilityTerrain(vec2 xz) {
-  if (uShOn < 0.5) return 1.0;
-  float e = -uShBoxGrid.z - uShBoxGrid.y;
-  if (abs(xz.x) < e && abs(xz.y) < e) return textureLod(uShBox, ((xz - uShBoxGrid.z) / uShBoxGrid.y + 0.5) / uShBoxGrid.x, 0.0).r;
+  // (uShOn: how much of it is drawn — 1 but while the clock is run to an hour, when it fades out and back in)
+  if (uShOn <= 0.0) return 1.0;
+  float e = -uShBoxGrid.z - uShBoxGrid.y, s;
+  if (abs(xz.x) < e && abs(xz.y) < e) s = textureLod(uShBox, ((xz - uShBoxGrid.z) / uShBoxGrid.y + 0.5) / uShBoxGrid.x, 0.0).r;
   // (the world's shade: SH_WORLD_N² over the world's span, whatever the world grid's own size)
-  return textureLod(uShWorld, ((xz - uFarGrid.z) / (uFarGrid.y * (uFarGrid.x - 1.0)) * ${SH_WORLD_N - 1}.0 + 0.5) / ${SH_WORLD_N}.0, 0.0).r;
+  else s = textureLod(uShWorld, ((xz - uFarGrid.z) / (uFarGrid.y * (uFarGrid.x - 1.0)) * ${SH_WORLD_N - 1}.0 + 0.5) / ${SH_WORLD_N}.0, 0.0).r;
+  return uShOn >= 1.0 ? s : mix(1.0, s, uShOn);
 }
 // … and the forests' shade on top
 float sunVisibility(vec2 xz) {
   float v = sunVisibilityTerrain(xz);
   // (… not read where the hills' shade is already whole: 0 × the trees' is 0 — 2026-11-16, docs/PERF.md)
-  if (v > 0.0 && uTreeShOn > 0.5 && abs(xz.x) < -uTreeShGrid.z && abs(xz.y) < -uTreeShGrid.z)
-    v *= textureLod(uTreeSh, ((xz - uTreeShGrid.z) / uTreeShGrid.y + 0.5) / uTreeShGrid.x, 0.0).r;
+  if (v > 0.0 && uTreeShOn > 0.0 && abs(xz.x) < -uTreeShGrid.z && abs(xz.y) < -uTreeShGrid.z) {
+    float t = textureLod(uTreeSh, ((xz - uTreeShGrid.z) / uTreeShGrid.y + 0.5) / uTreeShGrid.x, 0.0).r;
+    v *= uTreeShOn >= 1.0 ? t : mix(1.0, t, uTreeShOn);
+  }
   return v;
 }
 `

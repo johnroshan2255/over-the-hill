@@ -131,20 +131,30 @@ async function boot() {
   // (co-op: the hour and the weather are the world's — a change here is told to the server, which tells everyone;
   //  set once joined: `skyNet.set`)
   const skyNet: { set?: (hour: number | null, weather: SkySet, wait: boolean) => void } = {}
+  // THE HOUR SET BY HAND (2026-11-27, the user: "it changes so suddenly … make it work like Genshin Impact's"): the
+  // clock RUNS to the hour asked (Atmosphere.sweepTo — the day going by in a few seconds, onward; an hour's step the
+  // short way), a DIAL showing it turn (`clockHud`); in co-op the world's clock is told, and runs there for everyone
+  const clockHud = timeDial()
+  const runSun = new GFX.Vector3()
+  const timeTo = (hour: number, way: 'on' | 'near' = 'on') => {
+    const h = ((hour % 24) + 24) % 24
+    atmos.sweepTo(h, way)
+    skyNet.set?.(h, 'keep', false)
+    clockHud.show()
+  }
   window.addEventListener('keydown', (e) => {
-    if (e.code === 'BracketRight') { atmos.hour = (atmos.hour + 1) % 24; skyNet.set?.(atmos.hour, 'keep', false) }
-    if (e.code === 'BracketLeft') { atmos.hour = (atmos.hour + 23) % 24; skyNet.set?.(atmos.hour, 'keep', false) }
+    // ([ / ]: an hour back / on — from the hour it is running to, so the key held or tapped again steps on)
+    if (e.code === 'BracketRight') timeTo(atmos.hourAsked + 1, 'near')
+    if (e.code === 'BracketLeft') timeTo(atmos.hourAsked - 1, 'near')
     if (e.code === 'KeyT') { if (atmos.followed) toast('The clock is the world\'s in co-op'); else atmos.dayMinutes = atmos.dayMinutes ? 0 : runMinutes }
     if (e.code === 'KeyK') { toast(`Weather: ${atmos.stepWeather()}`); skyNet.set?.(null, atmos.weather, false) }
     // G: the next time of day (morning → noon → evening → night); Shift + G: the next weather (2026-11-02, the user)
     if (e.code === 'KeyG') {
       if (e.shiftKey) { toast(`Weather: ${atmos.stepWeather()}`); skyNet.set?.(null, atmos.weather, false) }
       else {
-        const P: [number, string][] = [[6.5, 'Morning'], [12, 'Noon'], [17.5, 'Evening'], [21.5, 'Night']]
-        const next = P.find(([t]) => t > atmos.hour + 0.25) ?? P[0]
-        atmos.hour = next[0]
-        skyNet.set?.(atmos.hour, 'keep', false)
-        toast(`Time · ${next[1]}`)
+        // (the next from the hour it is running to: pressed again on the way, it runs on to the one after)
+        const P = [6.5, 12, 17.5, 21.5]
+        timeTo(P.find((t) => t > atmos.hourAsked + 0.25) ?? P[0])
       }
     }
   })
@@ -1369,6 +1379,7 @@ async function boot() {
     if (myCamp && (myCamp.x - p.x) ** 2 + (myCamp.z - p.z) ** 2 < 25 * 25) return { name: 'Your camp', own: true }
     return null
   }
+  let resting = false
   const canCamp = () => driving && !!ride.sim && ride.speedKmh < 3 && ride.grounded() && map.waterAt(ride.pos.x, ride.pos.z) === null
   const closeMenu = () => {
     pause?.close()
@@ -1376,10 +1387,16 @@ async function boot() {
     clock.getDelta()
     last = performance.now()
   }
-  const rest = (apply: () => void, waitOut = false) => {
+  // A REST till an hour: the day runs there before your eyes (`timeTo` — no black screen: it was a fade and a jump, and
+  // the land's shadows came a moment after the fade lifted); the car mended, the journey saved once the hour is come
+  // (the frame loop: `resting`). A WAIT for the weather — no hour to run to — stays behind its fade.
+  // (co-op: the rest moves the world's clock — everyone's — and a wait clears everyone's sky)
+  const rest = (hour: number | null) => {
     closeMenu()
-    // (co-op: the rest moves the world's clock — everyone's — and a wait clears everyone's sky)
-    fadeThrough(() => { apply(); skyNet.set?.(waitOut ? null : atmos.hour, 'keep', waitOut); car.damage?.repair(); atmos.update(camera.position, clock.elapsedTime); save(); toast('Rested · progress saved') })
+    if (hour === null) { fadeThrough(() => { atmos.clearSky(); skyNet.set?.(null, 'keep', true); car.damage?.repair(); atmos.update(camera.position, clock.elapsedTime); save(); toast('Rested · progress saved') }); return }
+    timeTo(hour)
+    car.damage?.repair()
+    resting = true
   }
   const openCamp = () => {
     if (pause || !canCamp()) return
@@ -1399,11 +1416,11 @@ async function boot() {
       heading: here.name,
       onResume: closeMenu,
       items: [
-        { label: 'Rest until sunrise', note: '06:30', go: () => rest(() => (atmos.hour = 6.5)) },
-        { label: 'Rest until noon', note: '12:00', go: () => rest(() => (atmos.hour = 12)) },
-        { label: 'Rest until evening', note: '17:30', go: () => rest(() => (atmos.hour = 17.5)) },
-        { label: 'Rest until night', note: '21:30', go: () => rest(() => (atmos.hour = 21.5)) },
-        ...(wet ? [{ label: 'Wait out the weather', note: 'clear skies', go: () => rest(() => atmos.clearSky(), true) }] : []),
+        { label: 'Rest until sunrise', note: '06:30', go: () => rest(6.5) },
+        { label: 'Rest until noon', note: '12:00', go: () => rest(12) },
+        { label: 'Rest until evening', note: '17:30', go: () => rest(17.5) },
+        { label: 'Rest until night', note: '21:30', go: () => rest(21.5) },
+        ...(wet ? [{ label: 'Wait out the weather', note: 'clear skies', go: () => rest(null) }] : []),
         ...(here.own ? [{ label: 'Pack up camp', go: () => { myCamp = null; world.props.pitch(null); save(); closeMenu(); toast('Camp packed up') } }] : []),
         { label: 'Back on the road', go: closeMenu },
       ],
@@ -1640,6 +1657,9 @@ async function boot() {
     ui.update(driving, atmos.clock)
     audio.update(dt, camera)
     atmos.tick(dt)
+    clockHud.update(atmos, dt)
+    // (a rest's hour come: the journey saved at it)
+    if (resting && !atmos.sweeping) { resting = false; save(); toast('Rested · progress saved') }
     // THE HAZE'S FLOOR (Atmosphere uHaze, the look): the low ground round the camera — the lowest fifth of the land
     // within 1.2 km, eased over a few seconds — so the haze lies in the valley you're in, thinner on the ridges
     {
@@ -1676,7 +1696,8 @@ async function boot() {
     mapView.update(dt)
     radar?.update(dt, radarOn && driving && !mapView.isOpen, ride.speedKmh)
     winch.update(dt, camera)
-    shadow.update(atmos.uniforms.uSunDir.value)
+    // (the clock run to an hour: the shadows fade out, the bake asked for the hour it ends on — TerrainShadow.update)
+    shadow.update(atmos.uniforms.uSunDir.value, dt, atmos.sweeping ? atmos.lightAt(atmos.hourAsked, runSun) : null)
     // (the trees' see-through round what the camera follows — Trees.seeThrough: the car, the bike, the walker; off in
     //  first person, on the map, in the free camera)
     world.trees.seeThrough(ride.pos, driving && !inFpp && !mapView.isOpen ? (onFoot ? 1.1 : riding ? 1.5 : 2.8) : 0)
@@ -1908,6 +1929,9 @@ async function boot() {
     /** Drive mode on / off (the chase camera). */
     drive: (on: boolean) => { driving = on; if (on) chase.snap() },
     setHour: (h: number) => { atmos.hour = h; atmos.update(camera.position, 0) },
+    /** (scripts/harness/timeshot.mjs) the land's shadows against the sun; a camp's rest till an hour */
+    shadowState: () => shadow.state(atmos.uniforms.uSunDir.value),
+    restTill: (h: number) => rest(h),
     sunDir: () => atmos.uniforms.uSunDir.value.toArray(),
     /** Resolves when the GPU has finished what's been submitted (fps.mjs: the honest frame time — WebGPU's rAF runs ahead). */
     gpuDone: () => renderer.gpuDone(),
@@ -2040,6 +2064,36 @@ function gameHud(coins0: number) {
 }
 
 /** Fade to black, do `mid`, fade back (a rest at camp). */
+/** THE DIAL of an hour set by hand (2026-11-27 — Genshin Impact's way: the clock seen turning to the hour asked): a
+ *  day's ring — its upper half the day, amber, noon at the top; its lower the night —, the sun's mark going round it
+ *  with the clock, the time beside it and the part of the day it has come to. Shown while the clock runs and a moment
+ *  after; nothing a frame otherwise. */
+function timeDial(): { show: () => void; update: (a: { hour: number; sweeping: boolean; clock: string }, dt: number) => void } {
+  const el = document.createElement('div')
+  el.className = 'oth-clock'
+  el.innerHTML = '<svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="25" fill="none" stroke="#2b3242" stroke-width="5"/><path d="M7 32 A25 25 0 0 1 57 32" fill="none" stroke="#f2a93b" stroke-width="5"/>'
+    + '<path d="M32 3v6M32 55v6M3 32h6M55 32h6" stroke="#f4efe6" stroke-width="1.5" opacity=".55"/><g><line x1="32" y1="32" x2="32" y2="13" stroke="#f4efe6" stroke-width="2"/><circle cx="32" cy="7" r="5.5" fill="#f4efe6" stroke="#0b0b0d" stroke-width="1.5"/></g><circle cx="32" cy="32" r="2.5" fill="#f4efe6"/></svg><div><b>00:00</b><span></span></div>'
+  document.body.appendChild(el)
+  const hand = el.querySelector('g') as SVGGElement, mark = hand.querySelector('circle') as SVGCircleElement, time = el.querySelector('b') as HTMLElement, part = el.querySelector('span') as HTMLElement
+  const PARTS: [number, string][] = [[5, 'Night'], [7, 'Dawn'], [11, 'Morning'], [14, 'Noon'], [17, 'Afternoon'], [20, 'Evening'], [24, 'Night']]
+  let on = false, held = 0, shownClock = '', shownPart = ''
+  return {
+    show() { on = true; held = 0; el.classList.add('on') },
+    update(a, dt) {
+      if (!on) return
+      // (noon at the top: the day over the upper half, the night under)
+      hand.setAttribute('transform', `rotate(${(((a.hour - 12) / 24) * 360).toFixed(1)} 32 32)`)
+      const night = a.hour < 6 || a.hour > 18.6
+      mark.setAttribute('fill', night ? '#aebbe0' : '#ffd27a')
+      if (a.clock !== shownClock) time.textContent = shownClock = a.clock
+      const p = PARTS.find(([h]) => a.hour < h)![1]
+      if (p !== shownPart) part.textContent = shownPart = p
+      // (the hour come: the dial stays a moment, then goes)
+      if (!a.sweeping && (held += dt) > 1.4) { on = false; el.classList.remove('on') }
+    },
+  }
+}
+
 function fadeThrough(mid: () => void): void {
   const f = document.createElement('div')
   f.className = 'oth-fade'

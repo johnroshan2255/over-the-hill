@@ -142,9 +142,50 @@ export class Atmosphere {
   followed = false
   private hourFix = 0
 
+  /** THE HOUR SET BY HAND (2026-11-27, the user: "when I change it, it changes so suddenly — and set to morning it
+   *  shows noon first, then morning; make the day-night change work like Genshin Impact's"). The hour was put where it
+   *  was asked in one frame — the sky, the light, the stars, the lamps all at once, and the land's shadows, baked off
+   *  the main thread, a moment later: the old hour's shadows under the new hour's light until they came. Now the clock
+   *  RUNS there: `sweepTo` — the day goes by in a few seconds (1.4 s and a sixth of a second an hour, eased in and out;
+   *  4.5 s at the most): the sun over and down, the dusk, the stars, the dawn — always ONWARD, as time goes (to an
+   *  earlier hour: through the night), but for a step of an hour or two back (`near`: the short way). The shadows are
+   *  baked along with it as it goes (TerrainShadow keeps to the sun) and the clock goes on from there. */
+  private sweep: { from: number; span: number; t: number; dur: number } | null = null
+  /** The LIGHT's direction at an hour — the sun's, by night the moon's (what `update` puts in uSunDir at it: the
+   *  same sums). The land's shadows are baked for the hour a run ENDS on (TerrainShadow.update). */
+  lightAt(hour: number, out: GFX.Vector3): GFX.Vector3 {
+    const az = ((hour - 6) / 12) * Math.PI, el = Math.sin(az) * GFX.MathUtils.degToRad(62)
+    out.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az)).normalize()
+    if (!(out.y > -0.05)) { out.negate(); if (out.y < 0.15) out.y = 0.15; out.normalize() }
+    return out
+  }
+  /** The clock is running to an hour set by hand. */
+  get sweeping(): boolean { return this.sweep !== null }
+  /** The hour it is running to (the one it is at, when it is not). */
+  get hourAsked(): number { const s = this.sweep; return s ? (((s.from + s.span) % 24) + 24) % 24 : this.hour }
+  /** How far through the run (0 … 1; 1: not running). */
+  get sweepK(): number { const s = this.sweep; return s ? Math.min(1, s.t / s.dur) : 1 }
+  sweepTo(hour: number, way: 'on' | 'near' = 'on'): void {
+    const h = ((hour % 24) + 24) % 24
+    let span = (h - this.hour + 24) % 24
+    if (way === 'near' && span > 12) span -= 24
+    if (Math.abs(span) < 0.02 || Math.abs(span - 24) < 0.02) { this.sweep = null; this.hour = h; return }
+    this.sweep = { from: this.hour, span, t: 0, dur: Math.min(4.5, 1.4 + 0.16 * Math.abs(span)) }
+    this.hourFix = 0
+  }
+
   /** Advance the clock and the weather by dt real seconds. */
   tick(dt: number): void {
     this.tickWeather(dt)
+    const sw = this.sweep
+    if (sw) {
+      // (eased in and out — smootherstep: the day gathers speed, goes by, slows into its hour)
+      sw.t += dt
+      const x = Math.min(1, sw.t / sw.dur), k = x * x * x * (x * (x * 6 - 15) + 10)
+      this.hour = (((sw.from + sw.span * k) % 24) + 24) % 24
+      if (x >= 1) this.sweep = null
+      return
+    }
     if (this.hourFix !== 0) {
       const k = Math.abs(this.hourFix) < 1e-5 ? this.hourFix : this.hourFix * Math.min(1, dt * 1.5)
       this.hour = (this.hour + k + 24) % 24
@@ -170,7 +211,17 @@ export class Atmosphere {
     u.uRain.value = s.rain
     u.uWet.value = s.wet
     const d = ((s.hour - this.hour + 36) % 24) - 12
-    if (first || snap || Math.abs(d) > 0.25) { this.hour = s.hour; this.hourFix = 0 }
+    const sw = this.sweep
+    if (first || snap) { this.hour = s.hour; this.hourFix = 0; this.sweep = null }
+    else if (sw) {
+      // (running to an hour — ours, told to the server, or another player's: the server's word is where it ends; a
+      //  little off — its clock has gone on meanwhile —, the run's end is moved; another hour altogether: run there)
+      const e = ((s.hour - (sw.from + sw.span) + 36 + 2400) % 24) - 12
+      if (Math.abs(e) < 0.5) sw.span += e
+      else this.sweepTo(s.hour)
+    }
+    // (far off: someone has set the hour — the day runs there for everyone, onward; an hour or two: the short way)
+    else if (Math.abs(d) > 0.25) this.sweepTo(s.hour, Math.abs(d) < 2 ? 'near' : 'on')
     else this.hourFix = d
   }
 

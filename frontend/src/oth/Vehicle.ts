@@ -10,6 +10,7 @@ import { CockpitAnim, dialMaterial, dialTexture, type CockpitState } from './Coc
 import DAMAGE from '../../../proto/damage.json'
 import { CarDamage, crackU, DAMAGE_ON } from './Damage'
 import { CarLamps } from './Lamps'
+import { CarRain, DROPS_GLSL, dropsDrawn, dropsFor, MUD_WASH, WIPE_PERIOD, wipeAngle } from './Drops'
 import type { Horizon } from './Horizon'
 import type { MapData } from './MapData'
 import type { OthPhysics } from './Physics'
@@ -66,7 +67,9 @@ export class Vehicle {
 
   constructor(private readonly map: MapData, private readonly physics: OthPhysics, atmos: Atmosphere, shadow: TerrainShadow, tier: Tier, farGrid: GFX.Vector4) {
     this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 },
-      uCoat: this.coatU, uCoatColor: { value: this.coatColor }, uCarBase: this.baseU, uChar: this.charU, uCrack: crackU }
+      uCoat: this.coatU, uCoatColor: { value: this.coatColor }, uCarBase: this.baseU, uChar: this.charU, uCrack: crackU, ...this.rain.uniforms }
+    // (the rain's drops on the cars: ULTRA on a PC — Drops.ts)
+    dropsFor(tier)
     // PHONES AND WEAK GPUS: the cars' phone files and smaller textures (loadModels carDetail) — a phone-class chip, or
     // the LOW / MEDIUM tiers: the 1024² file; LOW: drawn at 512²
     carDetailFor(tier)
@@ -133,6 +136,9 @@ export class Vehicle {
   near = true
   /** P: the wipers sweep. */
   wipers = false
+  /** The rain on it (Drops.ts): how wet, the drops' clocks, the wipers' fans, the mud washed. */
+  readonly rain = new CarRain()
+  private shellLook: RainShell | null = null
   private wipeT = 0
   private clutchK = 0
   private lastT = 0
@@ -380,16 +386,20 @@ export class Vehicle {
     const fixed = truck.doors.filter((d) => d !== driver)
     const bodyGeo = mergeParts([truck.body, ...(truck.cabin ? [truck.cabin] : []), ...fixed.map((d) => atHinge(d.body, d.hinge))])
     const glassGeo = mergeParts([truck.glass, ...fixed.flatMap((d) => (d.glass ? [atHinge(d.glass, d.hinge)] : []))])
-    const body = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, ...dmgDef }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
-    const glass = new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef, ...dmgDef }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false })
+    // THE RAIN ON IT (Drops.ts): the drops on its shell and its glass (ULTRA on a PC), its texture's mud washed off
+    // (every device) — each its own shader, drawn only while it is so (`RainShell`): dry and as painted, the car is
+    // drawn by the shader it always had
+    this.rain.setCar(truck)
+    const mudOn = MUD_WASH && !!look.mud && !!truck.map
+    const bodyMat = (d: Record<string, string>) => new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, ...dmgDef, ...d }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) })
+    const glassMat = (d: Record<string, string>) => new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef, ...dmgDef, ...d }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false })
+    const bodies = rainMats(bodyMat, mudOn, true), glasses = rainMats(glassMat, false, false)
     if (dm) { dm.attach(bodyGeo, false); dm.attach(glassGeo, true) }
     // (no depth written: the water — drawn after the glass, transparent too — showed nowhere through a window from
     //  inside; 2026-11-05)
-    const b = new GFX.Mesh(bodyGeo, body)
-    const g = new GFX.Mesh(glassGeo, glass)
-    b.frustumCulled = g.frustumCulled = false
-    g.renderOrder = 3 // (transparent: after the cabin behind it)
-    this.root.add(b, g)
+    const shellLook = (this.shellLook = new RainShell())
+    shellLook.add(this.root, bodyGeo, bodies, 0)
+    shellLook.add(this.root, glassGeo, glasses, 3) // (transparent: after the cabin behind it)
     // THE LAMPS (Lamps.ts): the lenses' own faces lit, their halos; the head lamps' beams in the air
     this.shell = { body: bodyGeo, glass: glassGeo }
     const lamps = (this.lamps = new CarLamps(truck))
@@ -404,10 +414,8 @@ export class Vehicle {
       // (damage: the door's skin and pane this car's own copies — the model's are every car's)
       const dbGeo = dm ? driver.body.clone() : driver.body, dgGeo = driver.glass ? (dm ? driver.glass.clone() : driver.glass) : null
       if (dm) { dm.attach(dbGeo, false, driver.hinge); if (dgGeo) dm.attach(dgGeo, true, driver.hinge) }
-      const db = new GFX.Mesh(dbGeo, body), dg = dgGeo ? new GFX.Mesh(dgGeo, glass) : null
-      db.frustumCulled = false
-      pv.add(db)
-      if (dg) { dg.frustumCulled = false; dg.renderOrder = 3; pv.add(dg) }
+      shellLook.add(pv, dbGeo, bodies, 0)
+      if (dgGeo) shellLook.add(pv, dgGeo, glasses, 3)
       this.root.add(pv)
     }
     this.cockpit?.removeFromParent()
@@ -727,8 +735,9 @@ export class Vehicle {
       const c = this.sim.controls, steer = (w[0].steer + (w[1]?.steer ?? w[0].steer)) / 2
       this.steerWheel = Math.max(-2.6, Math.min(2.6, steer * 14))
       if (this.wheelPivot) this.wheelPivot.quaternion.setFromAxisAngle(new GFX.Vector3(...tr.steeringAxis).normalize(), this.steerWheel)
-      if (this.wipers || this.wipeT % 1.1 > 0.02) this.wipeT += dt
-      const sweep = (0.5 - 0.5 * Math.cos((this.wipeT / 1.1) * Math.PI * 2)) * 1.45
+      // (the blades by Drops.ts's sum: the rain's drops are wiped where the same sum says the rubber is)
+      if (this.wipers || this.wipeT % WIPE_PERIOD > 0.02) this.wipeT += dt
+      const sweep = wipeAngle(this.wipeT)
       const gas = Math.max(0, c.throttle), brk = c.brake || c.throttle < 0 ? 1 : 0
       // the CLUTCH pedal (a manual's): down as the drivetrain's clutch opens — pulling away, each shift — eased, a foot's speed
       const open = 1 - (this.sim.drivetrain?.clutch ?? 1)
@@ -801,16 +810,26 @@ export class Vehicle {
     this.baseU.value = ground
     const speed = Math.min(1, Math.abs(this.sim.speed) / 8)
     const lvl = this.map.waterAt(p.x, p.z)
-    if (lvl !== null && lvl - ground > 0.2 && p.y < lvl + 0.6) { this.coat -= (dt / 3.5) * (0.3 + speed); return }
+    const inWater = lvl !== null && lvl - ground > 0.2 && p.y < lvl + 0.6
     const onGround = p.y - ground < 1.5
     const track = Math.max(0, Math.min(1, (0.3 - this.map.wayEdge(p.x, p.z)) / 0.6))
+    // THE MUD under it: the marsh's, the mud holes', the banks' (mud.bin) — and a track's in the wet, a little
+    const bog = onGround && !inWater ? this.map.mudAt(p.x, p.z) : 0
+    // THE RAIN ON IT (Drops.ts): how wet it is, its drops' clocks, its wipers' strokes; its painted mud washed — by
+    // the rain, by the water it stands in (how deep at its wheels' ground) —, brought back by the mud it drives through
+    this.rain.update(dt, atmos, this.sim.speed, this.wipeT, this.root.position.y, inWater ? lvl! - this.root.position.y : 0, Math.max(bog, onGround && !inWater ? track * 0.2 * u.uWet.value : 0))
+    this.shellLook?.set(this.rain.wet, this.rain.washed)
+    if (inWater) { this.coat -= (dt / 3.5) * (0.3 + speed); return }
     const dirt = onGround ? track * 0.35 * (1 - u.uWet.value) : 0
-    const gain = (dt / 70) * speed * dirt
-    if (gain > 0) {
-      this.coatTo.setRGB(0.55, 0.45, 0.33)
-      this.coatColor.lerp(this.coatTo, Math.min(1, gain / Math.max(this.coat, 0.05)))
+    // (dust off a dry track in a minute or so; MUD out of a bog much sooner, and darker)
+    const gain = (dt / 70) * speed * dirt, mudGain = (dt / 22) * speed * bog
+    if (gain + mudGain > 0) {
+      if (mudGain > gain) this.coatTo.setRGB(0.27, 0.2, 0.13)
+      else this.coatTo.setRGB(0.55, 0.45, 0.33)
+      this.coatColor.lerp(this.coatTo, Math.min(1, (gain + mudGain) / Math.max(this.coat, 0.05)))
     }
-    this.coat += gain - (dt / 80) * u.uRain.value
+    // (the rain takes the coat off in ~45 s — it was 80: the user, 2026-11-27, "a muddy car in the rain must come clean")
+    this.coat += gain + mudGain - (dt / 45) * u.uRain.value
   }
   private lamps: CarLamps | null = null
   /** This car's own shell (its body, its glass — what Damage crumples): the lamps' lit faces follow it. */
@@ -931,6 +950,54 @@ export class Vehicle {
 
 const NO_LAMPS: readonly boolean[] = [false, false, false, false]
 
+/** A part's materials as the rain has the car: [as it always was, its mud washed (`mud`: this car's texture has mud —
+ *  the shell's only), wet with the drops on it (where they are drawn — Drops.ts `dropsFor`)]; null: no such look. */
+function rainMats(make: (defines: Record<string, string>) => GFX.ShaderMaterial, mud: boolean, shell: boolean): (GFX.ShaderMaterial | null)[] {
+  const M: Record<string, string> = mud && shell ? { MUD: '' } : {}
+  return [make({}), mud && shell ? make(M) : null, dropsDrawn() ? make({ DROPS: '', ...M }) : null]
+}
+
+/**
+ * A CAR'S SHELL AS THE RAIN HAS IT (2026-11-27, the user: "make sure it all costs 0"): the drops and the washed mud are
+ * work in the shader — a little even with nothing to show (the pixel's steps taken, the mud's colour looked for). So
+ * each look is its OWN shader on its own mesh over the same geometry, and only the one that is so is drawn: a car DRY
+ * AND AS PAINTED — nearly always — is drawn by the shader it had before there was any rain on it, to the instruction;
+ * WASHED (the rain or a ford has taken mud off: till the mud is back), with the mud's wash; WET, with the drops too.
+ * The others are hidden — they cost a mesh not drawn, and the layer warms their shaders at the load (gfx/scene.ts: the
+ * first drop of rain is no stall).
+ */
+class RainShell {
+  private readonly parts: (GFX.Mesh | null)[][] = []
+  private look = 0
+  /** A part of the shell (its geometry, its materials by look — `rainMats`), under `parent`. */
+  add(parent: GFX.Object3D, geo: GFX.BufferGeometry, mats: (GFX.ShaderMaterial | null)[], order: number): void {
+    const meshes = mats.map((m, k) => {
+      if (!m) return null
+      const mesh = new GFX.Mesh(geo, m)
+      mesh.frustumCulled = false
+      mesh.renderOrder = order
+      mesh.visible = k === 0
+      parent.add(mesh)
+      return mesh
+    })
+    this.parts.push(meshes)
+    this.look = 0
+  }
+  /** Wet (the drops, where they are drawn); else washed (some of its mud is off); else as it always was. A part with
+   *  no such look of its own (the glass has no mud; no drops on this device) takes the nearest it has. */
+  set(wet: boolean, washed: boolean): void {
+    const look = wet ? 2 : washed ? 1 : 0
+    if (look === this.look) return
+    this.look = look
+    for (const P of this.parts) {
+      let k = look
+      while (k > 0 && !P[k]) k--
+      // (wet with no drops drawn here, the mud washed: its washed look)
+      for (let i = 0; i < P.length; i++) if (P[i]) P[i]!.visible = i === k
+    }
+  }
+}
+
 /** Parts merged into one geometry: each given the attributes the others have, as floats (a missing colour → white,
  *  paint mask / uv → 0: what the shader read for it before — no USE_COLOR / an attribute's default), all indexed or
  *  none. */
@@ -1016,6 +1083,11 @@ uniform vec3 uPaint;
 uniform float uCoat;
 uniform vec3 uCoatColor;
 uniform float uCarBase;
+#ifdef MUD
+// (Drops.ts) the texture's own mud washed off: above x by the rain, below y by a ford (m above the car's wheels' ground — z, the world's)
+uniform vec3 uMud;
+#endif
+${DROPS_GLSL}
 #ifdef DAMAGE
 // (Damage.ts) per vertex: 1 on a cracked pane of glass (the body's is not read). uChar: a burnt-out car's soot;
 // uCrack: the cracks' pattern (scripts/oth/damage.py)
@@ -1046,6 +1118,10 @@ float vehGrainH(vec3 p, vec3 w, float t1, float t2) { return vehGrain1(p.yz, w.x
 void main() {
   vec3 N = normalize(vN);
   if (!gl_FrontFacing) N = -N;
+#ifdef DROPS
+  // (the pixel's steps over the face, in the car's space and the world's — for the drops' map: taken here, before any branch)
+  vec3 dDlx = dFdx(vLocal), dDly = dFdy(vLocal), dWx = dFdx(vWorld), dWy = dFdy(vWorld);
+#endif
 #ifdef USE_NORMALMAP_OTH
   // THE NORMAL MAP (the character's: his muscles, the cloth's weave — scripts/oth/hero.py; OpenGL's +y), its tangent
   // frame from the screen-space derivatives (no tangents in the mesh). (Checked lit at noon, 2026-11-09: y as stored —
@@ -1086,6 +1162,41 @@ void main() {
     ga = max(ga + 0.08, cr * 0.95);
   }
 #endif
+#ifdef DROPS
+  // THE RAIN'S DROPS on the pane (Drops.ts): each a small lens. From OUTSIDE the pane's own dark under it, the sky's
+  // light on its upper shoulder, the sky mirrored at its rim; from the SEAT the world through it turned over — the sky
+  // in its foot, the ground in its head —, a dark rim. A glint of the sun on either.
+  {
+    vec3 dTw, dBw;
+    vec4 dr = dropsOn(vLocal, dDlx, dDly, dWx, dWy, 1.0, dTw, dBw);
+    if (dr.z > 0.003) {
+      vec3 lean = dTw * dr.x + dBw * dr.y;
+      vec3 Nd = normalize(N + lean * (gl_FrontFacing ? 0.85 : -0.85));
+      vec3 Rd = reflect(-V, Nd);
+      float Fd = 0.1 + 0.8 * pow(1.0 - max(dot(Nd, V), 0.0), 3.0);
+      vec3 dc;
+      float da;
+      if (gl_FrontFacing) {
+        // (the shoulder that faces the sky and the sun: a small crescent of their light, not the whole drop)
+        float sh = smoothstep(0.25, 0.8, dot(lean, normalize(uSunDir + vec3(0.0, 0.8, 0.0))) / max(dr.z, 1e-3));
+        dc = c * 0.8 + skyColor(vec3(0.0, 1.0, 0.0)) * (0.3 * sh);
+        Fd *= 0.45;
+        da = 0.85;
+      } else {
+        vec3 Ld = normalize(-V - lean * 1.6);
+        vec3 ground = vec3(0.09, 0.1, 0.07) * (ambient(vec3(0.0, 1.0, 0.0)) + uSunColor * 0.5);
+        dc = mix(ground, skyColor(normalize(vec3(Ld.x, abs(Ld.y) + 0.02, Ld.z))), smoothstep(-0.2, 0.25, Ld.y));
+        dc *= 1.0 - 0.45 * smoothstep(0.55, 1.0, length(dr.xy) / max(dr.z, 1e-3));
+        da = 0.82;
+      }
+      dc = mix(dc, skyColor(normalize(vec3(Rd.x, abs(Rd.y) + 0.05, Rd.z))), Fd) + uSunColor * sun * pow(max(dot(Rd, uSunDir), 0.0), 90.0) * 1.6;
+      c = mix(c, dc, dr.z);
+      ga = mix(ga, da, dr.z);
+    }
+    // (a run's wet thread, the blade's arcs: a film on the pane)
+    ga = min(1.0, ga + 0.1 * dr.w);
+  }
+#endif
   gl_FragColor = vec4(applyAtmos(c, vWorld), ga);
 #else
   vec3 albedo = vCol;
@@ -1099,6 +1210,18 @@ void main() {
 #ifdef ALPHA_CUT
   if (tex.a < 0.5) discard;
 #endif
+#ifdef MUD
+  // THE MUD PAINTED INTO THE TEXTURE (carkit.paint_texture: brown thrown up the flanks, over the pale paint) WASHED
+  // OFF (Drops.ts): found by its colour — warm, and not as red as the rust —, taken back to the paint's pale where the
+  // rain's line has come down past it (in streaks: the line wavers along the car) or a ford's has come up
+  float mudGone = 0.0;
+  {
+    float mud = clamp((tex.r - tex.b) * 9.0, 0.0, 1.0) * (1.0 - smoothstep(1.9, 2.8, tex.r / max(tex.g, 1e-3)));
+    float h = vWorld.y - uMud.z + 0.05 * sin(vLocal.z * 37.0 + vLocal.x * 29.0) + 0.03 * sin(vLocal.z * 113.0 + vLocal.x * 71.0);
+    mudGone = mud * max(smoothstep(-0.04, 0.04, h - uMud.x), 1.0 - smoothstep(-0.03, 0.03, h - uMud.y));
+    tex.rgb = mix(tex.rgb, vec3(0.8), mudGone);
+  }
+#endif
   albedo *= tex.rgb;
 #endif
   // the paint takes the panel's hue, keeps its shading; white = the model's own colours
@@ -1106,7 +1229,11 @@ void main() {
   float body = step(1.5, vPaint);
   float m = vPaint - 2.0 * body;
 #ifdef USE_PAINTMAP
+#ifdef MUD
+  m *= mix(texture(uPaintMask, vUv).r, 1.0, mudGone);   // (washed: the paint again, in the car's colour)
+#else
   m *= texture(uPaintMask, vUv).r;
+#endif
 #endif
   float lum = dot(albedo, vec3(0.3, 0.59, 0.11));
   float isWhite = step(2.95, uPaint.r + uPaint.g + uPaint.b);
@@ -1178,6 +1305,28 @@ void main() {
     rough = mix(rough, 0.95, k);
     coatK = k;
   }
+#ifdef DROPS
+  // THE RAIN ON THE SHELL (Drops.ts; the bodywork — never the cabin, the wheels, what looks down): WET, the paint a
+  // little darker, the sun's light tighter on it; BEADS standing on it, a few RUNS down its steep faces — each bends
+  // the light as a bump, carries the sky's and a glint of the sun
+  vec4 dr = vec4(0.0);
+#ifndef WHEEL
+  {
+    float bw = step(0.5, vPaint) * step(-0.25, N.y);
+    vec3 dTw, dBw;
+    // (asked only of the bodywork: from the seat half the frame is the cabin's — the dash, the seats —, which has none)
+    if (bw > 0.5) dr = dropsOn(vLocal, dDlx, dDly, dWx, dWy, 0.0, dTw, dBw);
+    albedo *= 1.0 - 0.1 * uCarWet * bw;
+    rough = mix(rough, 0.6, 0.55 * uCarWet * bw);
+    if (dr.z > 0.003) {
+      vec3 lean = dTw * dr.x + dBw * dr.y;
+      // (dr.w from here: the shoulder of the bead that faces the sky and the sun — where its light sits)
+      dr.w = smoothstep(0.25, 0.8, dot(lean, normalize(uSunDir + vec3(0.0, 0.8, 0.0))) / max(dr.z, 1e-3));
+      N = normalize(N + lean * 0.8);
+    }
+  }
+#endif
+#endif
   // (the paint's light wraps further round — a softer terminator, the stylised look; the rest as before)
   vec3 c = shade(albedo, N, V, rough, 0.02, 1.0, sun, mix(0.25, 0.55, m));
 #ifndef WHEEL
@@ -1198,6 +1347,13 @@ void main() {
 #endif
   // a little painted rim light so the car reads against the field (soft: a matte surface's)
   c += albedo * uSunColor * pow(1.0 - max(dot(N, V), 0.0), 3.0) * (0.08 + 0.06 * m) * sun;
+#ifdef DROPS
+  if (dr.z > 0.003) {
+    vec3 Rd = reflect(-V, N);
+    c = c * (1.0 - 0.2 * dr.z * smoothstep(0.5, 1.0, length(dr.xy) / max(dr.z, 1e-3)))
+      + dr.z * (skyColor(normalize(vec3(Rd.x, abs(Rd.y) + 0.05, Rd.z))) * (dr.w * (0.1 + 0.35 * pow(1.0 - max(dot(N, V), 0.0), 3.0))) + uSunColor * sun * pow(max(dot(Rd, uSunDir), 0.0), 70.0) * 1.2);
+  }
+#endif
   c *= 1.0 - 0.75 * ck;
   gl_FragColor = vec4(applyAtmos(c, vWorld), 1.0);
 #endif
@@ -1294,6 +1450,9 @@ export class RemoteCar {
   private lastYaw = NaN
   private lamps: CarLamps | null = null
   private shell: { body: GFX.BufferGeometry; glass: GFX.BufferGeometry } | null = null
+  /** The rain on it (Drops.ts): wet, its drops, its mud washed by the rain — no wipers known, no ford. */
+  readonly rain = new CarRain()
+  private shellLook: RainShell | null = null
   private readonly viewSphere = new GFX.Sphere(new GFX.Vector3(), 6)
   private readonly v = new GFX.Vector3()
   /** The body's box in car space (centre, half size) — null until its model is in. */
@@ -1326,7 +1485,7 @@ export class RemoteCar {
 
   constructor(private readonly map: MapData, private readonly atmos: Atmosphere, shadow: TerrainShadow, farGrid: GFX.Vector4) {
     this.uniforms = { ...atmos.uniforms, ...shadow.uniforms, uFarGrid: { value: farGrid }, uMap: { value: null }, uPaintMask: { value: null }, uPaint: { value: new GFX.Color(1, 1, 1) }, uSunHere: { value: 1 },
-      uCoat: { value: 0 }, uCoatColor: { value: new GFX.Color(0.55, 0.45, 0.33) }, uCarBase: { value: 0 }, uChar: this.charU, uCrack: crackU }
+      uCoat: { value: 0 }, uCoatColor: { value: new GFX.Color(0.55, 0.45, 0.33) }, uCarBase: { value: 0 }, uChar: this.charU, uCrack: crackU, ...this.rain.uniforms }
     const sg = new GFX.PlaneGeometry(1, 1, 8, 8).rotateX(-Math.PI / 2)
     this.shadow = new GFX.Mesh(sg, new GFX.ShaderMaterial({
       glslVersion: GFX.GLSL3,
@@ -1369,10 +1528,12 @@ export class RemoteCar {
     const dmgDef: Record<string, string> = dm ? { DAMAGE: '' } : {}
     if (dm) { dm.attach(bodyGeo, false); dm.attach(glassGeo, true) }
     this.lampRev = -1
-    const body = new GFX.Mesh(bodyGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, ...dmgDef }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) }))
-    const glass = new GFX.Mesh(glassGeo, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef, ...dmgDef }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false }))
-    body.frustumCulled = glass.frustumCulled = false
-    glass.renderOrder = 3
+    // (the rain on it — as ours: each look its own shader, drawn only while it is so)
+    this.rain.setCar(truck)
+    const mudOn = MUD_WASH && !!look.mud && !!truck.map
+    const shellLook = (this.shellLook = new RainShell())
+    shellLook.add(this.root, bodyGeo, rainMats((d) => new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, ...dmgDef, ...d }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(bodyGeo) }), mudOn, true), 0)
+    shellLook.add(this.root, glassGeo, rainMats((d) => new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { OTH_SPEC: '', GLASS: '', MIST_K: '0.45', ...glassDef, ...dmgDef, ...d }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, vertexColors: vc(glassGeo), side: GFX.DoubleSide, depthWrite: false }), false, false), 3)
     this.wheelMesh = new GFX.InstancedMesh(truck.wheel, new GFX.ShaderMaterial({ glslVersion: GFX.GLSL3, uniforms: u, defines: { ...defines, WHEEL: '' }, vertexShader: VERT, fragmentShader: FRAG, vertexColors: vc(truck.wheel) }), 4)
     this.wheelMesh.frustumCulled = false
     this.wheelMesh.instanceMatrix.setUsage(GFX.DynamicDrawUsage)
@@ -1380,7 +1541,7 @@ export class RemoteCar {
     this.lamps?.dispose()
     this.lamps = new CarLamps(truck)
     this.shell = { body: bodyGeo, glass: glassGeo }
-    this.root.add(body, glass, this.wheelMesh, this.lamps.mesh)
+    this.root.add(this.wheelMesh, this.lamps.mesh)
     this.shadowSize.set(truck.half.x * 2 + 1.0, 1, truck.half.z * 2 + 1.2)
     this.viewSphere.radius = Math.hypot(truck.half.x, truck.half.z) + 1.5
     // (its solid box for the others' physics — Remotes.ts: the body's bounds, car space)
@@ -1426,6 +1587,8 @@ export class RemoteCar {
     })
     this.wheelMesh.instanceMatrix.needsUpdate = true
     this.uniforms.uCarBase.value = this.map.height(p[0], p[2])
+    this.rain.update(Math.min(0.1, dt), this.atmos, speed, null, p[1])
+    this.shellLook?.set(this.rain.wet, this.rain.washed)
     const night = this.atmos.uniforms.uNight.value
     if (this.lamps) {
       // (the head lamps on at night, the tail lamps dim with them — as ours; a broken one dark)

@@ -505,6 +505,50 @@ The Select-map card (`MapInfo.page`) opens `/oth.html`; it is not a room map (th
     (3 → 2 with the beams); the lamps with their painted beams +0.17 / +0.16 / +0.12 ms from ahead and +0.06 / +0.07 /
     +0.12 ms from behind at ULTRA / MEDIUM / LOW — before: +0.18 / +0.12 / +0.10 and +0.12 / +0.08 / +0.08 (the same
     within the ±0.05 ms of the runs). Not yet on a phone.
+  - **The rain on the car** (2026-11-27, the user: "in the rain, on a PC at ULTRA, water droplets on the car — moving
+    over the windows and the front glass, wiped by the wiper; in first person the drops on the windows, moving
+    naturally; and on every device a muddy car in the rain or through water comes clean" — `Drops.ts`, the car's FRAG
+    under `DROPS` / `MUD`). No texture, no draw: patterns fixed to each face, in metres. BEADS — one in each cell of a
+    grid, where and how big its own, each landing, sitting its while and gone on the rain's own clock — at three sizes,
+    each drawn where it can be seen and faded out as it nears a pixel (fine from the seat, middling within a few metres,
+    BIG from the chase camera: larger than water is, so the rain still reads from there). RUNS on the glass and the
+    steep panels — down each column a drop that sticks, lets go, runs, along a path that wanders, a thread behind it
+    breaking into beads; at speed the side windows' runs lean back and the windscreen's are pushed up (the beads sit).
+    A drop is a lens: from outside the sky's light on its shoulder, from the seat the world turned over in it. THE
+    WIPERS (P): each blade's fan — pivot, rest, reach from the model's own wiper; the stroke the one sum the blade is
+    drawn by (`wipeAngle`) — is clear where the rubber has passed; beads back in ~5 s of full rain, the runs after.
+    The car wets in ~5 s, dries in ~50 (sooner at speed). Other players' and the companion's cars too (no wipers known).
+    THE MUD, every device: the mud carkit paints into a car's texture (catalogue `mud`) is found in the shader by its
+    colour and taken back to the paint where it is washed — by the rain from the top down (~50 s of full rain, in
+    streaks), by a ford from the bottom up to where the water stood; driving through a bog brings it back, and puts a
+    dark coat on (the dust coat's way; the rain takes that off in ~45 s, was 80). ULTRA on a PC for the drops
+    (`dropsFor`: not a phone, not a weak GPU; `?drops=0 / 1`), `?mud=0`. `scripts/harness/rainshot.mjs` (outside, the
+    seat, the wipers mid-sweep and after, at speed, drying, the mud as painted / rained / forded; WebGPU and the
+    phones' LOW checked) and `raincost.mjs`. **Cost** (1080p uncapped, an Apple M4, two tabs interleaved): the DROPS
+    at ULTRA +0.10 ms from the chase camera (430 → 413 fps), +0.23 ms with the car filling the frame, +0.65 ms from
+    the seat — the windscreen across the whole frame (368 → 297 fps); the MUD's wash at LOW, the phones' way, +0.01
+    to +0.07 ms (inside the runs' ±0.05). Not on a phone yet; under a cave's roof the car still wets (no roof is
+    asked of the map).
+    **… and nothing when it is dry** (the same day, the user: "make sure it all costs 0"): each look of the shell is
+    its OWN shader on its own mesh over the same geometry (`RainShell`, Vehicle.ts) — as it always was / its mud
+    washed / wet with the drops — and only the one that is so is drawn; the others are hidden and warmed at the load.
+    A car dry and as painted is drawn by the very shader it had before. Before today's work against now
+    (`abq.mjs "port=5201|" spawn,forest,lake 6` — the commit before the lamps, the crates, the rain and the clock, from
+    a worktree): −0.010 / −0.033 / +0.043 ms: nothing (the runs' ±0.05).
+  - **The hour set by hand runs there** (2026-11-27, the user: "it changes so suddenly — and set to morning it shows
+    noon first, then morning; make the day-night change work like Genshin Impact's" — `Atmosphere.sweepTo`,
+    `TerrainShadow.update`, main.ts `timeTo` / `timeDial`). The hour was put where asked in one frame, and the land's
+    shadows — baked off the main thread, ~1 s a bake — came a second later: the old hour's shadows under the new
+    light. Now G / the wheel's TIME (the next part of the day), [ / ] (an hour), the camp's rest: the clock RUNS to
+    the hour — 1.4 s + 0.16 s an hour, eased in and out, 4.5 s at most; always onward (to an earlier hour: through
+    the night), an hour's step the short way — the sun over, the dusk, the stars, the dawn going by; a DIAL (the day's
+    ring, the sun's mark turning, the time, the part of the day) shown while it runs. The shadows fade out as it
+    starts (0.35 s), the bake is asked at once for the hour it ENDS on, and they fade in (0.7 s) when it is there:
+    never a shadow that is not the hour's own (`uShOn` / `uTreeShOn` are how much is drawn, not a switch; at 1 the
+    same sums as before). A rest is the run too — no black screen; the journey saved when the hour is come (a wait for
+    the weather keeps its fade). Co-op: the world's clock is told the hour and runs there for everyone (`follow`).
+    `scripts/harness/timeshot.mjs` films six runs: no jump, the hour asked reached, no stale shadow drawn, the
+    hour's own back within ~1 s of its end, the dial shown and gone.
 - **No post pass by default (2026-10-27, the user: "400+ fps at 1080p on the laptop so a small phone holds 60+";
   "even remove post-processing, but keep the ULTRA look")**: every tier draws straight to the canvas with its own MSAA
   (on a phone's tile GPU resolved on-chip); the bloom and god rays are painted FORWARD (Glow.ts): a sun GLARE sprite

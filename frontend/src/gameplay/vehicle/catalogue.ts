@@ -86,6 +86,9 @@ export interface VehicleDef {
    *  `head2`: a second headlamp per side (the E30's quad lamps); sizes are half extents (m); the shapes — the head
    *  lamps round, the tail lamps square, unless said. */
   lamps?: { head: [number, number, number]; tail: [number, number, number]; head2?: [number, number, number]; headSize?: [number, number]; tailSize?: [number, number]; headShape?: 'round' | 'square'; tailShape?: 'round' | 'square' }
+  /** ITS TEXTURE IS carkit's (`paint_texture`): MUD painted up its flanks — the rain and a ford wash it off, driving
+   *  through mud brings it back (oth/Drops.ts; the shader finds the mud by its colour, so only a texture painted so). */
+  mud?: boolean
   /** The dash: 'twin' round speedo + tacho, 'single' speedo + lamp strip, 'screen' a wide twin screen (Cockpit). */
   dash: 'twin' | 'single' | 'screen'
   /** THE FACTORY COLOUR's name and a line about it (`stock.paint` is the colour itself): the real machine's own —
@@ -169,7 +172,7 @@ const KIT: VehicleDef[] = KIT_ROWS.map(([id, name, year, voice, pitch, blurb]) =
   return {
     id, name, maker: 'Overhill', year, blurb,
     url: KIT_URL[`../../assets/models/vehicles/${id}.glb`], length: c.length, forward: '-z', wheelRegex: /wheel_(FL|FR|RL|RR)/i, paintRegex: /CarPaint/i, bytes: c.bytes, dash: 'twin',
-    urlSmall: KIT_URL[`../../assets/models/vehicles/${id}.m.glb`], whitePaint: true, smooth: true,      // painted (chips, rust, mud — carkit.paint_texture): the phones' file its texture at 1024²
+    urlSmall: KIT_URL[`../../assets/models/vehicles/${id}.m.glb`], whitePaint: true, smooth: true, mud: true,      // painted (chips, rust, mud — carkit.paint_texture): the phones' file its texture at 1024²
     glassTint: 0.9, voice,
     cabin: { hip: c.hip, roof: c.roofInner, behind: 0.5 }, seatHip: c.hip,
     paintName: c.paintName, paintNote: c.paintNote, gauges: c.gauges,
@@ -198,6 +201,7 @@ export const VEHICLES: VehicleDef[] = [
     //  (`smooth`): at a few metres its dots are one pixel each and SPARKLED as the car moved — the user: "some pixels
     //  blink"; and it is three height samples a pixel saved. The glass dark from outside.)
     smooth: true,
+    mud: true,
     glassTint: 0.9,
     // (its PAINTED TEXTURE — carkit.paint_texture: chips, scratches, rust, mud over a pale paint — the bright neutral
     //  texels take the garage's paint, the mud and the rust stay their own)
